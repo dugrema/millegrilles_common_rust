@@ -34,3 +34,9 @@ uuid = { version = "0.8.2", features = ["serde", "v4"] }
 # MongoDB
 mongodb = { version = "1.2.2", default-features = false, features = ["async-std-runtime"] }
 bson = "1.2.3"
+
+# RabbitMQ
+lapin = { "version" = "1.7.1" }
+futures = "0.3.1"
+futures-util = "0.3.16"
+tokio-amqp = { version = "1.0.0" }
