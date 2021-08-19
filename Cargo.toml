@@ -1,5 +1,5 @@
 [package]
-name = "millegrilles_common_rust"
+name = "millegrilles"
 version = "0.1.0"
 edition = "2018"
 
