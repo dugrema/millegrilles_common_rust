@@ -10,6 +10,7 @@ edition = "2018"
 async-trait = "0.1.51"
 num-traits = "0.2.14"
 log = { version = "0.4.14", features = ["max_level_debug", "release_max_level_info"] }
+rand = "0.7"
 
 # Crypto et certs
 openssl = { version = "0.10.29", features = ["vendored"] }
