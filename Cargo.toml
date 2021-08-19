@@ -1,8 +1,28 @@
 [package]
 name = "millegrilles"
-version = "0.1.0"
+version = "1.45.0"
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+async-trait = "0.1.51"
+num-traits = "0.2.14"
+log = { version = "0.4.14", features = ["max_level_debug", "release_max_level_info"] }
+
+# Crypto et certs
+openssl = { version = "0.10.29", features = ["vendored"] }
+x509-parser = { "version" = "0.10.0" }
+multibase = "0.9.1"
+multicodec = "0.1.0"
+multihash = "0.14.0"
+
+# JSON
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Formats
+chrono = { version = "0.4.19" }
+uuid = { version = "0.8.2", features = ["serde", "v4"] }
+
