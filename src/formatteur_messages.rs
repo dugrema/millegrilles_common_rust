@@ -302,16 +302,12 @@ impl Serialize for DateEpochSeconds {
 
 impl<'de> Deserialize<'de> for DateEpochSeconds {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        println!("*** Deserializer!");
         deserializer.deserialize_u32(DateEpochSecondsVisitor)
-        // Ok(DateEpochSeconds::from_timestamp(valeur))
     }
 
     fn deserialize_in_place<D>(deserializer: D, place: &mut Self) -> Result<(), D::Error> where D: Deserializer<'de> {
         let date_inner = deserializer.deserialize_i64(DateEpochSecondsVisitor)?;
-        // let date_inner = DateEpochSeconds::from_timestamp(valeur);
         place.date = date_inner.date;
-
         Ok(())
     }
 }
@@ -376,10 +372,12 @@ mod serialization_tests {
 
     #[test]
     fn serializer_date() {
-        let date = DateEpochSeconds::now();
+        let date = DateEpochSeconds::from_i64(1629813607);
+
         let value = serde_json::to_value(date).unwrap();
+
         let date_epoch_secs = value.as_i64().expect("i64");
-        assert_eq!(date_epoch_secs>1629813607, true);
+        assert_eq!(date_epoch_secs, 1629813607);
     }
 
     #[test]
@@ -388,6 +386,7 @@ mod serialization_tests {
         let value = Value::from(value_int);
 
         let date: DateEpochSeconds = serde_json::from_value(value).expect("date");
-        println!("Date deserializee : {:?}", date);
+
+        assert_eq!(date.date.timestamp() as i32, value_int);
     }
 }
