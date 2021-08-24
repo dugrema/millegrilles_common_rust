@@ -474,10 +474,8 @@ mod serialization_tests {
             idmg.to_owned()
         )
             .build();
-        println!("Entete buildee! {:?}", entete);
 
         let value = serde_json::to_value(entete).unwrap();
-        println!("Value entete : {:?}", value);
 
         assert_eq!(value.get("fingerprint_certificat").expect("fp").as_str().expect("fp str"), fingerprint);
         assert_eq!(value.get("hachage_contenu").expect("hachage").as_str().expect("hachage str"), hachage_contenu);
@@ -498,7 +496,9 @@ mod serialization_tests {
         });
 
         let entete: Entete = serde_json::from_value(value).expect("deserialiser entete");
-        println!("Entete deserialisee! {:?}", entete);
+
+        assert_eq!(entete.domaine.expect("domaine").as_str(), "Backup.catalogueHoraire");
+        assert_eq!(entete.estampille.date.timestamp(), 1627585202);
 
     }
 }

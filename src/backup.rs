@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, FormatChiffrage, DateEpochSeconds};
+use crate::{EnveloppeCertificat, FormatChiffrage, DateEpochSeconds, Entete};
 use crate::certificats::EnveloppePrivee;
 use serde_json::Value;
 use serde::{Serialize, Deserialize};
@@ -31,16 +31,56 @@ struct BackupInformation {
     uuid_backup: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct CatalogueHoraire {
     /// Heure du backup (minutes = 0, secs = 0)
     heure: DateEpochSeconds,
     /// Nom du domaine ou sous-domaine
-    nom_domaine: String,
-    /// Collection des certificats presents dans les transactions du backup
-    //certificats: HashMap<String, EnveloppeCertificat>,
+    domaine: String,
     /// Identificateur unique du groupe de backup (collateur)
     uuid_backup: String,
+
+    catalogue_nomfichier: String,
+
+    /// Collection des certificats presents dans les transactions du backup
+    certificats: Vec<String>,
+    certificats_chaine_catalogue: Vec<String>,
+    certificats_intermediaires: Vec<String>,
+    certificats_millegrille: Vec<String>,
+    certificats_pem: HashMap<String, String>,
+
+    transactions_hachage: String,
+    transactions_nomfichier: String,
+    uuid_transactions: Vec<String>,
+
+    #[serde(rename = "en-tete")]
+    entete: Entete,
+
+    /// Enchainement backup precedent
+    backup_precedent: Option<String>,  // todo mettre bon type
+
+    /// Cle chiffree avec la cle de MilleGrille (si backup chiffre)
+    cle: Option<String>,
+
+    /// IV du contenu chiffre
+    iv: Option<String>,
+
+    /// Compute tag du contenu chiffre
+    tag: Option<String>,
+
+    /// Format du chiffrage
+    format: Option<String>,
+
+}
+
+#[derive(Clone, Debug)]
+struct CatalogueHoraireBuilder {
+    heure: DateEpochSeconds,
+    nom_domaine: String,
+    uuid_backup: String,
+
+    certificats: HashMap<String, EnveloppeCertificat>,
+    uuid_transactions: Vec<String>,
 }
 
 impl BackupInformation {
@@ -68,6 +108,7 @@ impl BackupInformation {
             uuid_backup,
         }
     }
+
 }
 
 impl BackupHandler for BackupInformation {
@@ -78,17 +119,80 @@ impl BackupHandler for BackupInformation {
 }
 
 impl CatalogueHoraire {
-    fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String) -> CatalogueHoraire {
-        CatalogueHoraire {
-            heure,
-            nom_domaine,
-            //certificats: HashMap::new(),
-            uuid_backup,
+    fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String) -> CatalogueHoraireBuilder {
+        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup)
+    }
+}
+
+impl CatalogueHoraireBuilder {
+
+    fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String) -> Self {
+        CatalogueHoraireBuilder {
+            heure, nom_domaine, uuid_backup,
+            certificats: HashMap::new(),
+            uuid_transactions: Vec::new(),
         }
     }
 
-    fn ajouter_certificat(certificat: EnveloppeCertificat) {
+    fn est_certificat_present(&self, fingerprint: &str) -> bool {
+        match self.certificats.get(fingerprint) {
+            Some(_) => true,
+            None => false,
+        }
+    }
 
+    fn ajouter_ceritificat(mut self, certificat: EnveloppeCertificat) {
+        self.certificats.insert(certificat.fingerprint().to_owned(), certificat);
+    }
+
+    fn ajouter_transaction(mut self, uuid_transaction: String) {
+        self.uuid_transactions.push(uuid_transaction);
+    }
+
+    fn build(self) -> CatalogueHoraire {
+
+        // Build collections de certificats
+        let certificats: Vec<String> = Vec::new();
+        let certificats_chaine_catalogue: Vec<String> = Vec::new();
+        let certificats_intermediaires: Vec<String> = Vec::new();
+        let certificats_millegrille: Vec<String> = Vec::new();
+        let certificats_pem: HashMap<String, String> = HashMap::new();
+
+        let transactions_hachage = "".to_owned();
+        let transactions_nomfichier = "".to_owned();
+        let catalogue_nomfichier = "".to_owned();
+
+        let entete = Entete::builder(
+            "zFingerprint".to_owned(),
+            "mHachage".to_owned(),
+            "zidmg".to_owned(),
+        ).build();
+
+        CatalogueHoraire {
+            heure: self.heure,
+            domaine: self.nom_domaine,
+            uuid_backup: self.uuid_backup,
+            catalogue_nomfichier,
+
+            certificats,
+            certificats_chaine_catalogue,
+            certificats_intermediaires,
+            certificats_millegrille,
+            certificats_pem,
+
+            transactions_hachage,
+            transactions_nomfichier,
+            uuid_transactions: self.uuid_transactions,
+
+            entete,
+
+            backup_precedent: None,  // todo mettre bon type
+            cle: None,
+            iv: None,
+
+            tag: None,
+            format: None,
+        }
     }
 
 }
@@ -103,7 +207,7 @@ mod backup_tests {
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
 
     #[test]
-    fn init_catalogue() {
+    fn init_backup_information() {
         let info = BackupInformation::new(
             NOM_DOMAINE_BACKUP.to_owned(),
             NOM_COLLECTION_BACKUP.to_owned(),
@@ -118,23 +222,63 @@ mod backup_tests {
     }
 
     #[test]
-    fn init_backup_horaire() {
+    fn init_backup_horaire_builder() {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 0);
         let uuid_backup = Uuid::new_v4().to_string();
 
-        let catalogue = CatalogueHoraire::new(heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup);
+        let catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup);
 
-        assert_eq!(catalogue.heure.get_datetime().timestamp(), heure.get_datetime().timestamp());
-        assert_eq!(&catalogue.nom_domaine, NOM_DOMAINE_BACKUP);
+        assert_eq!(catalogue_builder.heure.get_datetime().timestamp(), heure.get_datetime().timestamp());
+        assert_eq!(&catalogue_builder.nom_domaine, NOM_DOMAINE_BACKUP);
     }
 
     #[test]
-    fn marshall_catalogue() {
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 0);
-        let uuid_backup = Uuid::new_v4().to_string();
+    fn build_catalogue() {
+        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
-        let catalogue = CatalogueHoraire::new(heure, NOM_DOMAINE_BACKUP.to_owned(), uuid_backup);
+        let catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
 
+        let catalogue = catalogue_builder.build();
+
+        assert_eq!(catalogue.heure, heure);
+        assert_eq!(&catalogue.uuid_backup, uuid_backup);
+    }
+
+    #[test]
+    fn serialiser_catalogue() {
+        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+
+        let catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+
+        let catalogue = catalogue_builder.build();
+
+        let value = serde_json::to_value(catalogue).expect("value");
+
+        println!("Valeur catalogue : {:?}", value);
+    }
+
+    #[test]
+    fn catalogue_to_json() {
+        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+
+        let catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+
+        let catalogue = catalogue_builder.build();
+
+        let value = serde_json::to_value(catalogue).expect("value");
+        let catalogue_str = serde_json::to_string(&value).expect("json");
+        println!("Json catalogue : {:?}", catalogue_str);
+
+        assert_eq!(catalogue_str.find("1627794000"), Some(9));
+        assert_eq!(catalogue_str.find(NOM_DOMAINE_BACKUP), Some(31));
+        assert_eq!(catalogue_str.find(uuid_backup), Some(60));
     }
 
 }
