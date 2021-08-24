@@ -263,7 +263,7 @@ pub fn lire_date_value(date: &Value) -> Result<DateTime<Utc>, String> {
     Ok(DateTime::from_utc(date_naive, Utc))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DateEpochSeconds {
     date: DateTime<Utc>,
 }
@@ -290,6 +290,12 @@ impl DateEpochSeconds {
 
     pub fn get_datetime(&self) -> &DateTime<Utc> {
         &self.date
+    }
+}
+
+impl Default for DateEpochSeconds {
+    fn default() -> Self {
+        DateEpochSeconds::now()
     }
 }
 
@@ -364,6 +370,73 @@ impl <'de> Visitor<'de> for DateEpochSecondsVisitor {
 
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Entete {
+    domaine: Option<String>,
+    estampille: DateEpochSeconds,
+    fingerprint_certificat: String,
+    hachage_contenu: String,
+    idmg: String,
+    uuid_transaction: String,
+    version: u32,
+}
+
+impl Entete {
+    pub fn builder(fingerprint_certificat: String, hachage_contenu: String, idmg: String) -> EnteteBuilder {
+        EnteteBuilder::new(fingerprint_certificat, hachage_contenu, idmg)
+    }
+}
+
+pub struct EnteteBuilder {
+    domaine: Option<String>,
+    estampille: DateEpochSeconds,
+    fingerprint_certificat: String,
+    hachage_contenu: String,
+    idmg: String,
+    uuid_transaction: String,
+    version: u32,
+}
+
+impl EnteteBuilder {
+    pub fn new(fingerprint_certificat: String, hachage_contenu: String, idmg: String) -> EnteteBuilder {
+        EnteteBuilder {
+            domaine: None,
+            estampille: DateEpochSeconds::now(),
+            fingerprint_certificat,
+            hachage_contenu,
+            idmg,
+            uuid_transaction: Uuid::new_v4().to_string(),
+            version: 1,
+        }
+    }
+
+    pub fn domaine(mut self, domaine: String) -> EnteteBuilder {
+        self.domaine = Some(domaine);
+        self
+    }
+
+    pub fn estampille(mut self, estampille: DateEpochSeconds) -> EnteteBuilder {
+        self.estampille = estampille;
+        self
+    }
+
+    pub fn version(mut self, version: u32) -> EnteteBuilder {
+        self.version = version;
+        self
+    }
+
+    pub fn build(self) -> Entete {
+        Entete {
+            domaine: self.domaine,
+            estampille: self.estampille,
+            fingerprint_certificat: self.fingerprint_certificat,
+            hachage_contenu: self.hachage_contenu,
+            idmg: self.idmg,
+            uuid_transaction: self.uuid_transaction,
+            version: self.version,
+        }
+    }
+}
 
 #[cfg(test)]
 mod serialization_tests {
@@ -388,5 +461,44 @@ mod serialization_tests {
         let date: DateEpochSeconds = serde_json::from_value(value).expect("date");
 
         assert_eq!(date.date.timestamp() as i32, value_int);
+    }
+
+    #[test]
+    fn serializer_entete() {
+        let fingerprint = "zQmPD1VZCEgPDvpNdSK8SCv6SuhdrtbvzAy5nUDvRWYn3Wv";
+        let hachage_contenu = "mEiAoFMueZNEcSQ97UXcOWmezPuQyjBYWpm8+1NZDKJvb2g";
+        let idmg = "z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s";
+        let entete = Entete::builder(
+            fingerprint.to_owned(),
+            hachage_contenu.to_owned(),
+            idmg.to_owned()
+        )
+            .build();
+        println!("Entete buildee! {:?}", entete);
+
+        let value = serde_json::to_value(entete).unwrap();
+        println!("Value entete : {:?}", value);
+
+        assert_eq!(value.get("fingerprint_certificat").expect("fp").as_str().expect("fp str"), fingerprint);
+        assert_eq!(value.get("hachage_contenu").expect("hachage").as_str().expect("hachage str"), hachage_contenu);
+        assert_eq!(value.get("idmg").expect("idmg").as_str().expect("idmg str"), idmg);
+    }
+
+    #[test]
+    fn deserializer_entete() {
+
+        let value = json!({
+	    	"domaine": "Backup.catalogueHoraire",
+		    "estampille": 1627585202,
+		    "fingerprint_certificat": "zQmPD1VZCEgPDvpNdSK8SCv6SuhdrtbvzAy5nUDvRWYn3Wv",
+		    "hachage_contenu": "mEiAoFMueZNEcSQ97UXcOWmezPuQyjBYWpm8+1NZDKJvb2g",
+		    "idmg": "z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s",
+		    "uuid_transaction": "2da93aa1-f09f-11eb-95a5-bf4298f92e28",
+		    "version": 6
+        });
+
+        let entete: Entete = serde_json::from_value(value).expect("deserialiser entete");
+        println!("Entete deserialisee! {:?}", entete);
+
     }
 }
