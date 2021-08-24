@@ -1,11 +1,3 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
-
 pub mod certificats;
 pub mod configuration;
 pub mod constantes;
@@ -19,6 +11,8 @@ pub mod recepteur_messages;
 pub mod signatures;
 pub mod verificateur;
 pub mod transactions;
+pub mod backup;
+pub mod chiffrage;
 
 pub use certificats::*;
 pub use configuration::*;
@@ -33,3 +27,5 @@ pub use recepteur_messages::*;
 pub use signatures::*;
 pub use verificateur::*;
 pub use transactions::*;
+pub use backup::*;
+pub use chiffrage::*;

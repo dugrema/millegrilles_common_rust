@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::collections::hash_map::RandomState;
-use std::fmt::Error;
+use std::fmt::{Error, Formatter};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc, NaiveDate, NaiveTime};
 use log::{debug, error, info};
 use num_traits::ToPrimitive;
 use openssl::pkey::{PKey, Private};
-use serde::Deserializer;
+use serde::{Serialize, Deserialize, Deserializer, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -16,6 +16,7 @@ use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
 use crate::signatures::signer_message;
+use serde::de::Visitor;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
@@ -260,4 +261,133 @@ pub fn lire_date_value(date: &Value) -> Result<DateTime<Utc>, String> {
     }?;
     let date_naive = NaiveDateTime::from_timestamp(date_epoch, 0);
     Ok(DateTime::from_utc(date_naive, Utc))
+}
+
+#[derive(Clone, Debug)]
+pub struct DateEpochSeconds {
+    date: DateTime<Utc>,
+}
+
+impl DateEpochSeconds {
+    pub fn now() -> DateEpochSeconds {
+        DateEpochSeconds { date: Utc::now() }
+    }
+
+    pub fn from_i64(ts_seconds: i64) -> DateEpochSeconds {
+        let date_naive = NaiveDateTime::from_timestamp(ts_seconds, 0);
+        let date = DateTime::from_utc(date_naive, Utc);
+        DateEpochSeconds { date }
+    }
+
+    pub fn from_heure(annee: i32, mois: u32, jour: u32, heure: u32) -> DateEpochSeconds {
+        let date_naive = NaiveDate::from_ymd(annee, mois, jour);
+        let heure_naive = NaiveTime::from_hms(heure, 0, 0);
+        let datetime_naive = NaiveDateTime::new(date_naive, heure_naive);
+        let date = DateTime::from_utc(datetime_naive, Utc);
+
+        DateEpochSeconds { date }
+    }
+
+    pub fn get_datetime(&self) -> &DateTime<Utc> {
+        &self.date
+    }
+}
+
+impl Serialize for DateEpochSeconds {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        let ts = self.date.timestamp();
+        serializer.serialize_i64(ts)
+    }
+}
+
+impl<'de> Deserialize<'de> for DateEpochSeconds {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+        println!("*** Deserializer!");
+        deserializer.deserialize_u32(DateEpochSecondsVisitor)
+        // Ok(DateEpochSeconds::from_timestamp(valeur))
+    }
+
+    fn deserialize_in_place<D>(deserializer: D, place: &mut Self) -> Result<(), D::Error> where D: Deserializer<'de> {
+        let date_inner = deserializer.deserialize_i64(DateEpochSecondsVisitor)?;
+        // let date_inner = DateEpochSeconds::from_timestamp(valeur);
+        place.date = date_inner.date;
+
+        Ok(())
+    }
+}
+
+struct DateEpochSecondsVisitor;
+
+impl <'de> Visitor<'de> for DateEpochSecondsVisitor {
+
+    type Value = DateEpochSeconds;
+
+    fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+        formatter.write_str("integer")
+    }
+
+    fn visit_i8<E>(self, value: i8) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        self.visit_i64(value as i64)
+    }
+
+    fn visit_i16<E>(self, value: i16) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        self.visit_i64(value as i64)
+    }
+
+    fn visit_i32<E>(self, value: i32) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        self.visit_i64(value as i64)
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        Ok(DateEpochSeconds::from_i64(value))
+    }
+
+    fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        self.visit_i64(value as i64)
+    }
+
+    fn visit_u16<E>(self, value: u16) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        self.visit_i64(value as i64)
+    }
+
+    fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        self.visit_i64(value as i64)
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where E: serde::de::Error {
+        self.visit_i64(value as i64)
+    }
+
+}
+
+
+#[cfg(test)]
+mod serialization_tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+
+    #[test]
+    fn serializer_date() {
+        let date = DateEpochSeconds::now();
+        let value = serde_json::to_value(date).unwrap();
+        let date_epoch_secs = value.as_i64().expect("i64");
+        assert_eq!(date_epoch_secs>1629813607, true);
+    }
+
+    #[test]
+    fn deserializer_date() {
+        let value_int = 1629813607;
+        let value = Value::from(value_int);
+
+        let date: DateEpochSeconds = serde_json::from_value(value).expect("date");
+        println!("Date deserializee : {:?}", date);
+    }
 }

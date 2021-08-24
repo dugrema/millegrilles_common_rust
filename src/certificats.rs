@@ -353,6 +353,46 @@ impl EnveloppeCertificat {
 
 }
 
+impl Clone for EnveloppeCertificat {
+
+    fn clone(&self) -> Self {
+
+        let mut intermediaire: Stack<X509> = Stack::new().expect("stack");
+        for cert in &self.intermediaire {
+            intermediaire.push(cert.to_owned());
+        }
+
+        EnveloppeCertificat {
+            certificat: self.certificat.clone(),
+            chaine: self.chaine.clone(),
+            cle_publique: self.cle_publique.clone(),
+            intermediaire,
+            presentement_valide: self.presentement_valide,
+            fingerprint: self.fingerprint.clone(),
+            date_enveloppe: self.date_enveloppe.clone(),
+            extensions_millegrille: self.extensions_millegrille.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+
+        let mut intermediaire = Stack::new().expect("stack");
+        for cert in &source.intermediaire {
+            intermediaire.push(cert.to_owned());
+        }
+
+        self.certificat = source.certificat.clone();
+        self.chaine = source.chaine.clone();
+        self.cle_publique = source.cle_publique.clone();
+        self.intermediaire = intermediaire;
+        self.presentement_valide = source.presentement_valide;
+        self.fingerprint = source.fingerprint.clone();
+        self.date_enveloppe = source.date_enveloppe.clone();
+        self.extensions_millegrille = source.extensions_millegrille.clone();
+    }
+
+}
+
 impl Debug for EnveloppeCertificat {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Enveloppe certificat {}", self.fingerprint)
