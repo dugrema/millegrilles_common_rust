@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, FormatChiffrage, DateEpochSeconds, Entete};
+use crate::{EnveloppeCertificat, FormatChiffrage, DateEpochSeconds, Entete, CollectionCertificatsPem};
 use crate::certificats::EnveloppePrivee;
 use serde_json::Value;
 use serde::{Serialize, Deserialize};
@@ -40,21 +40,16 @@ struct CatalogueHoraire {
     /// Identificateur unique du groupe de backup (collateur)
     uuid_backup: String,
 
-    catalogue_nomfichier: String,
-
     /// Collection des certificats presents dans les transactions du backup
-    certificats: Vec<String>,
-    certificats_chaine_catalogue: Vec<String>,
-    certificats_intermediaires: Vec<String>,
-    certificats_millegrille: Vec<String>,
-    certificats_pem: HashMap<String, String>,
+    certificats: CollectionCertificatsPem,
 
-    transactions_hachage: String,
+    catalogue_nomfichier: String,
     transactions_nomfichier: String,
+    transactions_hachage: String,
     uuid_transactions: Vec<String>,
 
-    #[serde(rename = "en-tete")]
-    entete: Entete,
+    // #[serde(rename = "en-tete")]
+    // entete: Entete,
 
     /// Enchainement backup precedent
     backup_precedent: Option<String>,  // todo mettre bon type
@@ -79,7 +74,7 @@ struct CatalogueHoraireBuilder {
     nom_domaine: String,
     uuid_backup: String,
 
-    certificats: HashMap<String, EnveloppeCertificat>,
+    certificats: CollectionCertificatsPem,
     uuid_transactions: Vec<String>,
 }
 
@@ -129,20 +124,13 @@ impl CatalogueHoraireBuilder {
     fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String) -> Self {
         CatalogueHoraireBuilder {
             heure, nom_domaine, uuid_backup,
-            certificats: HashMap::new(),
+            certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
         }
     }
 
-    fn est_certificat_present(&self, fingerprint: &str) -> bool {
-        match self.certificats.get(fingerprint) {
-            Some(_) => true,
-            None => false,
-        }
-    }
-
-    fn ajouter_ceritificat(mut self, certificat: EnveloppeCertificat) {
-        self.certificats.insert(certificat.fingerprint().to_owned(), certificat);
+    fn ajouter_certificat(mut self, certificat: EnveloppeCertificat) {
+        self.certificats.ajouter_certificat(certificat);
     }
 
     fn ajouter_transaction(mut self, uuid_transaction: String) {
@@ -152,21 +140,11 @@ impl CatalogueHoraireBuilder {
     fn build(self) -> CatalogueHoraire {
 
         // Build collections de certificats
-        let certificats: Vec<String> = Vec::new();
-        let certificats_chaine_catalogue: Vec<String> = Vec::new();
-        let certificats_intermediaires: Vec<String> = Vec::new();
-        let certificats_millegrille: Vec<String> = Vec::new();
-        let certificats_pem: HashMap<String, String> = HashMap::new();
+        let certificats = CollectionCertificatsPem::new();
 
         let transactions_hachage = "".to_owned();
         let transactions_nomfichier = "".to_owned();
         let catalogue_nomfichier = "".to_owned();
-
-        let entete = Entete::builder(
-            "zFingerprint".to_owned(),
-            "mHachage".to_owned(),
-            "zidmg".to_owned(),
-        ).build();
 
         CatalogueHoraire {
             heure: self.heure,
@@ -175,16 +153,10 @@ impl CatalogueHoraireBuilder {
             catalogue_nomfichier,
 
             certificats,
-            certificats_chaine_catalogue,
-            certificats_intermediaires,
-            certificats_millegrille,
-            certificats_pem,
 
             transactions_hachage,
             transactions_nomfichier,
             uuid_transactions: self.uuid_transactions,
-
-            entete,
 
             backup_precedent: None,  // todo mettre bon type
             cle: None,
@@ -201,7 +173,6 @@ impl CatalogueHoraireBuilder {
 mod backup_tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
-    use chrono::Timelike;
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -281,4 +252,15 @@ mod backup_tests {
         assert_eq!(catalogue_str.find(uuid_backup), Some(60));
     }
 
+    #[test]
+    fn build_catalogue_() {
+        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+
+        let catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+
+        let catalogue = catalogue_builder.build();
+
+    }
 }

@@ -4,11 +4,12 @@ use std::fmt::{Error, Formatter};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, NaiveDateTime, Utc, NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use log::{debug, error, info};
 use num_traits::ToPrimitive;
 use openssl::pkey::{PKey, Private};
-use serde::{Serialize, Deserialize, Deserializer, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::Visitor;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
@@ -16,7 +17,6 @@ use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
 use crate::signatures::signer_message;
-use serde::de::Visitor;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
