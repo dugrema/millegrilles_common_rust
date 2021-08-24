@@ -4,7 +4,7 @@ use std::fmt::{Error, Formatter};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{format, DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use log::{debug, error, info};
 use num_traits::ToPrimitive;
 use openssl::pkey::{PKey, Private};
@@ -290,6 +290,10 @@ impl DateEpochSeconds {
 
     pub fn get_datetime(&self) -> &DateTime<Utc> {
         &self.date
+    }
+
+    pub fn format_ymdh(&self) -> String {
+        self.date.format("%Y%m%d%H").to_string()
     }
 }
 

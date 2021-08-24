@@ -139,10 +139,12 @@ impl CatalogueHoraireBuilder {
 
     fn build(self) -> CatalogueHoraire {
 
+        let date_str = self.heure.format_ymdh();
+
         // Build collections de certificats
         let transactions_hachage = "".to_owned();
-        let transactions_nomfichier = "".to_owned();
-        let catalogue_nomfichier = "".to_owned();
+        let transactions_nomfichier = format!("{}_{}.jsonl.xz", &self.nom_domaine, date_str);
+        let catalogue_nomfichier = format!("{}_{}.json.xz", &self.nom_domaine, date_str);
 
         CatalogueHoraire {
             heure: self.heure,
@@ -216,6 +218,8 @@ mod backup_tests {
 
         assert_eq!(catalogue.heure, heure);
         assert_eq!(&catalogue.uuid_backup, uuid_backup);
+        assert_eq!(&catalogue.catalogue_nomfichier, "Domaine.test_2021080105.json.xz");
+        assert_eq!(&catalogue.transactions_nomfichier, "Domaine.test_2021080105.jsonl.xz");
     }
 
     #[test]
