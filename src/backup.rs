@@ -129,19 +129,17 @@ impl CatalogueHoraireBuilder {
         }
     }
 
-    fn ajouter_certificat(mut self, certificat: EnveloppeCertificat) {
-        self.certificats.ajouter_certificat(certificat);
+    fn ajouter_certificat(&mut self, certificat: EnveloppeCertificat) {
+        self.certificats.ajouter_certificat(certificat).expect("certificat");
     }
 
-    fn ajouter_transaction(mut self, uuid_transaction: String) {
+    fn ajouter_transaction(&mut self, uuid_transaction: String) {
         self.uuid_transactions.push(uuid_transaction);
     }
 
     fn build(self) -> CatalogueHoraire {
 
         // Build collections de certificats
-        let certificats = CollectionCertificatsPem::new();
-
         let transactions_hachage = "".to_owned();
         let transactions_nomfichier = "".to_owned();
         let catalogue_nomfichier = "".to_owned();
@@ -152,7 +150,7 @@ impl CatalogueHoraireBuilder {
             uuid_backup: self.uuid_backup,
             catalogue_nomfichier,
 
-            certificats,
+            certificats: self.certificats,
 
             transactions_hachage,
             transactions_nomfichier,
@@ -173,6 +171,8 @@ impl CatalogueHoraireBuilder {
 mod backup_tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+
+    use crate::certificats::certificats_tests::{prep_enveloppe, CERT_FICHIERS, CERT_DOMAINES};
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -230,7 +230,7 @@ mod backup_tests {
 
         let value = serde_json::to_value(catalogue).expect("value");
 
-        println!("Valeur catalogue : {:?}", value);
+        // println!("Valeur catalogue : {:?}", value);
     }
 
     #[test]
@@ -245,7 +245,7 @@ mod backup_tests {
 
         let value = serde_json::to_value(catalogue).expect("value");
         let catalogue_str = serde_json::to_string(&value).expect("json");
-        println!("Json catalogue : {:?}", catalogue_str);
+        // println!("Json catalogue : {:?}", catalogue_str);
 
         assert_eq!(catalogue_str.find("1627794000"), Some(9));
         assert_eq!(catalogue_str.find(NOM_DOMAINE_BACKUP), Some(31));
@@ -253,14 +253,19 @@ mod backup_tests {
     }
 
     #[test]
-    fn build_catalogue_() {
+    fn build_catalogue_1certificat() {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
-        let catalogue_builder = CatalogueHoraireBuilder::new(
+        let mut catalogue_builder = CatalogueHoraireBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
 
-        let catalogue = catalogue_builder.build();
+        let certificat = prep_enveloppe(CERT_DOMAINES);
+        println!("!!! Enveloppe : {:?}", certificat);
 
+        catalogue_builder.ajouter_certificat(certificat);
+
+        let catalogue = catalogue_builder.build();
+        println!("!!! Catalogue : {:?}", catalogue);
     }
 }

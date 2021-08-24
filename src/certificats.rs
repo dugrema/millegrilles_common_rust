@@ -717,11 +717,11 @@ impl CollectionCertificatsPem {
 }
 
 #[cfg(test)]
-mod certificats_tests {
+pub mod certificats_tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
 
-    const CERT_MILLEGRILLE: &str = r#"
+    pub const CERT_MILLEGRILLE: &str = r#"
 -----BEGIN CERTIFICATE-----
 MIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD
 VQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa
@@ -747,7 +747,7 @@ yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
 qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 -----END CERTIFICATE-----"#;
 
-    const CERT_DOMAINES: &str = r#"
+    pub const CERT_DOMAINES: &str = r#"
 -----BEGIN CERTIFICATE-----
 MIID/zCCAuegAwIBAgIUOhOPjxIYcu/2KtUKOfVf9gjtRWswDQYJKoZIhvcNAQEL
 BQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj
@@ -821,7 +821,7 @@ yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
 qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 -----END CERTIFICATE-----"#;
 
-    const CERT_FICHIERS: &str = r#"
+    pub const CERT_FICHIERS: &str = r#"
 -----BEGIN CERTIFICATE-----
 MIIETzCCAzegAwIBAgIUcdGmFDjYwUMTr2svrUTEcZt7B7QwDQYJKoZIhvcNAQEL
 BQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj
@@ -897,7 +897,7 @@ yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
 qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 -----END CERTIFICATE-----"#;
 
-    fn prep_enveloppe(pem: &str) -> EnveloppeCertificat {
+    pub fn prep_enveloppe(pem: &str) -> EnveloppeCertificat {
         let ca_x509 = charger_certificat(CERT_MILLEGRILLE);
         let store = build_store(&ca_x509, false).expect("store");
         charger_enveloppe(pem, Some(&store)).expect("enveloppe")
@@ -948,6 +948,6 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 
         let value = serde_json::to_value(collection_pems).expect("json");
 
-        println!("Value certificats : {:?}", value);
+        // println!("Value certificats : {:?}", value);
     }
 }
