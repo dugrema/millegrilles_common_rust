@@ -43,10 +43,10 @@ struct CatalogueHoraire {
     /// Collection des certificats presents dans les transactions du backup
     certificats: CollectionCertificatsPem,
 
-    catalogue_nomfichier: String,
-    transactions_nomfichier: String,
-    transactions_hachage: String,
-    uuid_transactions: Vec<String>,
+    pub catalogue_nomfichier: String,
+    pub transactions_nomfichier: String,
+    pub transactions_hachage: String,
+    pub uuid_transactions: Vec<String>,
 
     // #[serde(rename = "en-tete")]
     // entete: Entete,
@@ -76,6 +76,7 @@ struct CatalogueHoraireBuilder {
 
     certificats: CollectionCertificatsPem,
     uuid_transactions: Vec<String>,
+    transactions_hachage: String,
 }
 
 impl BackupInformation {
@@ -126,6 +127,7 @@ impl CatalogueHoraireBuilder {
             heure, nom_domaine, uuid_backup,
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
+            transactions_hachage: "".to_owned(),
         }
     }
 
@@ -137,12 +139,16 @@ impl CatalogueHoraireBuilder {
         self.uuid_transactions.push(uuid_transaction);
     }
 
+    fn transactions_hachage(&mut self, hachage: String) {
+        self.transactions_hachage = hachage;
+    }
+
     fn build(self) -> CatalogueHoraire {
 
         let date_str = self.heure.format_ymdh();
 
         // Build collections de certificats
-        let transactions_hachage = "".to_owned();
+        let transactions_hachage = self.transactions_hachage;
         let transactions_nomfichier = format!("{}_{}.jsonl.xz", &self.nom_domaine, date_str);
         let catalogue_nomfichier = format!("{}_{}.json.xz", &self.nom_domaine, date_str);
 
@@ -223,6 +229,23 @@ mod backup_tests {
     }
 
     #[test]
+    fn build_catalogue_params() {
+        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+
+        let transactions_hachage = "zABCD1234";
+
+        let mut catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+
+        catalogue_builder.transactions_hachage(transactions_hachage.to_owned());
+
+        let catalogue = catalogue_builder.build();
+
+        assert_eq!(&catalogue.transactions_hachage, transactions_hachage);
+    }
+
+    #[test]
     fn serialiser_catalogue() {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
@@ -265,11 +288,12 @@ mod backup_tests {
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
 
         let certificat = prep_enveloppe(CERT_DOMAINES);
-        println!("!!! Enveloppe : {:?}", certificat);
+        // println!("!!! Enveloppe : {:?}", certificat);
 
         catalogue_builder.ajouter_certificat(certificat);
 
         let catalogue = catalogue_builder.build();
-        println!("!!! Catalogue : {:?}", catalogue);
+        // println!("!!! Catalogue : {:?}", catalogue);
+        assert_eq!(catalogue.certificats.len(), 1);
     }
 }

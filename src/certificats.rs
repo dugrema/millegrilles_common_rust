@@ -714,6 +714,10 @@ impl CollectionCertificatsPem {
 
         Ok(())
     }
+
+    pub fn len(&self) -> usize {
+        self.certificats.len()
+    }
 }
 
 #[cfg(test)]
