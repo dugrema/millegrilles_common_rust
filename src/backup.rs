@@ -3,12 +3,14 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tempfile::{TempDir, tempdir};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, FormatChiffrage, DateEpochSeconds, Entete, CollectionCertificatsPem};
+use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage};
 use crate::certificats::EnveloppePrivee;
-use serde_json::Value;
-use serde::{Serialize, Deserialize};
+use std::error::Error;
 
 const PATH_BACKUP_DEFAUT: &str = "/tmp/backup_millegrille";
 
@@ -17,7 +19,7 @@ trait BackupHandler {
 }
 
 /// Struct de backup
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct BackupInformation {
     /// Nom du domaine
     nom_domaine: String,
@@ -29,6 +31,8 @@ struct BackupInformation {
     workpath: PathBuf,
     /// Identificateur unique du backup (collateur)
     uuid_backup: String,
+    /// Repertoire temporaire qui est supprime automatiquement apres le backup.
+    tmp_workdir: Option<TempDir>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -87,22 +91,28 @@ impl BackupInformation {
         nom_collection_transactions: String,
         chiffrage: Option<FormatChiffrage>,
         workpath: Option<PathBuf>
-    ) -> BackupInformation {
+    ) -> Result<BackupInformation, Box<dyn Error>> {
 
-        let workpath_inner = match workpath {
-            Some(wp) => wp,
-            None => PathBuf::from(PATH_BACKUP_DEFAUT),
+        let (workpath_inner, tmp_workdir): (PathBuf, Option<TempDir>) = match workpath {
+            Some(wp) => (wp, None),
+            None => {
+                let tmp_workdir = tempdir()?;
+                let path_tmp = tmp_workdir.path().to_owned();
+
+                (path_tmp, Some(tmp_workdir))
+            },
         };
 
         let uuid_backup = Uuid::new_v4().to_string();
 
-        BackupInformation {
+        Ok(BackupInformation {
             nom_domaine,
             nom_collection_transactions,
             chiffrage,
             workpath: workpath_inner,
             uuid_backup,
-        }
+            tmp_workdir,
+        })
     }
 
 }
@@ -177,10 +187,10 @@ impl CatalogueHoraireBuilder {
 
 #[cfg(test)]
 mod backup_tests {
+    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, prep_enveloppe};
+
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
-
-    use crate::certificats::certificats_tests::{prep_enveloppe, CERT_FICHIERS, CERT_DOMAINES};
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -192,12 +202,14 @@ mod backup_tests {
             NOM_COLLECTION_BACKUP.to_owned(),
             None,
             None
-        );
+        ).expect("init");
+
+        let workpath = info.workpath.to_str().unwrap();
 
         assert_eq!(&info.nom_collection_transactions, NOM_COLLECTION_BACKUP);
         assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
         assert_eq!(info.chiffrage.is_none(), true);
-        assert_eq!(info.workpath.to_str().unwrap(), PATH_BACKUP_DEFAUT);
+        assert_eq!(workpath.starts_with("/tmp/."), true);
     }
 
     #[test]

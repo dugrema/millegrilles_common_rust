@@ -7,9 +7,12 @@ edition = "2018"
 
 [dependencies]
 
-num-traits = "0.2.14"
 log = { version = "0.4.14", features = ["max_level_debug", "release_max_level_info"] }
+num-traits = "0.2.14"
 rand = "0.7"
+tar = { version = "0.4.37" }
+tempfile = { version = "3.2.0" }
+xz2 = { version = "0.1.6", features = ["tokio"] }
 
 # Tokio, async
 async-trait = "0.1.51"
