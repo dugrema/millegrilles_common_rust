@@ -1,18 +1,134 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::error::Error;
+use std::fs::File;
+use std::{io, io::Write};
+use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use log::{debug, error, info, warn};
+use mongodb::bson::doc;
+use mongodb::Cursor;
+use mongodb::options::FindOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::{TempDir, tempdir};
+use tokio_stream::StreamExt;
 use uuid::Uuid;
+use xz2::write::XzEncoder;
 
-use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage};
+use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, MongoDao};
 use crate::certificats::EnveloppePrivee;
-use std::error::Error;
+use crate::constantes::*;
+use bson::Document;
 
-const PATH_BACKUP_DEFAUT: &str = "/tmp/backup_millegrille";
+pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<(), Box<dyn Error>> {
+
+    // Creer repertoire temporaire de travail pour le backup
+    let workdir = tempfile::tempdir()?;
+
+    let info_backup = BackupInformation::new(
+        "domaine_dummy".to_owned(),
+        nom_collection.to_owned(),
+        None,
+        Some(workdir.path().to_owned())
+    )?;
+
+    // Generer liste builders domaine/heures
+    let builders = grouper_backups(middleware, nom_collection, &workdir)?;
+
+    for builder in builders {
+        // Creer fichier de transactions
+        let mut path_fichier_transactions = info_backup.workpath.clone();
+        path_fichier_transactions.push(PathBuf::from("transactions.xz"));
+
+        let mut curseur = requete_transactions(middleware, nom_collection, &builder).await?;
+        serialiser_transactions(&mut curseur, &builder, path_fichier_transactions.as_path()).await?;
+
+        let catalogue_horaire = uploader_backup(builder).await?;
+
+        // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
+        todo!("soumettre catalogue horaire");
+
+        // Marquer transactions du backup comme completees
+        marquer_transaction_backup_complete(middleware, &catalogue_horaire).await?;
+    }
+
+    Ok(())
+}
+
+fn grouper_backups(middleware: &impl MongoDao, nom_collection: &str, workdir: &TempDir) -> Result<Vec<CatalogueHoraireBuilder>, Box<dyn Error>> {
+
+    let collection = middleware.get_collection(nom_collection)?;
+    let pipeline = doc! {
+        TRANSACTION_CHAMP_BACKUP_FLAG: false,
+        TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
+    };
+
+    // let curseur = collection.aggregate(pipeline, None)?;
+
+    let builders = Vec::new();
+
+    todo!("Separer sous-domaines");
+
+    Ok(builders)
+}
+
+async fn requete_transactions(middleware: &impl MongoDao, nom_collection: &str, builder: &CatalogueHoraireBuilder) -> Result<Cursor, Box<dyn Error>> {
+    let collection = middleware.get_collection(nom_collection)?;
+
+    let debut_heure = builder.heure.get_datetime();
+    let fin_heure = debut_heure.clone() + chrono::Duration::hours(1);
+
+    todo!("Separer sous-domaines");
+
+    let filtre = doc! {
+        TRANSACTION_CHAMP_BACKUP_FLAG: false,
+        TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
+        TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$gte": debut_heure, "$lt": &fin_heure},
+    };
+
+    let sort = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
+    let find_options = FindOptions::builder().sort(sort).build();
+
+    let curseur = collection.find(filtre, find_options).await?;
+
+    Ok(curseur)
+}
+
+async fn serialiser_transactions(curseur: &mut Cursor, builder: &CatalogueHoraireBuilder, path_transactions: &Path) -> Result<(), Box<dyn Error>> {
+    // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
+    let mut transaction_writer = TransactionWriter::new(path_transactions, false)?;
+
+    // Obtenir curseur sur transactions en ordre chronologique de flag complete
+    while let Some(Ok(d)) = curseur.next().await {
+        // Serialiser transaction
+
+        // Ajouter uuid_transaction dans info
+    }
+
+    Ok(())
+}
+
+async fn serialiser_transaction(document: Document, builder: &CatalogueHoraireBuilder) {
+
+}
+
+async fn uploader_backup(builder: CatalogueHoraireBuilder) -> Result<CatalogueHoraire, Box<dyn Error>> {
+    let catalogue = builder.build();
+
+    // Conserver hachage transactions dans info
+
+    // Build et serialiser catalogue + transaction maitre des cles
+
+    // Uploader backup
+
+    todo!();
+    Ok(catalogue)
+}
+
+async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, catalogue_horaire: &CatalogueHoraire) -> Result<(), Box<dyn Error>> {
+    todo!()
+}
 
 trait BackupHandler {
     fn run() -> Result<(), String>;
@@ -69,7 +185,6 @@ struct CatalogueHoraire {
 
     /// Format du chiffrage
     format: Option<String>,
-
 }
 
 #[derive(Clone, Debug)]
@@ -185,12 +300,74 @@ impl CatalogueHoraireBuilder {
 
 }
 
+struct TransactionWriter<'a> {
+    path_fichier: &'a Path,
+    xz_encodeur: XzEncoder<File>,
+    // chiffreur: Option<...>,
+}
+
+impl TransactionWriter<'_> {
+
+    pub fn new(path_fichier: &Path, chiffrer: bool) -> Result<TransactionWriter, Box<dyn Error>> {
+        let output_file = File::create(path_fichier)?;
+        let xz_encodeur = XzEncoder::new(output_file, 9);
+
+        Ok(TransactionWriter {
+            path_fichier,
+            xz_encodeur,
+        })
+    }
+
+    pub fn write_bytes(&mut self, contenu: &[u8]) -> io::Result<usize> {
+        self.xz_encodeur.write(contenu)
+
+        // Ajouter au hachage du fichier
+    }
+
+    /// Serialise un objet Json (Value) dans le fichier. Ajouter un line feed (\n).
+    pub fn write_json_line(&mut self, contenu: &Value) -> io::Result<usize> {
+        // Convertir value en bytes
+        let mut contenu_bytes = serde_json::to_string(contenu)?.as_bytes().to_owned();
+
+        // Ajouter line feed (\n)
+        contenu_bytes.push(NEW_LINE_BYTE);
+
+        // Write dans le fichier
+        self.write_bytes(contenu_bytes.as_slice())
+    }
+
+    pub fn write_bson_line(&mut self, contenu: &Document) -> io::Result<usize> {
+        let mut value = serde_json::to_value(contenu)?;
+
+        // S'assurer qu'on a un document (map)
+        // Retirer le champ _id si present
+        match value.as_object_mut() {
+            Some(mut doc) => {
+                doc.remove("_id");
+                self.write_json_line(&value)
+            },
+            None => {
+                warn!("Valeur bson fournie en backup n'est pas un _Document_, on l'ignore : {:?}", contenu);
+                Ok((0))
+            }
+        }
+    }
+
+    pub fn fermer(mut self) -> io::Result<File> {
+        // Completer chiffrage au besoin
+
+        // Fermer XZ encodeur et retourner le fichier
+        self.xz_encodeur.finish()
+    }
+}
+
 #[cfg(test)]
 mod backup_tests {
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, prep_enveloppe};
 
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+    use serde_json::json;
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -307,5 +484,48 @@ mod backup_tests {
         let catalogue = catalogue_builder.build();
         // println!("!!! Catalogue : {:?}", catalogue);
         assert_eq!(catalogue.certificats.len(), 1);
+    }
+
+    #[test]
+    fn ecrire_bytes_writer() {
+        let path_fichier = PathBuf::from("/tmp/fichier_writer.txt.xz");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), false).expect("writer");
+
+        writer.write_bytes("Du contenu a ecrire".as_bytes()).expect("write");
+
+        let file = writer.fermer().expect("fermer");
+        println!("File du writer : {:?}", file);
+    }
+
+    #[test]
+    fn ecrire_transactions_writer_json() {
+        let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions.jsonl.xz");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), false).expect("writer");
+
+        let doc_json = json!({
+            "contenu": "Du contenu a encoder",
+            "valeur": 1234,
+        });
+        writer.write_json_line(&doc_json).expect("write");
+
+        let file = writer.fermer().expect("fermer");
+        println!("File du writer : {:?}", file);
+    }
+
+    #[test]
+    fn ecrire_transactions_writer_bson() {
+        let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), false).expect("writer");
+
+        let doc_bson = doc! {
+            "_id": "Un ID dummy qui doit etre retire",
+            "contenu": "Du contenu BSON (Document) a encoder",
+            "valeur": 5678,
+            "date": Utc::now(),
+        };
+        writer.write_bson_line(&doc_bson).expect("write");
+
+        let file = writer.fermer().expect("fermer");
+        println!("File du writer : {:?}", file);
     }
 }

@@ -30,6 +30,10 @@ pub fn securite_str(securite: &Securite) -> &'static str {
     }
 }
 
+// Global
+
+pub const NEW_LINE_BYTE: u8 = 0x0A;
+
 // Evenements globaux
 pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
 
@@ -51,6 +55,8 @@ pub const TRANSACTION_CHAMP_ERREUR_TRAITEMENT: &str = "_evenements.erreur_traite
 pub const TRANSACTION_CHAMP_DATE_RESOUMISE: &str = "_evenements.resoumise";
 pub const TRANSACTION_CHAMP_COMPTE_RESOUMISE: &str = "_evenements.compte_resoumise";
 pub const TRANSACTION_CHAMP_ERREUR_RESOUMISSION: &str = "_evenements.erreur_resoumission";
+pub const TRANSACTION_CHAMP_BACKUP_FLAG: &str = "_evenements.backup_flag";
+pub const TRANSACTION_CHAMP_TRANSACTION_TRAITEE: &str = "_evenements.transaction_traitee";
 pub const TRANSACTION_LIMITE_RESOUMISSION: i32 = 4;
 
 // Certificats, PKI

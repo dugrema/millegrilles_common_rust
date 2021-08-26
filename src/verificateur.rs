@@ -15,6 +15,7 @@ use crate::certificats::EnveloppeCertificat;
 use crate::formatteur_messages::{MessageJson, nettoyer_message};
 use crate::hachages::verifier_multihash;
 use crate::signatures::{SALT_LENGTH, VERSION_1};
+use std::error::Error;
 
 pub struct ResultatValidation {
     pub signature_valide: bool,
@@ -126,7 +127,7 @@ pub fn verifier_message(
     })
 }
 
-pub fn verifier_hachage(message: &MessageJson) -> Result<bool, ErrorStack> {
+pub fn verifier_hachage(message: &MessageJson) -> Result<bool, Box<dyn Error>> {
     let (mut message_modifie, _): (BTreeMap<String, Value>, _) = nettoyer_message(message);
 
     let key_entete = String::from("en-tete");
