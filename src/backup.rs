@@ -4,7 +4,7 @@ use std::fs::File;
 use std::{io, io::Write};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Utc, TimeZone};
 use log::{debug, error, info, warn};
 use mongodb::bson::doc;
 use mongodb::Cursor;
@@ -16,10 +16,12 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 use xz2::write::XzEncoder;
 
-use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, MongoDao};
+use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, MongoDao, Hacheur};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use bson::Document;
+use multihash::Code;
+use multibase::Base;
 
 pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<(), Box<dyn Error>> {
 
@@ -303,6 +305,7 @@ impl CatalogueHoraireBuilder {
 struct TransactionWriter<'a> {
     path_fichier: &'a Path,
     xz_encodeur: XzEncoder<File>,
+    hacheur: Hacheur,
     // chiffreur: Option<...>,
 }
 
@@ -311,17 +314,19 @@ impl TransactionWriter<'_> {
     pub fn new(path_fichier: &Path, chiffrer: bool) -> Result<TransactionWriter, Box<dyn Error>> {
         let output_file = File::create(path_fichier)?;
         let xz_encodeur = XzEncoder::new(output_file, 9);
+        let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base64).build();
 
         Ok(TransactionWriter {
             path_fichier,
             xz_encodeur,
+            hacheur,
         })
     }
 
     pub fn write_bytes(&mut self, contenu: &[u8]) -> io::Result<usize> {
-        self.xz_encodeur.write(contenu)
-
         // Ajouter au hachage du fichier
+        self.hacheur.update(contenu);
+        self.xz_encodeur.write(contenu)
     }
 
     /// Serialise un objet Json (Value) dans le fichier. Ajouter un line feed (\n).
@@ -353,11 +358,14 @@ impl TransactionWriter<'_> {
         }
     }
 
-    pub fn fermer(mut self) -> io::Result<File> {
+    pub fn fermer(mut self) -> Result<(File, String), Box<dyn Error>> {
         // Completer chiffrage au besoin
+        let hachage = self.hacheur.finalize();
 
         // Fermer XZ encodeur et retourner le fichier
-        self.xz_encodeur.finish()
+        let file = self.xz_encodeur.finish()?;
+
+        Ok((file, hachage))
     }
 }
 
@@ -494,7 +502,7 @@ mod backup_tests {
         writer.write_bytes("Du contenu a ecrire".as_bytes()).expect("write");
 
         let file = writer.fermer().expect("fermer");
-        println!("File du writer : {:?}", file);
+        // println!("File du writer : {:?}", file);
     }
 
     #[test]
@@ -509,7 +517,7 @@ mod backup_tests {
         writer.write_json_line(&doc_json).expect("write");
 
         let file = writer.fermer().expect("fermer");
-        println!("File du writer : {:?}", file);
+        // println!("File du writer : {:?}", file);
     }
 
     #[test]
@@ -521,11 +529,13 @@ mod backup_tests {
             "_id": "Un ID dummy qui doit etre retire",
             "contenu": "Du contenu BSON (Document) a encoder",
             "valeur": 5678,
-            "date": Utc::now(),
+            "date": Utc.timestamp(1629464026, 0),
         };
         writer.write_bson_line(&doc_bson).expect("write");
 
-        let file = writer.fermer().expect("fermer");
-        println!("File du writer : {:?}", file);
+        let (file, mh) = writer.fermer().expect("fermer");
+        // println!("File du writer : {:?}, multihash: {}", file, mh);
+
+        assert_eq!(mh.as_str(), "mE0Ckxgpf4TNbbif1CKwdd6PoXyD/BvSH2ZKYUEIAoU9fEgUg9JW/meSIcyxD9RZr0p2xXH0RByjf+BIg8M7Q8O15");
     }
 }
