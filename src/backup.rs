@@ -351,8 +351,8 @@ impl TransactionWriter<'_> {
                     let len_update = c.update(&contenu[pos..pos_max], &mut buffer)?;
 
                     // Hacher et conserver contenu chiffre
-                    self.hacheur.update(&contenu[0..len_update]);
-                    self.xz_encodeur.write(&contenu[0..len_update]);
+                    self.hacheur.update(&buffer[0..len_update]);
+                    self.xz_encodeur.write(&buffer[0..len_update]);
 
                     // Next
                     pos += TransactionWriter::BUFFER_SIZE;

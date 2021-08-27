@@ -5,24 +5,35 @@ use openssl::rsa::{Padding, Rsa};
 use multibase::{Base, encode, decode};
 use std::io::Write;
 use std::cmp::min;
-use openssl::encrypt::Decrypter;
+use openssl::encrypt::{Decrypter, Encrypter};
+use openssl::hash::MessageDigest;
 
 #[derive(Clone, Debug)]
 pub enum FormatChiffrage {
     Mgs2,
 }
 
-fn chiffrage_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> [u8; 256] {
-    let rsa_key = public_key.rsa().unwrap();
+fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> [u8; 256] {
     let mut cle_chiffree = [0u8; 256];
-    rsa_key.public_encrypt(cle_symmetrique, &mut cle_chiffree, Padding::PKCS1_OAEP).expect("chiffrage cle secrete");
+
+    let mut encrypter = Encrypter::new(public_key).expect("encrypter");
+    encrypter.set_rsa_padding(Padding::PKCS1_OAEP);
+    encrypter.set_rsa_mgf1_md(MessageDigest::sha256());
+    encrypter.set_rsa_oaep_md(MessageDigest::sha256());
+    encrypter.encrypt(cle_symmetrique, &mut cle_chiffree).expect("encrypt PK");
+
     cle_chiffree
 }
 
 fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Vec<u8> {
-    let rsa_key = private_key.rsa().expect("rsa");
     let mut cle_dechiffree = [0u8; 256];
-    rsa_key.private_decrypt(&cle_chiffree_bytes, &mut cle_dechiffree, Padding::PKCS1_OAEP).expect("dechiffrage cle secrete");
+
+    let mut decrypter = Decrypter::new(private_key).expect("decrypter");
+
+    decrypter.set_rsa_padding(Padding::PKCS1_OAEP);
+    decrypter.set_rsa_mgf1_md(MessageDigest::sha256());
+    decrypter.set_rsa_oaep_md(MessageDigest::sha256());
+    decrypter.decrypt(cle_chiffree_bytes, &mut cle_dechiffree).expect("encrypt PK");
 
     let cle_dechiffree = &cle_dechiffree[..32];
     cle_dechiffree.to_vec().to_owned()
@@ -48,7 +59,7 @@ impl CipherMgs2 {
         let iv = &buffer_random[32..44];
 
         // Chiffrer la cle avec cle publique
-        let cle_chiffree = chiffrage_asymetrique(public_key, &cle);
+        let cle_chiffree = chiffrer_asymetrique(public_key, &cle);
 
         let mut encrypter = Crypter::new(
             Cipher::aes_256_gcm(),
@@ -70,21 +81,6 @@ impl CipherMgs2 {
             Err(e) => Err(format!("Erreur update : {:?}", e))
         }
     }
-
-    // fn update_writer(&mut self, data: &[u8], out: &mut impl Write) -> Result<usize, String> {
-    //     let mut buffer = [0u8; 4096];
-    //     let mut pos = 0;
-    //
-    //     while pos < data.len() {
-    //         let pos_max: usize = min(pos + buffer.len(), data.len());
-    //
-    //         let len_traite = 4096;
-    //
-    //         pos += len_traite;
-    //     }
-    //
-    //     Ok(pos)
-    // }
 
     pub fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.encrypter.finalize(out) {
@@ -121,7 +117,7 @@ impl DecipherMgs2 {
         // Chiffrer la cle avec cle publique
         let cle_dechiffree = dechiffrer_asymetrique(private_key, &cle_chiffree_bytes);
 
-        println!("cle dechiffree bytes : {:?}", cle_dechiffree);
+        println!("cle dechiffree bytes base64: {}, bytes: {:?}", encode(Base::Base64, &cle_dechiffree), cle_dechiffree);
 
         let decrypter = Crypter::new(
             Cipher::aes_256_gcm(),
@@ -180,6 +176,24 @@ mod backup_tests {
     }
 
     #[test]
+    fn chiffrage_asymetrique() {
+        // Cles
+        let (cle_publique, cle_privee) = charger_cles();
+
+        let mut buffer_random = [0u8; 32];
+        openssl::rand::rand_bytes(&mut buffer_random);
+        println!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
+
+        let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random);
+        println!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
+
+        let buffer_dechiffre = dechiffrer_asymetrique(&cle_privee, &ciphertext);
+        println!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
+
+        assert_eq!(buffer_random, buffer_dechiffre.as_slice());
+    }
+
+    #[test]
     fn roundtrip_chiffrage() {
         // Cles
         let (cle_publique, cle_privee) = charger_cles();
@@ -196,6 +210,8 @@ mod backup_tests {
         let len_output = cipher.finalize(&mut output).expect("finalize");
         let tag = cipher.get_tag().expect("tag");
         assert_eq!(tag.len(), 23);
+
+        println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
 
         // Dechiffrer
         let mut dechiffreur = DecipherMgs2::new(
