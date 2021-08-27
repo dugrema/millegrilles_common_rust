@@ -4,7 +4,7 @@ use std::error;
 use std::fmt::{Debug, Formatter};
 use std::fs::read_to_string;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -921,6 +921,21 @@ erI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda
 yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
 qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 -----END CERTIFICATE-----"#;
+
+    pub fn charger_enveloppe_privee_env() -> (Arc<Box<ValidateurX509Impl>>, EnveloppePrivee) {
+        const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
+        const DOMAINES_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.domaines.cert";
+        const DOMAINES_KEY_PATH: &str = "/home/mathieu/mgdev/certs/pki.domaines.key";
+        let validateur = build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store");
+        let validateur = Arc::new(Box::new(validateur));
+        let enveloppe_privee = charger_enveloppe_privee(
+            PathBuf::from(DOMAINES_CERT_PATH).as_path(),
+            PathBuf::from(DOMAINES_KEY_PATH).as_path(),
+            validateur.clone()
+        ).expect("privee");
+
+        (validateur, enveloppe_privee)
+    }
 
     pub fn prep_enveloppe(pem: &str) -> EnveloppeCertificat {
         let ca_x509 = charger_certificat(CERT_MILLEGRILLE);

@@ -14,7 +14,7 @@ use serde_json::Value;
 use tempfile::{TempDir, tempdir};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
-use xz2::write::XzEncoder;
+use xz2::stream;
 
 use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, MongoDao, Hacheur, CipherMgs2};
 use crate::certificats::EnveloppePrivee;
@@ -23,6 +23,8 @@ use bson::Document;
 use multihash::Code;
 use multibase::Base;
 use std::cmp::min;
+
+const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 
 pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<(), Box<dyn Error>> {
 
@@ -305,18 +307,20 @@ impl CatalogueHoraireBuilder {
 
 struct TransactionWriter<'a> {
     path_fichier: &'a Path,
-    xz_encodeur: XzEncoder<File>,
+    fichier: File,
+    xz_encodeur: stream::Stream,
     hacheur: Hacheur,
     chiffreur: Option<CipherMgs2>,
 }
 
-impl TransactionWriter<'_> {
+impl<'a> TransactionWriter<'a> {
 
-    const BUFFER_SIZE: usize = 65535;
+    const BUFFER_SIZE: usize = 64 * 1024;
 
-    pub fn new(path_fichier: &Path, certificat_chiffrage: Option<EnveloppeCertificat>) -> Result<TransactionWriter, Box<dyn Error>> {
+    pub fn new(path_fichier: &'a Path, certificat_chiffrage: Option<&'a EnveloppeCertificat>) -> Result<TransactionWriter<'a>, Box<dyn Error>> {
         let output_file = File::create(path_fichier)?;
-        let xz_encodeur = XzEncoder::new(output_file, 9);
+        // let xz_encodeur = XzEncoder::new(output_file, 9);
+        let xz_encodeur = stream::Stream::new_easy_encoder(9, stream::Check::Crc64).expect("stream");
         let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base64).build();
 
         let chiffreur = match certificat_chiffrage {
@@ -329,6 +333,7 @@ impl TransactionWriter<'_> {
 
         Ok(TransactionWriter {
             path_fichier,
+            fichier: output_file,
             xz_encodeur,
             hacheur,
             chiffreur,
@@ -337,37 +342,38 @@ impl TransactionWriter<'_> {
 
     pub fn write_bytes(&mut self, contenu: &[u8]) -> Result<usize, Box<dyn Error>> {
 
-        // Chiffrer au besoin
-        match &mut self.chiffreur {
-            Some(c) => {
-                // Utilisation d'un buffer pour chiffrer le contenu
-                let mut buffer = [0u8; TransactionWriter::BUFFER_SIZE];
-                let mut pos = 0usize;
-                while pos < contenu.len() {
-                    // Calculer position (next ou fin)
-                    let pos_max = min(pos+TransactionWriter::BUFFER_SIZE, contenu.len());
+        let mut chunks = contenu.chunks(TransactionWriter::BUFFER_SIZE);
 
-                    // Chiffrer
-                    let len_update = c.update(&contenu[pos..pos_max], &mut buffer)?;
+        // Preparer vecteur pour recevoir data compresse (avant chiffrage) pour output vers fichier
+        let mut buffer_chiffre = [0u8; TransactionWriter::BUFFER_SIZE];
+        let mut buffer : Vec<u8> = Vec::new();
+        buffer.reserve(TransactionWriter::BUFFER_SIZE);
 
-                    // Hacher et conserver contenu chiffre
-                    self.hacheur.update(&buffer[0..len_update]);
-                    self.xz_encodeur.write(&buffer[0..len_update]);
+        let mut count_bytes = 0usize;
 
-                    // Next
-                    pos += TransactionWriter::BUFFER_SIZE;
-                }
-
-                Ok(contenu.len())
-            },
-            None => {
-                // Traitement direct sans chiffrage
-                self.hacheur.update(contenu);
-                let size = self.xz_encodeur.write(contenu)?;
-                Ok(size)
+        while let Some(chunk) = chunks.next() {
+            let status = self.xz_encodeur.process_vec(chunk, &mut buffer, stream::Action::Run)?;
+            if status != stream::Status::Ok {
+                Err(format!("Erreur compression transaction, status {:?}", status))?;
             }
+
+            let buffer_output = match &mut self.chiffreur {
+                Some(c) => {
+                    let len = c.update(buffer.as_slice(), &mut buffer_chiffre)?;
+                    &buffer_chiffre[..len]
+                },
+                None => buffer.as_slice()
+            };
+
+            // Ajouter au hachage
+            self.hacheur.update(buffer_output);
+
+            // Ecrire dans fichier
+            let file_bytes = self.fichier.write(buffer_output)?;
+            count_bytes += file_bytes;
         }
 
+        Ok(count_bytes)
     }
 
     /// Serialise un objet Json (Value) dans le fichier. Ajouter un line feed (\n).
@@ -399,24 +405,60 @@ impl TransactionWriter<'_> {
         }
     }
 
-    pub fn fermer(mut self) -> Result<(File, String), Box<dyn Error>> {
-        // Completer chiffrage au besoin
+    pub fn fermer(mut self) -> Result<String, Box<dyn Error>> {
+        let mut buffer_chiffre = [0u8; TransactionWriter::BUFFER_SIZE];
+        let mut buffer : Vec<u8> = Vec::new();
+        buffer.reserve(TransactionWriter::BUFFER_SIZE);
+
+        // Flush xz
+        while let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)? {
+
+            let buffer_output = match &mut self.chiffreur {
+                Some(c) => {
+                    let len = c.update(buffer.as_slice(), &mut buffer_chiffre)?;
+                    &buffer_chiffre[..len]
+                },
+                None => buffer.as_slice()
+            };
+
+            self.hacheur.update(buffer_output);
+            self.fichier.write(buffer_output);
+
+            if status != stream::Status::Ok {
+                if status == stream::Status::MemNeeded {
+                    Err("Erreur generique de creation fichier .xz")?;
+                }
+                break
+            }
+        }
+
+        // Flusher chiffrage (si applicable)
+        match &mut self.chiffreur {
+            Some(c) => {
+                let len = c.finalize(&mut buffer_chiffre)?;
+                if len > 0 {
+                    // Finaliser output
+                    let slice_buffer = &buffer_chiffre[..len];
+                    self.hacheur.update(slice_buffer);
+                    self.fichier.write(slice_buffer)?;
+                }
+            },
+            None => ()
+        }
+
+        // Passer dans le hachage et finir l'ecriture du fichier
         let hachage = self.hacheur.finalize();
+        self.fichier.flush()?;
 
-        // Fermer XZ encodeur et retourner le fichier
-        let file = self.xz_encodeur.finish()?;
-
-        Ok((file, hachage))
+        Ok(hachage)
     }
 }
 
 #[cfg(test)]
 mod backup_tests {
-    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, prep_enveloppe};
-
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
     use serde_json::json;
+    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, prep_enveloppe, charger_enveloppe_privee_env};
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -561,22 +603,47 @@ mod backup_tests {
         // println!("File du writer : {:?}", file);
     }
 
-    #[test]
-    fn ecrire_transactions_writer_bson() {
-        let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz");
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).expect("writer");
-
+    fn get_doc_reference() -> (String, Document) {
         let doc_bson = doc! {
             "_id": "Un ID dummy qui doit etre retire",
             "contenu": "Du contenu BSON (Document) a encoder",
             "valeur": 5678,
             "date": Utc.timestamp(1629464026, 0),
         };
+
+        (String::from("mE0AISSkaUPMWlq3Zfka8+OHsgO3rTXLdzxFPI9hXRC3G3gnloGR6Ai4xapbdXCY+psL3RinjZQsUnYNrxCENkTXn"), doc_bson)
+    }
+
+    #[test]
+    fn ecrire_transactions_writer_bson() {
+        let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).expect("writer");
+
+        let (mh_reference, doc_bson) = get_doc_reference();
         writer.write_bson_line(&doc_bson).expect("write");
 
-        let (file, mh) = writer.fermer().expect("fermer");
+        let mh = writer.fermer().expect("fermer");
         // println!("File du writer : {:?}, multihash: {}", file, mh);
 
-        assert_eq!(mh.as_str(), "mE0Ckxgpf4TNbbif1CKwdd6PoXyD/BvSH2ZKYUEIAoU9fEgUg9JW/meSIcyxD9RZr0p2xXH0RByjf+BIg8M7Q8O15");
+        assert_eq!(mh.as_str(), &mh_reference);
+    }
+
+    #[test]
+    fn chiffrer_roundtrip_backup() {
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+
+        let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz.mgs2");
+        let mut writer = TransactionWriter::new(
+            path_fichier.as_path(),
+            Some(&enveloppe.enveloppe)
+        ).expect("writer");
+
+        let (mh_reference, doc_bson) = get_doc_reference();
+        writer.write_bson_line(&doc_bson).expect("write chiffre");
+        let mh = writer.fermer().expect("fermer");
+
+        // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
+        assert_ne!(mh.as_str(), &mh_reference);
+
     }
 }

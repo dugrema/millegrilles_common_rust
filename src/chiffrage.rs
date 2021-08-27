@@ -112,12 +112,12 @@ impl DecipherMgs2 {
         let (_, tag_bytes) = decode(tag).expect("tag");
         let (_, iv_bytes) = decode(iv).expect("tag");
         let (_, cle_chiffree_bytes) = decode(cle_chiffree).expect("cle_chiffree");
-        println!("tag {:?}\niv {:?}\ncle chiffree bytes {:?}", tag_bytes, iv_bytes, cle_chiffree_bytes);
+        // println!("tag {:?}\niv {:?}\ncle chiffree bytes {:?}", tag_bytes, iv_bytes, cle_chiffree_bytes);
 
         // Chiffrer la cle avec cle publique
         let cle_dechiffree = dechiffrer_asymetrique(private_key, &cle_chiffree_bytes);
 
-        println!("cle dechiffree bytes base64: {}, bytes: {:?}", encode(Base::Base64, &cle_dechiffree), cle_dechiffree);
+        // println!("cle dechiffree bytes base64: {}, bytes: {:?}", encode(Base::Base64, &cle_dechiffree), cle_dechiffree);
 
         let decrypter = Crypter::new(
             Cipher::aes_256_gcm(),
@@ -182,13 +182,13 @@ mod backup_tests {
 
         let mut buffer_random = [0u8; 32];
         openssl::rand::rand_bytes(&mut buffer_random);
-        println!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
+        // println!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
 
         let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random);
-        println!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
+        // println!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
 
         let buffer_dechiffre = dechiffrer_asymetrique(&cle_privee, &ciphertext);
-        println!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
+        // println!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
 
         assert_eq!(buffer_random, buffer_dechiffre.as_slice());
     }
@@ -200,7 +200,7 @@ mod backup_tests {
         let mut cipher = CipherMgs2::new(&cle_publique);
 
         // Chiffrer
-        println!("Crypter avec info\niv: {}\ncle chiffree: {}", cipher.iv, cipher.cle_chiffree);
+        // println!("Crypter avec info\niv: {}\ncle chiffree: {}", cipher.iv, cipher.cle_chiffree);
         let input = b"Data en input";
         let mut output = [0u8; 13];
 
@@ -211,7 +211,7 @@ mod backup_tests {
         let tag = cipher.get_tag().expect("tag");
         assert_eq!(tag.len(), 23);
 
-        println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
+        // println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
 
         // Dechiffrer
         let mut dechiffreur = DecipherMgs2::new(
@@ -227,7 +227,7 @@ mod backup_tests {
 
         let vec_out = dechiffrer_out.to_vec();
         let dechiffre_str = String::from_utf8(vec_out).expect("str out");
-        println!("Contenu dechiffre : {:?} (len {})", dechiffre_str, len_decipher);
+        // println!("Contenu dechiffre : {:?} (len {})", dechiffre_str, len_decipher);
 
     }
 
