@@ -32,6 +32,7 @@ use x509_parser::parse_x509_certificate;
 
 use crate::constantes::*;
 use crate::hachages::hacher_bytes;
+use std::error::Error;
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -354,6 +355,20 @@ impl EnveloppeCertificat {
         calculer_fingerprint_pk(&pk)
     }
 
+    /// Retourne la cle publique pour le certificat (leaf) et le CA (millegrille)
+    /// Utilise pour chiffrage de cles secretes
+    pub fn fingerprint_cert_publickeys(&self) -> Result<Vec<FingerprintCertPublicKey>, Box<dyn Error>> {
+        let cert_leaf = self.chaine.get(0).expect("leaf");
+        let fp_leaf = calculer_fingerprint(cert_leaf)?;
+        let fpleaf = FingerprintCertPublicKey { fingerprint: fp_leaf, public_key: cert_leaf.public_key()? };
+
+        let cert_mg = self.chaine.last().expect("cert mg");
+        let fp_mg = calculer_fingerprint(cert_mg)?;
+        let fpmg = FingerprintCertPublicKey { fingerprint: fp_mg, public_key: cert_mg.public_key()? };
+
+        Ok(vec!(fpleaf, fpmg))
+    }
+
     pub fn get_exchanges(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.exchanges) }
     pub fn get_roles(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.roles) }
     pub fn get_domaines(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.domaines) }
@@ -413,6 +428,12 @@ impl Debug for EnveloppeCertificat {
 pub struct FingerprintCert {
     pub fingerprint: String,
     pub pem: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct FingerprintCertPublicKey {
+    pub fingerprint: String,
+    pub public_key: PKey<Public>,
 }
 
 /// Enveloppe avec cle pour cle et certificat combine

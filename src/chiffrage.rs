@@ -12,11 +12,28 @@ pub enum FormatChiffrage {
     Mgs2,
 }
 
+fn chiffrage_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> [u8; 256] {
+    let rsa_key = public_key.rsa().unwrap();
+    let mut cle_chiffree = [0u8; 256];
+    rsa_key.public_encrypt(cle_symmetrique, &mut cle_chiffree, Padding::PKCS1_OAEP).expect("chiffrage cle secrete");
+    cle_chiffree
+}
+
+fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Vec<u8> {
+    let rsa_key = private_key.rsa().expect("rsa");
+    let mut cle_dechiffree = [0u8; 256];
+    rsa_key.private_decrypt(&cle_chiffree_bytes, &mut cle_dechiffree, Padding::PKCS1_OAEP).expect("dechiffrage cle secrete");
+
+    let cle_dechiffree = &cle_dechiffree[..32];
+    cle_dechiffree.to_vec().to_owned()
+}
+
+
 trait CipherMillegrille {
 
 }
 
-struct CipherMgs2 {
+pub struct CipherMgs2 {
     encrypter: Crypter,
     iv: String,
     cle_chiffree: String,
@@ -24,8 +41,6 @@ struct CipherMgs2 {
 
 impl CipherMgs2 {
     pub fn new(public_key: &PKey<Public>) -> Self {
-        let rsa_key = public_key.rsa().unwrap();
-
         let mut buffer_random = [0u8; 44];
         openssl::rand::rand_bytes(&mut buffer_random);
 
@@ -33,8 +48,7 @@ impl CipherMgs2 {
         let iv = &buffer_random[32..44];
 
         // Chiffrer la cle avec cle publique
-        let mut cle_chiffree = [0u8; 256];
-        rsa_key.public_encrypt(&cle, &mut cle_chiffree, Padding::PKCS1_OAEP).expect("chiffrage cle secrete");
+        let cle_chiffree = chiffrage_asymetrique(public_key, &cle);
 
         let mut encrypter = Crypter::new(
             Cipher::aes_256_gcm(),
@@ -50,36 +64,36 @@ impl CipherMgs2 {
         }
     }
 
-    fn update_buffer(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>{
+    pub fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String> {
         match self.encrypter.update(data, out) {
             Ok(s) => Ok(s),
             Err(e) => Err(format!("Erreur update : {:?}", e))
         }
     }
 
-    fn update_writer(&mut self, data: &[u8], out: &mut impl Write) -> Result<usize, String> {
-        let mut buffer = [0u8; 4096];
-        let mut pos = 0;
+    // fn update_writer(&mut self, data: &[u8], out: &mut impl Write) -> Result<usize, String> {
+    //     let mut buffer = [0u8; 4096];
+    //     let mut pos = 0;
+    //
+    //     while pos < data.len() {
+    //         let pos_max: usize = min(pos + buffer.len(), data.len());
+    //
+    //         let len_traite = 4096;
+    //
+    //         pos += len_traite;
+    //     }
+    //
+    //     Ok(pos)
+    // }
 
-        while pos < data.len() {
-            let pos_max: usize = min(pos + buffer.len(), data.len());
-
-            let len_traite = 4096;
-
-            pos += len_traite;
-        }
-
-        Ok(pos)
-    }
-
-    fn finalize_buffer(&mut self, out: &mut [u8]) -> Result<usize, String> {
+    pub fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.encrypter.finalize(out) {
             Ok(s) => Ok(s),
             Err(e) => Err(format!("Erreur update : {:?}", e)),
         }
     }
 
-    fn get_tag(&self) -> Result<String, String> {
+    pub fn get_tag(&self) -> Result<String, String> {
         let mut tag = [0u8; 16];
         match self.encrypter.get_tag(&mut tag) {
             Ok(()) => {
@@ -105,16 +119,14 @@ impl DecipherMgs2 {
         println!("tag {:?}\niv {:?}\ncle chiffree bytes {:?}", tag_bytes, iv_bytes, cle_chiffree_bytes);
 
         // Chiffrer la cle avec cle publique
-        let rsa_key = private_key.rsa().expect("rsa");
-        let mut cle_dechiffree = [0u8; 256];
-        rsa_key.private_decrypt(&cle_chiffree_bytes, &mut cle_dechiffree, Padding::PKCS1_OAEP).expect("dechiffrage cle secrete");
+        let cle_dechiffree = dechiffrer_asymetrique(private_key, &cle_chiffree_bytes);
 
         println!("cle dechiffree bytes : {:?}", cle_dechiffree);
 
         let decrypter = Crypter::new(
             Cipher::aes_256_gcm(),
             Mode::Decrypt,
-            &cle_dechiffree[0..32],
+            &cle_dechiffree,
             Some(iv_bytes.as_slice())
         ).unwrap();
 
@@ -123,14 +135,14 @@ impl DecipherMgs2 {
         })
     }
 
-    fn update_buffer(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>{
+    fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>{
         match self.decrypter.update(data, out) {
             Ok(s) => Ok(s),
             Err(e) => Err(format!("Erreur update : {:?}", e))
         }
     }
 
-    fn finalize_buffer(&mut self, out: &mut [u8]) -> Result<usize, String> {
+    fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.decrypter.finalize(out) {
             Ok(s) => Ok(s),
             Err(e) => Err(format!("Erreur update : {:?}", e)),
@@ -178,10 +190,10 @@ mod backup_tests {
         let input = b"Data en input";
         let mut output = [0u8; 13];
 
-        let len_output = cipher.update_buffer(input, &mut output).expect("output");
+        let len_output = cipher.update(input, &mut output).expect("output");
         assert_eq!(len_output, input.len());
 
-        let len_output = cipher.finalize_buffer(&mut output).expect("finalize");
+        let len_output = cipher.finalize(&mut output).expect("finalize");
         let tag = cipher.get_tag().expect("tag");
         assert_eq!(tag.len(), 23);
 
@@ -194,12 +206,13 @@ mod backup_tests {
         ).expect("dechiffreur");
 
         let mut dechiffrer_out= [0u8; 13];
-        let len_decipher = dechiffreur.update_buffer(&output, &mut dechiffrer_out).expect("dechiffrer");
+        let len_decipher = dechiffreur.update(&output, &mut dechiffrer_out).expect("dechiffrer");
         assert_eq!(&dechiffrer_out, input);
 
         let vec_out = dechiffrer_out.to_vec();
         let dechiffre_str = String::from_utf8(vec_out).expect("str out");
         println!("Contenu dechiffre : {:?} (len {})", dechiffre_str, len_decipher);
+
     }
 
 }

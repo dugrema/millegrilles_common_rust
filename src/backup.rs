@@ -16,12 +16,13 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 use xz2::write::XzEncoder;
 
-use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, MongoDao, Hacheur};
+use crate::{CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, MongoDao, Hacheur, CipherMgs2};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use bson::Document;
 use multihash::Code;
 use multibase::Base;
+use std::cmp::min;
 
 pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<(), Box<dyn Error>> {
 
@@ -99,7 +100,7 @@ async fn requete_transactions(middleware: &impl MongoDao, nom_collection: &str, 
 
 async fn serialiser_transactions(curseur: &mut Cursor, builder: &CatalogueHoraireBuilder, path_transactions: &Path) -> Result<(), Box<dyn Error>> {
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
-    let mut transaction_writer = TransactionWriter::new(path_transactions, false)?;
+    let mut transaction_writer = TransactionWriter::new(path_transactions, None)?;
 
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
@@ -306,31 +307,71 @@ struct TransactionWriter<'a> {
     path_fichier: &'a Path,
     xz_encodeur: XzEncoder<File>,
     hacheur: Hacheur,
-    // chiffreur: Option<...>,
+    chiffreur: Option<CipherMgs2>,
 }
 
 impl TransactionWriter<'_> {
 
-    pub fn new(path_fichier: &Path, chiffrer: bool) -> Result<TransactionWriter, Box<dyn Error>> {
+    const BUFFER_SIZE: usize = 65535;
+
+    pub fn new(path_fichier: &Path, certificat_chiffrage: Option<EnveloppeCertificat>) -> Result<TransactionWriter, Box<dyn Error>> {
         let output_file = File::create(path_fichier)?;
         let xz_encodeur = XzEncoder::new(output_file, 9);
         let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base64).build();
+
+        let chiffreur = match certificat_chiffrage {
+            Some(c) => {
+                let cle_publique = c.certificat().public_key()?;
+                Some(CipherMgs2::new(&cle_publique))
+            },
+            None => None,
+        };
 
         Ok(TransactionWriter {
             path_fichier,
             xz_encodeur,
             hacheur,
+            chiffreur,
         })
     }
 
-    pub fn write_bytes(&mut self, contenu: &[u8]) -> io::Result<usize> {
-        // Ajouter au hachage du fichier
-        self.hacheur.update(contenu);
-        self.xz_encodeur.write(contenu)
+    pub fn write_bytes(&mut self, contenu: &[u8]) -> Result<usize, Box<dyn Error>> {
+
+        // Chiffrer au besoin
+        match &mut self.chiffreur {
+            Some(c) => {
+                // Utilisation d'un buffer pour chiffrer le contenu
+                let mut buffer = [0u8; TransactionWriter::BUFFER_SIZE];
+                let mut pos = 0usize;
+                while pos < contenu.len() {
+                    // Calculer position (next ou fin)
+                    let pos_max = min(pos+TransactionWriter::BUFFER_SIZE, contenu.len());
+
+                    // Chiffrer
+                    let len_update = c.update(&contenu[pos..pos_max], &mut buffer)?;
+
+                    // Hacher et conserver contenu chiffre
+                    self.hacheur.update(&contenu[0..len_update]);
+                    self.xz_encodeur.write(&contenu[0..len_update]);
+
+                    // Next
+                    pos += TransactionWriter::BUFFER_SIZE;
+                }
+
+                Ok(contenu.len())
+            },
+            None => {
+                // Traitement direct sans chiffrage
+                self.hacheur.update(contenu);
+                let size = self.xz_encodeur.write(contenu)?;
+                Ok(size)
+            }
+        }
+
     }
 
     /// Serialise un objet Json (Value) dans le fichier. Ajouter un line feed (\n).
-    pub fn write_json_line(&mut self, contenu: &Value) -> io::Result<usize> {
+    pub fn write_json_line(&mut self, contenu: &Value) -> Result<usize, Box<dyn Error>> {
         // Convertir value en bytes
         let mut contenu_bytes = serde_json::to_string(contenu)?.as_bytes().to_owned();
 
@@ -341,7 +382,7 @@ impl TransactionWriter<'_> {
         self.write_bytes(contenu_bytes.as_slice())
     }
 
-    pub fn write_bson_line(&mut self, contenu: &Document) -> io::Result<usize> {
+    pub fn write_bson_line(&mut self, contenu: &Document) -> Result<usize, Box<dyn Error>> {
         let mut value = serde_json::to_value(contenu)?;
 
         // S'assurer qu'on a un document (map)
@@ -497,7 +538,7 @@ mod backup_tests {
     #[test]
     fn ecrire_bytes_writer() {
         let path_fichier = PathBuf::from("/tmp/fichier_writer.txt.xz");
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), false).expect("writer");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).expect("writer");
 
         writer.write_bytes("Du contenu a ecrire".as_bytes()).expect("write");
 
@@ -508,7 +549,7 @@ mod backup_tests {
     #[test]
     fn ecrire_transactions_writer_json() {
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions.jsonl.xz");
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), false).expect("writer");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).expect("writer");
 
         let doc_json = json!({
             "contenu": "Du contenu a encoder",
@@ -523,7 +564,7 @@ mod backup_tests {
     #[test]
     fn ecrire_transactions_writer_bson() {
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz");
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), false).expect("writer");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).expect("writer");
 
         let doc_bson = doc! {
             "_id": "Un ID dummy qui doit etre retire",
