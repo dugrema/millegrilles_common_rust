@@ -101,6 +101,17 @@ impl CipherMgs2 {
         }
     }
 
+    pub fn get_cipher_data(&self) -> Result<Mgs2CipherData, String> {
+        match Mgs2CipherData::new(
+            &self.cle_chiffree,
+            &self.iv,
+            &self.get_tag()?,
+        ) {
+            Ok(m) => Ok(m),
+            Err(e) => Err(format!("Erreur get_cipher_data {:?}", e)),
+        }
+    }
+
 }
 
 pub struct DecipherMgs2 {
@@ -122,10 +133,15 @@ impl DecipherMgs2 {
 
         // println!("cle dechiffree bytes base64: {}, bytes: {:?}", encode(Base::Base64, &cle_dechiffree), cle_dechiffree);
 
+        let cle_dechiffree = match &decipher_data.cle_dechiffree {
+            Some(c) => c,
+            None => Err("Cle n'est pas dechiffree")?,
+        };
+
         let decrypter = Crypter::new(
             Cipher::aes_256_gcm(),
             Mode::Decrypt,
-            &decipher_data.cle_dechiffree,
+            cle_dechiffree,
             Some(&decipher_data.iv)
         ).unwrap();
 
@@ -134,14 +150,14 @@ impl DecipherMgs2 {
         })
     }
 
-    fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>{
+    pub fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>{
         match self.decrypter.update(data, out) {
             Ok(s) => Ok(s),
             Err(e) => Err(format!("Erreur update : {:?}", e))
         }
     }
 
-    fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
+    pub fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.decrypter.finalize(out) {
             Ok(s) => Ok(s),
             Err(e) => Err(format!("Erreur update : {:?}", e)),
@@ -217,12 +233,12 @@ mod backup_tests {
         // println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
 
         // Dechiffrer
-        let cipher_data = Mgs2CipherData::new(
-            &cle_privee,
+        let mut cipher_data = Mgs2CipherData::new(
             &cipher.cle_chiffree,
             &cipher.iv,
             &tag,
         ).expect("cipher_data");
+        cipher_data.dechiffrer_cle(&cle_privee).expect("Dechiffrer cle");
         let mut dechiffreur = DecipherMgs2::new(&cipher_data).expect("dechiffreur");
 
         let mut dechiffrer_out= [0u8; 13];
@@ -239,20 +255,31 @@ mod backup_tests {
 
 #[derive(Clone)]
 pub struct Mgs2CipherData {
-    cle_dechiffree: Vec<u8>,
+    cle_chiffree: Vec<u8>,
+    cle_dechiffree: Option<Vec<u8>>,
     iv: Vec<u8>,
     tag: Vec<u8>,
 }
 
 impl Mgs2CipherData {
-    pub fn new(cle_privee: &PKey<Private>, cle_chiffree: &String, iv: &String, tag: &String) -> Result<Self, Box<dyn Error>> {
-        let cle_bytes: Vec<u8> = decode(cle_chiffree)?.1;
-        let cle_dechiffree = dechiffrer_asymetrique(cle_privee, cle_bytes.as_slice());
-
+    pub fn new(cle_chiffree: &String, iv: &String, tag: &String) -> Result<Self, Box<dyn Error>> {
+        let cle_chiffree_bytes: Vec<u8> = decode(cle_chiffree)?.1;
         let iv_bytes: Vec<u8> = decode(iv)?.1;
-        let tag_bytes: Vec<u8> = decode(tag)?.1;;
+        let tag_bytes: Vec<u8> = decode(tag)?.1;
 
-        Ok(Mgs2CipherData { cle_dechiffree, iv: iv_bytes, tag: tag_bytes })
+        Ok(Mgs2CipherData {
+            cle_chiffree: cle_chiffree_bytes,
+            cle_dechiffree: None,
+            iv: iv_bytes,
+            tag: tag_bytes
+        })
+    }
+
+    pub fn dechiffrer_cle(&mut self, cle_privee: &PKey<Private>) -> Result<(), Box<dyn Error>> {
+        let cle_dechiffree = dechiffrer_asymetrique(cle_privee, self.cle_chiffree.as_slice());
+        self.cle_dechiffree = Some(cle_dechiffree);
+
+        Ok(())
     }
 }
 

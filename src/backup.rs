@@ -409,7 +409,7 @@ impl<'a> TransactionWriter<'a> {
         }
     }
 
-    pub async fn fermer(mut self) -> Result<String, Box<dyn Error>> {
+    pub async fn fermer(mut self) -> Result<(String, Option<Mgs2CipherData>), Box<dyn Error>> {
         let mut buffer_chiffre = [0u8; TransactionWriter::BUFFER_SIZE];
         let mut buffer : Vec<u8> = Vec::new();
         buffer.reserve(TransactionWriter::BUFFER_SIZE);
@@ -454,8 +454,20 @@ impl<'a> TransactionWriter<'a> {
         let hachage = self.hacheur.finalize();
         self.fichier.flush().await?;
 
-        Ok(hachage)
+        let cipher_data = match &self.chiffreur {
+            Some(c) => Some(c.get_cipher_data()?),
+            None => None,
+        };
+
+        Ok((hachage, cipher_data))
     }
+
+    // fn get_cipher_data(&self) -> Result<Mgs2CipherData, String> {
+    //     match &self.chiffreur {
+    //         Some(c) => Ok(c.get_cipher_data()?),
+    //         None => Err(String::from("Chiffrage n'est pas active")),
+    //     }
+    // }
 }
 
 struct TransactionReader<'a> {
@@ -493,6 +505,8 @@ impl<'a> TransactionReader<'a> {
         let mut xz_output = Vec::new();
         xz_output.reserve(TransactionWriter::BUFFER_SIZE);
 
+        let mut dechiffrage_output = [0u8; TransactionWriter::BUFFER_SIZE];
+
         let mut output_complet = Vec::new();
 
         loop {
@@ -500,11 +514,19 @@ impl<'a> TransactionReader<'a> {
             let len = reader.read(&mut buffer).await.expect("lecture");
             if len == 0 {break}
 
-            let traiter_bytes = &buffer[..len];
+            // let traiter_bytes = &buffer[..len];
 
-            println!("Lu {}\n{:?}", len, traiter_bytes);
+            let traiter_bytes = match &mut self.dechiffreur {
+                Some(d) => {
+                    d.update(&buffer[..len], &mut dechiffrage_output);
+                    &dechiffrage_output[..len]
+                },
+                None => &buffer[..len],
+            };
+
+            // println!("Lu {}\n{:?}", len, traiter_bytes);
             let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
-            println!("Status xz : {:?}\n{:?}", status, xz_output);
+            // println!("Status xz : {:?}\n{:?}", status, xz_output);
 
             output_complet.append(&mut xz_output);
         }
@@ -523,7 +545,7 @@ impl<'a> TransactionReader<'a> {
         }
 
         // Verifier si a on a un newline dans le buffer pour separer les transactions
-        println!("Output complet : {:?}", output_complet);
+        // println!("Output complet : {:?}", output_complet);
 
         let index_nl = output_complet.as_slice().split(|n| n == &NEW_LINE_BYTE);
 
@@ -706,11 +728,11 @@ mod backup_tests {
         // println!("File du writer : {:?}", file);
 
         let fichier_cs = Box::new(tokio::fs::File::open(path_fichier.as_path()).await.expect("open read"));
-
         let mut reader = TransactionReader::new(fichier_cs, None).expect("reader");
         let transactions = reader.read_transactions().await.expect("transactions");
         for t in transactions {
-            println!("Transaction : {:?}", t);
+            // println!("Transaction : {:?}", t);
+            assert_eq!(&doc_json, &t);
         }
 
     }
@@ -734,7 +756,7 @@ mod backup_tests {
         let (mh_reference, doc_bson) = get_doc_reference();
         writer.write_bson_line(&doc_bson).await.expect("write");
 
-        let mh = writer.fermer().await.expect("fermer");
+        let (mh, decipher_data) = writer.fermer().await.expect("fermer");
         // println!("File du writer : {:?}, multihash: {}", file, mh);
 
         assert_eq!(mh.as_str(), &mh_reference);
@@ -752,12 +774,24 @@ mod backup_tests {
 
         let (mh_reference, doc_bson) = get_doc_reference();
         writer.write_bson_line(&doc_bson).await.expect("write chiffre");
-        let mh = writer.fermer().await.expect("fermer");
+        let (mh, mut decipher_data_option) = writer.fermer().await.expect("fermer");
+
+        let mut decipher_data = decipher_data_option.expect("decipher data");
 
         // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
         assert_ne!(mh.as_str(), &mh_reference);
 
+        decipher_data.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
 
+        let fichier_cs = Box::new(tokio::fs::File::open(path_fichier.as_path()).await.expect("open read"));
+        let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_data)).expect("reader");
+        let transactions = reader.read_transactions().await.expect("transactions");
+
+        for t in transactions {
+            // println!("Transaction dechiffree : {:?}", t);
+            let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
+            assert_eq!(valeur_chiffre, 5678);
+        }
 
     }
 }
