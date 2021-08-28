@@ -7,6 +7,8 @@ use std::io::Write;
 use std::cmp::min;
 use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
+use std::fmt::{Debug, Formatter};
+use std::error::Error;
 
 #[derive(Clone, Debug)]
 pub enum FormatChiffrage {
@@ -101,29 +103,30 @@ impl CipherMgs2 {
 
 }
 
-struct DecipherMgs2 {
+pub struct DecipherMgs2 {
     decrypter: Crypter,
 }
 
 impl DecipherMgs2 {
 
-    pub fn new(private_key: &PKey<Private>, cle_chiffree: &str, iv: &str, tag: &str) -> Result<Self, String> {
+    // pub fn new(private_key: &PKey<Private>, cle_chiffree: &str, iv: &str, tag: &str) -> Result<Self, String> {
+    pub fn new(decipher_data: &Mgs2CipherData) -> Result<Self, String> {
 
-        let (_, tag_bytes) = decode(tag).expect("tag");
-        let (_, iv_bytes) = decode(iv).expect("tag");
-        let (_, cle_chiffree_bytes) = decode(cle_chiffree).expect("cle_chiffree");
+        // let (_, tag_bytes) = decode(tag).expect("tag");
+        // let (_, iv_bytes) = decode(iv).expect("tag");
+        // let (_, cle_chiffree_bytes) = decode(cle_chiffree).expect("cle_chiffree");
         // println!("tag {:?}\niv {:?}\ncle chiffree bytes {:?}", tag_bytes, iv_bytes, cle_chiffree_bytes);
 
         // Chiffrer la cle avec cle publique
-        let cle_dechiffree = dechiffrer_asymetrique(private_key, &cle_chiffree_bytes);
+        // let cle_dechiffree = dechiffrer_asymetrique(private_key, &cle_chiffree_bytes);
 
         // println!("cle dechiffree bytes base64: {}, bytes: {:?}", encode(Base::Base64, &cle_dechiffree), cle_dechiffree);
 
         let decrypter = Crypter::new(
             Cipher::aes_256_gcm(),
             Mode::Decrypt,
-            &cle_dechiffree,
-            Some(iv_bytes.as_slice())
+            &decipher_data.cle_dechiffree,
+            Some(&decipher_data.iv)
         ).unwrap();
 
         Ok(DecipherMgs2 {
@@ -214,12 +217,13 @@ mod backup_tests {
         // println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
 
         // Dechiffrer
-        let mut dechiffreur = DecipherMgs2::new(
+        let cipher_data = Mgs2CipherData::new(
             &cle_privee,
             &cipher.cle_chiffree,
             &cipher.iv,
             &tag,
-        ).expect("dechiffreur");
+        ).expect("cipher_data");
+        let mut dechiffreur = DecipherMgs2::new(&cipher_data).expect("dechiffreur");
 
         let mut dechiffrer_out= [0u8; 13];
         let len_decipher = dechiffreur.update(&output, &mut dechiffrer_out).expect("dechiffrer");
@@ -231,4 +235,29 @@ mod backup_tests {
 
     }
 
+}
+
+#[derive(Clone)]
+pub struct Mgs2CipherData {
+    cle_dechiffree: Vec<u8>,
+    iv: Vec<u8>,
+    tag: Vec<u8>,
+}
+
+impl Mgs2CipherData {
+    pub fn new(cle_privee: &PKey<Private>, cle_chiffree: &String, iv: &String, tag: &String) -> Result<Self, Box<dyn Error>> {
+        let cle_bytes: Vec<u8> = decode(cle_chiffree)?.1;
+        let cle_dechiffree = dechiffrer_asymetrique(cle_privee, cle_bytes.as_slice());
+
+        let iv_bytes: Vec<u8> = decode(iv)?.1;
+        let tag_bytes: Vec<u8> = decode(tag)?.1;;
+
+        Ok(Mgs2CipherData { cle_dechiffree, iv: iv_bytes, tag: tag_bytes })
+    }
+}
+
+impl Debug for Mgs2CipherData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("Mgs2CipherData iv: {:?}, tag: {:?}", self.iv, self.tag).as_str())
+    }
 }

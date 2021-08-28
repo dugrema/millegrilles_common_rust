@@ -18,13 +18,14 @@ use serde_json::Value;
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
-use tokio_stream::StreamExt;
+use tokio_stream::{StreamExt, Iter};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, Hacheur, MongoDao};
+use crate::{CipherMgs2, DecipherMgs2, CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, Hacheur, MongoDao, Mgs2CipherData};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
+use openssl::pkey::{PKey, Private};
 
 const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 
@@ -457,6 +458,37 @@ impl<'a> TransactionWriter<'a> {
     }
 }
 
+struct TransactionReader {
+    data: Iter<u8>,
+    xz_decoder: stream::Stream,
+    // hacheur: Hacheur,
+    dechiffreur: Option<DecipherMgs2>,
+}
+
+impl TransactionReader {
+
+    pub fn new(data: Iter<u8>, decipher_data: Option<&Mgs2CipherData>) -> Result<Self, Box<dyn Error>> {
+
+        let mut xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
+
+        let dechiffreur = match decipher_data {
+            Some(cd) => {
+                let mut dechiffreur = DecipherMgs2::new(cd)?;
+                Some(dechiffreur)
+            },
+            None => None,
+        };
+
+        Ok(TransactionReader {
+            data,
+            xz_decoder,
+            // hacheur,
+            dechiffreur,
+        })
+    }
+
+}
+
 #[cfg(test)]
 mod backup_tests {
     use serde_json::json;
@@ -594,18 +626,22 @@ mod backup_tests {
     }
 
     #[tokio::test]
-    async fn ecrire_transactions_writer_json() {
+    async fn roundtrip_json() {
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions.jsonl.xz");
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).await.expect("writer");
 
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).await.expect("writer");
         let doc_json = json!({
             "contenu": "Du contenu a encoder",
             "valeur": 1234,
+            // "date": Utc.timestamp(1629464027, 0),
         });
         writer.write_json_line(&doc_json).await.expect("write");
 
         let file = writer.fermer().await.expect("fermer");
         // println!("File du writer : {:?}", file);
+
+
+
     }
 
     fn get_doc_reference() -> (String, Document) {
@@ -649,6 +685,8 @@ mod backup_tests {
 
         // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
         assert_ne!(mh.as_str(), &mh_reference);
+
+
 
     }
 }
