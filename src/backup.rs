@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File;
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::io::{AsyncWriteExt, BufWriter, AsyncRead, AsyncReadExt};
 use tokio_stream::{StreamExt, Iter};
 use uuid::Uuid;
 use xz2::stream;
@@ -458,16 +458,16 @@ impl<'a> TransactionWriter<'a> {
     }
 }
 
-struct TransactionReader {
-    data: Iter<u8>,
+struct TransactionReader<'a> {
+    data: Box<dyn AsyncRead + Unpin + 'a>,
     xz_decoder: stream::Stream,
     // hacheur: Hacheur,
     dechiffreur: Option<DecipherMgs2>,
 }
 
-impl TransactionReader {
+impl<'a> TransactionReader<'a> {
 
-    pub fn new(data: Iter<u8>, decipher_data: Option<&Mgs2CipherData>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(data: Box<impl AsyncRead + Unpin + 'a>, decipher_data: Option<&Mgs2CipherData>) -> Result<Self, Box<dyn Error>> {
 
         let mut xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
 
@@ -485,6 +485,69 @@ impl TransactionReader {
             // hacheur,
             dechiffreur,
         })
+    }
+
+    /// todo Les transactions sont lues en memoire avant d'etre traitees - changer pour iterator async
+    pub async fn read_transactions(&mut self) -> Result<Vec<Value>, Box<dyn Error>> {
+        let mut buffer = [0u8; TransactionWriter::BUFFER_SIZE/2];
+        let mut xz_output = Vec::new();
+        xz_output.reserve(TransactionWriter::BUFFER_SIZE);
+
+        let mut output_complet = Vec::new();
+
+        loop {
+            let mut reader = &mut self.data;
+            let len = reader.read(&mut buffer).await.expect("lecture");
+            if len == 0 {break}
+
+            let traiter_bytes = &buffer[..len];
+
+            println!("Lu {}\n{:?}", len, traiter_bytes);
+            let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
+            println!("Status xz : {:?}\n{:?}", status, xz_output);
+
+            output_complet.append(&mut xz_output);
+        }
+
+        loop {
+            let traiter_bytes = [0u8;0];
+
+            let status = self.xz_decoder.process_vec(&traiter_bytes[0..0], &mut xz_output, stream::Action::Run).expect("xz-output");
+            output_complet.append(&mut xz_output);
+            if status != stream::Status::Ok {
+                if status != stream::Status::StreamEnd {
+                    Err("Erreur decompression xz")?;
+                }
+                break
+            }
+        }
+
+        // Verifier si a on a un newline dans le buffer pour separer les transactions
+        println!("Output complet : {:?}", output_complet);
+
+        let index_nl = output_complet.as_slice().split(|n| n == &NEW_LINE_BYTE);
+
+        let mapper = index_nl.map(|t| {
+            match String::from_utf8(t.to_vec()) {
+                Ok(ts) => {
+                    match serde_json::from_str::<Value>(ts.as_str()) {
+                        Ok(v) => Ok(v),
+                        Err(e) => Err(format!("Erreur {:?}", e)),
+                    }
+                },
+                Err(e) => Err(format!("Erreur {:?}", e)),
+            }
+        });
+
+        let mut transactions = Vec::new();
+        for t in mapper {
+            match t {
+                Ok(tt) => transactions.push(tt),
+                Err(e) => error!("Erreur lecture : {:?}", e)
+            }
+        }
+
+        Ok(transactions)
     }
 
 }
@@ -636,11 +699,19 @@ mod backup_tests {
             // "date": Utc.timestamp(1629464027, 0),
         });
         writer.write_json_line(&doc_json).await.expect("write");
+        writer.write_json_line(&doc_json).await.expect("write");
+        writer.write_json_line(&doc_json).await.expect("write");
 
         let file = writer.fermer().await.expect("fermer");
         // println!("File du writer : {:?}", file);
 
+        let fichier_cs = Box::new(tokio::fs::File::open(path_fichier.as_path()).await.expect("open read"));
 
+        let mut reader = TransactionReader::new(fichier_cs, None).expect("reader");
+        let transactions = reader.read_transactions().await.expect("transactions");
+        for t in transactions {
+            println!("Transaction : {:?}", t);
+        }
 
     }
 
@@ -690,3 +761,4 @@ mod backup_tests {
 
     }
 }
+
