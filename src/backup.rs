@@ -30,13 +30,13 @@ use crate::constantes::*;
 
 const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 
+/// Lance un backup complet de la collection en parametre.
 pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<(), Box<dyn Error>> {
 
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
 
     let info_backup = BackupInformation::new(
-        "domaine_dummy",
         nom_collection,
         None,
         Some(workdir.path().to_owned())
@@ -246,8 +246,6 @@ trait BackupHandler {
 /// Struct de backup
 #[derive(Debug)]
 struct BackupInformation {
-    /// Nom du domaine
-    nom_domaine: String,
     /// Nom complet de la collection de transactions mongodb
     nom_collection_transactions: String,
     /// Options de chiffrage
@@ -311,7 +309,6 @@ impl BackupInformation {
 
     /// Creation d'une nouvelle structure de backup
     pub fn new(
-        nom_domaine: &str,
         nom_collection_transactions: &str,
         certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>,
         workpath: Option<PathBuf>
@@ -330,7 +327,6 @@ impl BackupInformation {
         let uuid_backup = Uuid::new_v4().to_string();
 
         Ok(BackupInformation {
-            nom_domaine: nom_domaine.to_owned(),
             nom_collection_transactions: nom_collection_transactions.to_owned(),
             certificats_chiffrage,
             workpath: workpath_inner,
@@ -563,12 +559,6 @@ impl<'a> TransactionWriter<'a> {
         Ok((hachage, cipher_data))
     }
 
-    // fn get_cipher_data(&self) -> Result<Mgs2CipherData, String> {
-    //     match &self.chiffreur {
-    //         Some(c) => Ok(c.get_cipher_data()?),
-    //         None => Err(String::from("Chiffrage n'est pas active")),
-    //     }
-    // }
 }
 
 struct TransactionReader<'a> {
@@ -689,7 +679,6 @@ mod backup_tests {
     #[test]
     fn init_backup_information() {
         let info = BackupInformation::new(
-            NOM_DOMAINE_BACKUP,
             NOM_COLLECTION_BACKUP,
             None,
             None
@@ -698,7 +687,7 @@ mod backup_tests {
         let workpath = info.workpath.to_str().unwrap();
 
         assert_eq!(&info.nom_collection_transactions, NOM_COLLECTION_BACKUP);
-        assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
+        // assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
         assert_eq!(info.certificats_chiffrage.is_none(), true);
         assert_eq!(workpath.starts_with("/tmp/."), true);
     }
@@ -920,7 +909,7 @@ mod test_integration {
         futures.push(tokio::spawn(async move {
 
             // Test
-            let info = BackupInformation::new("Pki", "Pki.rust", None, None).expect("info");
+            let info = BackupInformation::new("Pki.rust", None, None).expect("info");
 
             let workdir = tempfile::tempdir().expect("tmpdir");
             let groupes = grouper_backups(
@@ -946,7 +935,7 @@ mod test_integration {
         futures.push(tokio::spawn(async move {
 
             // Test
-            let info = BackupInformation::new("Pki", "Pki.rust", None, None).expect("info");
+            let info = BackupInformation::new("Pki.rust", None, None).expect("info");
             let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
             let mut builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
 
@@ -986,7 +975,6 @@ mod test_integration {
 
             // Test
             let info = BackupInformation::new(
-                "Pki",
                 "Pki.rust",
                 Some(certificats_chiffrage.clone()),
                 None
