@@ -57,6 +57,7 @@ pub const TRANSACTION_CHAMP_COMPTE_RESOUMISE: &str = "_evenements.compte_resoumi
 pub const TRANSACTION_CHAMP_ERREUR_RESOUMISSION: &str = "_evenements.erreur_resoumission";
 pub const TRANSACTION_CHAMP_BACKUP_FLAG: &str = "_evenements.backup_flag";
 pub const TRANSACTION_CHAMP_TRANSACTION_TRAITEE: &str = "_evenements.transaction_traitee";
+pub const TRANSACTION_CHAMP_BACKUP_HORAIRE: &str = "_evenements.backup_horaire";
 pub const TRANSACTION_LIMITE_RESOUMISSION: i32 = 4;
 
 // Certificats, PKI

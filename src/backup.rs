@@ -59,7 +59,11 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
         todo!("soumettre catalogue horaire");
 
         // Marquer transactions du backup comme completees
-        marquer_transaction_backup_complete(middleware, &catalogue_horaire).await?;
+        marquer_transaction_backup_complete(
+            middleware,
+            info_backup.nom_collection_transactions.as_str(),
+            &catalogue_horaire
+        ).await?;
     }
 
     Ok(())
@@ -173,7 +177,7 @@ async fn serialiser_transactions(
     builder: &mut CatalogueHoraireBuilder,
     path_transactions: &Path,
     certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>
-) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
+) -> Result<Option<Mgs2CipherKeys>, Box<dyn Error>> {
 
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
     let mut transaction_writer = TransactionWriter::new(
@@ -193,7 +197,11 @@ async fn serialiser_transactions(
         builder.ajouter_transaction(uuid_transaction);
     }
 
-    transaction_writer.fermer().await
+    let (hachage, cipher_keys) = transaction_writer.fermer().await?;
+
+    builder.transactions_hachage = hachage;
+
+    Ok(cipher_keys)
 }
 
 async fn uploader_backup(builder: CatalogueHoraireBuilder) -> Result<CatalogueHoraire, Box<dyn Error>> {
@@ -209,8 +217,26 @@ async fn uploader_backup(builder: CatalogueHoraireBuilder) -> Result<CatalogueHo
     Ok(catalogue)
 }
 
-async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, catalogue_horaire: &CatalogueHoraire) -> Result<(), Box<dyn Error>> {
-    todo!()
+async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_collection: &str, catalogue_horaire: &CatalogueHoraire) -> Result<(), Box<dyn Error>> {
+    let collection = middleware.get_collection(nom_collection)?;
+    let filtre = doc! {
+        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: {"$in": &catalogue_horaire.uuid_transactions}
+    };
+    let ops = doc! {
+        "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: true},
+        "$currentDate": {TRANSACTION_CHAMP_BACKUP_HORAIRE: true},
+    };
+
+    let r= collection.update_many(filtre, ops, None).await?;
+    if r.matched_count as usize != catalogue_horaire.uuid_transactions.len() {
+        Err(format!(
+            "Erreur mismatch nombre de transactions maj apres backup : {:?} dans le backup != {:?} mises a jour",
+            catalogue_horaire.uuid_transactions.len(),
+            r.matched_count
+        ))?;
+    }
+
+    Ok(())
 }
 
 trait BackupHandler {
@@ -980,7 +1006,7 @@ mod test_integration {
                 Some(certificats_chiffrage)
             ).await.expect("serialiser");
 
-            println!("Resultat extraction transactions : {:?}", resultat);
+            println!("Resultat extraction transactions : {:?}\nCatalogue: {:?}", resultat, builder);
 
         }));
         // Execution async du test
