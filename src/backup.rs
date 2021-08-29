@@ -10,7 +10,7 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use log::{debug, error, info, warn};
 use mongodb::bson::doc;
 use mongodb::Cursor;
-use mongodb::options::FindOptions;
+use mongodb::options::{FindOptions, AggregateOptions, Hint};
 use multibase::Base;
 use multihash::Code;
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,7 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
         let mut path_fichier_transactions = info_backup.workpath.clone();
         path_fichier_transactions.push(PathBuf::from("transactions.xz"));
 
-        let mut curseur = requete_transactions(middleware, nom_collection, &builder).await?;
+        let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
         serialiser_transactions(&mut curseur, &mut builder, path_fichier_transactions.as_path()).await?;
 
         let catalogue_horaire = uploader_backup(builder).await?;
@@ -72,9 +72,9 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     let collection = middleware.get_collection(nom_collection)?;
     let pipeline = vec! [
         doc! {"$match": {
+            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
             TRANSACTION_CHAMP_BACKUP_FLAG: false,
             TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
-            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
         }},
 
         // Grouper par domaines et heure
@@ -106,7 +106,11 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
         doc! {"$sort": {"_id.heure": 1}},
     ];
 
-    let mut curseur = collection.aggregate(pipeline, None).await?;
+    let mut options = AggregateOptions::builder()
+        .hint(Hint::Name(String::from("backup_transactions")))
+        .build();
+
+    let mut curseur = collection.aggregate(pipeline, options).await?;
 
     let mut builders = Vec::new();
 
@@ -139,13 +143,12 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     Ok(builders)
 }
 
-async fn requete_transactions(middleware: &impl MongoDao, nom_collection: &str, builder: &CatalogueHoraireBuilder) -> Result<Cursor, Box<dyn Error>> {
+async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueHoraireBuilder) -> Result<Cursor, Box<dyn Error>> {
+    let nom_collection = &info.nom_collection_transactions;
     let collection = middleware.get_collection(nom_collection)?;
 
     let debut_heure = builder.heure.get_datetime();
     let fin_heure = debut_heure.clone() + chrono::Duration::hours(1);
-
-    todo!("Separer sous-domaines");
 
     let filtre = doc! {
         TRANSACTION_CHAMP_BACKUP_FLAG: false,
@@ -154,7 +157,10 @@ async fn requete_transactions(middleware: &impl MongoDao, nom_collection: &str, 
     };
 
     let sort = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
-    let find_options = FindOptions::builder().sort(sort).build();
+    let find_options = FindOptions::builder()
+        .sort(sort)
+        .hint(Hint::Name(String::from("backup_transactions")))
+        .build();
 
     let curseur = collection.find(filtre, find_options).await?;
 
@@ -859,7 +865,7 @@ mod backup_tests {
 mod test_integration {
     use super::*;
     use crate::middleware::preparer_middleware_pki;
-    use crate::MiddlewareDbPki;
+    use crate::{MiddlewareDbPki, charger_transaction};
     use std::sync::Arc;
 
     #[tokio::test]
@@ -877,6 +883,29 @@ mod test_integration {
             ).await.expect("groupes");
 
             println!("Groupes : {:?}", groupes);
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+
+    #[tokio::test]
+    async fn extraire_transactions() {
+        // Connecter mongo
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        futures.push(tokio::spawn(async move {
+
+            // Test
+            let info = BackupInformation::new("Pki", "Pki.rust", None, None).expect("info");
+            let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
+            let builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
+
+            let workdir = tempfile::tempdir().expect("tmpdir");
+            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+
+            while let Some(t) = transactions.next().await {
+                println!("Transaction : {:?}", t);
+            }
 
         }));
         // Execution async du test
