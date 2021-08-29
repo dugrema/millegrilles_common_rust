@@ -447,8 +447,9 @@ impl<'a> TransactionWriter<'a> {
             self.hacheur.update(buffer_output);
 
             // Ecrire dans fichier
-            let file_bytes = self.fichier.write(buffer_output).await?;
-            count_bytes += file_bytes;
+            self.fichier.write_all(buffer_output).await?;
+
+            count_bytes += buffer_output.len();
         }
 
         Ok(count_bytes)
@@ -500,7 +501,7 @@ impl<'a> TransactionWriter<'a> {
             };
 
             self.hacheur.update(buffer_output);
-            self.fichier.write(buffer_output).await?;
+            self.fichier.write_all(buffer_output).await?;
 
             if status != stream::Status::Ok {
                 if status == stream::Status::MemNeeded {
@@ -518,7 +519,7 @@ impl<'a> TransactionWriter<'a> {
                     // Finaliser output
                     let slice_buffer = &buffer_chiffre[..len];
                     self.hacheur.update(slice_buffer);
-                    self.fichier.write(slice_buffer).await?;
+                    self.fichier.write_all(slice_buffer).await?;
                 }
             },
             None => ()
