@@ -436,6 +436,12 @@ pub struct FingerprintCertPublicKey {
     pub public_key: PKey<Public>,
 }
 
+impl FingerprintCertPublicKey {
+    pub fn new(fingerprint: String, public_key: PKey<Public>) -> Self {
+        FingerprintCertPublicKey { fingerprint, public_key }
+    }
+}
+
 /// Enveloppe avec cle pour cle et certificat combine
 pub struct EnveloppePrivee {
     pub enveloppe: EnveloppeCertificat,

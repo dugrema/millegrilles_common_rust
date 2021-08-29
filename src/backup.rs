@@ -24,7 +24,7 @@ use tokio_stream::{Iter, StreamExt};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FormatChiffrage, Hacheur, Mgs2CipherData, MongoDao};
+use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FormatChiffrage, Hacheur, Mgs2CipherData, MongoDao, FingerprintCertPublicKey, Mgs2CipherKeys};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 
@@ -172,7 +172,7 @@ async fn serialiser_transactions(
     curseur: &mut Cursor,
     builder: &mut CatalogueHoraireBuilder,
     path_transactions: &Path
-) -> Result<(String, Option<Mgs2CipherData>), Box<dyn Error>> {
+) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
 
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
     let mut transaction_writer = TransactionWriter::new(path_transactions, None).await?;
@@ -391,16 +391,15 @@ impl<'a> TransactionWriter<'a> {
 
     const BUFFER_SIZE: usize = 64 * 1024;
 
-    pub async fn new(path_fichier: &'a Path, certificat_chiffrage: Option<&'a EnveloppeCertificat>) -> Result<TransactionWriter<'a>, Box<dyn Error>> {
+    pub async fn new(path_fichier: &'a Path, certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>) -> Result<TransactionWriter<'a>, Box<dyn Error>> {
         let output_file = tokio::fs::File::create(path_fichier).await?;
         // let xz_encodeur = XzEncoder::new(output_file, 9);
         let xz_encodeur = stream::Stream::new_easy_encoder(9, stream::Check::Crc64).expect("stream");
         let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base64).build();
 
-        let chiffreur = match certificat_chiffrage {
+        let chiffreur = match certificats_chiffrage {
             Some(c) => {
-                let cle_publique = c.certificat().public_key()?;
-                Some(CipherMgs2::new(&cle_publique))
+                Some(CipherMgs2::new(&c))
             },
             None => None,
         };
@@ -480,7 +479,7 @@ impl<'a> TransactionWriter<'a> {
         }
     }
 
-    pub async fn fermer(mut self) -> Result<(String, Option<Mgs2CipherData>), Box<dyn Error>> {
+    pub async fn fermer(mut self) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
         let mut buffer_chiffre = [0u8; TransactionWriter::BUFFER_SIZE];
         let mut buffer : Vec<u8> = Vec::new();
         buffer.reserve(TransactionWriter::BUFFER_SIZE);
@@ -526,7 +525,7 @@ impl<'a> TransactionWriter<'a> {
         self.fichier.flush().await?;
 
         let cipher_data = match &self.chiffreur {
-            Some(c) => Some(c.get_cipher_data()?),
+            Some(c) => Some(c.get_cipher_keys()?),
             None => None,
         };
 
@@ -838,24 +837,30 @@ mod backup_tests {
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
 
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz.mgs2");
+        let fp_certs = vec!(FingerprintCertPublicKey::new(
+            String::from("dummy"),
+            enveloppe.certificat().public_key().clone().expect("cle")
+        ));
+
         let mut writer = TransactionWriter::new(
             path_fichier.as_path(),
-            Some(&enveloppe.enveloppe)
+            Some(fp_certs)
         ).await.expect("writer");
 
         let (mh_reference, doc_bson) = get_doc_reference();
         writer.write_bson_line(&doc_bson).await.expect("write chiffre");
         let (mh, mut decipher_data_option) = writer.fermer().await.expect("fermer");
 
-        let mut decipher_data = decipher_data_option.expect("decipher data");
+        let decipher_keys = decipher_data_option.expect("decipher data");
+        let mut decipher_key = decipher_keys.get_cipher_data("dummy").expect("cle");
 
         // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
         assert_ne!(mh.as_str(), &mh_reference);
 
-        decipher_data.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
+        decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
 
         let fichier_cs = Box::new(tokio::fs::File::open(path_fichier.as_path()).await.expect("open read"));
-        let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_data)).expect("reader");
+        let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
         let transactions = reader.read_transactions().await.expect("transactions");
 
         for t in transactions {
@@ -873,6 +878,7 @@ mod test_integration {
 
     use crate::{charger_transaction, MiddlewareDbPki};
     use crate::middleware::preparer_middleware_pki;
+    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
 
     use super::*;
 
@@ -899,7 +905,7 @@ mod test_integration {
     }
 
     #[tokio::test]
-    async fn extraire_transactions() {
+    async fn serialiser_transactions_compressees() {
 
         // let workdir = tempfile::tempdir().expect("tmpdir");
         let workdir = PathBuf::from("/tmp");
@@ -931,4 +937,42 @@ mod test_integration {
         futures.next().await.expect("resultat").expect("ok");
     }
 
+    #[tokio::test]
+    async fn serialiser_transactions_chiffrage() {
+
+        // let workdir = tempfile::tempdir().expect("tmpdir");
+        let workdir = PathBuf::from("/tmp");
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+
+        // Connecter mongo
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        futures.push(tokio::spawn(async move {
+
+            // Test
+            let info = BackupInformation::new(
+                "Pki",
+                "Pki.rust",
+                None,
+                None
+            ).expect("info");
+            let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
+            let mut builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
+
+            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+
+            let mut path_transactions = workdir.clone();
+            path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
+            println!("Sauvegarde transactions sous : {:?}", path_transactions);
+            let resultat = serialiser_transactions(
+                &mut transactions,
+                &mut builder,
+                path_transactions.as_path()
+            ).await.expect("serialiser");
+
+            println!("Resultat extraction transactions : {:?}", resultat);
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
 }

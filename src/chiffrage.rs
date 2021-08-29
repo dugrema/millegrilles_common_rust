@@ -9,6 +9,7 @@ use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
 use std::fmt::{Debug, Formatter};
 use std::error::Error;
+use crate::FingerprintCertPublicKey;
 
 #[derive(Clone, Debug)]
 pub enum FormatChiffrage {
@@ -49,11 +50,18 @@ trait CipherMillegrille {
 pub struct CipherMgs2 {
     encrypter: Crypter,
     iv: String,
+    cles_chiffrees: Vec<FingerprintCleChiffree>,
+}
+
+// Structure qui conserve une cle chiffree pour un fingerprint de certificat
+#[derive(Clone, Debug)]
+pub struct FingerprintCleChiffree {
+    fingerprint: String,
     cle_chiffree: String,
 }
 
 impl CipherMgs2 {
-    pub fn new(public_key: &PKey<Public>) -> Self {
+    pub fn new(public_keys: &Vec<FingerprintCertPublicKey>) -> Self {
         let mut buffer_random = [0u8; 44];
         openssl::rand::rand_bytes(&mut buffer_random);
 
@@ -61,7 +69,15 @@ impl CipherMgs2 {
         let iv = &buffer_random[32..44];
 
         // Chiffrer la cle avec cle publique
-        let cle_chiffree = chiffrer_asymetrique(public_key, &cle);
+        let mut fp_cles = Vec::new();
+        for fp_pk in public_keys {
+            let cle_chiffree = chiffrer_asymetrique(&fp_pk.public_key, &cle);
+            let cle_chiffree_str = encode(Base::Base64, cle_chiffree);
+            fp_cles.push(FingerprintCleChiffree {
+                fingerprint: fp_pk.fingerprint.clone(),
+                cle_chiffree: cle_chiffree_str}
+            );
+        }
 
         let mut encrypter = Crypter::new(
             Cipher::aes_256_gcm(),
@@ -73,7 +89,7 @@ impl CipherMgs2 {
         CipherMgs2 {
             encrypter,
             iv: encode(Base::Base64, iv),
-            cle_chiffree: encode(Base::Base64, cle_chiffree)
+            cles_chiffrees: fp_cles,
         }
     }
 
@@ -101,15 +117,12 @@ impl CipherMgs2 {
         }
     }
 
-    pub fn get_cipher_data(&self) -> Result<Mgs2CipherData, String> {
-        match Mgs2CipherData::new(
-            &self.cle_chiffree,
-            &self.iv,
-            &self.get_tag()?,
-        ) {
-            Ok(m) => Ok(m),
-            Err(e) => Err(format!("Erreur get_cipher_data {:?}", e)),
-        }
+    pub fn get_cipher_keys(&self) -> Result<Mgs2CipherKeys, String> {
+        Ok(Mgs2CipherKeys::new(
+            self.cles_chiffrees.clone(),
+            self.iv.clone(),
+            self.get_tag()?.clone(),
+        ))
     }
 
 }
@@ -166,6 +179,65 @@ impl DecipherMgs2 {
 
 }
 
+#[derive(Clone, Debug)]
+pub struct Mgs2CipherKeys {
+    cles_chiffrees: Vec<FingerprintCleChiffree>,
+    iv: String,
+    tag: String,
+}
+
+impl Mgs2CipherKeys {
+    pub fn new(cles_chiffrees: Vec<FingerprintCleChiffree>, iv: String, tag: String) -> Self {
+        Mgs2CipherKeys { cles_chiffrees, iv, tag }
+    }
+
+    pub fn get_cipher_data(&self, fingerprint: &str) -> Result<Mgs2CipherData, Box<dyn Error>> {
+        let mut cle = self.cles_chiffrees.iter().filter(|c| c.fingerprint == fingerprint);
+        match cle.next() {
+            Some(c) => {
+                Ok(Mgs2CipherData::new(&c.cle_chiffree, &self.iv, &self.tag)?)
+            },
+            None => Err(format!("Cle introuvable : {}", fingerprint))?,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Mgs2CipherData {
+    cle_chiffree: Vec<u8>,
+    cle_dechiffree: Option<Vec<u8>>,
+    iv: Vec<u8>,
+    tag: Vec<u8>,
+}
+
+impl Mgs2CipherData {
+    pub fn new(cle_chiffree: &String, iv: &String, tag: &String) -> Result<Self, Box<dyn Error>> {
+        let cle_chiffree_bytes: Vec<u8> = decode(cle_chiffree)?.1;
+        let iv_bytes: Vec<u8> = decode(iv)?.1;
+        let tag_bytes: Vec<u8> = decode(tag)?.1;
+
+        Ok(Mgs2CipherData {
+            cle_chiffree: cle_chiffree_bytes,
+            cle_dechiffree: None,
+            iv: iv_bytes,
+            tag: tag_bytes
+        })
+    }
+
+    pub fn dechiffrer_cle(&mut self, cle_privee: &PKey<Private>) -> Result<(), Box<dyn Error>> {
+        let cle_dechiffree = dechiffrer_asymetrique(cle_privee, self.cle_chiffree.as_slice());
+        self.cle_dechiffree = Some(cle_dechiffree);
+
+        Ok(())
+    }
+}
+
+impl Debug for Mgs2CipherData {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("Mgs2CipherData iv: {:?}, tag: {:?}", self.iv, self.tag).as_str())
+    }
+}
+
 #[cfg(test)]
 mod backup_tests {
     use super::*;
@@ -216,7 +288,8 @@ mod backup_tests {
     fn roundtrip_chiffrage() {
         // Cles
         let (cle_publique, cle_privee) = charger_cles();
-        let mut cipher = CipherMgs2::new(&cle_publique);
+        let fp_cles = vec![FingerprintCertPublicKey::new(String::from("dummy"), cle_publique)];
+        let mut cipher = CipherMgs2::new(&fp_cles);
 
         // Chiffrer
         // println!("Crypter avec info\niv: {}\ncle chiffree: {}", cipher.iv, cipher.cle_chiffree);
@@ -233,11 +306,13 @@ mod backup_tests {
         // println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
 
         // Dechiffrer
-        let mut cipher_data = Mgs2CipherData::new(
-            &cipher.cle_chiffree,
-            &cipher.iv,
-            &tag,
-        ).expect("cipher_data");
+        let cipher_keys = cipher.get_cipher_keys().expect("keys");
+        let mut cipher_data = cipher_keys.get_cipher_data("dummy").expect("cle dummy");
+        // let mut cipher_data = Mgs2CipherData::new(
+        //     &cipher.cle_chiffree,
+        //     &cipher.iv,
+        //     &tag,
+        // ).expect("cipher_data");
         cipher_data.dechiffrer_cle(&cle_privee).expect("Dechiffrer cle");
         let mut dechiffreur = DecipherMgs2::new(&cipher_data).expect("dechiffreur");
 
@@ -251,40 +326,4 @@ mod backup_tests {
 
     }
 
-}
-
-#[derive(Clone)]
-pub struct Mgs2CipherData {
-    cle_chiffree: Vec<u8>,
-    cle_dechiffree: Option<Vec<u8>>,
-    iv: Vec<u8>,
-    tag: Vec<u8>,
-}
-
-impl Mgs2CipherData {
-    pub fn new(cle_chiffree: &String, iv: &String, tag: &String) -> Result<Self, Box<dyn Error>> {
-        let cle_chiffree_bytes: Vec<u8> = decode(cle_chiffree)?.1;
-        let iv_bytes: Vec<u8> = decode(iv)?.1;
-        let tag_bytes: Vec<u8> = decode(tag)?.1;
-
-        Ok(Mgs2CipherData {
-            cle_chiffree: cle_chiffree_bytes,
-            cle_dechiffree: None,
-            iv: iv_bytes,
-            tag: tag_bytes
-        })
-    }
-
-    pub fn dechiffrer_cle(&mut self, cle_privee: &PKey<Private>) -> Result<(), Box<dyn Error>> {
-        let cle_dechiffree = dechiffrer_asymetrique(cle_privee, self.cle_chiffree.as_slice());
-        self.cle_dechiffree = Some(cle_dechiffree);
-
-        Ok(())
-    }
-}
-
-impl Debug for Mgs2CipherData {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("Mgs2CipherData iv: {:?}, tag: {:?}", self.iv, self.tag).as_str())
-    }
 }
