@@ -51,7 +51,7 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
         path_fichier_transactions.push(PathBuf::from("transactions.xz"));
 
         let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
-        serialiser_transactions(&mut curseur, &mut builder, path_fichier_transactions.as_path()).await?;
+        serialiser_transactions(&mut curseur, &mut builder, path_fichier_transactions.as_path(), None).await?;
 
         let catalogue_horaire = uploader_backup(builder).await?;
 
@@ -171,11 +171,15 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
 async fn serialiser_transactions(
     curseur: &mut Cursor,
     builder: &mut CatalogueHoraireBuilder,
-    path_transactions: &Path
+    path_transactions: &Path,
+    certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>
 ) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
 
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
-    let mut transaction_writer = TransactionWriter::new(path_transactions, None).await?;
+    let mut transaction_writer = TransactionWriter::new(
+        path_transactions,
+        certificats_chiffrage
+    ).await?;
 
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
@@ -221,7 +225,7 @@ struct BackupInformation {
     /// Nom complet de la collection de transactions mongodb
     nom_collection_transactions: String,
     /// Options de chiffrage
-    chiffrage: Option<FormatChiffrage>,
+    certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>,
     /// Path de travail pour conserver les fichiers temporaires de chiffrage
     workpath: PathBuf,
     /// Identificateur unique du backup (collateur)
@@ -283,7 +287,7 @@ impl BackupInformation {
     pub fn new(
         nom_domaine: &str,
         nom_collection_transactions: &str,
-        chiffrage: Option<FormatChiffrage>,
+        certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>,
         workpath: Option<PathBuf>
     ) -> Result<BackupInformation, Box<dyn Error>> {
 
@@ -302,7 +306,7 @@ impl BackupInformation {
         Ok(BackupInformation {
             nom_domaine: nom_domaine.to_owned(),
             nom_collection_transactions: nom_collection_transactions.to_owned(),
-            chiffrage,
+            certificats_chiffrage,
             workpath: workpath_inner,
             uuid_backup,
             tmp_workdir,
@@ -668,7 +672,7 @@ mod backup_tests {
 
         assert_eq!(&info.nom_collection_transactions, NOM_COLLECTION_BACKUP);
         assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
-        assert_eq!(info.chiffrage.is_none(), true);
+        assert_eq!(info.certificats_chiffrage.is_none(), true);
         assert_eq!(workpath.starts_with("/tmp/."), true);
     }
 
@@ -927,7 +931,8 @@ mod test_integration {
             let resultat = serialiser_transactions(
                 &mut transactions,
                 &mut builder,
-                path_transactions.as_path()
+                path_transactions.as_path(),
+                None
             ).await.expect("serialiser");
 
             println!("Resultat extraction transactions : {:?}", resultat);
@@ -944,6 +949,10 @@ mod test_integration {
         let workdir = PathBuf::from("/tmp");
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
 
+        let certificats_chiffrage = vec! [
+            FingerprintCertPublicKey::new(String::from("dummy"), enveloppe.cle_publique().clone())
+        ];
+
         // Connecter mongo
         let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
         futures.push(tokio::spawn(async move {
@@ -952,7 +961,7 @@ mod test_integration {
             let info = BackupInformation::new(
                 "Pki",
                 "Pki.rust",
-                None,
+                Some(certificats_chiffrage.clone()),
                 None
             ).expect("info");
             let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
@@ -966,7 +975,8 @@ mod test_integration {
             let resultat = serialiser_transactions(
                 &mut transactions,
                 &mut builder,
-                path_transactions.as_path()
+                path_transactions.as_path(),
+                Some(certificats_chiffrage)
             ).await.expect("serialiser");
 
             println!("Resultat extraction transactions : {:?}", resultat);
