@@ -26,6 +26,7 @@ use crate::{CipherMgs2, DecipherMgs2, CollectionCertificatsPem, DateEpochSeconds
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use openssl::pkey::{PKey, Private};
+use async_trait::async_trait;
 
 const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 
@@ -35,22 +36,22 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
     let workdir = tempfile::tempdir()?;
 
     let info_backup = BackupInformation::new(
-        "domaine_dummy".to_owned(),
-        nom_collection.to_owned(),
+        "domaine_dummy",
+        nom_collection,
         None,
         Some(workdir.path().to_owned())
     )?;
 
     // Generer liste builders domaine/heures
-    let builders = grouper_backups(middleware, nom_collection, &workdir)?;
+    let builders = grouper_backups(middleware, &info_backup, &workdir).await?;
 
-    for builder in builders {
+    for mut builder in builders {
         // Creer fichier de transactions
         let mut path_fichier_transactions = info_backup.workpath.clone();
         path_fichier_transactions.push(PathBuf::from("transactions.xz"));
 
         let mut curseur = requete_transactions(middleware, nom_collection, &builder).await?;
-        serialiser_transactions(&mut curseur, &builder, path_fichier_transactions.as_path()).await?;
+        serialiser_transactions(&mut curseur, &mut builder, path_fichier_transactions.as_path()).await?;
 
         let catalogue_horaire = uploader_backup(builder).await?;
 
@@ -64,19 +65,76 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
     Ok(())
 }
 
-fn grouper_backups(middleware: &impl MongoDao, nom_collection: &str, workdir: &TempDir) -> Result<Vec<CatalogueHoraireBuilder>, Box<dyn Error>> {
+async fn grouper_backups(middleware: &impl MongoDao, backup_information: &BackupInformation, workdir: &TempDir) -> Result<Vec<CatalogueHoraireBuilder>, Box<dyn Error>> {
+
+    let nom_collection = &backup_information.nom_collection_transactions;
 
     let collection = middleware.get_collection(nom_collection)?;
-    let pipeline = doc! {
-        TRANSACTION_CHAMP_BACKUP_FLAG: false,
-        TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
-    };
+    let pipeline = vec! [
+        doc! {"$match": {
+            TRANSACTION_CHAMP_BACKUP_FLAG: false,
+            TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
+            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
+        }},
 
-    // let curseur = collection.aggregate(pipeline, None)?;
+        // Grouper par domaines et heure
+        doc! {"$group": {
+            "_id": {
+                "domaine": "$en-tete.domaine",
+                "sousdomaine": {"$slice": [
+                    {"$split": ["$en-tete.domaine", "."]},
+                    {"$add": [{"$size": {"$split": ["$en-tete.domaine", "."]}}, -1]}
+                ]},
+                "heure": {
+                    "year": {"$year": "$_evenements.transaction_traitee"},
+                    "month": {"$month": "$_evenements.transaction_traitee"},
+                    "day": {"$dayOfMonth": "$_evenements.transaction_traitee"},
+                    "hour": {"$hour": "$_evenements.transaction_traitee"},
+                }
+            },
+            "sousdomaine": {
+                "$addToSet": {
+                    "$slice": [
+                        {"$split": ["$en-tete.domaine", "."]},
+                        {"$add": [{"$size": {"$split": ["$en-tete.domaine", "."]}}, -1]}
+                    ]
+                }
+            },
+        }},
 
-    let builders = Vec::new();
+        // Trier par heure
+        doc! {"$sort": {"_id.heure": 1}},
+    ];
 
-    todo!("Separer sous-domaines");
+    let mut curseur = collection.aggregate(pipeline, None).await?;
+
+    let mut builders = Vec::new();
+
+    while let Some(entree) = curseur.next().await {
+        println!("Entree aggregation : {:?}", entree);
+        let tmp_id = entree?;
+        let info_id = tmp_id.get("_id").expect("id").as_document().expect("doc id");
+
+        let sousdomaine = info_id.get("sousdomaine").expect("domaine").as_array().expect("array");
+        let sousdomaines_str = sousdomaine.iter().map(|d| d.as_str().expect("str"));
+        let mut sousdomaine_vec = Vec::new();
+        for s in sousdomaines_str {
+            sousdomaine_vec.push(s)
+        }
+        let sousdomaine_str = sousdomaine_vec.as_slice().join(".");
+        println!("Resultat : {:?}", sousdomaine_str);
+
+        let doc_heure = info_id.get("heure").expect("heure").as_document().expect("doc heure");
+        let annee = doc_heure.get("year").expect("year").as_i32().expect("i32");
+        let mois = doc_heure.get("month").expect("month").as_i32().expect("i32") as u32;
+        let jour = doc_heure.get("day").expect("day").as_i32().expect("i32") as u32;
+        let heure = doc_heure.get("hour").expect("hour").as_i32().expect("i32") as u32;
+
+        let date = DateEpochSeconds::from_heure(annee, mois, jour, heure);
+
+        let builder = CatalogueHoraireBuilder::new(date, sousdomaine_str.to_owned(), backup_information.uuid_backup.clone());
+        builders.push(builder);
+    }
 
     Ok(builders)
 }
@@ -103,22 +161,23 @@ async fn requete_transactions(middleware: &impl MongoDao, nom_collection: &str, 
     Ok(curseur)
 }
 
-async fn serialiser_transactions(curseur: &mut Cursor, builder: &CatalogueHoraireBuilder, path_transactions: &Path) -> Result<(), Box<dyn Error>> {
+async fn serialiser_transactions(curseur: &mut Cursor, builder: &mut CatalogueHoraireBuilder, path_transactions: &Path) -> Result<(), Box<dyn Error>> {
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
     let mut transaction_writer = TransactionWriter::new(path_transactions, None).await?;
 
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
+        let entete = d.get("en-tete").expect("en-tete").as_document().expect("document");
+        let uuid_transaction = entete.get("uuid_transaction").expect("uuid-transaction").to_string();
+
         // Serialiser transaction
+        transaction_writer.write_bson_line(&d).await?;
 
         // Ajouter uuid_transaction dans info
+        builder.ajouter_transaction(uuid_transaction);
     }
 
     Ok(())
-}
-
-async fn serialiser_transaction(document: Document, builder: &CatalogueHoraireBuilder) {
-
 }
 
 async fn uploader_backup(builder: CatalogueHoraireBuilder) -> Result<CatalogueHoraire, Box<dyn Error>> {
@@ -210,8 +269,8 @@ impl BackupInformation {
 
     /// Creation d'une nouvelle structure de backup
     pub fn new(
-        nom_domaine: String,
-        nom_collection_transactions: String,
+        nom_domaine: &str,
+        nom_collection_transactions: &str,
         chiffrage: Option<FormatChiffrage>,
         workpath: Option<PathBuf>
     ) -> Result<BackupInformation, Box<dyn Error>> {
@@ -229,8 +288,8 @@ impl BackupInformation {
         let uuid_backup = Uuid::new_v4().to_string();
 
         Ok(BackupInformation {
-            nom_domaine,
-            nom_collection_transactions,
+            nom_domaine: nom_domaine.to_owned(),
+            nom_collection_transactions: nom_collection_transactions.to_owned(),
             chiffrage,
             workpath: workpath_inner,
             uuid_backup,
@@ -588,8 +647,8 @@ mod backup_tests {
     #[test]
     fn init_backup_information() {
         let info = BackupInformation::new(
-            NOM_DOMAINE_BACKUP.to_owned(),
-            NOM_COLLECTION_BACKUP.to_owned(),
+            NOM_DOMAINE_BACKUP,
+            NOM_COLLECTION_BACKUP,
             None,
             None
         ).expect("init");
@@ -796,3 +855,32 @@ mod backup_tests {
     }
 }
 
+#[cfg(test)]
+mod test_integration {
+    use super::*;
+    use crate::middleware::preparer_middleware_pki;
+    use crate::MiddlewareDbPki;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn grouper_transactions() {
+        // Connecter mongo
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        futures.push(tokio::spawn(async move {
+
+            // Test
+            let info = BackupInformation::new("Pki", "Pki.rust", None, None).expect("info");
+
+            let workdir = tempfile::tempdir().expect("tmpdir");
+            let groupes = grouper_backups(
+                middleware.as_ref(), &info, &workdir
+            ).await.expect("groupes");
+
+            println!("Groupes : {:?}", groupes);
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+
+}
