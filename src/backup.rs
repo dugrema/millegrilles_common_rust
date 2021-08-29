@@ -5,28 +5,28 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+use async_trait::async_trait;
 use bson::Document;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use log::{debug, error, info, warn};
 use mongodb::bson::doc;
 use mongodb::Cursor;
-use mongodb::options::{FindOptions, AggregateOptions, Hint};
+use mongodb::options::{AggregateOptions, FindOptions, Hint};
 use multibase::Base;
 use multihash::Code;
+use openssl::pkey::{PKey, Private};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File;
-use tokio::io::{AsyncWriteExt, BufWriter, AsyncRead, AsyncReadExt};
-use tokio_stream::{StreamExt, Iter};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio_stream::{Iter, StreamExt};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, DecipherMgs2, CollectionCertificatsPem, DateEpochSeconds, Entete, EnveloppeCertificat, FormatChiffrage, Hacheur, MongoDao, Mgs2CipherData};
+use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FormatChiffrage, Hacheur, Mgs2CipherData, MongoDao};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
-use openssl::pkey::{PKey, Private};
-use async_trait::async_trait;
 
 const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 
@@ -43,7 +43,7 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
     )?;
 
     // Generer liste builders domaine/heures
-    let builders = grouper_backups(middleware, &info_backup, &workdir).await?;
+    let builders = grouper_backups(middleware, &info_backup).await?;
 
     for mut builder in builders {
         // Creer fichier de transactions
@@ -65,7 +65,8 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
     Ok(())
 }
 
-async fn grouper_backups(middleware: &impl MongoDao, backup_information: &BackupInformation, workdir: &TempDir) -> Result<Vec<CatalogueHoraireBuilder>, Box<dyn Error>> {
+/// Identifie les sousdomaines/heures a inclure dans le backup.
+async fn grouper_backups(middleware: &impl MongoDao, backup_information: &BackupInformation) -> Result<Vec<CatalogueHoraireBuilder>, Box<dyn Error>> {
 
     let nom_collection = &backup_information.nom_collection_transactions;
 
@@ -167,7 +168,12 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     Ok(curseur)
 }
 
-async fn serialiser_transactions(curseur: &mut Cursor, builder: &mut CatalogueHoraireBuilder, path_transactions: &Path) -> Result<(), Box<dyn Error>> {
+async fn serialiser_transactions(
+    curseur: &mut Cursor,
+    builder: &mut CatalogueHoraireBuilder,
+    path_transactions: &Path
+) -> Result<(String, Option<Mgs2CipherData>), Box<dyn Error>> {
+
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
     let mut transaction_writer = TransactionWriter::new(path_transactions, None).await?;
 
@@ -183,7 +189,7 @@ async fn serialiser_transactions(curseur: &mut Cursor, builder: &mut CatalogueHo
         builder.ajouter_transaction(uuid_transaction);
     }
 
-    Ok(())
+    transaction_writer.fermer().await
 }
 
 async fn uploader_backup(builder: CatalogueHoraireBuilder) -> Result<CatalogueHoraire, Box<dyn Error>> {
@@ -375,7 +381,7 @@ impl CatalogueHoraireBuilder {
 
 struct TransactionWriter<'a> {
     path_fichier: &'a Path,
-    fichier: tokio::fs::File,
+    fichier: Box<tokio::fs::File>,
     xz_encodeur: stream::Stream,
     hacheur: Hacheur,
     chiffreur: Option<CipherMgs2>,
@@ -401,7 +407,7 @@ impl<'a> TransactionWriter<'a> {
 
         Ok(TransactionWriter {
             path_fichier,
-            fichier: output_file,
+            fichier: Box::new(output_file),
             xz_encodeur,
             hacheur,
             chiffreur,
@@ -863,10 +869,12 @@ mod backup_tests {
 
 #[cfg(test)]
 mod test_integration {
-    use super::*;
-    use crate::middleware::preparer_middleware_pki;
-    use crate::{MiddlewareDbPki, charger_transaction};
     use std::sync::Arc;
+
+    use crate::{charger_transaction, MiddlewareDbPki};
+    use crate::middleware::preparer_middleware_pki;
+
+    use super::*;
 
     #[tokio::test]
     async fn grouper_transactions() {
@@ -879,7 +887,8 @@ mod test_integration {
 
             let workdir = tempfile::tempdir().expect("tmpdir");
             let groupes = grouper_backups(
-                middleware.as_ref(), &info, &workdir
+                middleware.as_ref(),
+                &info
             ).await.expect("groupes");
 
             println!("Groupes : {:?}", groupes);
@@ -891,6 +900,10 @@ mod test_integration {
 
     #[tokio::test]
     async fn extraire_transactions() {
+
+        // let workdir = tempfile::tempdir().expect("tmpdir");
+        let workdir = PathBuf::from("/tmp");
+
         // Connecter mongo
         let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
         futures.push(tokio::spawn(async move {
@@ -898,14 +911,20 @@ mod test_integration {
             // Test
             let info = BackupInformation::new("Pki", "Pki.rust", None, None).expect("info");
             let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
-            let builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
+            let mut builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
 
-            let workdir = tempfile::tempdir().expect("tmpdir");
             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
 
-            while let Some(t) = transactions.next().await {
-                println!("Transaction : {:?}", t);
-            }
+            let mut path_transactions = workdir.clone();
+            path_transactions.push("extraire_transactions.jsonl.xz");
+            println!("Sauvegarde transactions sous : {:?}", path_transactions);
+            let resultat = serialiser_transactions(
+                &mut transactions,
+                &mut builder,
+                path_transactions.as_path()
+            ).await.expect("serialiser");
+
+            println!("Resultat extraction transactions : {:?}", resultat);
 
         }));
         // Execution async du test

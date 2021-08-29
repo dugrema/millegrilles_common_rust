@@ -120,12 +120,13 @@ impl HacheurBuilder {
     }
 }
 
-trait HacheurInterne {
+trait HacheurInterne: Send {
     fn new() -> Self where Self: Sized;
     fn update(&mut self, data: &[u8]);
     fn finalize(&mut self) -> Vec<u8>;
 }
 
+#[derive(Debug)]
 struct HacheurSha2_256 { hacheur: Sha2_256 }
 impl HacheurInterne for HacheurSha2_256 {
     fn new() -> Self { HacheurSha2_256{hacheur: Sha2_256::default()} }
@@ -137,6 +138,7 @@ impl HacheurInterne for HacheurSha2_256 {
     }
 }
 
+#[derive(Debug)]
 struct HacheurSha2_512 { hacheur: Sha2_512 }
 impl HacheurInterne for HacheurSha2_512 {
     fn new() -> Self { HacheurSha2_512{hacheur: Sha2_512::default()} }
