@@ -33,6 +33,7 @@ pub fn securite_str(securite: &Securite) -> &'static str {
 // Global
 
 pub const NEW_LINE_BYTE: u8 = 0x0A;
+pub const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 
 // Evenements globaux
 pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
@@ -79,3 +80,8 @@ pub const PKI_TRANSACTION_NOUVEAU_CERTIFICAT: &str = PKI_COMMANDE_NOUVEAU_CERTIF
 pub const PKI_DOCUMENT_CHAMP_FINGERPRINT: &str = "fingerprint";
 pub const PKI_DOCUMENT_CHAMP_FINGERPRINT_PK: &str = "fingerprint_pk";
 pub const PKI_DOCUMENT_CHAMP_CERTIFICAT: &str = "certificat";
+
+
+// Maitre des cles
+pub const MAITREDESCLES_CHAMP_HACHAGE_BYTES: &str = "hachage_bytes";
+pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";

@@ -10,6 +10,8 @@ use openssl::hash::MessageDigest;
 use std::fmt::{Debug, Formatter};
 use std::error::Error;
 use crate::FingerprintCertPublicKey;
+use std::iter::Map;
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub enum FormatChiffrage {
@@ -200,6 +202,33 @@ impl Mgs2CipherKeys {
             None => Err(format!("Cle introuvable : {}", fingerprint))?,
         }
     }
+
+    pub fn get_commande_sauvegarder_cles(
+        &self,
+        hachage_bytes: &str,
+        domaine: &str,
+        identificateurs_document: HashMap<String, String>
+    ) -> CommandeSauvegarderCle {
+        CommandeSauvegarderCle {
+            hachage_bytes: hachage_bytes.to_owned(),
+            cles: self.cles_chiffrees.to_owned(),
+            iv: self.iv.clone(),
+            tag: self.tag.clone(),
+            format: FormatChiffrage::Mgs2,
+            domaine: domaine.to_owned(),
+            identificateurs_document,
+        }
+    }
+}
+
+pub struct CommandeSauvegarderCle {
+    hachage_bytes: String,
+    cles: Vec<FingerprintCleChiffree>,
+    iv: String,
+    tag: String,
+    format: FormatChiffrage,
+    domaine: String,
+    identificateurs_document: HashMap<String, String>,
 }
 
 #[derive(Clone)]

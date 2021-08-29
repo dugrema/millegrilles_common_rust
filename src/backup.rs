@@ -1,4 +1,3 @@
-// use std::fs::File;
 use std::{io, io::Write};
 use std::cmp::min;
 use std::collections::HashMap;
@@ -24,11 +23,10 @@ use tokio_stream::{Iter, StreamExt};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FormatChiffrage, Hacheur, Mgs2CipherData, MongoDao, FingerprintCertPublicKey, Mgs2CipherKeys};
+use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FingerprintCertPublicKey, FormatChiffrage, Hacheur, Mgs2CipherData, Mgs2CipherKeys, MongoDao, FingerprintCleChiffree, CommandeSauvegarderCle};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
-
-const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
+use std::iter::Map;
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<(), Box<dyn Error>> {
@@ -51,9 +49,28 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
         path_fichier_transactions.push(PathBuf::from("transactions.xz"));
 
         let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
-        serialiser_transactions(&mut curseur, &mut builder, path_fichier_transactions.as_path(), None).await?;
+        let cipher_keys = serialiser_transactions(&mut curseur, &mut builder, path_fichier_transactions.as_path(), None).await?;
 
-        let catalogue_horaire = uploader_backup(builder).await?;
+        let transaction_maitredescles = match cipher_keys {
+            Some(k) => {
+                let mut identificateurs_document = HashMap::new();
+                identificateurs_document.insert(String::from("domaine"), builder.nom_domaine.clone());
+                identificateurs_document.insert(String::from("heure"), String::from("...heure..."));
+
+                let commande = k.get_commande_sauvegarder_cles(
+                    builder.transactions_hachage.as_str(),
+                    "Backup",
+                    identificateurs_document
+                );
+                Some(commande)
+            },
+            None => None,
+        };
+
+        // Generer catalogue
+        let catalogue_horaire = builder.build();
+
+        let catalogue_horaire = uploader_backup(catalogue_horaire, transaction_maitredescles).await?;
 
         // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
         todo!("soumettre catalogue horaire");
@@ -204,9 +221,7 @@ async fn serialiser_transactions(
     Ok(cipher_keys)
 }
 
-async fn uploader_backup(builder: CatalogueHoraireBuilder) -> Result<CatalogueHoraire, Box<dyn Error>> {
-    let catalogue = builder.build();
-
+async fn uploader_backup(catalogue: CatalogueHoraire, commande_cles: Option<CommandeSauvegarderCle>) -> Result<CatalogueHoraire, Box<dyn Error>> {
     // Conserver hachage transactions dans info
 
     // Build et serialiser catalogue + transaction maitre des cles
@@ -421,7 +436,7 @@ impl<'a> TransactionWriter<'a> {
         let output_file = tokio::fs::File::create(path_fichier).await?;
         // let xz_encodeur = XzEncoder::new(output_file, 9);
         let xz_encodeur = stream::Stream::new_easy_encoder(9, stream::Check::Crc64).expect("stream");
-        let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base64).build();
+        let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base58Btc).build();
 
         let chiffreur = match certificats_chiffrage {
             Some(c) => {
@@ -897,8 +912,8 @@ mod test_integration {
     use std::sync::Arc;
 
     use crate::{charger_transaction, MiddlewareDbPki};
-    use crate::middleware::preparer_middleware_pki;
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
+    use crate::middleware::preparer_middleware_pki;
 
     use super::*;
 
@@ -917,7 +932,7 @@ mod test_integration {
                 &info
             ).await.expect("groupes");
 
-            println!("Groupes : {:?}", groupes);
+            // println!("Groupes : {:?}", groupes);
 
         }));
         // Execution async du test
@@ -943,7 +958,7 @@ mod test_integration {
 
             let mut path_transactions = workdir.clone();
             path_transactions.push("extraire_transactions.jsonl.xz");
-            println!("Sauvegarde transactions sous : {:?}", path_transactions);
+            // println!("Sauvegarde transactions sous : {:?}", path_transactions);
             let resultat = serialiser_transactions(
                 &mut transactions,
                 &mut builder,
@@ -951,7 +966,7 @@ mod test_integration {
                 None
             ).await.expect("serialiser");
 
-            println!("Resultat extraction transactions : {:?}", resultat);
+            // println!("Resultat extraction transactions : {:?}", resultat);
 
         }));
         // Execution async du test
@@ -986,7 +1001,7 @@ mod test_integration {
 
             let mut path_transactions = workdir.clone();
             path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
-            println!("Sauvegarde transactions sous : {:?}", path_transactions);
+            // println!("Sauvegarde transactions sous : {:?}", path_transactions);
             let resultat = serialiser_transactions(
                 &mut transactions,
                 &mut builder,
@@ -994,10 +1009,16 @@ mod test_integration {
                 Some(certificats_chiffrage)
             ).await.expect("serialiser");
 
-            println!("Resultat extraction transactions : {:?}\nCatalogue: {:?}", resultat, builder);
+            // println!("Resultat extraction transactions : {:?}\nCatalogue: {:?}", resultat, builder);
 
         }));
         // Execution async du test
         futures.next().await.expect("resultat").expect("ok");
     }
+
+    #[tokio::test]
+    async fn uploader_backup_horaire() {
+
+    }
+
 }
