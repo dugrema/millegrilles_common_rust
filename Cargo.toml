@@ -20,6 +20,7 @@ xz2 = { version = "0.1.6", features = ["tokio"] }
 async-trait = "0.1.51"
 tokio = { version = "1.9.0", features = ["full"] }
 tokio-stream = { version = "0.1.7" }
+tokio-util = { version = "*", features = ["codec"] }
 
 # Crypto et certs
 openssl = { version = "0.10.29", features = ["vendored"] }

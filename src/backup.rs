@@ -23,10 +23,15 @@ use tokio_stream::{Iter, StreamExt};
 use uuid::Uuid;
 use xz2::stream;
 
+use tokio_util::codec::{BytesCodec, FramedRead};
+use futures::stream::TryStreamExt;
+use reqwest::multipart::Part;
+
 use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FingerprintCertPublicKey, FormatChiffrage, Hacheur, Mgs2CipherData, Mgs2CipherKeys, MongoDao, FingerprintCleChiffree, CommandeSauvegarderCle, ValidateurX509, FichierWriter, MessageJson, Formatteur, MessageSigne};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use std::iter::Map;
+use reqwest::Body;
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collection: &str) -> Result<(), Box<dyn Error>> {
@@ -256,7 +261,10 @@ async fn serialiser_catalogue(
 
             let value_commande: Value = serde_json::to_value(commande_maitredescles).expect("commande");
             let msg_commande = MessageJson::new(value_commande);
-            let commande_signee = middleware.formatter_value(&msg_commande, Some("MaitreDesCles.nouvelleCle")).expect("signature");
+            let commande_signee = middleware.formatter_value(
+                &msg_commande,
+                Some("MaitreDesCles.nouvelleCle")
+            ).expect("signature");
 
             Some(commande_signee)
         },
@@ -643,6 +651,20 @@ impl<'a> TransactionReader<'a> {
 
 }
 
+async fn file_to_part(filename: &str, file: File) -> Part {
+    let metadata = &file.metadata().await.expect("md");
+    let len = metadata.len();
+
+    let stream = FramedRead::new(file, BytesCodec::new());
+
+    let body = Body::wrap_stream(stream);
+
+    Part::stream_with_length(body, len)
+        .mime_str("application/xz").expect("mimetype")
+        .file_name(filename.to_owned())
+
+}
+
 #[cfg(test)]
 mod backup_tests {
     use serde_json::json;
@@ -1002,6 +1024,30 @@ mod test_integration {
             .https_only(true)
             .use_rustls_tls()
             .build().expect("client");
+
+        let catalogue_heure = DateEpochSeconds::now();
+        let timestamp_backup = catalogue_heure.get_datetime().timestamp().to_string();
+
+        let workdir = PathBuf::from("/tmp");
+
+        let mut path_transactions: PathBuf = workdir.clone();
+        path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
+        let fichier_transactions = File::open(path_transactions.as_path()).await.expect("open");
+
+        let mut path_catalogue: PathBuf = workdir.clone();
+        path_catalogue.push("extraire_transactions_catalogue.json.xz");
+        let fichier_catalogue = File::open(path_catalogue.as_path()).await.expect("open");
+
+        let form = reqwest::multipart::Form::new()
+            .text("timestamp_backup", timestamp_backup)
+            .part("transactions", file_to_part("transactions.jsonl.xz.mgs2", fichier_transactions).await)
+            .part("catalogue", file_to_part("catalogue.json.xz", fichier_catalogue).await);
+
+        let mut request = client.put("https://mg-dev4:3021/backup/domaine/nom_catalogue.json.xz")
+            .multipart(form);
+
+        let resultat = request.send().await.expect("resultat");
+        println!("Resultat : {:?}", resultat);
 
         // let res = client.get("https://mg-dev4:3021/backup/listeDomaines")
         //     //.body("the exact body that is sent")
