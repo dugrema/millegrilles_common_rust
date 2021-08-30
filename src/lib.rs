@@ -13,6 +13,7 @@ pub mod verificateur;
 pub mod transactions;
 pub mod backup;
 pub mod chiffrage;
+pub mod fichiers;
 
 pub use certificats::*;
 pub use configuration::*;
@@ -29,3 +30,4 @@ pub use verificateur::*;
 pub use transactions::*;
 pub use backup::*;
 pub use chiffrage::*;
+pub use fichiers::*;

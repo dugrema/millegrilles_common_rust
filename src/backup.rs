@@ -23,13 +23,13 @@ use tokio_stream::{Iter, StreamExt};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FingerprintCertPublicKey, FormatChiffrage, Hacheur, Mgs2CipherData, Mgs2CipherKeys, MongoDao, FingerprintCleChiffree, CommandeSauvegarderCle};
+use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FingerprintCertPublicKey, FormatChiffrage, Hacheur, Mgs2CipherData, Mgs2CipherKeys, MongoDao, FingerprintCleChiffree, CommandeSauvegarderCle, ValidateurX509, FichierWriter};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use std::iter::Map;
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<(), Box<dyn Error>> {
+pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collection: &str) -> Result<(), Box<dyn Error>> {
 
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
@@ -49,7 +49,7 @@ pub async fn backup(middleware: &impl MongoDao, nom_collection: &str) -> Result<
         path_fichier_transactions.push(PathBuf::from("transactions.xz"));
 
         let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
-        let cipher_keys = serialiser_transactions(&mut curseur, &mut builder, path_fichier_transactions.as_path(), None).await?;
+        let cipher_keys = serialiser_transactions(middleware, &mut curseur, &mut builder, path_fichier_transactions.as_path(), None).await?;
 
         let transaction_maitredescles = match cipher_keys {
             Some(k) => {
@@ -190,6 +190,7 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
 }
 
 async fn serialiser_transactions(
+    middleware: &(impl ValidateurX509),
     curseur: &mut Cursor,
     builder: &mut CatalogueHoraireBuilder,
     path_transactions: &Path,
@@ -205,12 +206,19 @@ async fn serialiser_transactions(
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
         let entete = d.get("en-tete").expect("en-tete").as_document().expect("document");
-        let uuid_transaction = entete.get("uuid_transaction").expect("uuid-transaction").to_string();
+        let uuid_transaction = entete.get(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("uuid-transaction").to_string();
+        let fingerprint_certificat = entete.get(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint certificat").to_string();
+
+        // Trouver certificat et ajouter au catalogue
+        match middleware.get_certificat(fingerprint_certificat.as_str()).await {
+            Some(c) => builder.ajouter_certificat(c.as_ref()),
+            None => (),
+        }
 
         // Serialiser transaction
         transaction_writer.write_bson_line(&d).await?;
 
-        // Ajouter uuid_transaction dans info
+        // Ajouter uuid_transaction dans catalogue
         builder.ajouter_transaction(uuid_transaction);
     }
 
@@ -376,7 +384,7 @@ impl CatalogueHoraireBuilder {
         }
     }
 
-    fn ajouter_certificat(&mut self, certificat: EnveloppeCertificat) {
+    fn ajouter_certificat(&mut self, certificat: &EnveloppeCertificat) {
         self.certificats.ajouter_certificat(certificat).expect("certificat");
     }
 
@@ -421,75 +429,14 @@ impl CatalogueHoraireBuilder {
 }
 
 struct TransactionWriter<'a> {
-    path_fichier: &'a Path,
-    fichier: Box<tokio::fs::File>,
-    xz_encodeur: stream::Stream,
-    hacheur: Hacheur,
-    chiffreur: Option<CipherMgs2>,
+    fichier_writer: FichierWriter<'a>,
 }
 
 impl<'a> TransactionWriter<'a> {
 
-    const BUFFER_SIZE: usize = 64 * 1024;
-
     pub async fn new(path_fichier: &'a Path, certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>) -> Result<TransactionWriter<'a>, Box<dyn Error>> {
-        let output_file = tokio::fs::File::create(path_fichier).await?;
-        // let xz_encodeur = XzEncoder::new(output_file, 9);
-        let xz_encodeur = stream::Stream::new_easy_encoder(9, stream::Check::Crc64).expect("stream");
-        let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base58Btc).build();
-
-        let chiffreur = match certificats_chiffrage {
-            Some(c) => {
-                Some(CipherMgs2::new(&c))
-            },
-            None => None,
-        };
-
-        Ok(TransactionWriter {
-            path_fichier,
-            fichier: Box::new(output_file),
-            xz_encodeur,
-            hacheur,
-            chiffreur,
-        })
-    }
-
-    pub async fn write_bytes(&mut self, contenu: &[u8]) -> Result<usize, Box<dyn Error>> {
-
-        let chunks = contenu.chunks(TransactionWriter::BUFFER_SIZE);
-        let mut chunks = tokio_stream::iter(chunks);
-
-        // Preparer vecteur pour recevoir data compresse (avant chiffrage) pour output vers fichier
-        let mut buffer_chiffre = [0u8; TransactionWriter::BUFFER_SIZE];
-        let mut buffer : Vec<u8> = Vec::new();
-        buffer.reserve(TransactionWriter::BUFFER_SIZE);
-
-        let mut count_bytes = 0usize;
-
-        while let Some(chunk) = chunks.next().await {
-            let status = self.xz_encodeur.process_vec(chunk, &mut buffer, stream::Action::Run)?;
-            if status != stream::Status::Ok {
-                Err(format!("Erreur compression transaction, status {:?}", status))?;
-            }
-
-            let buffer_output = match &mut self.chiffreur {
-                Some(c) => {
-                    let len = c.update(buffer.as_slice(), &mut buffer_chiffre)?;
-                    &buffer_chiffre[..len]
-                },
-                None => buffer.as_slice()
-            };
-
-            // Ajouter au hachage
-            self.hacheur.update(buffer_output);
-
-            // Ecrire dans fichier
-            self.fichier.write_all(buffer_output).await?;
-
-            count_bytes += buffer_output.len();
-        }
-
-        Ok(count_bytes)
+        let fichier_writer = FichierWriter::new(path_fichier, certificats_chiffrage).await?;
+        Ok(TransactionWriter{fichier_writer})
     }
 
     /// Serialise un objet Json (Value) dans le fichier. Ajouter un line feed (\n).
@@ -501,7 +448,7 @@ impl<'a> TransactionWriter<'a> {
         contenu_bytes.push(NEW_LINE_BYTE);
 
         // Write dans le fichier
-        self.write_bytes(contenu_bytes.as_slice()).await
+        self.fichier_writer.write(contenu_bytes.as_slice()).await
     }
 
     pub async fn write_bson_line(&mut self, contenu: &Document) -> Result<usize, Box<dyn Error>> {
@@ -522,56 +469,7 @@ impl<'a> TransactionWriter<'a> {
     }
 
     pub async fn fermer(mut self) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
-        let mut buffer_chiffre = [0u8; TransactionWriter::BUFFER_SIZE];
-        let mut buffer : Vec<u8> = Vec::new();
-        buffer.reserve(TransactionWriter::BUFFER_SIZE);
-
-        // Flush xz
-        while let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)? {
-
-            let buffer_output = match &mut self.chiffreur {
-                Some(c) => {
-                    let len = c.update(buffer.as_slice(), &mut buffer_chiffre)?;
-                    &buffer_chiffre[..len]
-                },
-                None => buffer.as_slice()
-            };
-
-            self.hacheur.update(buffer_output);
-            self.fichier.write_all(buffer_output).await?;
-
-            if status != stream::Status::Ok {
-                if status == stream::Status::MemNeeded {
-                    Err("Erreur generique de creation fichier .xz")?;
-                }
-                break
-            }
-        }
-
-        // Flusher chiffrage (si applicable)
-        match &mut self.chiffreur {
-            Some(c) => {
-                let len = c.finalize(&mut buffer_chiffre)?;
-                if len > 0 {
-                    // Finaliser output
-                    let slice_buffer = &buffer_chiffre[..len];
-                    self.hacheur.update(slice_buffer);
-                    self.fichier.write_all(slice_buffer).await?;
-                }
-            },
-            None => ()
-        }
-
-        // Passer dans le hachage et finir l'ecriture du fichier
-        let hachage = self.hacheur.finalize();
-        self.fichier.flush().await?;
-
-        let cipher_data = match &self.chiffreur {
-            Some(c) => Some(c.get_cipher_keys()?),
-            None => None,
-        };
-
-        Ok((hachage, cipher_data))
+        self.fichier_writer.fermer().await
     }
 
 }
@@ -584,6 +482,8 @@ struct TransactionReader<'a> {
 }
 
 impl<'a> TransactionReader<'a> {
+
+    const BUFFER_SIZE: usize = 65535;
 
     pub fn new(data: Box<impl AsyncRead + Unpin + 'a>, decipher_data: Option<&Mgs2CipherData>) -> Result<Self, Box<dyn Error>> {
 
@@ -607,11 +507,11 @@ impl<'a> TransactionReader<'a> {
 
     /// todo Les transactions sont lues en memoire avant d'etre traitees - changer pour iterator async
     pub async fn read_transactions(&mut self) -> Result<Vec<Value>, Box<dyn Error>> {
-        let mut buffer = [0u8; TransactionWriter::BUFFER_SIZE/2];
+        let mut buffer = [0u8; TransactionReader::BUFFER_SIZE/2];
         let mut xz_output = Vec::new();
-        xz_output.reserve(TransactionWriter::BUFFER_SIZE);
+        xz_output.reserve(TransactionReader::BUFFER_SIZE);
 
-        let mut dechiffrage_output = [0u8; TransactionWriter::BUFFER_SIZE];
+        let mut dechiffrage_output = [0u8; TransactionReader::BUFFER_SIZE];
 
         let mut output_complet = Vec::new();
 
@@ -797,22 +697,11 @@ mod backup_tests {
         let certificat = prep_enveloppe(CERT_DOMAINES);
         // println!("!!! Enveloppe : {:?}", certificat);
 
-        catalogue_builder.ajouter_certificat(certificat);
+        catalogue_builder.ajouter_certificat(&certificat);
 
         let catalogue = catalogue_builder.build();
         // println!("!!! Catalogue : {:?}", catalogue);
         assert_eq!(catalogue.certificats.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn ecrire_bytes_writer() {
-        let path_fichier = PathBuf::from("/tmp/fichier_writer.txt.xz");
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).await.expect("writer");
-
-        writer.write_bytes("Du contenu a ecrire".as_bytes()).await.expect("write");
-
-        let file = writer.fermer().await.expect("fermer");
-        // println!("File du writer : {:?}", file);
     }
 
     #[tokio::test]
@@ -850,7 +739,7 @@ mod backup_tests {
             "date": Utc.timestamp(1629464026, 0),
         };
 
-        (String::from("mE0AISSkaUPMWlq3Zfka8+OHsgO3rTXLdzxFPI9hXRC3G3gnloGR6Ai4xapbdXCY+psL3RinjZQsUnYNrxCENkTXn"), doc_bson)
+        (String::from("z8Vsx9FQ9pnTXuQT41WtY9TBh4a3zDoN7HZXf1c2Q4c8tuhR4TnWn8GCEmoMbRXWdgcXujYWz4M3zdEytDikQKsTE2i"), doc_bson)
     }
 
     #[tokio::test]
@@ -960,6 +849,7 @@ mod test_integration {
             path_transactions.push("extraire_transactions.jsonl.xz");
             // println!("Sauvegarde transactions sous : {:?}", path_transactions);
             let resultat = serialiser_transactions(
+                middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
                 path_transactions.as_path(),
@@ -1003,6 +893,7 @@ mod test_integration {
             path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
             // println!("Sauvegarde transactions sous : {:?}", path_transactions);
             let resultat = serialiser_transactions(
+                middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
                 path_transactions.as_path(),
@@ -1010,6 +901,12 @@ mod test_integration {
             ).await.expect("serialiser");
 
             // println!("Resultat extraction transactions : {:?}\nCatalogue: {:?}", resultat, builder);
+
+            // Serialiser catalogue
+            let catalogue = builder.build();
+            // let catalogue_value = serde_json::to_value(catalogue).expect("value");
+
+            // serde_json::to_writer()
 
         }));
         // Execution async du test
@@ -1023,8 +920,6 @@ mod test_integration {
 
         let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
 
-        println!("Certificat client fourni : {:?}", enveloppe.clecert_pem);
-
         let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
 
         let client = reqwest::Client::builder()
@@ -1034,12 +929,17 @@ mod test_integration {
             .use_rustls_tls()
             .build().expect("client");
 
-        let res = client.get("https://mg-dev4:3021/backup/listeDomaines")
-            //.body("the exact body that is sent")
-            .send()
-            .await.expect("put");
+        // let res = client.get("https://mg-dev4:3021/backup/listeDomaines")
+        //     //.body("the exact body that is sent")
+        //     .send()
+        //     .await.expect("put");
+        //
+        // println!("Response : {:?}", res);
+        // let resultat = res.bytes().await.expect("bytes");
+        // let value: Value = serde_json::from_slice(resultat.as_ref()).expect("to_json");
+        // println!("Resultat : {:?}", value);
 
-        println!("Response : {:?}", res);
+
 
     }
 

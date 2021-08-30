@@ -724,7 +724,7 @@ impl CollectionCertificatsPem {
         }
     }
 
-    pub fn ajouter_certificat(&mut self, certificat: EnveloppeCertificat) -> Result<(), Box<dyn error::Error>> {
+    pub fn ajouter_certificat(&mut self, certificat: &EnveloppeCertificat) -> Result<(), Box<dyn error::Error>> {
         let fingerprint = &certificat.fingerprint;
 
         match self.pems.get(fingerprint) {
@@ -963,7 +963,7 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
     fn collection_pems_1cert() {
         let certificat = prep_enveloppe(CERT_DOMAINES);
         let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(certificat.clone());
+        collection_pems.ajouter_certificat(&certificat);
 
         // println!("!!! Collection pems {:?}", collection_pems);
         assert_eq!(collection_pems.certificats.len(), 1);
@@ -978,8 +978,8 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
         let certificat_domaines = prep_enveloppe(CERT_DOMAINES);
         let certificat_fichiers = prep_enveloppe(CERT_FICHIERS);
         let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(certificat_domaines.clone());
-        collection_pems.ajouter_certificat(certificat_fichiers.clone());
+        collection_pems.ajouter_certificat(&certificat_domaines);
+        collection_pems.ajouter_certificat(&certificat_fichiers);
 
         // println!("!!! Collection pems {:?}", collection_pems);
         assert_eq!(collection_pems.certificats.len(), 2);
@@ -994,7 +994,7 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
     fn collection_serialiser() {
         let certificat = prep_enveloppe(CERT_DOMAINES);
         let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(certificat.clone());
+        collection_pems.ajouter_certificat(&certificat);
 
         let value = serde_json::to_value(collection_pems).expect("json");
 

@@ -221,6 +221,7 @@ impl Mgs2CipherKeys {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct CommandeSauvegarderCle {
     hachage_bytes: String,
     cles: Vec<FingerprintCleChiffree>,
