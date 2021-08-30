@@ -261,10 +261,6 @@ impl ValidateurX509Database {
         self.validateur.entretien();
     }
 
-    async fn charger_cert_db(&self) -> Result<(), String> {
-        Ok(())
-    }
-
     async fn upsert_enveloppe(&self, enveloppe: &EnveloppeCertificat) -> Result<(), String> {
         debug!("Upserting enveloppe");
 
@@ -326,7 +322,7 @@ impl ValidateurX509 for ValidateurX509Database {
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-        debug!("ValidateurX509Database: get_certificat!");
+        debug!("ValidateurX509Database: get_certificat {}", fingerprint);
         match self.validateur.get_certificat(fingerprint).await {
             Some(enveloppe) => Some(enveloppe),
             None => {
@@ -359,12 +355,19 @@ impl ValidateurX509 for ValidateurX509Database {
                                         None => None,
                                     }
                                 },
-                                None => None,
+                                None => {
+                                    println!("Certificat inconnu (pas dans la DB) {:?}", fingerprint);
+                                    None
+                                },
                             },
-                            Err(_) => None,
+                            Err(e) => {
+                                println!("Erreur!!! {:?}", e);
+                                None
+                            },
                         }
                     },
                     Err(e) => {
+                        println!("Erreur!!! {:?}", e);
                         None
                     }
                 }

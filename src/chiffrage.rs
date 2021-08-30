@@ -184,8 +184,8 @@ impl DecipherMgs2 {
 #[derive(Clone, Debug)]
 pub struct Mgs2CipherKeys {
     cles_chiffrees: Vec<FingerprintCleChiffree>,
-    iv: String,
-    tag: String,
+    pub iv: String,
+    pub tag: String,
 }
 
 impl Mgs2CipherKeys {
@@ -201,6 +201,10 @@ impl Mgs2CipherKeys {
             },
             None => Err(format!("Cle introuvable : {}", fingerprint))?,
         }
+    }
+
+    pub fn get_format(&self) -> String {
+        String::from("mgs2")
     }
 
     pub fn get_commande_sauvegarder_cles(

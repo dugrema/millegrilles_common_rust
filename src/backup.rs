@@ -207,12 +207,15 @@ async fn serialiser_transactions(
     while let Some(Ok(d)) = curseur.next().await {
         let entete = d.get("en-tete").expect("en-tete").as_document().expect("document");
         let uuid_transaction = entete.get(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("uuid-transaction").as_str().expect("str");
-        let fingerprint_certificat = entete.get(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint certificat").to_string();
+        let fingerprint_certificat = entete.get(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint certificat").as_str().expect("str");
 
         // Trouver certificat et ajouter au catalogue
-        match middleware.get_certificat(fingerprint_certificat.as_str()).await {
-            Some(c) => builder.ajouter_certificat(c.as_ref()),
-            None => (),
+        match middleware.get_certificat(fingerprint_certificat).await {
+            Some(c) => {
+                println!("OK Certificat ajoute : {}", fingerprint_certificat);
+                builder.ajouter_certificat(c.as_ref())
+            },
+            None => println!("Warn certificat {} inconnu", fingerprint_certificat),
         }
 
         // Serialiser transaction
@@ -326,6 +329,7 @@ struct CatalogueHoraireBuilder {
     certificats: CollectionCertificatsPem,
     uuid_transactions: Vec<String>,
     transactions_hachage: String,
+    cles: Option<Mgs2CipherKeys>,
 }
 
 impl BackupInformation {
@@ -381,6 +385,7 @@ impl CatalogueHoraireBuilder {
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
             transactions_hachage: "".to_owned(),
+            cles: None,
         }
     }
 
@@ -396,6 +401,10 @@ impl CatalogueHoraireBuilder {
         self.transactions_hachage = hachage;
     }
 
+    fn set_cles(&mut self, cles: &Mgs2CipherKeys) {
+        self.cles = Some(cles.clone());
+    }
+
     fn build(self) -> CatalogueHoraire {
 
         let date_str = self.heure.format_ymdh();
@@ -404,6 +413,13 @@ impl CatalogueHoraireBuilder {
         let transactions_hachage = self.transactions_hachage;
         let transactions_nomfichier = format!("{}_{}.jsonl.xz", &self.nom_domaine, date_str);
         let catalogue_nomfichier = format!("{}_{}.json.xz", &self.nom_domaine, date_str);
+
+        let (format, cle, iv, tag) = match(self.cles) {
+            Some(cles) => {
+                (Some(cles.get_format()), None, Some(cles.iv), Some(cles.tag))
+            },
+            None => (None, None, None, None)
+        };
 
         CatalogueHoraire {
             heure: self.heure,
@@ -418,11 +434,10 @@ impl CatalogueHoraireBuilder {
             uuid_transactions: self.uuid_transactions,
 
             backup_precedent: None,  // todo mettre bon type
-            cle: None,
-            iv: None,
-
-            tag: None,
-            format: None,
+            cle,
+            iv,
+            tag,
+            format,
         }
     }
 
@@ -892,13 +907,15 @@ mod test_integration {
             let mut path_transactions = workdir.clone();
             path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
             // println!("Sauvegarde transactions sous : {:?}", path_transactions);
-            let resultat = serialiser_transactions(
+            let cles = serialiser_transactions(
                 middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
                 path_transactions.as_path(),
                 Some(certificats_chiffrage)
-            ).await.expect("serialiser");
+            ).await.expect("serialiser").expect("cles");
+
+            builder.set_cles(&cles);
 
             // println!("Resultat extraction transactions : {:?}\nCatalogue: {:?}", resultat, builder);
 
