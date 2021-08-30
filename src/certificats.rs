@@ -363,11 +363,11 @@ impl EnveloppeCertificat {
     pub fn fingerprint_cert_publickeys(&self) -> Result<Vec<FingerprintCertPublicKey>, Box<dyn Error>> {
         let cert_leaf = self.chaine.get(0).expect("leaf");
         let fp_leaf = calculer_fingerprint(cert_leaf)?;
-        let fpleaf = FingerprintCertPublicKey { fingerprint: fp_leaf, public_key: cert_leaf.public_key()? };
+        let fpleaf = FingerprintCertPublicKey { fingerprint: fp_leaf, public_key: cert_leaf.public_key()?, est_cle_millegrille: false };
 
         let cert_mg = self.chaine.last().expect("cert mg");
         let fp_mg = calculer_fingerprint(cert_mg)?;
-        let fpmg = FingerprintCertPublicKey { fingerprint: fp_mg, public_key: cert_mg.public_key()? };
+        let fpmg = FingerprintCertPublicKey { fingerprint: fp_mg, public_key: cert_mg.public_key()?, est_cle_millegrille: true };
 
         Ok(vec!(fpleaf, fpmg))
     }
@@ -437,11 +437,12 @@ pub struct FingerprintCert {
 pub struct FingerprintCertPublicKey {
     pub fingerprint: String,
     pub public_key: PKey<Public>,
+    pub est_cle_millegrille: bool,
 }
 
 impl FingerprintCertPublicKey {
-    pub fn new(fingerprint: String, public_key: PKey<Public>) -> Self {
-        FingerprintCertPublicKey { fingerprint, public_key }
+    pub fn new(fingerprint: String, public_key: PKey<Public>, est_cle_millegrille: bool) -> Self {
+        FingerprintCertPublicKey { fingerprint, public_key, est_cle_millegrille }
     }
 }
 

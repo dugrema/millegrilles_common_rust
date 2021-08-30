@@ -53,6 +53,7 @@ pub struct CipherMgs2 {
     encrypter: Crypter,
     iv: String,
     cles_chiffrees: Vec<FingerprintCleChiffree>,
+    fp_cle_millegrille: Option<String>,
 }
 
 // Structure qui conserve une cle chiffree pour un fingerprint de certificat
@@ -72,6 +73,7 @@ impl CipherMgs2 {
 
         // Chiffrer la cle avec cle publique
         let mut fp_cles = Vec::new();
+        let mut fp_cle_millegrille: Option<String> = None;
         for fp_pk in public_keys {
             let cle_chiffree = chiffrer_asymetrique(&fp_pk.public_key, &cle);
             let cle_chiffree_str = encode(Base::Base64, cle_chiffree);
@@ -79,6 +81,9 @@ impl CipherMgs2 {
                 fingerprint: fp_pk.fingerprint.clone(),
                 cle_chiffree: cle_chiffree_str}
             );
+            if fp_pk.est_cle_millegrille {
+                fp_cle_millegrille = Some(fp_pk.fingerprint.clone());
+            }
         }
 
         let mut encrypter = Crypter::new(
@@ -92,6 +97,7 @@ impl CipherMgs2 {
             encrypter,
             iv: encode(Base::Base64, iv),
             cles_chiffrees: fp_cles,
+            fp_cle_millegrille,
         }
     }
 
@@ -120,11 +126,14 @@ impl CipherMgs2 {
     }
 
     pub fn get_cipher_keys(&self) -> Result<Mgs2CipherKeys, String> {
-        Ok(Mgs2CipherKeys::new(
+        let mut cipher_keys = Mgs2CipherKeys::new(
             self.cles_chiffrees.clone(),
             self.iv.clone(),
             self.get_tag()?.clone(),
-        ))
+        );
+        cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
+
+        Ok(cipher_keys)
     }
 
 }
@@ -186,11 +195,16 @@ pub struct Mgs2CipherKeys {
     cles_chiffrees: Vec<FingerprintCleChiffree>,
     pub iv: String,
     pub tag: String,
+    pub fingerprint_cert_millegrille: Option<String>
 }
 
 impl Mgs2CipherKeys {
     pub fn new(cles_chiffrees: Vec<FingerprintCleChiffree>, iv: String, tag: String) -> Self {
-        Mgs2CipherKeys { cles_chiffrees, iv, tag }
+        Mgs2CipherKeys { cles_chiffrees, iv, tag, fingerprint_cert_millegrille: None }
+    }
+
+    pub fn set_fingerprint_cert_millegrille(&mut self, fingerprint_cert_millegrille: &str) {
+        self.fingerprint_cert_millegrille = Some(fingerprint_cert_millegrille.into());
     }
 
     pub fn get_cipher_data(&self, fingerprint: &str) -> Result<Mgs2CipherData, Box<dyn Error>> {
@@ -221,6 +235,21 @@ impl Mgs2CipherKeys {
             format: FormatChiffrage::Mgs2,
             domaine: domaine.to_owned(),
             identificateurs_document,
+        }
+    }
+
+    pub fn get_cle_millegrille(&self) -> Option<String> {
+        // println!("info chiffrage : {:?}", self);
+        match &self.fingerprint_cert_millegrille {
+            Some(fp) => {
+                match self.cles_chiffrees.iter().filter(|cle| cle.fingerprint == fp.as_str()).last() {
+                    Some(cle) => {
+                        Some(cle.cle_chiffree.to_owned())
+                    },
+                    None => None,
+                }
+            },
+            None => None,
         }
     }
 }
@@ -322,7 +351,7 @@ mod backup_tests {
     fn roundtrip_chiffrage() {
         // Cles
         let (cle_publique, cle_privee) = charger_cles();
-        let fp_cles = vec![FingerprintCertPublicKey::new(String::from("dummy"), cle_publique)];
+        let fp_cles = vec![FingerprintCertPublicKey::new(String::from("dummy"), cle_publique, true)];
         let mut cipher = CipherMgs2::new(&fp_cles);
 
         // Chiffrer

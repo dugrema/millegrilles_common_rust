@@ -356,18 +356,18 @@ impl ValidateurX509 for ValidateurX509Database {
                                     }
                                 },
                                 None => {
-                                    println!("Certificat inconnu (pas dans la DB) {:?}", fingerprint);
+                                    debug!("Certificat inconnu (pas dans la DB) {:?}", fingerprint);
                                     None
                                 },
                             },
                             Err(e) => {
-                                println!("Erreur!!! {:?}", e);
+                                debug!("Erreur!!! {:?}", e);
                                 None
                             },
                         }
                     },
                     Err(e) => {
-                        println!("Erreur!!! {:?}", e);
+                        debug!("Erreur!!! {:?}", e);
                         None
                     }
                 }

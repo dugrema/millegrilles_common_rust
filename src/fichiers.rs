@@ -170,7 +170,8 @@ mod fichiers_tests {
 
         let fp_certs = vec!(FingerprintCertPublicKey::new(
             String::from("dummy"),
-            enveloppe.certificat().public_key().clone().expect("cle")
+            enveloppe.certificat().public_key().clone().expect("cle"),
+            true
         ));
 
         let path_fichier = PathBuf::from("/tmp/fichier_tests.2.xz.mgs2");

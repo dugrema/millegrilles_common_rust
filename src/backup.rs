@@ -137,7 +137,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     let mut builders = Vec::new();
 
     while let Some(entree) = curseur.next().await {
-        println!("Entree aggregation : {:?}", entree);
+        // println!("Entree aggregation : {:?}", entree);
         let tmp_id = entree?;
         let info_id = tmp_id.get("_id").expect("id").as_document().expect("doc id");
 
@@ -148,7 +148,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
             sousdomaine_vec.push(s)
         }
         let sousdomaine_str = sousdomaine_vec.as_slice().join(".");
-        println!("Resultat : {:?}", sousdomaine_str);
+        // println!("Resultat : {:?}", sousdomaine_str);
 
         let doc_heure = info_id.get("heure").expect("heure").as_document().expect("doc heure");
         let annee = doc_heure.get("year").expect("year").as_i32().expect("i32");
@@ -212,10 +212,12 @@ async fn serialiser_transactions(
         // Trouver certificat et ajouter au catalogue
         match middleware.get_certificat(fingerprint_certificat).await {
             Some(c) => {
-                println!("OK Certificat ajoute : {}", fingerprint_certificat);
+                // println!("OK Certificat ajoute : {}", fingerprint_certificat);
                 builder.ajouter_certificat(c.as_ref())
             },
-            None => println!("Warn certificat {} inconnu", fingerprint_certificat),
+            None => {
+                // println!("Warn certificat {} inconnu", fingerprint_certificat)
+            },
         }
 
         // Serialiser transaction
@@ -416,7 +418,7 @@ impl CatalogueHoraireBuilder {
 
         let (format, cle, iv, tag) = match(self.cles) {
             Some(cles) => {
-                (Some(cles.get_format()), None, Some(cles.iv), Some(cles.tag))
+                (Some(cles.get_format()), cles.get_cle_millegrille(), Some(cles.iv), Some(cles.tag))
             },
             None => (None, None, None, None)
         };
@@ -778,7 +780,8 @@ mod backup_tests {
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz.mgs2");
         let fp_certs = vec!(FingerprintCertPublicKey::new(
             String::from("dummy"),
-            enveloppe.certificat().public_key().clone().expect("cle")
+            enveloppe.certificat().public_key().clone().expect("cle"),
+            true
         ));
 
         let mut writer = TransactionWriter::new(
@@ -886,7 +889,11 @@ mod test_integration {
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
 
         let certificats_chiffrage = vec! [
-            FingerprintCertPublicKey::new(String::from("dummy"), enveloppe.cle_publique().clone())
+            FingerprintCertPublicKey::new(
+                String::from("dummy"),
+                enveloppe.cle_publique().clone(),
+                true
+            )
         ];
 
         // Connecter mongo
