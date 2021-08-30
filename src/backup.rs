@@ -23,7 +23,7 @@ use tokio_stream::{Iter, StreamExt};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FingerprintCertPublicKey, FormatChiffrage, Hacheur, Mgs2CipherData, Mgs2CipherKeys, MongoDao, FingerprintCleChiffree, CommandeSauvegarderCle, ValidateurX509, FichierWriter};
+use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FingerprintCertPublicKey, FormatChiffrage, Hacheur, Mgs2CipherData, Mgs2CipherKeys, MongoDao, FingerprintCleChiffree, CommandeSauvegarderCle, ValidateurX509, FichierWriter, MessageJson, Formatteur, MessageSigne};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use std::iter::Map;
@@ -232,6 +232,52 @@ async fn serialiser_transactions(
     builder.transactions_hachage = hachage;
 
     Ok(cipher_keys)
+}
+
+async fn serialiser_catalogue(
+    middleware: &(impl Formatteur),
+    builder: CatalogueHoraireBuilder,
+    path_catalogue: &Path
+) -> Result<(CatalogueHoraire, Option<MessageSigne>), Box<dyn Error>> {
+
+    let commande_signee = match &builder.cles {
+        Some(cles) => {
+
+            // Signer commande de maitre des cles
+            let mut identificateurs_document: HashMap<String, String> = HashMap::new();
+            identificateurs_document.insert("domaine".into(), builder.nom_domaine.clone());
+            identificateurs_document.insert("heure".into(), format!("{}00", builder.heure.format_ymdh()));
+
+            let commande_maitredescles = cles.get_commande_sauvegarder_cles(
+                builder.transactions_hachage.as_str(),
+                "Backup",
+                identificateurs_document,
+            );
+
+            let value_commande: Value = serde_json::to_value(commande_maitredescles).expect("commande");
+            let msg_commande = MessageJson::new(value_commande);
+            let commande_signee = middleware.formatter_value(&msg_commande, Some("MaitreDesCles.nouvelleCle")).expect("signature");
+
+            Some(commande_signee)
+        },
+        None => None,
+    };
+
+    // Signer et serialiser catalogue
+    let catalogue = builder.build();
+    let catalogue_value = serde_json::to_value(&catalogue).expect("value");
+    let message_json = MessageJson::new(catalogue_value);
+    let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signature");
+
+    // let mut path_catalogue = workdir.clone();
+    // path_catalogue.push("extraire_transactions_catalogue.json.xz");
+    let mut writer_catalogue = FichierWriter::new(path_catalogue, None)
+        .await.expect("write catalogue");
+    writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
+    let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer catalogue writer");
+    // println!("Hachage catalogue {}", mh_catalogue);
+
+    Ok((catalogue, commande_signee))
 }
 
 async fn uploader_backup(catalogue: CatalogueHoraire, commande_cles: Option<CommandeSauvegarderCle>) -> Result<CatalogueHoraire, Box<dyn Error>> {
@@ -818,7 +864,7 @@ mod backup_tests {
 mod test_integration {
     use std::sync::Arc;
 
-    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, MessageJson};
+    use crate::{charger_transaction, MiddlewareDbPki, Formatteur};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
 
@@ -925,37 +971,16 @@ mod test_integration {
 
             builder.set_cles(&cles);
 
-            // println!("Resultat extraction transactions : {:?}\nCatalogue: {:?}", resultat, builder);
-
             // Signer et serialiser catalogue
-            let catalogue = builder.build();
-            let catalogue_value = serde_json::to_value(&catalogue).expect("value");
-            let message_json = MessageJson::new(catalogue_value);
-            let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signature");
-
             let mut path_catalogue = workdir.clone();
             path_catalogue.push("extraire_transactions_catalogue.json.xz");
-            let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None)
-                .await.expect("write catalogue");
-            writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
-            let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer catalogue writer");
-            println!("Hachage catalogue {}", mh_catalogue);
+            let (catalogue, commande_cles) = serialiser_catalogue(
+                middleware.as_ref(),
+                builder,
+                path_catalogue.as_path()
+            ).await.expect("serialiser");
 
-            // Signer commande de maitre des cles
-            let mut identificateurs_document: HashMap<String, String> = HashMap::new();
-            identificateurs_document.insert("domaine".into(), domaine.into());
-            identificateurs_document.insert("heure".into(), format!("{}00", heure.format_ymdh()));
-            let commande_maitredescles = cles.get_commande_sauvegarder_cles(
-                catalogue.transactions_hachage.as_str(),
-                "Backup",
-                identificateurs_document,
-            );
-
-            println!("Commande maitre des cles : {:?}", commande_maitredescles);
-            let value_commande: Value = serde_json::to_value(commande_maitredescles).expect("commande");
-            let msg_commande = MessageJson::new(value_commande);
-            let commande_signee = middleware.formatter_value(&msg_commande, Some("MaitreDesCles.nouvelleCle")).expect("signature");
-            println!("Commande signee : {}", commande_signee.message);
+            println!("Commande cles : {:?}", commande_cles);
 
         }));
         // Execution async du test
