@@ -907,7 +907,8 @@ mod test_integration {
                 None
             ).expect("info");
             let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
-            let mut builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
+            let domaine = "Pki";
+            let mut builder = CatalogueHoraire::builder(heure.clone(), domaine.into(), "Pki.rust".into());
 
             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
 
@@ -928,7 +929,7 @@ mod test_integration {
 
             // Signer et serialiser catalogue
             let catalogue = builder.build();
-            let catalogue_value = serde_json::to_value(catalogue).expect("value");
+            let catalogue_value = serde_json::to_value(&catalogue).expect("value");
             let message_json = MessageJson::new(catalogue_value);
             let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signature");
 
@@ -939,6 +940,22 @@ mod test_integration {
             writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
             let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer catalogue writer");
             println!("Hachage catalogue {}", mh_catalogue);
+
+            // Signer commande de maitre des cles
+            let mut identificateurs_document: HashMap<String, String> = HashMap::new();
+            identificateurs_document.insert("domaine".into(), domaine.into());
+            identificateurs_document.insert("heure".into(), format!("{}00", heure.format_ymdh()));
+            let commande_maitredescles = cles.get_commande_sauvegarder_cles(
+                catalogue.transactions_hachage.as_str(),
+                "Backup",
+                identificateurs_document,
+            );
+
+            println!("Commande maitre des cles : {:?}", commande_maitredescles);
+            let value_commande: Value = serde_json::to_value(commande_maitredescles).expect("commande");
+            let msg_commande = MessageJson::new(value_commande);
+            let commande_signee = middleware.formatter_value(&msg_commande, Some("MaitreDesCles.nouvelleCle")).expect("signature");
+            println!("Commande signee : {}", commande_signee.message);
 
         }));
         // Execution async du test

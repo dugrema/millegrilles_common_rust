@@ -12,10 +12,11 @@ use std::error::Error;
 use crate::FingerprintCertPublicKey;
 use std::iter::Map;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {
-    Mgs2,
+    mgs2,
 }
 
 fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> [u8; 256] {
@@ -57,7 +58,7 @@ pub struct CipherMgs2 {
 }
 
 // Structure qui conserve une cle chiffree pour un fingerprint de certificat
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FingerprintCleChiffree {
     fingerprint: String,
     cle_chiffree: String,
@@ -221,6 +222,14 @@ impl Mgs2CipherKeys {
         String::from("mgs2")
     }
 
+    pub fn cles_to_map(&self) -> HashMap<String, String> {
+        let mut map: HashMap<String, String> = HashMap::new();
+        for cle in &self.cles_chiffrees {
+            map.insert(cle.fingerprint.clone(), cle.cle_chiffree.clone());
+        }
+        map
+    }
+
     pub fn get_commande_sauvegarder_cles(
         &self,
         hachage_bytes: &str,
@@ -229,10 +238,10 @@ impl Mgs2CipherKeys {
     ) -> CommandeSauvegarderCle {
         CommandeSauvegarderCle {
             hachage_bytes: hachage_bytes.to_owned(),
-            cles: self.cles_chiffrees.to_owned(),
+            cles: self.cles_to_map(),
             iv: self.iv.clone(),
             tag: self.tag.clone(),
-            format: FormatChiffrage::Mgs2,
+            format: FormatChiffrage::mgs2,
             domaine: domaine.to_owned(),
             identificateurs_document,
         }
@@ -254,10 +263,10 @@ impl Mgs2CipherKeys {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CommandeSauvegarderCle {
     hachage_bytes: String,
-    cles: Vec<FingerprintCleChiffree>,
+    cles: HashMap<String, String>,
     iv: String,
     tag: String,
     format: FormatChiffrage,
