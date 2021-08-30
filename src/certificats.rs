@@ -253,6 +253,8 @@ pub fn charger_enveloppe_privee(path_cert: &Path, path_cle: &Path, validateur: A
     let pem_cert = read_to_string(path_cert).unwrap();
     let enveloppe = charger_enveloppe(&pem_cert, Some(validateur.store()))?;
 
+    let clecert_pem = format!("{}\n{}", pem_cle, pem_cert);
+
     // Recreer la chaine de certificats avec les PEM.
     let mut chaine_pem: Vec<String> = Vec::new();
     let cert_pem = String::from_utf8(enveloppe.certificat().to_pem().unwrap()).unwrap();
@@ -267,6 +269,7 @@ pub fn charger_enveloppe_privee(path_cert: &Path, path_cle: &Path, validateur: A
         enveloppe,
         cle_privee,
         chaine_pem,
+        clecert_pem,
     };
 
     Ok(enveloppe_privee)
@@ -447,6 +450,7 @@ pub struct EnveloppePrivee {
     pub enveloppe: EnveloppeCertificat,
     cle_privee: PKey<Private>,
     chaine_pem: Vec<String>,
+    pub clecert_pem: String,
 }
 
 impl EnveloppePrivee {

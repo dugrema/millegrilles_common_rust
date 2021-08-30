@@ -1018,6 +1018,28 @@ mod test_integration {
 
     #[tokio::test]
     async fn uploader_backup_horaire() {
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+        let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
+
+        let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
+
+        println!("Certificat client fourni : {:?}", enveloppe.clecert_pem);
+
+        let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
+
+        let client = reqwest::Client::builder()
+            .add_root_certificate(root_ca)
+            .identity(identity)
+            .https_only(true)
+            .use_rustls_tls()
+            .build().expect("client");
+
+        let res = client.get("https://mg-dev4:3021/backup/listeDomaines")
+            //.body("the exact body that is sent")
+            .send()
+            .await.expect("put");
+
+        println!("Response : {:?}", res);
 
     }
 
