@@ -206,7 +206,7 @@ async fn serialiser_transactions(
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
         let entete = d.get("en-tete").expect("en-tete").as_document().expect("document");
-        let uuid_transaction = entete.get(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("uuid-transaction").to_string();
+        let uuid_transaction = entete.get(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("uuid-transaction").as_str().expect("str");
         let fingerprint_certificat = entete.get(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint certificat").to_string();
 
         // Trouver certificat et ajouter au catalogue
@@ -388,8 +388,8 @@ impl CatalogueHoraireBuilder {
         self.certificats.ajouter_certificat(certificat).expect("certificat");
     }
 
-    fn ajouter_transaction(&mut self, uuid_transaction: String) {
-        self.uuid_transactions.push(uuid_transaction);
+    fn ajouter_transaction(&mut self, uuid_transaction: &str) {
+        self.uuid_transactions.push(String::from(uuid_transaction));
     }
 
     fn transactions_hachage(&mut self, hachage: String) {
@@ -800,7 +800,7 @@ mod backup_tests {
 mod test_integration {
     use std::sync::Arc;
 
-    use crate::{charger_transaction, MiddlewareDbPki};
+    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, MessageJson};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
 
@@ -902,11 +902,19 @@ mod test_integration {
 
             // println!("Resultat extraction transactions : {:?}\nCatalogue: {:?}", resultat, builder);
 
-            // Serialiser catalogue
+            // Signer et serialiser catalogue
             let catalogue = builder.build();
-            // let catalogue_value = serde_json::to_value(catalogue).expect("value");
+            let catalogue_value = serde_json::to_value(catalogue).expect("value");
+            let message_json = MessageJson::new(catalogue_value);
+            let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signature");
 
-            // serde_json::to_writer()
+            let mut path_catalogue = workdir.clone();
+            path_catalogue.push("extraire_transactions_catalogue.json.xz");
+            let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None)
+                .await.expect("write catalogue");
+            writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
+            let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer catalogue writer");
+            println!("Hachage catalogue {}", mh_catalogue);
 
         }));
         // Execution async du test

@@ -13,6 +13,8 @@ use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageJson, MessageSigne};
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
+use crate::Formatteur;
+use std::fmt::Error;
 
 #[async_trait]
 pub trait GenerateurMessages: Send + Sync {
@@ -210,6 +212,12 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
             Some(_) => true,
             None => false,
         }
+    }
+}
+
+impl Formatteur for GenerateurMessagesImpl {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSigne, Error> {
+        self.formatteur.formatter_value(message, domaine)
     }
 }
 

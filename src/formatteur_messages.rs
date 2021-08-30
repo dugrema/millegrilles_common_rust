@@ -31,19 +31,25 @@ pub struct MessageSigne {
 impl MessageSigne {
 }
 
+pub trait Formatteur: Send + Sync {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSigne, Error>;
+}
+
 pub struct FormatteurMessage {
     validateur: Arc<Box<ValidateurX509Impl>>,
     enveloppe_privee: Arc<Box<EnveloppePrivee>>,
 }
 
 impl FormatteurMessage {
-
     pub fn new(validateur: Arc<Box<ValidateurX509Impl>>, enveloppe_privee: Arc<Box<EnveloppePrivee>>) -> Self {
         FormatteurMessage { validateur, enveloppe_privee }
     }
+}
+
+impl Formatteur for FormatteurMessage {
 
     /// Prepare en-tete, _signature et _certificat dans un message
-    pub fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSigne, Error> {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSigne, Error> {
 
         // Copier tous les champs qui ne commencent pas par _
         let (mut message_modifie, mut champs_retires): (BTreeMap<String, Value>, HashMap<&String, &Value, RandomState>) = nettoyer_message(message);
