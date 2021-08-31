@@ -1128,4 +1128,33 @@ mod test_integration {
 
     }
 
+    #[tokio::test]
+    async fn download_backup() {
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+        let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
+        let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
+        let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
+        let client = reqwest::Client::builder()
+            .add_root_certificate(root_ca)
+            .identity(identity)
+            .https_only(true)
+            .use_rustls_tls()
+            .build().expect("client");
+
+        let response = client.get("https://mg-dev4:3021/backup/restaurerDomaine/Pki")
+            .send()
+            .await.expect("download backup");
+
+        println!("Response get backup {} : {:?}", response.status(), response);
+
+        let mut file_output = File::create(PathBuf::from("/tmp/download.tar").as_path()).await.expect("create");
+
+        let mut stream = response.bytes_stream();
+        while let Some(item) = stream.next().await {
+            let content = item.expect("item");
+            file_output.write_all(content.as_ref()).await.expect("write");
+        }
+
+    }
+
 }

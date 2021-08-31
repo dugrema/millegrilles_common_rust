@@ -10,6 +10,9 @@ use xz2::stream;
 
 use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys};
 use crate::constantes::*;
+use futures::{Stream};
+use tokio_util::codec::{FramedRead, BytesCodec};
+use tokio_tar::Archive;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
@@ -214,6 +217,33 @@ impl CompresseurBytes {
 
 }
 
+pub struct TarParser {
+
+}
+
+impl TarParser
+//where R: futures::AsyncRead + Unpin
+{
+    pub fn new() -> Self {
+        TarParser {}
+    }
+
+    pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+        let mut reader = Archive::new(stream);
+        // while let Some(Ok(chunk)) = self.stream.next().await {
+        //     println!("Chunk {:?}", chunk);
+        // }
+        let mut entries = reader.entries().expect("entries");
+
+        while let Some(entry) = entries.next().await {
+            let file = entry.expect("file");
+            println!("File dans tar : {:?}", file);
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod fichiers_tests {
 
@@ -222,6 +252,7 @@ mod fichiers_tests {
 
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
     use std::collections::HashMap;
+    use tokio_util::codec::{FramedRead, BytesCodec};
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
     const BYTES_TEST: &[u8] = b"des bytes a ecrire";
@@ -267,4 +298,12 @@ mod fichiers_tests {
         println!("Commande cles : {:?}", commande_cles);
     }
 
+    #[tokio::test]
+    async fn tar_parse() {
+        let file = File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
+
+        // let mut stream: FramedRead<File, BytesCodec> = FramedRead::new(file, BytesCodec::new());
+        let mut tar_parser = TarParser::new();
+        tar_parser.parse(file).await;
+    }
 }
