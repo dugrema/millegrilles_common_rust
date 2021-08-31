@@ -264,7 +264,7 @@ async fn serialiser_catalogue(
             let commande_signee = middleware.formatter_value(
                 &msg_commande,
                 Some("MaitreDesCles.nouvelleCle")
-            ).expect("signature");
+            )?;
 
             Some(commande_signee)
         },
@@ -273,16 +273,16 @@ async fn serialiser_catalogue(
 
     // Signer et serialiser catalogue
     let catalogue = builder.build();
-    let catalogue_value = serde_json::to_value(&catalogue).expect("value");
+    let catalogue_value = serde_json::to_value(&catalogue)?;
     let message_json = MessageJson::new(catalogue_value);
-    let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signature");
+    let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup"))?;
 
     // let mut path_catalogue = workdir.clone();
     // path_catalogue.push("extraire_transactions_catalogue.json.xz");
     let mut writer_catalogue = FichierWriter::new(path_catalogue, None)
         .await.expect("write catalogue");
-    writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
-    let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer catalogue writer");
+    writer_catalogue.write(catalogue_signe.message.as_bytes()).await?;
+    let (mh_catalogue, _) = writer_catalogue.fermer().await?;
     // println!("Hachage catalogue {}", mh_catalogue);
 
     Ok((catalogue, commande_signee))

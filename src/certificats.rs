@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::error;
 use std::fmt::{Debug, Formatter};
 use std::fs::read_to_string;
@@ -709,11 +709,20 @@ fn extraire_vec_strings(data: &[u8]) -> Result<Vec<String>, String> {
     Ok(vec)
 }
 
+fn ordered_map<S>(value: &HashMap<String, String>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let ordered: BTreeMap<_, _> = value.iter().collect();
+    ordered.serialize(serializer)
+}
+
 /// Structure qui permet d'exporter en Json plusieurs certificats en format PEM.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CollectionCertificatsPem {
-    pems: HashMap<String, String>,
     certificats: Vec<Vec<String>>,
+    #[serde(serialize_with = "ordered_map")]
+    pems: HashMap<String, String>,
 }
 
 impl CollectionCertificatsPem {
