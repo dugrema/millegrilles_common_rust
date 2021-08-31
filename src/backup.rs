@@ -32,6 +32,9 @@ use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use std::iter::Map;
 use reqwest::Body;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::io::Bytes;
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collection: &str) -> Result<(), Box<dyn Error>> {
@@ -896,11 +899,14 @@ mod backup_tests {
 mod test_integration {
     use std::sync::Arc;
 
-    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, CompresseurBytes};
+    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, CompresseurBytes, TarParser};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
 
     use super::*;
+    use futures_util::stream::IntoAsyncRead;
+    use std::io::Bytes;
+    use async_std::io::BufReader;
 
     #[tokio::test]
     async fn grouper_transactions() {
@@ -1147,13 +1153,18 @@ mod test_integration {
 
         println!("Response get backup {} : {:?}", response.status(), response);
 
-        let mut file_output = File::create(PathBuf::from("/tmp/download.tar").as_path()).await.expect("create");
-
+        // Conserver fichier sur le disque (temporaire)
+        // todo Trouver comment streamer en memoire
         let mut stream = response.bytes_stream();
+        let mut file_output = File::create(PathBuf::from("/tmp/download.tar").as_path()).await.expect("create");
         while let Some(item) = stream.next().await {
             let content = item.expect("item");
             file_output.write_all(content.as_ref()).await.expect("write");
         }
+
+        let fichier_tar = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
+        let mut tar_parse = TarParser::new();
+        tar_parse.parse(fichier_tar).await;
 
     }
 

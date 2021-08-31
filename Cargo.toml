@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 
 async-std = "1.9.0"
+async-tar = { version = "0.4.2" }
 log = { version = "0.4.14", features = ["max_level_debug", "release_max_level_info"] }
 num-traits = "0.2.14"
 rand = "0.7"
@@ -19,8 +20,8 @@ xz2 = { version = "0.1.6", features = ["tokio"] }
 async-trait = "0.1.51"
 tokio = { version = "1.9.0", features = ["full"] }
 tokio-stream = { version = "0.1.7" }
-tokio-tar = { version = "0.3.0" }
-tokio-util = { version = "*", features = ["codec"] }
+# tokio-tar = { version = "0.3.0" }
+tokio-util = { version = "*", features = ["codec", "io"] }
 
 # Crypto et certs
 openssl = { version = "0.10.29", features = ["vendored"] }
