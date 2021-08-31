@@ -13,7 +13,8 @@ use crate::constantes::*;
 use futures::{Stream};
 use tokio_util::codec::{FramedRead, BytesCodec};
 // use tokio_tar::Archive;
-use async_tar::Archive;
+use async_tar::{Archive, Entry};
+use async_recursion::async_recursion;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
@@ -218,29 +219,42 @@ impl CompresseurBytes {
 
 }
 
-pub struct TarParser {
+// pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+    let mut reader = Archive::new(stream);
 
+    let mut entries = reader.entries().expect("entries");
+    while let Some(entry) = entries.next().await {
+        let mut file = entry.expect("file");
+        let file_path = file.path().expect("path");
+        println!("File dans tar {:?} : {:?}", file_path, file);
+
+        if file_path.extension().expect("ext") == "tar" {
+            println!("TAR!");
+            parse_tar1(&mut file).await?
+        } else {
+            println!("Pas tar");
+        }
+    }
+
+    Ok(())
 }
 
-impl TarParser
-//where R: futures::AsyncRead + Unpin
-{
-    pub fn new() -> Self {
-        TarParser {}
-    }
+async fn parse_tar1(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+    let mut reader = Archive::new(stream);
 
-    // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
-    pub async fn parse(&mut self, stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
-        let mut reader = Archive::new(stream);
+    let mut entries = reader.entries().expect("entries");
+    while let Some(entry) = entries.next().await {
+        let mut file = entry.expect("file");
+        println!("File dans tar : {:?}", file);
 
-        let mut entries = reader.entries().expect("entries");
-        while let Some(entry) = entries.next().await {
-            let file = entry.expect("file");
-            println!("File dans tar : {:?}", file);
+        let file_path = file.path().expect("file");
+        if file_path.ends_with(".tar") {
+            panic!("Pas implemente, 2 niveaux tar")
         }
-
-        Ok(())
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -299,12 +313,16 @@ mod fichiers_tests {
 
     #[tokio::test]
     async fn tar_parse() {
-        // let file = File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
-        // let tstream = tokio_util::codec::FramedRead::new(file, BytesCodec::new());
-        // let reader = tokio_util::io::StreamReader::new(tstream);
-
         let file = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
-        let mut tar_parser = TarParser::new();
-        tar_parser.parse(file).await;
+        // let mut tar_parser = TarParser::new();
+        parse_tar(file).await.expect("parse");
     }
+
+    #[tokio::test]
+    async fn tar_tar_parse() {
+        let file = async_std::fs::File::open(PathBuf::from("/tmp/download_tar.tar")).await.expect("open");
+        // let mut tar_parser = TarParser::new();
+        parse_tar(file).await.expect("parse");
+    }
+
 }

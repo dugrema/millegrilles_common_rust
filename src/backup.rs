@@ -899,7 +899,7 @@ mod backup_tests {
 mod test_integration {
     use std::sync::Arc;
 
-    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, CompresseurBytes, TarParser};
+    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, CompresseurBytes};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
 
@@ -1163,8 +1163,8 @@ mod test_integration {
         }
 
         let fichier_tar = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
-        let mut tar_parse = TarParser::new();
-        tar_parse.parse(fichier_tar).await;
+        // let mut tar_parse = TarParser::new();
+        // tar_parse.parse(fichier_tar).await;
 
     }
 
