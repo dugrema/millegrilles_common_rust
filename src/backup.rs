@@ -1119,7 +1119,8 @@ mod test_integration {
                 .multipart(form);
 
             let resultat = request.send().await.expect("resultat");
-            println!("Resultat : {:?}", resultat);
+            println!("Resultat {} : {:?}", resultat.status(), resultat);
+
         }));
 
         // Execution async du test

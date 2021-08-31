@@ -1,18 +1,21 @@
-use rand::Rng;
-use openssl::symm::{encrypt, Cipher, Crypter, Mode};
-use openssl::pkey::{Public, PKey, Private};
-use openssl::rsa::{Padding, Rsa};
-use multibase::{Base, encode, decode};
-use std::io::Write;
 use std::cmp::min;
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt::{Debug, Formatter};
+use std::io::Write;
+use std::iter::Map;
+
+use multibase::{Base, decode, encode};
 use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
-use std::fmt::{Debug, Formatter};
-use std::error::Error;
+use openssl::pkey::{PKey, Private, Public};
+use openssl::rsa::{Padding, Rsa};
+use openssl::symm::{Cipher, Crypter, encrypt, Mode};
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+
+use crate::certificats::ordered_map;
 use crate::FingerprintCertPublicKey;
-use std::iter::Map;
-use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {
@@ -265,13 +268,15 @@ impl Mgs2CipherKeys {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandeSauvegarderCle {
-    hachage_bytes: String,
+    #[serde(serialize_with = "ordered_map")]
     cles: HashMap<String, String>,
+    domaine: String,
+    format: FormatChiffrage,
+    hachage_bytes: String,
+    #[serde(serialize_with = "ordered_map")]
+    identificateurs_document: HashMap<String, String>,
     iv: String,
     tag: String,
-    format: FormatChiffrage,
-    domaine: String,
-    identificateurs_document: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -312,13 +317,15 @@ impl Debug for Mgs2CipherData {
 
 #[cfg(test)]
 mod backup_tests {
-    use super::*;
-    use std::fs::read_to_string;
-    use openssl::pkey::{PKey, Private, Public};
-    use openssl::x509::X509;
     use std::error::Error;
+    use std::fs::read_to_string;
     use std::path::PathBuf;
+
+    use openssl::pkey::{PKey, Private, Public};
     use openssl::rsa::Rsa;
+    use openssl::x509::X509;
+
+    use super::*;
 
     const PATH_CLE: &str = "/home/mathieu/mgdev/certs/pki.domaines.key";
     const PATH_CERT: &str = "/home/mathieu/mgdev/certs/pki.domaines.cert";

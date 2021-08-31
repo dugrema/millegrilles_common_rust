@@ -709,7 +709,7 @@ fn extraire_vec_strings(data: &[u8]) -> Result<Vec<String>, String> {
     Ok(vec)
 }
 
-fn ordered_map<S>(value: &HashMap<String, String>, serializer: S) -> Result<S::Ok, S::Error>
+pub fn ordered_map<S>(value: &HashMap<String, String>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {

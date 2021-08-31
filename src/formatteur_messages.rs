@@ -25,7 +25,7 @@ const CERTIFICATS: &str = "_certificat";
 #[derive(Clone, Debug)]
 pub struct MessageSigne {
     pub message: String,
-    pub entete: Map<String, Value>,
+    pub entete: BTreeMap<String, Value>,
 }
 
 impl MessageSigne {
@@ -70,12 +70,12 @@ impl Formatteur for FormatteurMessage {
 
         // Ajouter l'entete
         let entete = json!({
-            "version": 1,
-            "idmg": self.validateur.idmg(),
+            "estampille": estampille.as_secs(),
             "fingerprint_certificat": enveloppe_privee.fingerprint(),
             "hachage_contenu": hachage,
+            "idmg": self.validateur.idmg(),
             "uuid_transaction": uuid_message,
-            "estampille": estampille.as_secs(),
+            "version": 1,
         });
         let mut entete_modifie: Map<String, Value> = entete.as_object().unwrap().to_owned();
         match domaine {
@@ -84,10 +84,11 @@ impl Formatteur for FormatteurMessage {
             },
             None => (),
         }
-        let entete: Map<String, Value> = entete_modifie;
+        let mut entete: BTreeMap<String, Value> = BTreeMap::new();
+        entete.extend(entete_modifie);
 
         let key_entete = String::from(ENTETE);
-        let entete_value = Value::Object(entete.clone());
+        let entete_value = serde_json::to_value(&entete).expect("entete");
         message_modifie.insert(key_entete, entete_value);
 
         // Serialiser en json pour signer
