@@ -1,20 +1,20 @@
 use std::error::Error;
 use std::path::Path;
 
+use async_recursion::async_recursion;
+use async_tar::{Archive, Entry};
+use futures::Stream;
+use log::{debug, error, info, warn};
 use multibase::Base;
 use multihash::Code;
 use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio_stream::{Iter, StreamExt};
+use tokio_util::codec::{BytesCodec, FramedRead};
 use xz2::stream;
 
 use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys};
 use crate::constantes::*;
-use futures::{Stream};
-use tokio_util::codec::{FramedRead, BytesCodec};
-// use tokio_tar::Archive;
-use async_tar::{Archive, Entry};
-use async_recursion::async_recursion;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
@@ -226,46 +226,110 @@ pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> R
     let mut entries = reader.entries().expect("entries");
     while let Some(entry) = entries.next().await {
         let mut file = entry.expect("file");
-        let file_path = file.path().expect("path");
-        println!("File dans tar {:?} : {:?}", file_path, file);
+        let file_path = file.path().expect("path").into_owned();
 
-        if file_path.extension().expect("ext") == "tar" {
-            println!("TAR!");
-            parse_tar1(&mut file).await?
-        } else {
-            println!("Pas tar");
+        // Process tar or other file type
+        match file_path.extension() {
+            Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
+                "tar" => parse_tar1(&mut file).await?,
+                _ => parse_file(file_path.as_path(), &mut file).await?
+            },
+            None => {
+                warn!("Fichier de type inconnu, on skip : {:?}", file_path)
+            }
         }
     }
 
     Ok(())
 }
 
-async fn parse_tar1(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+// todo : Fix parse_tar recursion async
+pub async fn parse_tar1(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
     let mut reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
     while let Some(entry) = entries.next().await {
         let mut file = entry.expect("file");
-        println!("File dans tar : {:?}", file);
+        let file_path = file.path().expect("path").into_owned();
 
-        let file_path = file.path().expect("file");
-        if file_path.ends_with(".tar") {
-            panic!("Pas implemente, 2 niveaux tar")
+        // Process tar or other file type
+        match file_path.extension() {
+            Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
+                "tar" => parse_tar2(&mut file).await?,
+                _ => parse_file(file_path.as_path(), &mut file).await?
+            },
+            None => {
+                warn!("Fichier de type inconnu, on skip : {:?}", file_path)
+            }
         }
     }
 
     Ok(())
 }
 
+// todo : Fix parse_tar recursion async
+pub async fn parse_tar2(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+    let mut reader = Archive::new(stream);
+
+    let mut entries = reader.entries().expect("entries");
+    while let Some(entry) = entries.next().await {
+        let mut file = entry.expect("file");
+        let file_path = file.path().expect("path").into_owned();
+
+        // Process tar or other file type
+        match file_path.extension() {
+            Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
+                "tar" => parse_tar3(&mut file).await?,
+                _ => parse_file(file_path.as_path(), &mut file).await?
+            },
+            None => {
+                warn!("Fichier de type inconnu, on skip : {:?}", file_path)
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// todo : Fix parse_tar recursion async
+pub async fn parse_tar3(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+    let mut reader = Archive::new(stream);
+
+    let mut entries = reader.entries().expect("entries");
+    while let Some(entry) = entries.next().await {
+        let mut file = entry.expect("file");
+        let file_path = file.path().expect("path").into_owned();
+
+        // Process tar or other file type
+        match file_path.extension() {
+            Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
+                "tar" => panic!("Recursion niveau 2 .tar non supporte"),
+                _ => parse_file(file_path.as_path(), &mut file).await?
+            },
+            None => {
+                warn!("Fichier de type inconnu, on skip : {:?}", file_path)
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn parse_file(filepath: &async_std::path::Path, stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+    println!("Parse fichier : {:?}", filepath);
+    Ok(())
+}
+
 #[cfg(test)]
 mod fichiers_tests {
-
-    use super::*;
+    use std::collections::HashMap;
     use std::path::PathBuf;
 
+    use tokio_util::codec::{BytesCodec, FramedRead};
+
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
-    use std::collections::HashMap;
-    use tokio_util::codec::{FramedRead, BytesCodec};
+
+    use super::*;
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
     const BYTES_TEST: &[u8] = b"des bytes a ecrire";
