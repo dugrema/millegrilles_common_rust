@@ -258,7 +258,7 @@ impl ValidateurX509Database {
 
     pub async fn entretien(&self) {
         debug!("ValidateurX509Database: Entretien ValidateurX509Database");
-        self.validateur.entretien();
+        self.validateur.entretien().await;
     }
 
     async fn upsert_enveloppe(&self, enveloppe: &EnveloppeCertificat) -> Result<(), String> {
@@ -397,7 +397,7 @@ impl ValidateurX509 for ValidateurX509Database {
 
     /// Pas invoque
     async fn entretien(&self) {
-        self.validateur.entretien();
+        self.validateur.entretien().await;
     }
 
 }
@@ -439,7 +439,7 @@ impl ValidateurX509 for MiddlewareDb {
 
     /// Pas invoque
     async fn entretien(&self) {
-        self.validateur.entretien();
+        self.validateur.entretien().await;
     }
 
 }

@@ -23,9 +23,9 @@ fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> [u
     let mut cle_chiffree = [0u8; 256];
 
     let mut encrypter = Encrypter::new(public_key).expect("encrypter");
-    encrypter.set_rsa_padding(Padding::PKCS1_OAEP);
-    encrypter.set_rsa_mgf1_md(MessageDigest::sha256());
-    encrypter.set_rsa_oaep_md(MessageDigest::sha256());
+    encrypter.set_rsa_padding(Padding::PKCS1_OAEP).expect("padding");
+    encrypter.set_rsa_mgf1_md(MessageDigest::sha256()).expect("mgf1");
+    encrypter.set_rsa_oaep_md(MessageDigest::sha256()).expect("oaep");
     encrypter.encrypt(cle_symmetrique, &mut cle_chiffree).expect("encrypt PK");
 
     cle_chiffree
@@ -36,9 +36,9 @@ fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]
 
     let mut decrypter = Decrypter::new(private_key).expect("decrypter");
 
-    decrypter.set_rsa_padding(Padding::PKCS1_OAEP);
-    decrypter.set_rsa_mgf1_md(MessageDigest::sha256());
-    decrypter.set_rsa_oaep_md(MessageDigest::sha256());
+    decrypter.set_rsa_padding(Padding::PKCS1_OAEP).expect("padding");
+    decrypter.set_rsa_mgf1_md(MessageDigest::sha256()).expect("mgf1");
+    decrypter.set_rsa_oaep_md(MessageDigest::sha256()).expect("oaep");
     decrypter.decrypt(cle_chiffree_bytes, &mut cle_dechiffree).expect("encrypt PK");
 
     let cle_dechiffree = &cle_dechiffree[..32];
@@ -67,7 +67,7 @@ pub struct FingerprintCleChiffree {
 impl CipherMgs2 {
     pub fn new(public_keys: &Vec<FingerprintCertPublicKey>) -> Self {
         let mut buffer_random = [0u8; 44];
-        openssl::rand::rand_bytes(&mut buffer_random);
+        openssl::rand::rand_bytes(&mut buffer_random).expect("rand");
 
         let cle = &buffer_random[0..32];
         let iv = &buffer_random[32..44];
@@ -344,7 +344,7 @@ mod backup_tests {
         let (cle_publique, cle_privee) = charger_cles();
 
         let mut buffer_random = [0u8; 32];
-        openssl::rand::rand_bytes(&mut buffer_random);
+        openssl::rand::rand_bytes(&mut buffer_random).expect("rand");
         // println!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
 
         let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random);

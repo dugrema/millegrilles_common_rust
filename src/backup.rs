@@ -241,9 +241,8 @@ async fn serialiser_transactions(
 
 async fn serialiser_catalogue(
     middleware: &(impl Formatteur),
-    builder: CatalogueHoraireBuilder,
-    path_catalogue: &Path
-) -> Result<(CatalogueHoraire, Option<MessageSigne>), Box<dyn Error>> {
+    builder: CatalogueHoraireBuilder
+) -> Result<(CatalogueHoraire, MessageSigne, Option<MessageSigne>), Box<dyn Error>> {
 
     let commande_signee = match &builder.cles {
         Some(cles) => {
@@ -277,15 +276,12 @@ async fn serialiser_catalogue(
     let message_json = MessageJson::new(catalogue_value);
     let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup"))?;
 
-    // let mut path_catalogue = workdir.clone();
-    // path_catalogue.push("extraire_transactions_catalogue.json.xz");
-    let mut writer_catalogue = FichierWriter::new(path_catalogue, None)
-        .await.expect("write catalogue");
-    writer_catalogue.write(catalogue_signe.message.as_bytes()).await?;
-    let (mh_catalogue, _) = writer_catalogue.fermer().await?;
-    // println!("Hachage catalogue {}", mh_catalogue);
+    // let mut writer_catalogue = FichierWriter::new(path_catalogue, None)
+    //     .await.expect("write catalogue");
+    // writer_catalogue.write(catalogue_signe.message.as_bytes()).await?;
+    // let (mh_catalogue, _) = writer_catalogue.fermer().await?;
 
-    Ok((catalogue, commande_signee))
+    Ok((catalogue, catalogue_signe, commande_signee))
 }
 
 async fn uploader_backup(catalogue: CatalogueHoraire, commande_cles: Option<CommandeSauvegarderCle>) -> Result<CatalogueHoraire, Box<dyn Error>> {
@@ -595,7 +591,7 @@ impl<'a> TransactionReader<'a> {
 
             let traiter_bytes = match &mut self.dechiffreur {
                 Some(d) => {
-                    d.update(&buffer[..len], &mut dechiffrage_output);
+                    d.update(&buffer[..len], &mut dechiffrage_output).expect("update");
                     &dechiffrage_output[..len]
                 },
                 None => &buffer[..len],
@@ -651,6 +647,7 @@ impl<'a> TransactionReader<'a> {
 
 }
 
+/// Genere une nouvelle Part pour un fichier a uploader dans un form multipart
 async fn file_to_part(filename: &str, file: File) -> Part {
     let metadata = &file.metadata().await.expect("md");
     let len = metadata.len();
@@ -662,7 +659,20 @@ async fn file_to_part(filename: &str, file: File) -> Part {
     Part::stream_with_length(body, len)
         .mime_str("application/xz").expect("mimetype")
         .file_name(filename.to_owned())
+}
 
+/// Genere une nouvelle Part pour un fichier a uploader dans un form multipart
+fn bytes_to_part(filename: &str, contenu: Vec<u8>, mimetype: Option<&str>) -> Part {
+
+    let mimetype_inner = match mimetype {
+        Some(m) => m,
+        None => "application/octet-stream"
+    };
+
+    let vec_message = Vec::from(contenu);
+    Part::bytes(vec_message)
+        .mime_str(mimetype_inner).expect("mimetype")
+        .file_name(filename.to_owned())
 }
 
 #[cfg(test)]
@@ -886,7 +896,7 @@ mod backup_tests {
 mod test_integration {
     use std::sync::Arc;
 
-    use crate::{charger_transaction, MiddlewareDbPki, Formatteur};
+    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, CompresseurBytes};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
 
@@ -978,11 +988,14 @@ mod test_integration {
             let domaine = "Pki";
             let mut builder = CatalogueHoraire::builder(heure.clone(), domaine.into(), "Pki.rust".into());
 
-            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
-
+            // Path fichiers transactions et catalogue
             let mut path_transactions = workdir.clone();
             path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
-            // println!("Sauvegarde transactions sous : {:?}", path_transactions);
+            let mut path_catalogue = workdir.clone();
+            path_catalogue.push("extraire_transactions_catalogue.json.xz");
+
+            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+
             let cles = serialiser_transactions(
                 middleware.as_ref(),
                 &mut transactions,
@@ -994,14 +1007,17 @@ mod test_integration {
             builder.set_cles(&cles);
 
             // Signer et serialiser catalogue
-            let mut path_catalogue = workdir.clone();
-            path_catalogue.push("extraire_transactions_catalogue.json.xz");
-            let (catalogue, commande_cles) = serialiser_catalogue(
+            let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
                 middleware.as_ref(),
                 builder,
-                path_catalogue.as_path()
             ).await.expect("serialiser");
 
+            let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None)
+                .await.expect("write catalogue");
+            writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
+            let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer");
+
+            println!("Multihash catalogue : {}", mh_catalogue);
             println!("Commande cles : {:?}", commande_cles);
 
         }));
@@ -1012,18 +1028,6 @@ mod test_integration {
     #[tokio::test]
     async fn uploader_backup_horaire() {
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
-        let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
-
-        let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
-
-        let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
-
-        let client = reqwest::Client::builder()
-            .add_root_certificate(root_ca)
-            .identity(identity)
-            .https_only(true)
-            .use_rustls_tls()
-            .build().expect("client");
 
         let catalogue_heure = DateEpochSeconds::now();
         let timestamp_backup = catalogue_heure.get_datetime().timestamp().to_string();
@@ -1031,35 +1035,95 @@ mod test_integration {
         let workdir = PathBuf::from("/tmp");
 
         let mut path_transactions: PathBuf = workdir.clone();
-        path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
-        let fichier_transactions = File::open(path_transactions.as_path()).await.expect("open");
+        path_transactions.push("upload_transactions.jsonl.xz.mgs2");
 
-        let mut path_catalogue: PathBuf = workdir.clone();
-        path_catalogue.push("extraire_transactions_catalogue.json.xz");
-        let fichier_catalogue = File::open(path_catalogue.as_path()).await.expect("open");
+        let certificats_chiffrage = vec! [
+            FingerprintCertPublicKey::new(
+                String::from("dummy"),
+                enveloppe.cle_publique().clone(),
+                true
+            )
+        ];
 
-        let form = reqwest::multipart::Form::new()
-            .text("timestamp_backup", timestamp_backup)
-            .part("transactions", file_to_part("transactions.jsonl.xz.mgs2", fichier_transactions).await)
-            .part("catalogue", file_to_part("catalogue.json.xz", fichier_catalogue).await);
+        // Generer transactions, catalogue, commande maitredescles
+        // Test
+        let info = BackupInformation::new(
+            "Pki.rust",
+            Some(certificats_chiffrage.clone()),
+            None
+        ).expect("info");
+        let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
+        let domaine = "Pki";
+        let mut builder = CatalogueHoraire::builder(heure.clone(), domaine.into(), "Pki.rust".into());
 
-        let mut request = client.put("https://mg-dev4:3021/backup/domaine/nom_catalogue.json.xz")
-            .multipart(form);
+        // Connecter mongo
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        futures.push(tokio::spawn(async move {
 
-        let resultat = request.send().await.expect("resultat");
-        println!("Resultat : {:?}", resultat);
+            // Path fichiers transactions et catalogue
+            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
 
-        // let res = client.get("https://mg-dev4:3021/backup/listeDomaines")
-        //     //.body("the exact body that is sent")
-        //     .send()
-        //     .await.expect("put");
-        //
-        // println!("Response : {:?}", res);
-        // let resultat = res.bytes().await.expect("bytes");
-        // let value: Value = serde_json::from_slice(resultat.as_ref()).expect("to_json");
-        // println!("Resultat : {:?}", value);
+            let cles = serialiser_transactions(
+                middleware.as_ref(),
+                &mut transactions,
+                &mut builder,
+                path_transactions.as_path(),
+                Some(certificats_chiffrage)
+            ).await.expect("serialiser").expect("cles");
 
+            builder.set_cles(&cles);
 
+            // Signer et serialiser catalogue
+            let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
+                middleware.as_ref(),
+                builder,
+            ).await.expect("serialiser");
+
+            // Compresser catalogue et commande maitre des cles en XZ
+            let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
+            compresseur_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
+            let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
+
+            let commande_bytes = match commande_cles {
+                Some(c) => {
+                    let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
+                    println!("Commande maitre cles : {}", c.message);
+                    compresseur_commande.write(c.message.as_bytes()).await.expect("write");
+                    let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
+
+                    Some(commande_bytes)
+                },
+                None => None
+            };
+
+            let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
+            let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
+            let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
+            let client = reqwest::Client::builder()
+                .add_root_certificate(root_ca)
+                .identity(identity)
+                .https_only(true)
+                .use_rustls_tls()
+                .build().expect("client");
+
+            let fichier_transactions_read = File::open(path_transactions.as_path()).await.expect("open");
+
+            // Uploader fichiers et contenu backup
+            let form = reqwest::multipart::Form::new()
+                .text("timestamp_backup", timestamp_backup)
+                .part("transactions", file_to_part("transactions.jsonl.xz.mgs2", fichier_transactions_read).await)
+                .part("catalogue", bytes_to_part("catalogue.json.xz", catalogue_bytes, Some("application/xz")))
+                .part("cles", bytes_to_part("commande_maitredescles.json",commande_bytes.expect("commande"),Some("text/json")));
+
+            let mut request = client.put("https://mg-dev4:3021/backup/domaine/nom_catalogue.json.xz")
+                .multipart(form);
+
+            let resultat = request.send().await.expect("resultat");
+            println!("Resultat : {:?}", resultat);
+        }));
+
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
 
     }
 

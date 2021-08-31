@@ -138,6 +138,82 @@ impl<'a> FichierWriter<'a> {
 
 }
 
+/// Compresse des bytes, retourne un Vec
+pub struct CompresseurBytes {
+    xz_encodeur: stream::Stream,
+    hacheur: Hacheur,
+    contenu: Vec<u8>,
+}
+
+impl CompresseurBytes {
+    const BUFFER_SIZE: usize = 64 * 1024;
+
+    pub fn new() -> Result<CompresseurBytes, Box<dyn Error>> {
+        let xz_encodeur = stream::Stream::new_easy_encoder(9, stream::Check::Crc64).expect("stream");
+        let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base58Btc).build();
+
+        Ok(CompresseurBytes {
+            xz_encodeur,
+            hacheur,
+            contenu: Vec::new(),
+        })
+    }
+
+    pub async fn write(&mut self, contenu: &[u8]) -> Result<usize, Box<dyn Error>> {
+
+        let chunks = contenu.chunks(CompresseurBytes::BUFFER_SIZE);
+        let mut chunks = tokio_stream::iter(chunks);
+
+        // Preparer vecteur pour recevoir data compresse (avant chiffrage) pour output vers fichier
+        let mut buffer : Vec<u8> = Vec::new();
+        buffer.reserve(CompresseurBytes::BUFFER_SIZE);
+
+        let mut count_bytes = 0usize;
+
+        while let Some(chunk) = chunks.next().await {
+            let status = self.xz_encodeur.process_vec(chunk, &mut buffer, stream::Action::Run)?;
+            if status != stream::Status::Ok {
+                Err(format!("Erreur compression transaction, status {:?}", status))?;
+            }
+
+            // Ajouter au hachage
+            self.hacheur.update(&mut buffer);
+
+            // Ecrire dans contenu
+            self.contenu.append(&mut buffer);
+
+            count_bytes += buffer.len();
+        }
+
+        Ok(count_bytes)
+    }
+
+    pub fn fermer(mut self) -> Result<(Vec<u8>, String), Box<dyn Error>> {
+        let mut buffer : Vec<u8> = Vec::new();
+        buffer.reserve(CompresseurBytes::BUFFER_SIZE);
+
+        // Flush xz
+        while let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)? {
+
+            self.hacheur.update(&buffer);
+            self.contenu.append(&mut buffer);
+
+            if status != stream::Status::Ok {
+                if status == stream::Status::MemNeeded {
+                    Err("Erreur generique de creation fichier .xz")?;
+                }
+                break
+            }
+        }
+
+        // Passer dans le hachage et finir l'ecriture du fichier
+        let hachage = self.hacheur.finalize();
+
+        Ok((self.contenu, hachage))
+    }
+
+}
+
 #[cfg(test)]
 mod fichiers_tests {
 

@@ -226,7 +226,7 @@ pub fn build_store_path(ca_path: &Path) -> Result<ValidateurX509Impl, ErrorStack
     let validateur = ValidateurX509Impl::new(store, store_notime, idmg, ca_pem, ca_cert);
 
     // Conserver l'enveloppe dans le cache
-    validateur.cacher(enveloppe_ca);
+    let _ = validateur.cacher(enveloppe_ca);
 
     Ok(validateur)
 }
@@ -239,7 +239,7 @@ pub fn build_store(ca_cert: &X509, check_time: bool) -> Result<X509Store, ErrorS
 
     if check_time == false {
         // Verification manuelle de la date de validite.
-        builder.set_flags(X509VerifyFlags::NO_CHECK_TIME);
+        builder.set_flags(X509VerifyFlags::NO_CHECK_TIME).expect("set_flags");
     }
 
     Ok(builder.build())
@@ -387,7 +387,7 @@ impl Clone for EnveloppeCertificat {
 
         let mut intermediaire: Stack<X509> = Stack::new().expect("stack");
         for cert in &self.intermediaire {
-            intermediaire.push(cert.to_owned());
+            intermediaire.push(cert.to_owned()).expect("push");
         }
 
         EnveloppeCertificat {
@@ -406,7 +406,7 @@ impl Clone for EnveloppeCertificat {
 
         let mut intermediaire = Stack::new().expect("stack");
         for cert in &source.intermediaire {
-            intermediaire.push(cert.to_owned());
+            intermediaire.push(cert.to_owned()).expect("push");
         }
 
         self.certificat = source.certificat.clone();
@@ -988,8 +988,8 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
         let certificat_domaines = prep_enveloppe(CERT_DOMAINES);
         let certificat_fichiers = prep_enveloppe(CERT_FICHIERS);
         let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(&certificat_domaines);
-        collection_pems.ajouter_certificat(&certificat_fichiers);
+        collection_pems.ajouter_certificat(&certificat_domaines).expect("ajouter");
+        collection_pems.ajouter_certificat(&certificat_fichiers).expect("ajouter");
 
         // println!("!!! Collection pems {:?}", collection_pems);
         assert_eq!(collection_pems.certificats.len(), 2);
@@ -1004,7 +1004,7 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
     fn collection_serialiser() {
         let certificat = prep_enveloppe(CERT_DOMAINES);
         let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(&certificat);
+        collection_pems.ajouter_certificat(&certificat).expect("ajouter");
 
         let value = serde_json::to_value(collection_pems).expect("json");
 
