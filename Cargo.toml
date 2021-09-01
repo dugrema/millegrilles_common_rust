@@ -9,6 +9,7 @@ edition = "2018"
 
 async-std = "1.9.0"
 async-tar = { version = "0.4.2" }
+bytes = { version = "1.1.0" }
 log = { version = "0.4.14", features = ["max_level_debug", "release_max_level_info"] }
 num-traits = "0.2.14"
 rand = "0.7"

@@ -12,9 +12,13 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio_stream::{Iter, StreamExt};
 use tokio_util::codec::{BytesCodec, FramedRead};
 use xz2::stream;
+use async_std::io::ReadExt;
+use bytes::BufMut;
 
-use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys};
+use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader};
 use crate::constantes::*;
+use xz2::stream::Status;
+use crate::backup::CatalogueHoraire;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
@@ -219,6 +223,90 @@ impl CompresseurBytes {
 
 }
 
+struct DecompresseurBytes {
+    xz_decoder: stream::Stream,
+    output: Vec<u8>,
+}
+
+impl DecompresseurBytes {
+
+    const BUFFER_SIZE: usize = 65535;
+
+    pub fn new() -> Result<Self, Box<dyn Error>> {
+        let mut xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK)?;
+        Ok(DecompresseurBytes {
+            xz_decoder,
+            output: Vec::new(),
+        })
+    }
+
+    pub async fn update<'a>(&mut self, data: &mut (impl AsyncRead + Unpin + 'a)) -> Result<(), Box<dyn Error>> {
+        let mut buffer = [0u8; DecompresseurBytes::BUFFER_SIZE/2];
+        let mut xz_output = Vec::new();
+        xz_output.reserve(DecompresseurBytes::BUFFER_SIZE);
+
+        loop {
+            let len = data.read(&mut buffer).await.expect("lecture");
+            if len == 0 {break}
+
+            let traiter_bytes = &buffer[..len];
+
+            let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
+            if status != stream::Status::Ok && status != stream::Status::StreamEnd {
+                Err(format!("Erreur traitement stream : {:?}", status))?;
+            }
+
+            self.output.append(&mut xz_output);
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_std<'a>(&mut self, data: &mut (impl futures::io::AsyncRead + Unpin + 'a)) -> Result<(), Box<dyn Error>> {
+        let mut buffer = [0u8; DecompresseurBytes::BUFFER_SIZE/2];
+        let mut xz_output = Vec::new();
+        xz_output.reserve(DecompresseurBytes::BUFFER_SIZE);
+
+        loop {
+            let len = data.read(&mut buffer).await.expect("lecture");
+            if len == 0 {break}
+
+            let traiter_bytes = &buffer[..len];
+
+            let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
+            if status != stream::Status::Ok && status != stream::Status::StreamEnd {
+                Err(format!("Erreur traitement stream : {:?}", status))?;
+            }
+
+            self.output.append(&mut xz_output);
+        }
+
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<Vec<u8>, Box<dyn Error>> {
+
+        let mut xz_output = Vec::new();
+        xz_output.reserve(DecompresseurBytes::BUFFER_SIZE);
+
+        loop {
+            let traiter_bytes = [0u8;0];
+
+            let status = self.xz_decoder.process_vec(&traiter_bytes[0..0], &mut xz_output, stream::Action::Finish).expect("xz-output");
+            self.output.append(&mut xz_output);
+            if status != stream::Status::Ok {
+                if status != stream::Status::StreamEnd {
+                    Err("Erreur decompression xz")?;
+                }
+                break
+            }
+        }
+
+        Ok(self.output)
+    }
+
+}
+
 // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
 pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
     let mut reader = Archive::new(stream);
@@ -315,10 +403,58 @@ pub async fn parse_tar3(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> 
     Ok(())
 }
 
-async fn parse_file(filepath: &async_std::path::Path, stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+async fn parse_file(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
     println!("Parse fichier : {:?}", filepath);
+
+    match filepath.extension() {
+        Some(e) => {
+            let type_ext = e.to_ascii_lowercase();
+            match type_ext.to_str().expect("str") {
+                "xz" => parse_catalogue(filepath, stream).await,
+                "mgs2" => parse_transactions(filepath, stream).await,
+                _ => {
+                    warn ! ("Type fichier inconnu, on skip : {:?}", e);
+                    Ok(())
+                }
+            }
+        },
+        None => {
+            warn!("Type fichier inconnu, on skip : {:?}", filepath);
+            Ok(())
+        }
+    }
+}
+
+async fn parse_catalogue(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+    println!("Parse catalogue : {:?}", filepath);
+
+    let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
+    decompresseur.update_std(stream).await?;
+    let catalogue_bytes = decompresseur.finish()?;
+
+    let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
+    println!("Catalogue json Value : {:?}", catalogue);
+
     Ok(())
 }
+
+async fn parse_transactions(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+
+    let reader = TransactionReader::new(Box::new(stream), None)?;
+
+    // let mut buf = [0u8; 65535];
+    // let mut transaction_bytes: Vec<u8> = Vec::new();
+    // while let Ok(len) = stream.read(&mut buf).await {
+    //     if len == 0 {break}
+    //     transaction_bytes.put_slice(&buf[..len]);
+    // }
+    //
+    // let str_transactions = String::from_utf8(transaction_bytes.clone())?;
+    // println!("Transaction : {}", str_transactions);
+
+    Ok(())
+}
+
 
 #[cfg(test)]
 mod fichiers_tests {
@@ -336,7 +472,7 @@ mod fichiers_tests {
 
     #[tokio::test]
     async fn ecrire_bytes_writer() {
-        println!("Test async fichiers");
+        println!("Test write async fichiers");
 
         let path_fichier = PathBuf::from("/tmp/fichier_tests.1.xz");
         let mut writer = FichierWriter::new(path_fichier.as_path(), None).await.expect("writer");
@@ -344,6 +480,20 @@ mod fichiers_tests {
         let (mh, _) = writer.fermer().await.expect("finish");
 
         assert_eq!(HASH_FICHIER_TEST, mh.as_str());
+    }
+
+    #[tokio::test]
+    async fn decompresser_reader() {
+        println!("Test read fichier xz");
+
+        let path_fichier = PathBuf::from("/tmp/output.xz");
+        let mut fichier = File::open(path_fichier.as_path()).await.expect("fichier");
+
+        let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
+        decompresseur.update(&mut fichier).await.expect("update");
+        let mut resultat = decompresseur.finish().expect("decompresseur");
+        let resultat_str = String::from_utf8(resultat).expect("utf8");
+        println!("Resultat decompresse : {}", resultat_str);
     }
 
     #[tokio::test]
@@ -378,7 +528,6 @@ mod fichiers_tests {
     #[tokio::test]
     async fn tar_parse() {
         let file = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
-        // let mut tar_parser = TarParser::new();
         parse_tar(file).await.expect("parse");
     }
 

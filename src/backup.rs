@@ -17,11 +17,15 @@ use openssl::pkey::{PKey, Private};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::{TempDir, tempdir};
-use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
-use tokio_stream::{Iter, StreamExt};
+use tokio::fs::File as File_tokio;
+use tokio::io::{AsyncRead as AsyncRead_Tokio};
+use tokio_stream::{Iter as Iter_tokio, StreamExt};
 use uuid::Uuid;
 use xz2::stream;
+use futures::Stream;
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use async_std::fs::File;
+
 
 use tokio_util::codec::{BytesCodec, FramedRead};
 use futures::stream::TryStreamExt;
@@ -35,6 +39,7 @@ use reqwest::Body;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::io::Bytes;
+use async_std::io::BufReader;
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collection: &str) -> Result<(), Box<dyn Error>> {
@@ -340,7 +345,7 @@ struct BackupInformation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct CatalogueHoraire {
+pub struct CatalogueHoraire {
     /// Heure du backup (minutes = 0, secs = 0)
     heure: DateEpochSeconds,
     /// Nom du domaine ou sous-domaine
@@ -544,7 +549,7 @@ impl<'a> TransactionWriter<'a> {
 
 }
 
-struct TransactionReader<'a> {
+pub struct TransactionReader<'a> {
     data: Box<dyn AsyncRead + Unpin + 'a>,
     xz_decoder: stream::Stream,
     // hacheur: Hacheur,
@@ -651,12 +656,12 @@ impl<'a> TransactionReader<'a> {
 }
 
 /// Genere une nouvelle Part pour un fichier a uploader dans un form multipart
-async fn file_to_part(filename: &str, file: File) -> Part {
+async fn file_to_part(filename: &str, file: File_tokio) -> Part {
     let metadata = &file.metadata().await.expect("md");
     let len = metadata.len();
 
     let stream = FramedRead::new(file, BytesCodec::new());
-
+    // let reader = BufReader::new(file);
     let body = Body::wrap_stream(stream);
 
     Part::stream_with_length(body, len)
@@ -819,7 +824,7 @@ mod backup_tests {
         let file = writer.fermer().await.expect("fermer");
         // println!("File du writer : {:?}", file);
 
-        let fichier_cs = Box::new(tokio::fs::File::open(path_fichier.as_path()).await.expect("open read"));
+        let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
         let mut reader = TransactionReader::new(fichier_cs, None).expect("reader");
         let transactions = reader.read_transactions().await.expect("transactions");
         for t in transactions {
@@ -882,7 +887,7 @@ mod backup_tests {
 
         decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
 
-        let fichier_cs = Box::new(tokio::fs::File::open(path_fichier.as_path()).await.expect("open read"));
+        let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
         let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
         let transactions = reader.read_transactions().await.expect("transactions");
 
@@ -1112,7 +1117,7 @@ mod test_integration {
                 .use_rustls_tls()
                 .build().expect("client");
 
-            let fichier_transactions_read = File::open(path_transactions.as_path()).await.expect("open");
+            let fichier_transactions_read = File_tokio::open(path_transactions.as_path()).await.expect("open");
 
             // Uploader fichiers et contenu backup
             let form = reqwest::multipart::Form::new()
