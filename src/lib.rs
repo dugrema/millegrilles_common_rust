@@ -31,3 +31,13 @@ pub use transactions::*;
 pub use backup::*;
 pub use chiffrage::*;
 pub use fichiers::*;
+
+#[cfg(test)]
+mod test_setup {
+    use log::{debug};
+
+    pub fn setup(nom: &str) {
+        let _ = env_logger::builder().is_test(true).try_init();
+        debug!("Running {}", nom);
+    }
+}

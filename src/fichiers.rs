@@ -455,7 +455,6 @@ async fn parse_transactions(filepath: &async_std::path::Path, stream: &mut (impl
     Ok(())
 }
 
-
 #[cfg(test)]
 mod fichiers_tests {
     use std::collections::HashMap;
@@ -463,6 +462,7 @@ mod fichiers_tests {
 
     use tokio_util::codec::{BytesCodec, FramedRead};
 
+    use crate::test_setup::setup;
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
 
     use super::*;
@@ -472,7 +472,7 @@ mod fichiers_tests {
 
     #[tokio::test]
     async fn ecrire_bytes_writer() {
-        println!("Test write async fichiers");
+        setup("ecrire_bytes_writer");
 
         let path_fichier = PathBuf::from("/tmp/fichier_tests.1.xz");
         let mut writer = FichierWriter::new(path_fichier.as_path(), None).await.expect("writer");
@@ -484,7 +484,7 @@ mod fichiers_tests {
 
     #[tokio::test]
     async fn decompresser_reader() {
-        println!("Test read fichier xz");
+        setup("decompresser_reader");
 
         let path_fichier = PathBuf::from("/tmp/output.xz");
         let mut fichier = File::open(path_fichier.as_path()).await.expect("fichier");
@@ -498,7 +498,7 @@ mod fichiers_tests {
 
     #[tokio::test]
     async fn ecrire_bytes_chiffres_writer() {
-        println!("Test async fichiers");
+        setup("ecrire_bytes_chiffres_writer");
 
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
 
@@ -527,12 +527,14 @@ mod fichiers_tests {
 
     #[tokio::test]
     async fn tar_parse() {
+        setup("Test tar_parse");
         let file = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
         parse_tar(file).await.expect("parse");
     }
 
     #[tokio::test]
     async fn tar_tar_parse() {
+        setup("tar_tar_parse");
         let file = async_std::fs::File::open(PathBuf::from("/tmp/download_tar.tar")).await.expect("open");
         // let mut tar_parser = TarParser::new();
         parse_tar(file).await.expect("parse");
