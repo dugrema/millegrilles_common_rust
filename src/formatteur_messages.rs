@@ -17,6 +17,7 @@ use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
 use crate::signatures::signer_message;
+use crate::EnveloppeCertificat;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
@@ -26,6 +27,7 @@ const CERTIFICATS: &str = "_certificat";
 pub struct MessageSigne {
     pub message: String,
     pub entete: BTreeMap<String, Value>,
+    enveloppe: Option<Arc<EnveloppeCertificat>>,
 }
 
 impl MessageSigne {
@@ -121,6 +123,7 @@ impl Formatteur for FormatteurMessage {
         let resultat = MessageSigne {
             message: contenu_str,
             entete,
+            enveloppe: Some(enveloppe_privee.enveloppe.clone())
         };
 
         Ok(resultat)
@@ -453,9 +456,11 @@ impl EnteteBuilder {
 mod serialization_tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+    use crate::test_setup::setup;
 
     #[test]
     fn serializer_date() {
+        setup("serializer_date");
         let date = DateEpochSeconds::from_i64(1629813607);
 
         let value = serde_json::to_value(date).unwrap();
@@ -466,6 +471,7 @@ mod serialization_tests {
 
     #[test]
     fn deserializer_date() {
+        setup("deserializer_date");
         let value_int = 1629813607;
         let value = Value::from(value_int);
 
@@ -476,6 +482,7 @@ mod serialization_tests {
 
     #[test]
     fn serializer_entete() {
+        setup("deserializer_date");
         let fingerprint = "zQmPD1VZCEgPDvpNdSK8SCv6SuhdrtbvzAy5nUDvRWYn3Wv";
         let hachage_contenu = "mEiAoFMueZNEcSQ97UXcOWmezPuQyjBYWpm8+1NZDKJvb2g";
         let idmg = "z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s";
@@ -495,7 +502,7 @@ mod serialization_tests {
 
     #[test]
     fn deserializer_entete() {
-
+        setup("deserializer_date");
         let value = json!({
 	    	"domaine": "Backup.catalogueHoraire",
 		    "estampille": 1627585202,

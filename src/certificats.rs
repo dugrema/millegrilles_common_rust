@@ -266,7 +266,7 @@ pub fn charger_enveloppe_privee(path_cert: &Path, path_cle: &Path, validateur: A
     }
 
     let enveloppe_privee = EnveloppePrivee {
-        enveloppe,
+        enveloppe: Arc::new(enveloppe),
         cle_privee,
         chaine_pem,
         clecert_pem,
@@ -448,7 +448,7 @@ impl FingerprintCertPublicKey {
 
 /// Enveloppe avec cle pour cle et certificat combine
 pub struct EnveloppePrivee {
-    pub enveloppe: EnveloppeCertificat,
+    pub enveloppe: Arc<EnveloppeCertificat>,
     cle_privee: PKey<Private>,
     chaine_pem: Vec<String>,
     pub clecert_pem: String,
