@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Formatteur, Hacheur, MessageJson, MessageSigne, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509};
+use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Formatteur, Hacheur, MessageJson, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -250,7 +250,7 @@ async fn serialiser_transactions(
 async fn serialiser_catalogue(
     middleware: &(impl Formatteur),
     builder: CatalogueHoraireBuilder
-) -> Result<(CatalogueHoraire, MessageSigne, Option<MessageSigne>), Box<dyn Error>> {
+) -> Result<(CatalogueHoraire, MessageSerialise, Option<MessageSerialise>), Box<dyn Error>> {
 
     let commande_signee = match &builder.cles {
         Some(cles) => {

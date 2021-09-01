@@ -23,7 +23,7 @@ use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImp
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
-use crate::{Formatteur, MessageSigne, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message};
+use crate::{Formatteur, MessageSerialise, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message};
 use std::fmt::Error;
 
 /// Version speciale du middleware avec un acces direct au sous-domaine Pki dans MongoDB
@@ -154,11 +154,11 @@ impl ValidateurX509 for MiddlewareDbPki {
         self.validateur.get_certificat(fingerprint).await
     }
 
-    fn idmg(&self) -> &String {
+    fn idmg(&self) -> &str {
         self.validateur.idmg()
     }
 
-    fn ca_pem(&self) -> &String {
+    fn ca_pem(&self) -> &str {
         self.validateur.ca_pem()
     }
 
@@ -211,7 +211,7 @@ impl GenerateurMessages for MiddlewareDbPki {
 }
 
 impl Formatteur for MiddlewareDbPki {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSigne, Error> {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Error> {
         self.generateur_messages.formatter_value(message, domaine)
     }
 }
@@ -375,11 +375,11 @@ impl ValidateurX509 for ValidateurX509Database {
         }
     }
 
-    fn idmg(&self) -> &String {
+    fn idmg(&self) -> &str {
         self.validateur.idmg()
     }
 
-    fn ca_pem(&self) -> &String {
+    fn ca_pem(&self) -> &str {
         self.validateur.ca_pem()
     }
 
@@ -417,11 +417,11 @@ impl ValidateurX509 for MiddlewareDb {
         self.validateur.get_certificat(fingerprint).await
     }
 
-    fn idmg(&self) -> &String {
+    fn idmg(&self) -> &str {
         self.validateur.idmg()
     }
 
-    fn ca_pem(&self) -> &String {
+    fn ca_pem(&self) -> &str {
         self.validateur.ca_pem()
     }
 

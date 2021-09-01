@@ -21,7 +21,7 @@ use tokio_stream::StreamExt;
 use crate::certificats::{EnveloppePrivee, ValidateurX509};
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageSigne};
+use crate::formatteur_messages::{FormatteurMessage, MessageSerialise};
 
 use crate::recepteur_messages::TypeMessage;
 
@@ -490,7 +490,7 @@ async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel:
 
         let correlation_id = match &message.correlation_id {
             Some(c) => c.as_str(),
-            None => &entete.get("uuid_transaction").expect("entete 1").as_str().expect("entete 2")
+            None => &entete.uuid_transaction.as_str()
         };
 
         let routing_key = match &message.domaine_action {
@@ -564,7 +564,7 @@ pub enum MessageInterne {
 
 #[derive(Clone, Debug)]
 pub struct MessageOut {
-    pub message: MessageSigne,
+    pub message: MessageSerialise,
     type_message: TypeMessageOut,
     domaine_action: Option<String>,
     exchanges: Option<Vec<Securite>>,     // Utilise pour emission de message avec domaine_action
@@ -573,15 +573,14 @@ pub struct MessageOut {
 }
 
 impl MessageOut {
-    pub fn new(domaine_action: &str, message: MessageSigne, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>) -> MessageOut {
+    pub fn new(domaine_action: &str, message: MessageSerialise, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>) -> MessageOut {
         if type_message == TypeMessageOut::Reponse {
             panic!("Reponse non supportee, utiliser MessageOut::new_reply()");
         }
 
-        let entete = &message.entete;
-        let correlation_id = match entete.get("uuid-transaction") {
-            Some(c) => Some(c.as_str().unwrap().into()),
-            None => None,
+        let uuid_transaction = {
+            let entete = &message.entete;
+            entete.uuid_transaction.clone()
         };
 
         let exchange_effectif = match exchanges {
@@ -594,12 +593,12 @@ impl MessageOut {
             type_message,
             domaine_action: Some(domaine_action.to_owned()),
             exchanges: Some(exchange_effectif),
-            correlation_id,
+            correlation_id: Some(uuid_transaction),
             replying_to: None,
         }
     }
 
-    pub fn new_reply(message: MessageSigne, correlation_id: &str, replying_to: &str) -> MessageOut {
+    pub fn new_reply(message: MessageSerialise, correlation_id: &str, replying_to: &str) -> MessageOut {
         MessageOut {
             message,
             type_message: TypeMessageOut::Reponse,

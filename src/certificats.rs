@@ -506,9 +506,9 @@ pub trait ValidateurX509: Send + Sync {
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>;
 
-    fn idmg(&self) -> &String;
+    fn idmg(&self) -> &str;
 
-    fn ca_pem(&self) -> &String;
+    fn ca_pem(&self) -> &str;
 
     fn ca_cert(&self) -> &X509;
 
@@ -639,9 +639,9 @@ impl ValidateurX509 for ValidateurX509Impl {
         }
     }
 
-    fn idmg(&self) -> &String { &self.idmg }
+    fn idmg(&self) -> &str { self.idmg.as_str() }
 
-    fn ca_pem(&self) -> &String { &self.ca_pem }
+    fn ca_pem(&self) -> &str { self.ca_pem.as_str() }
 
     fn ca_cert(&self) -> &X509 { &self.ca_cert }
 

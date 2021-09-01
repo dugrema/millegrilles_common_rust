@@ -10,7 +10,7 @@ use tokio::time::error::Elapsed;
 use lapin::message::Delivery;
 
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageJson, MessageSigne};
+use crate::formatteur_messages::{FormatteurMessage, MessageJson, MessageSerialise};
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 use crate::Formatteur;
@@ -91,8 +91,11 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
         );
 
         let (tx_delivery, mut rx_delivery) = oneshot::channel();
-        let entete = &message_out.message.entete;
-        let correlation_id = entete.get("uuid_transaction").expect("uuid_transaction").as_str().expect("correlation_id").to_owned();
+
+        let correlation_id = {
+            let entete = &message_out.message.entete;
+            entete.uuid_transaction.clone()
+        };
 
         if blocking {
             let demande = MessageInterne::AttenteReponse(AttenteReponse {
@@ -143,7 +146,7 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
         );
 
         let entete = &message_out.message.entete;
-        let correlation_id = entete.get("uuid_transaction").expect("uuid_transaction").as_str().expect("correlation_id").to_owned();
+        let correlation_id = entete.uuid_transaction.clone();
 
         let (tx_delivery, mut rx_delivery) = oneshot::channel();
         let demande = MessageInterne::AttenteReponse(AttenteReponse {
@@ -216,13 +219,13 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
 }
 
 impl Formatteur for GenerateurMessagesImpl {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSigne, Error> {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Error> {
         self.formatteur.formatter_value(message, domaine)
     }
 }
 
 impl GenerateurMessagesImpl {
-    fn signer(&self, domaine: Option<&str>, message: &MessageJson) -> Result<MessageSigne, String> {
+    fn signer(&self, domaine: Option<&str>, message: &MessageJson) -> Result<MessageSerialise, String> {
         let message_signe = self.formatteur.formatter_value(message, domaine);
         let message_signe = match message_signe {
             Ok(m) => Ok(m),
