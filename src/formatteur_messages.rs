@@ -19,6 +19,7 @@ use crate::hachages::hacher_message;
 use crate::signatures::signer_message;
 use crate::EnveloppeCertificat;
 use serde::ser::SerializeMap;
+use env_logger::fmt::TimestampPrecision::Micros;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
@@ -110,10 +111,10 @@ pub struct MessageMilleGrille {
 
 impl MessageMilleGrille {
 
-    pub fn new_signer(enveloppe_privee: EnveloppePrivee, contenu: &impl Serialize) -> Self {
+    pub fn new_signer(enveloppe_privee: &EnveloppePrivee, contenu: &impl Serialize) -> Result<Self, Box<dyn std::error::Error>> {
 
         // Serialiser le contenu
-        let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu);
+        let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
 
         // Calculer le hachage du contenu
 
@@ -136,16 +137,18 @@ impl MessageMilleGrille {
             pem_str
         };
 
-        MessageMilleGrille {
+        let signature = MessageMilleGrille::signer_message(enveloppe_privee, &entete, &value)?;
+
+        Ok(MessageMilleGrille {
             entete,
             certificat: Some(pems),
-            signature: None,
+            signature: Some(signature),
             contenu: value,
-        }
+        })
     }
 
-    fn serialiser_contenu(contenu: &impl Serialize) -> Map<String, Value> {
-        serde_json::to_value(contenu).expect("value").as_object().expect("object").to_owned()
+    fn serialiser_contenu(contenu: &impl Serialize) -> Result<Map<String, Value>, Box<dyn std::error::Error>> {
+        Ok(serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned())
     }
 
     fn calculer_hachage_contenu(contenu: &Map<String, Value>) -> Result<String, Box<dyn std::error::Error>> {
@@ -163,18 +166,48 @@ impl MessageMilleGrille {
         Ok(hacher_message(message_string.as_str()))
     }
 
-    pub fn set_contenu(&mut self, map: Map<String, Value>) {
-        for (k, v) in map {
-            self.contenu.insert(k, v);
+    fn signer_message(enveloppe_privee: &EnveloppePrivee, entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn std::error::Error>> {
+        // let ordered: BTreeMap<_, _> = contenu.iter().collect();
+        let mut ordered = BTreeMap::new();
+
+        // Copier dans une BTreeMap. Retirer champs _ et en-tete
+        for (k, v) in contenu {
+            if ! k.starts_with("_") {
+                ordered.insert(k.as_str(), v);
+            }
         }
+
+        // Ajouter entete
+        let entete_value = serde_json::to_value(entete)?;
+        ordered.insert("en-tete", &entete_value);
+
+        // Serialiser en json pour signer
+        let message_string = serde_json::to_string(&ordered)?;
+
+        // debug!("Message serialise avec entete : {}", contenu_str);
+        let signature = signer_message(enveloppe_privee.cle_privee(), message_string.as_bytes())?;
+
+        Ok(signature)
     }
 
-    pub fn set_objet(&mut self, objet: &impl Serialize) -> Result<(), Box<dyn std::error::Error>> {
-        let contenu: Map<String, Value> = serde_json::to_value(objet).expect("value").as_object().expect("object").to_owned();
-        self.set_contenu(contenu);
-
+    fn signer(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
+        let signature = MessageMilleGrille::signer_message(enveloppe_privee, &self.entete, &self.contenu)?;
+        self.signature = Some(signature);
         Ok(())
     }
+
+    // pub fn set_contenu(&mut self, map: Map<String, Value>) {
+    //     for (k, v) in map {
+    //         self.contenu.insert(k, v);
+    //     }
+    // }
+    //
+    // pub fn set_objet(&mut self, objet: &impl Serialize) -> Result<(), Box<dyn std::error::Error>> {
+    //     let contenu: Map<String, Value> = serde_json::to_value(objet).expect("value").as_object().expect("object").to_owned();
+    //     self.set_contenu(contenu);
+    //
+    //     Ok(())
+    // }
 
     /// Sert a retirer les certificats pour serialisation (e.g. backup, transaction Mongo, etc)
     pub fn retirer_certificats(&mut self) {
@@ -665,7 +698,7 @@ mod serialization_tests {
     }
 
     #[test]
-    fn creer_message_millegrille() {
+    fn creer_message_millegrille_signe() {
         setup("creer_message_millegrille");
         let (_, enveloppe_privee) = charger_enveloppe_privee_env();
         let entete = Entete::builder("dummy", "hachage", "idmg").build();
@@ -673,11 +706,14 @@ mod serialization_tests {
         let val = json!({
             "valeur": 1,
             "texte": "oui!",
+            "alpaca": true,
         });
-        let message = MessageMilleGrille::new_signer(enveloppe_privee, &val);
+        let message = MessageMilleGrille::new_signer(&enveloppe_privee, &val).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         debug!("Message MilleGrille serialise : {}", message_str)
     }
+
+
 
 }
