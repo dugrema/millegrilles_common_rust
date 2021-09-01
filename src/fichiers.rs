@@ -19,6 +19,7 @@ use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, Trans
 use crate::constantes::*;
 use xz2::stream::Status;
 use crate::backup::CatalogueHoraire;
+use async_trait::async_trait;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
@@ -308,7 +309,7 @@ impl DecompresseurBytes {
 }
 
 // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
-pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>> {
     let mut reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -320,7 +321,8 @@ pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> R
         match file_path.extension() {
             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
                 "tar" => parse_tar1(&mut file).await?,
-                _ => parse_file(file_path.as_path(), &mut file).await?
+                // _ => parse_file(file_path.as_path(), &mut file).await?
+                _ => processeur.traiter_fichier( file_path.as_path(), &mut file).await?
             },
             None => {
                 warn!("Fichier de type inconnu, on skip : {:?}", file_path)
@@ -455,6 +457,11 @@ async fn parse_transactions(filepath: &async_std::path::Path, stream: &mut (impl
     Ok(())
 }
 
+#[async_trait]
+pub trait TraiterFichier {
+    async fn traiter_fichier(&mut self, nom_fichier: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>;
+}
+
 #[cfg(test)]
 mod fichiers_tests {
     use std::collections::HashMap;
@@ -466,9 +473,24 @@ mod fichiers_tests {
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
 
     use super::*;
+    use async_std::future::Future;
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
     const BYTES_TEST: &[u8] = b"des bytes a ecrire";
+
+    struct DummyTraiterFichier{}
+    #[async_trait]
+    impl TraiterFichier for DummyTraiterFichier {
+        async fn traiter_fichier(
+            &mut self,
+            nom_fichier: &async_std::path::Path,
+            stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)
+        ) -> Result<(), Box<dyn Error>> {
+            debug!("Traiter fichier {:?}", nom_fichier);
+
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn ecrire_bytes_writer() {
@@ -528,16 +550,21 @@ mod fichiers_tests {
     #[tokio::test]
     async fn tar_parse() {
         setup("Test tar_parse");
-        let file = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
-        parse_tar(file).await.expect("parse");
+        let file: async_std::fs::File = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
+
+        let mut traiter_fichier: DummyTraiterFichier = DummyTraiterFichier{};
+
+        parse_tar(file, &mut traiter_fichier).await.expect("parse");
     }
 
     #[tokio::test]
     async fn tar_tar_parse() {
         setup("tar_tar_parse");
         let file = async_std::fs::File::open(PathBuf::from("/tmp/download_tar.tar")).await.expect("open");
-        // let mut tar_parser = TarParser::new();
-        parse_tar(file).await.expect("parse");
+
+        let mut traiter_fichier = DummyTraiterFichier{};
+
+        parse_tar(file, &mut traiter_fichier).await.expect("parse");
     }
 
 }
