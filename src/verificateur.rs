@@ -17,6 +17,14 @@ use crate::hachages::verifier_multihash;
 use crate::signatures::{SALT_LENGTH, VERSION_1};
 use std::error::Error;
 
+pub trait VerificateurMessage {
+    fn verifier_message(
+        &self,
+        message: &MessageJson,
+        options: Option<ValidationOptions>
+    ) -> Result<ResultatValidation, Box<dyn Error>>;
+}
+
 pub struct ResultatValidation {
     pub signature_valide: bool,
     pub hachage_valide: Option<bool>,

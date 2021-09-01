@@ -2,11 +2,20 @@ use std::{io, io::Write};
 use std::cmp::min;
 use std::collections::HashMap;
 use std::error::Error;
+use std::io::Bytes;
+use std::iter::Map;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
+use async_std::fs::File;
+use async_std::io::BufReader;
 use async_trait::async_trait;
 use bson::Document;
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use futures::Stream;
+use futures::stream::TryStreamExt;
 use log::{debug, error, info, warn};
 use mongodb::bson::doc;
 use mongodb::Cursor;
@@ -14,32 +23,23 @@ use mongodb::options::{AggregateOptions, FindOptions, Hint};
 use multibase::Base;
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
+use reqwest::Body;
+use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
-use tokio::io::{AsyncRead as AsyncRead_Tokio};
+use tokio::io::AsyncRead as AsyncRead_Tokio;
 use tokio_stream::{Iter as Iter_tokio, StreamExt};
+use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
-use futures::Stream;
-use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use async_std::fs::File;
 
-
-use tokio_util::codec::{BytesCodec, FramedRead};
-use futures::stream::TryStreamExt;
-use reqwest::multipart::Part;
-
-use crate::{CipherMgs2, CollectionCertificatsPem, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FingerprintCertPublicKey, FormatChiffrage, Hacheur, Mgs2CipherData, Mgs2CipherKeys, MongoDao, FingerprintCleChiffree, CommandeSauvegarderCle, ValidateurX509, FichierWriter, MessageJson, Formatteur, MessageSigne};
+use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Formatteur, Hacheur, MessageJson, MessageSigne, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
-use std::iter::Map;
-use reqwest::Body;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::io::Bytes;
-use async_std::io::BufReader;
+use crate::fichiers::DecompresseurBytes;
+use std::sync::Arc;
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collection: &str) -> Result<(), Box<dyn Error>> {
@@ -683,6 +683,71 @@ fn bytes_to_part(filename: &str, contenu: Vec<u8>, mimetype: Option<&str>) -> Pa
         .file_name(filename.to_owned())
 }
 
+struct ProcesseurFichierBackup {
+    middleware: Arc<dyn ValidateurX509>,
+    catalogue: Option<CatalogueHoraire>,
+}
+
+impl ProcesseurFichierBackup {
+
+    fn new(middleware: Arc<dyn ValidateurX509>) -> Self {
+        ProcesseurFichierBackup {
+            middleware,
+            catalogue: None,
+        }
+    }
+
+    async fn parse_file(&mut self, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+        debug!("Parse fichier : {:?}", filepath);
+
+        match filepath.extension() {
+            Some(e) => {
+                let type_ext = e.to_ascii_lowercase();
+                match type_ext.to_str().expect("str") {
+                    "xz" => self.parse_catalogue(filepath, stream).await,
+                    "mgs2" => self.parse_transactions(filepath, stream).await,
+                    _ => {
+                        warn ! ("Type fichier inconnu, on skip : {:?}", e);
+                        Ok(())
+                    }
+                }
+            },
+            None => {
+                warn!("Type fichier inconnu, on skip : {:?}", filepath);
+                Ok(())
+            }
+        }
+    }
+
+    async fn parse_catalogue(&mut self, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+        debug!("Parse catalogue : {:?}", filepath);
+
+        let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
+        decompresseur.update_std(stream).await?;
+        let catalogue_bytes = decompresseur.finish()?;
+
+        let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
+
+        debug!("Catalogue json Value : {:?}", catalogue);
+        self.catalogue = Some(catalogue);
+
+        Ok(())
+    }
+
+    async fn parse_transactions(&mut self, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+        debug!("Parse transactions : {:?}", filepath);
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TraiterFichier for ProcesseurFichierBackup {
+    async fn traiter_fichier(&mut self, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>> {
+        self.parse_file(nom_fichier, stream).await
+    }
+}
+
 #[cfg(test)]
 mod backup_tests {
     use serde_json::json;
@@ -690,6 +755,8 @@ mod backup_tests {
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
 
     use super::*;
+    use crate::{CompresseurBytes, preparer_middleware_pki};
+    use crate::test_setup::setup;
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -898,20 +965,52 @@ mod backup_tests {
         }
 
     }
+
+    #[tokio::test]
+    async fn processeur_fichier_backup_catalogue() {
+        setup("processeur_fichier_backup_catalogue");
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+
+        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+        let catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+        let catalogue = catalogue_builder.build();
+        let catalogue_value: Value = serde_json::to_value(catalogue).expect("value");
+
+        let message_json = MessageJson::new(catalogue_value);
+        let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signer");
+
+        let mut compresseur = CompresseurBytes::new().expect("compresseur");
+        compresseur.write(catalogue_signe.message.as_bytes()).await;
+        let (catalogue_xz, _) = compresseur.fermer().expect("xz");
+
+        let mut buf_reader = BufReader::new(catalogue_xz.as_slice());
+        let nom_fichier = async_std::path::PathBuf::from("catalogue.xz");
+        let mut processeur = ProcesseurFichierBackup::new(middleware.clone());
+
+        processeur.parse_catalogue(nom_fichier.as_path(), &mut buf_reader).await.expect("parsed");
+
+        assert_eq!(processeur.catalogue.is_none(), false);
+        debug!("Catalogue charge : {:?}", processeur.catalogue);
+    }
+
 }
 
 #[cfg(test)]
 mod test_integration {
-    use super::*;
-    use async_std::io::BufReader;
-    use futures_util::stream::IntoAsyncRead;
     use std::io::Bytes;
     use std::sync::Arc;
 
-    use crate::test_setup::setup;
-    use crate::{charger_transaction, MiddlewareDbPki, Formatteur, CompresseurBytes};
+    use async_std::io::BufReader;
+    use futures_util::stream::IntoAsyncRead;
+
+    use crate::{charger_transaction, CompresseurBytes, Formatteur, MiddlewareDbPki};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
+    use crate::test_setup::setup;
+
+    use super::*;
 
     #[tokio::test]
     async fn grouper_transactions() {

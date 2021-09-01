@@ -231,7 +231,7 @@ impl MessageJson {
         self.message_json.as_object().expect("map")
     }
 
-    fn get_entete(&self) -> Result<&Map<String,Value>, String> {
+    pub fn get_entete(&self) -> Result<&Map<String,Value>, String> {
         match self.get_message().get(TRANSACTION_CHAMP_ENTETE) {
             Some(entete) => match entete.as_object() {
                 Some(entete) => Ok(entete),

@@ -23,7 +23,7 @@ use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImp
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
-use crate::{Formatteur, MessageSigne};
+use crate::{Formatteur, MessageSigne, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message};
 use std::fmt::Error;
 
 /// Version speciale du middleware avec un acces direct au sous-domaine Pki dans MongoDB
@@ -492,6 +492,15 @@ impl IsConfigurationPki for MiddlewareDb {
     }
 }
 
+// impl VerificateurMessage for MiddlewareDb {
+//     fn verifier_message(
+//         message: &MessageJson,
+//         options: Option<ValidationOptions>
+//     ) -> Result<ResultatValidation, Box<dyn std::error::Error>> {
+//         Ok(verifier_message(message, certificat, idmg_local, options)?)
+//     }
+// }
+
 impl IsConfigurationPki for MiddlewareDbPki {
     fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
 
@@ -520,6 +529,22 @@ impl EmetteurCertificat for MiddlewareDbPki {
         generateur_message.emettre_evenement(PKI_EVENEMENT_CERTIFICAT, &message, Some(exchanges)).await
     }
 }
+
+// impl VerificateurMessage for MiddlewareDbPki {
+//     fn verifier_message(
+//         &self,
+//         message: &MessageJson,
+//         options: Option<ValidationOptions>
+//     ) -> Result<ResultatValidation, Box<dyn std::error::Error>> {
+//
+//         let entete = message.get_entete()?;
+//         let validateur_x509 = self.configuration.get_configuration_pki().get_validateur();
+//         let idmg_local = validateur_x509.idmg().as_str();
+//         let certificat_message = message.get_message().get("_certificat");
+//
+//         Ok(verifier_message(message, certificat, idmg_local, options)?)
+//     }
+// }
 
 pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection, dirty: Option<bool>) -> Result<Option<String>, String> {
     let fingerprint = enveloppe.fingerprint();

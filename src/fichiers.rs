@@ -224,7 +224,7 @@ impl CompresseurBytes {
 
 }
 
-struct DecompresseurBytes {
+pub struct DecompresseurBytes {
     xz_decoder: stream::Stream,
     output: Vec<u8>,
 }
@@ -320,8 +320,7 @@ pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin, proc
         // Process tar or other file type
         match file_path.extension() {
             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
-                "tar" => parse_tar1(&mut file).await?,
-                // _ => parse_file(file_path.as_path(), &mut file).await?
+                "tar" => parse_tar1(&mut file, processeur).await?,
                 _ => processeur.traiter_fichier( file_path.as_path(), &mut file).await?
             },
             None => {
@@ -334,7 +333,7 @@ pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin, proc
 }
 
 // todo : Fix parse_tar recursion async
-pub async fn parse_tar1(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+pub async fn parse_tar1(stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>> {
     let mut reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -345,8 +344,8 @@ pub async fn parse_tar1(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> 
         // Process tar or other file type
         match file_path.extension() {
             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
-                "tar" => parse_tar2(&mut file).await?,
-                _ => parse_file(file_path.as_path(), &mut file).await?
+                "tar" => parse_tar2(&mut file, processeur).await?,
+                _ => processeur.traiter_fichier( file_path.as_path(), &mut file).await?
             },
             None => {
                 warn!("Fichier de type inconnu, on skip : {:?}", file_path)
@@ -358,7 +357,7 @@ pub async fn parse_tar1(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> 
 }
 
 // todo : Fix parse_tar recursion async
-pub async fn parse_tar2(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+pub async fn parse_tar2(stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>> {
     let mut reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -369,8 +368,8 @@ pub async fn parse_tar2(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> 
         // Process tar or other file type
         match file_path.extension() {
             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
-                "tar" => parse_tar3(&mut file).await?,
-                _ => parse_file(file_path.as_path(), &mut file).await?
+                "tar" => parse_tar3(&mut file, processeur).await?,
+                _ => processeur.traiter_fichier( file_path.as_path(), &mut file).await?
             },
             None => {
                 warn!("Fichier de type inconnu, on skip : {:?}", file_path)
@@ -382,7 +381,7 @@ pub async fn parse_tar2(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> 
 }
 
 // todo : Fix parse_tar recursion async
-pub async fn parse_tar3(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
+pub async fn parse_tar3(stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>> {
     let mut reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -393,66 +392,14 @@ pub async fn parse_tar3(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> 
         // Process tar or other file type
         match file_path.extension() {
             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
-                "tar" => panic!("Recursion niveau 2 .tar non supporte"),
-                _ => parse_file(file_path.as_path(), &mut file).await?
+                "tar" => panic!("Recursion niveau 3 .tar non supporte"),
+                _ => processeur.traiter_fichier( file_path.as_path(), &mut file).await?
             },
             None => {
                 warn!("Fichier de type inconnu, on skip : {:?}", file_path)
             }
         }
     }
-
-    Ok(())
-}
-
-async fn parse_file(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
-    debug!("Parse fichier : {:?}", filepath);
-
-    match filepath.extension() {
-        Some(e) => {
-            let type_ext = e.to_ascii_lowercase();
-            match type_ext.to_str().expect("str") {
-                "xz" => parse_catalogue(filepath, stream).await,
-                "mgs2" => parse_transactions(filepath, stream).await,
-                _ => {
-                    warn ! ("Type fichier inconnu, on skip : {:?}", e);
-                    Ok(())
-                }
-            }
-        },
-        None => {
-            warn!("Type fichier inconnu, on skip : {:?}", filepath);
-            Ok(())
-        }
-    }
-}
-
-async fn parse_catalogue(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
-    debug!("Parse catalogue : {:?}", filepath);
-
-    let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
-    decompresseur.update_std(stream).await?;
-    let catalogue_bytes = decompresseur.finish()?;
-
-    let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
-    debug!("Catalogue json Value : {:?}", catalogue);
-
-    Ok(())
-}
-
-async fn parse_transactions(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
-
-    let reader = TransactionReader::new(Box::new(stream), None)?;
-
-    // let mut buf = [0u8; 65535];
-    // let mut transaction_bytes: Vec<u8> = Vec::new();
-    // while let Ok(len) = stream.read(&mut buf).await {
-    //     if len == 0 {break}
-    //     transaction_bytes.put_slice(&buf[..len]);
-    // }
-    //
-    // let str_transactions = String::from_utf8(transaction_bytes.clone())?;
-    // debug!("Transaction : {}", str_transactions);
 
     Ok(())
 }
