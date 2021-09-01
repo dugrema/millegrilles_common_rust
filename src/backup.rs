@@ -150,7 +150,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     let mut builders = Vec::new();
 
     while let Some(entree) = curseur.next().await {
-        // println!("Entree aggregation : {:?}", entree);
+        // debug!("Entree aggregation : {:?}", entree);
         let tmp_id = entree?;
         let info_id = tmp_id.get("_id").expect("id").as_document().expect("doc id");
 
@@ -161,7 +161,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
             sousdomaine_vec.push(s)
         }
         let sousdomaine_str = sousdomaine_vec.as_slice().join(".");
-        // println!("Resultat : {:?}", sousdomaine_str);
+        // debug!("Resultat : {:?}", sousdomaine_str);
 
         let doc_heure = info_id.get("heure").expect("heure").as_document().expect("doc heure");
         let annee = doc_heure.get("year").expect("year").as_i32().expect("i32");
@@ -225,11 +225,11 @@ async fn serialiser_transactions(
         // Trouver certificat et ajouter au catalogue
         match middleware.get_certificat(fingerprint_certificat).await {
             Some(c) => {
-                // println!("OK Certificat ajoute : {}", fingerprint_certificat);
+                // debug!("OK Certificat ajoute : {}", fingerprint_certificat);
                 builder.ajouter_certificat(c.as_ref())
             },
             None => {
-                // println!("Warn certificat {} inconnu", fingerprint_certificat)
+                // debug!("Warn certificat {} inconnu", fingerprint_certificat)
             },
         }
 
@@ -605,9 +605,9 @@ impl<'a> TransactionReader<'a> {
                 None => &buffer[..len],
             };
 
-            // println!("Lu {}\n{:?}", len, traiter_bytes);
+            // debug!("Lu {}\n{:?}", len, traiter_bytes);
             let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
-            // println!("Status xz : {:?}\n{:?}", status, xz_output);
+            // debug!("Status xz : {:?}\n{:?}", status, xz_output);
 
             output_complet.append(&mut xz_output);
         }
@@ -626,7 +626,7 @@ impl<'a> TransactionReader<'a> {
         }
 
         // Verifier si a on a un newline dans le buffer pour separer les transactions
-        // println!("Output complet : {:?}", output_complet);
+        // debug!("Output complet : {:?}", output_complet);
 
         let index_nl = output_complet.as_slice().split(|n| n == &NEW_LINE_BYTE);
 
@@ -767,7 +767,7 @@ mod backup_tests {
 
         let value = serde_json::to_value(catalogue).expect("value");
 
-        // println!("Valeur catalogue : {:?}", value);
+        // debug!("Valeur catalogue : {:?}", value);
     }
 
     #[test]
@@ -782,7 +782,7 @@ mod backup_tests {
 
         let value = serde_json::to_value(catalogue).expect("value");
         let catalogue_str = serde_json::to_string(&value).expect("json");
-        // println!("Json catalogue : {:?}", catalogue_str);
+        // debug!("Json catalogue : {:?}", catalogue_str);
 
         assert_eq!(catalogue_str.find("1627794000"), Some(9));
         assert_eq!(catalogue_str.find(NOM_DOMAINE_BACKUP), Some(31));
@@ -798,12 +798,12 @@ mod backup_tests {
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
 
         let certificat = prep_enveloppe(CERT_DOMAINES);
-        // println!("!!! Enveloppe : {:?}", certificat);
+        // debug!("!!! Enveloppe : {:?}", certificat);
 
         catalogue_builder.ajouter_certificat(&certificat);
 
         let catalogue = catalogue_builder.build();
-        // println!("!!! Catalogue : {:?}", catalogue);
+        // debug!("!!! Catalogue : {:?}", catalogue);
         assert_eq!(catalogue.certificats.len(), 1);
     }
 
@@ -822,13 +822,13 @@ mod backup_tests {
         writer.write_json_line(&doc_json).await.expect("write");
 
         let file = writer.fermer().await.expect("fermer");
-        // println!("File du writer : {:?}", file);
+        // debug!("File du writer : {:?}", file);
 
         let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
         let mut reader = TransactionReader::new(fichier_cs, None).expect("reader");
         let transactions = reader.read_transactions().await.expect("transactions");
         for t in transactions {
-            // println!("Transaction : {:?}", t);
+            // debug!("Transaction : {:?}", t);
             assert_eq!(&doc_json, &t);
         }
 
@@ -854,7 +854,7 @@ mod backup_tests {
         writer.write_bson_line(&doc_bson).await.expect("write");
 
         let (mh, decipher_data) = writer.fermer().await.expect("fermer");
-        // println!("File du writer : {:?}, multihash: {}", file, mh);
+        // debug!("File du writer : {:?}, multihash: {}", file, mh);
 
         assert_eq!(mh.as_str(), &mh_reference);
     }
@@ -892,7 +892,7 @@ mod backup_tests {
         let transactions = reader.read_transactions().await.expect("transactions");
 
         for t in transactions {
-            // println!("Transaction dechiffree : {:?}", t);
+            // debug!("Transaction dechiffree : {:?}", t);
             let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
             assert_eq!(valeur_chiffre, 5678);
         }
@@ -902,19 +902,20 @@ mod backup_tests {
 
 #[cfg(test)]
 mod test_integration {
+    use super::*;
+    use async_std::io::BufReader;
+    use futures_util::stream::IntoAsyncRead;
+    use std::io::Bytes;
     use std::sync::Arc;
 
+    use crate::test_setup::setup;
     use crate::{charger_transaction, MiddlewareDbPki, Formatteur, CompresseurBytes};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
 
-    use super::*;
-    use futures_util::stream::IntoAsyncRead;
-    use std::io::Bytes;
-    use async_std::io::BufReader;
-
     #[tokio::test]
     async fn grouper_transactions() {
+        setup("grouper_transactions");
         // Connecter mongo
         let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
         futures.push(tokio::spawn(async move {
@@ -928,7 +929,7 @@ mod test_integration {
                 &info
             ).await.expect("groupes");
 
-            // println!("Groupes : {:?}", groupes);
+            // debug!("Groupes : {:?}", groupes);
 
         }));
         // Execution async du test
@@ -937,6 +938,7 @@ mod test_integration {
 
     #[tokio::test]
     async fn serialiser_transactions_compressees() {
+        setup("serialiser_transactions_compressees");
 
         // let workdir = tempfile::tempdir().expect("tmpdir");
         let workdir = PathBuf::from("/tmp");
@@ -954,7 +956,7 @@ mod test_integration {
 
             let mut path_transactions = workdir.clone();
             path_transactions.push("extraire_transactions.jsonl.xz");
-            // println!("Sauvegarde transactions sous : {:?}", path_transactions);
+            // debug!("Sauvegarde transactions sous : {:?}", path_transactions);
             let resultat = serialiser_transactions(
                 middleware.as_ref(),
                 &mut transactions,
@@ -963,7 +965,7 @@ mod test_integration {
                 None
             ).await.expect("serialiser");
 
-            // println!("Resultat extraction transactions : {:?}", resultat);
+            // debug!("Resultat extraction transactions : {:?}", resultat);
 
         }));
         // Execution async du test
@@ -972,6 +974,7 @@ mod test_integration {
 
     #[tokio::test]
     async fn serialiser_transactions_chiffrage() {
+        setup("serialiser_transactions_chiffrage");
 
         // let workdir = tempfile::tempdir().expect("tmpdir");
         let workdir = PathBuf::from("/tmp");
@@ -1028,8 +1031,8 @@ mod test_integration {
             writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
             let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer");
 
-            println!("Multihash catalogue : {}", mh_catalogue);
-            println!("Commande cles : {:?}", commande_cles);
+            debug!("Multihash catalogue : {}", mh_catalogue);
+            debug!("Commande cles : {:?}", commande_cles);
 
         }));
         // Execution async du test
@@ -1038,6 +1041,7 @@ mod test_integration {
 
     #[tokio::test]
     async fn uploader_backup_horaire() {
+        setup("uploader_backup_horaire");
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
 
         let catalogue_heure = DateEpochSeconds::now();
@@ -1098,7 +1102,7 @@ mod test_integration {
             let commande_bytes = match commande_cles {
                 Some(c) => {
                     let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
-                    println!("Commande maitre cles : {}", c.message);
+                    debug!("Commande maitre cles : {}", c.message);
                     compresseur_commande.write(c.message.as_bytes()).await.expect("write");
                     let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
 
@@ -1130,7 +1134,7 @@ mod test_integration {
                 .multipart(form);
 
             let resultat = request.send().await.expect("resultat");
-            println!("Resultat {} : {:?}", resultat.status(), resultat);
+            debug!("Resultat {} : {:?}", resultat.status(), resultat);
 
         }));
 
@@ -1141,6 +1145,7 @@ mod test_integration {
 
     #[tokio::test]
     async fn download_backup() {
+        setup("download_backup");
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
         let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
         let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
@@ -1156,7 +1161,7 @@ mod test_integration {
             .send()
             .await.expect("download backup");
 
-        println!("Response get backup {} : {:?}", response.status(), response);
+        debug!("Response get backup {} : {:?}", response.status(), response);
 
         // Conserver fichier sur le disque (temporaire)
         // todo Trouver comment streamer en memoire

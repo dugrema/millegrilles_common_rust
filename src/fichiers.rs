@@ -404,7 +404,7 @@ pub async fn parse_tar3(stream: impl futures::io::AsyncRead+Send+Sync+Unpin) -> 
 }
 
 async fn parse_file(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
-    println!("Parse fichier : {:?}", filepath);
+    debug!("Parse fichier : {:?}", filepath);
 
     match filepath.extension() {
         Some(e) => {
@@ -426,14 +426,14 @@ async fn parse_file(filepath: &async_std::path::Path, stream: &mut (impl futures
 }
 
 async fn parse_catalogue(filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
-    println!("Parse catalogue : {:?}", filepath);
+    debug!("Parse catalogue : {:?}", filepath);
 
     let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
     decompresseur.update_std(stream).await?;
     let catalogue_bytes = decompresseur.finish()?;
 
     let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
-    println!("Catalogue json Value : {:?}", catalogue);
+    debug!("Catalogue json Value : {:?}", catalogue);
 
     Ok(())
 }
@@ -450,7 +450,7 @@ async fn parse_transactions(filepath: &async_std::path::Path, stream: &mut (impl
     // }
     //
     // let str_transactions = String::from_utf8(transaction_bytes.clone())?;
-    // println!("Transaction : {}", str_transactions);
+    // debug!("Transaction : {}", str_transactions);
 
     Ok(())
 }
@@ -493,7 +493,7 @@ mod fichiers_tests {
         decompresseur.update(&mut fichier).await.expect("update");
         let mut resultat = decompresseur.finish().expect("decompresseur");
         let resultat_str = String::from_utf8(resultat).expect("utf8");
-        println!("Resultat decompresse : {}", resultat_str);
+        debug!("Resultat decompresse : {}", resultat_str);
     }
 
     #[tokio::test]
@@ -514,7 +514,7 @@ mod fichiers_tests {
         let (mh, cipher_keys) = writer.fermer().await.expect("finish");
 
         assert_ne!(HASH_FICHIER_TEST, mh.as_str());
-        println!("cipher_keys : {:?}", cipher_keys);
+        debug!("cipher_keys : {:?}", cipher_keys);
 
         let mut id_docs: HashMap<String, String> = HashMap::new();
         id_docs.insert(String::from("dummy_id"), String::from("dummy_valeur"));
@@ -522,7 +522,7 @@ mod fichiers_tests {
             .expect("cles")
             .get_commande_sauvegarder_cles(mh.as_str(), "dummy", id_docs);
 
-        println!("Commande cles : {:?}", commande_cles);
+        debug!("Commande cles : {:?}", commande_cles);
     }
 
     #[tokio::test]
