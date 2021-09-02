@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::collections::hash_map::RandomState;
-use std::fmt::{Error, Formatter};
+use std::error::Error;
+use std::fmt::Formatter;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,7 +18,7 @@ use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
 use crate::signatures::signer_message;
-use crate::EnveloppeCertificat;
+use crate::{EnveloppeCertificat, verifier_signature_str, verifier_message, ValidationOptions, ResultatValidation};
 use serde::ser::SerializeMap;
 use env_logger::fmt::TimestampPrecision::Micros;
 
@@ -117,11 +118,12 @@ impl MessageMilleGrille {
         let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
 
         // Calculer le hachage du contenu
+        let hachage = MessageMilleGrille::calculer_hachage_contenu(&value)?;
 
         // Generer l'entete
         let mut entete_builder = Entete::builder(
             enveloppe_privee.fingerprint(),
-            "hachage",
+            &hachage,
             enveloppe_privee.idmg().expect("idmg").as_str()
         )
             .estampille(DateEpochSeconds::now())
@@ -157,7 +159,21 @@ impl MessageMilleGrille {
     }
 
     fn calculer_hachage_contenu(contenu: &Map<String, Value>) -> Result<String, Box<dyn std::error::Error>> {
-        // let ordered: BTreeMap<_, _> = contenu.iter().collect();
+        let message_string = MessageMilleGrille::preparer_pour_hachage(contenu)?;
+        Ok(hacher_message(message_string.as_str()))
+    }
+
+    fn signer_message(enveloppe_privee: &EnveloppePrivee, entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn std::error::Error>> {
+        let message_string = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
+
+        // debug!("Message serialise avec entete : {}", contenu_str);
+        let signature = signer_message(enveloppe_privee.cle_privee(), message_string.as_bytes())?;
+
+        Ok(signature)
+    }
+
+    pub fn preparer_pour_hachage(contenu: &Map<String, Value>) -> Result<String, Box<dyn Error>> {
+                // let ordered: BTreeMap<_, _> = contenu.iter().collect();
         let mut ordered = BTreeMap::new();
 
         // Copier dans une BTreeMap. Retirer champs _ et en-tete
@@ -167,17 +183,16 @@ impl MessageMilleGrille {
             }
         }
 
-        let message_string = serde_json::to_string(&ordered)?;
-        Ok(hacher_message(message_string.as_str()))
+        Ok(serde_json::to_string(&ordered)?)
     }
 
-    fn signer_message(enveloppe_privee: &EnveloppePrivee, entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn preparer_pour_signature(entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn Error>> {
         // let ordered: BTreeMap<_, _> = contenu.iter().collect();
         let mut ordered = BTreeMap::new();
 
         // Copier dans une BTreeMap. Retirer champs _ et en-tete
         for (k, v) in contenu {
-            if ! k.starts_with("_") {
+            if !k.starts_with("_") {
                 ordered.insert(k.as_str(), v);
             }
         }
@@ -188,11 +203,7 @@ impl MessageMilleGrille {
 
         // Serialiser en json pour signer
         let message_string = serde_json::to_string(&ordered)?;
-
-        // debug!("Message serialise avec entete : {}", contenu_str);
-        let signature = signer_message(enveloppe_privee.cle_privee(), message_string.as_bytes())?;
-
-        Ok(signature)
+        Ok(message_string)
     }
 
     fn signer(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
@@ -269,7 +280,7 @@ pub struct MessageSerialise {
     entete: Entete,
     message: String,
     parsed: MessageMilleGrille,
-    certificat: Option<Arc<EnveloppeCertificat>>,
+    pub certificat: Option<Arc<EnveloppeCertificat>>,
 }
 
 impl MessageSerialise {
@@ -312,6 +323,54 @@ impl MessageSerialise {
     pub fn get_msg(&self) -> &MessageMilleGrille {
         &self.parsed
     }
+
+    pub async fn valider(&mut self, validateur: &dyn ValidateurX509, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
+        // S'assurer d'avoir le certificat
+        let enveloppe : Option<Arc<EnveloppeCertificat>> = self.charger_certificat(validateur).await?;
+        self.certificat = enveloppe;
+
+        // let mut valide = true;
+        match &self.certificat {
+            Some(c) => {
+                // Valider la signature
+                let public_key = c.certificat().public_key()?;
+                verifier_message(&self, validateur.idmg(), options)
+            },
+            None => Err("Certificat manquant")?,
+        }
+
+        // if let Some(c) = &self.certificat {
+        //     // Valider la signature
+        //     let public_key = c.certificat().public_key()?;
+        //     let resultat = verifier_message(&self, validateur.idmg(), options)?;
+        //     valide = resultat.valide();
+        //     if valide {
+        //         debug!("Signature OK pour message {}", self.entete.uuid_transaction);
+        //     } else {
+        //         info!("Message invalide, detail : {:?}", resultat);
+        //     }
+        // } else {
+        //     info!("Certificat {} ne peut pas etre charge", self.entete.fingerprint_certificat.as_str());
+        //     valide = false;
+        // }
+        //
+        // Ok(valide)
+    }
+
+    async fn charger_certificat(&mut self, validateur: &dyn ValidateurX509) -> Result<Option<Arc<EnveloppeCertificat>>, Box<dyn Error>> {
+        let fp_certificat = self.entete.fingerprint_certificat.as_str();
+        let enveloppe : Option<Arc<EnveloppeCertificat>> = match &self.parsed.certificat {
+            Some(c) => {
+                let enveloppe = validateur.charger_enveloppe(c, Some(fp_certificat)).await?;
+                Some(enveloppe)
+            },
+            None => {
+                validateur.get_certificat(fp_certificat).await
+            }
+        };
+        Ok(enveloppe)
+    }
+
 }
 
 pub trait Formatteur: Send + Sync {
@@ -698,7 +757,7 @@ mod serialization_tests {
     use crate::certificats_tests::charger_enveloppe_privee_env;
 
     /// Sample
-    const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUOhOPjxIYcu/2KtUKOfVf9gjtRWswDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgxMDExMzkzOFoXDTIxMDkwOTExNDEzOFowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBANQpo8awOOHgdRO56fwZ3/eQbAsqJSS8LNR/\nJHf/1ExHY0AbqH88w+X9Rhh2uU92ECQA1usueJHSMDsKeOSTAuw/7yZNxs5Pv/uu\nfgH4Yq1JnM0r1SqT2zeiLxpKyYuB06XgD1jA5+rz0nD593ARTpGP6bx1HQO7F5sj\nc1+N1Ujf/XHDA9SDptREbpsmwzgmgBgVlbTVm4VQrl99B1LZhQPjDX6nLomQ2jmc\n42CXJRzgihIh7Ym6wggKDgVqlOIevlIRuK4oxITaFRMgtzeBbhj7bw1nMZ8BjxYw\nUpvangdvT3W5s9zTg0C4LgRdihCtFMHIXZOR86J27x1DqhLvH7sCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQhkD483zW0QLedR2BlAZcR0glN6zAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEAPLe/7wTifOq24aGzbuB/BXcAbKm53CcnUQH7CbrnFh7VaHEM8WssZmKX5nYw\nKAts+ORk10xoLMddO9mEFtuKQD4QTjMFQe5EXnOuEuxzF51c3Gv2cY+b0Q/GcAcX\nu/UDN5Cw1SoRYd1SfYkvK8+8Deo7ds1Zib1gYehWmTYPA9ZD+bBIISd1pvgif6cz\nHl12aMusZ2F2m6Qhnot31vB90NPNa/hZ9cOAz+WnjwvcYXUXhCKV/wwuHtNWVNOS\nAphmpcYYJxAjqj1ok/EJF9L5/Z83NvTyz6omZbdptxa0ak4Qchql87rM1B6tGEVD\nkA1HOXEzYkfgtP4gGZZsKQhcxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAch/Y9PuoWyr0aTLAGtGizYuV8WQAHMpN2uIPZlFy7JVOUiDvwiAeKWRgM54+icV7CkagaA7HBN9tPsE/I7ftBkS9Z7v9LuNVpepjbZ+2qJrYtG9OwIi2TCRxUy85YUw1QGmUFI+45kV1uA35d27zbHy3ZDDVPlljz5pJuQpvhk8NMfKTtLEbCXjYsQUPtETd3vnQR0R3Yi169MVm7zH7MLnCyv3L4YMeSztaqR2rACv2KKomUcK8mAobo6VTZe8C9OODqGOsjcUtm5pl3dfwMo/d4eZCXJ53k8DeyzyNnZdd4HoIgBK+zKGDWrpGD91vxxmh6mqcWSaiw1kn8rN0nU","alpaca":true,"en-tete":{"domaine":null,"estampille":1630586714,"fingerprint_certificat":"zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds","hachage_contenu":"hachage","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"298eec83-c93b-4199-9642-b5727eb6dff1","version":1},"texte":"oui!","valeur":1}"#;
+    const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUOhOPjxIYcu/2KtUKOfVf9gjtRWswDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgxMDExMzkzOFoXDTIxMDkwOTExNDEzOFowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBANQpo8awOOHgdRO56fwZ3/eQbAsqJSS8LNR/\nJHf/1ExHY0AbqH88w+X9Rhh2uU92ECQA1usueJHSMDsKeOSTAuw/7yZNxs5Pv/uu\nfgH4Yq1JnM0r1SqT2zeiLxpKyYuB06XgD1jA5+rz0nD593ARTpGP6bx1HQO7F5sj\nc1+N1Ujf/XHDA9SDptREbpsmwzgmgBgVlbTVm4VQrl99B1LZhQPjDX6nLomQ2jmc\n42CXJRzgihIh7Ym6wggKDgVqlOIevlIRuK4oxITaFRMgtzeBbhj7bw1nMZ8BjxYw\nUpvangdvT3W5s9zTg0C4LgRdihCtFMHIXZOR86J27x1DqhLvH7sCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQhkD483zW0QLedR2BlAZcR0glN6zAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEAPLe/7wTifOq24aGzbuB/BXcAbKm53CcnUQH7CbrnFh7VaHEM8WssZmKX5nYw\nKAts+ORk10xoLMddO9mEFtuKQD4QTjMFQe5EXnOuEuxzF51c3Gv2cY+b0Q/GcAcX\nu/UDN5Cw1SoRYd1SfYkvK8+8Deo7ds1Zib1gYehWmTYPA9ZD+bBIISd1pvgif6cz\nHl12aMusZ2F2m6Qhnot31vB90NPNa/hZ9cOAz+WnjwvcYXUXhCKV/wwuHtNWVNOS\nAphmpcYYJxAjqj1ok/EJF9L5/Z83NvTyz6omZbdptxa0ak4Qchql87rM1B6tGEVD\nkA1HOXEzYkfgtP4gGZZsKQhcxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAXnWu4SZaiBNJMJgc4cVH9XcMsqBphRHvupwQ12oOODFplqz2c4UOdJ1V69DBGcoUZDVYElATHEM7Esm35gADXJdc/hc9yeb6WRK7fMjup1+cYDajPr8yCNezQlPyO6No8wSO9v6BUTXTgLS8sYFY8QXumMQyXd5XfAuo0KL61gG3a++aViaJ8GWdm52i7Hy+FJnuU+gNf4YXRtWfMTOcrFz563y0zMHRYyXnXO72mcYnmkL4Z79TEMLJcBR8A11LSmAteYvBcSJVJnJHXIJEoRPLNPAUR2id+CPpJE3ZDKUECq0gW8ONrvtIt9a5ApLyteXBARaOuVDX5Sh0STtcTE","alpaca":true,"en-tete":{"domaine":null,"estampille":1630600162,"fingerprint_certificat":"zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds","hachage_contenu":"mEiCerWQ+xmJBauIR2JdRX1pBa+1wYlUNg/Q0dbhCGUOSww","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"f5488642-01f3-42a0-9423-5f895bfed17a","version":1},"texte":"oui!","valeur":1}"#;
 
     #[test]
     fn serializer_date() {
@@ -761,7 +820,7 @@ mod serialization_tests {
     fn creer_message_millegrille_signe() {
         setup("creer_message_millegrille");
         let (_, enveloppe_privee) = charger_enveloppe_privee_env();
-        let entete = Entete::builder("dummy", "hachage", "idmg").build();
+        // let entete = Entete::builder("dummy", "hachage", "idmg").build();
 
         let val = json!({
             "valeur": 1,
@@ -784,10 +843,39 @@ mod serialization_tests {
         debug!("Entete message : ${:?}", entete);
         debug!("Contenu parsed : ${:?}", contenu);
 
-        assert_eq!("298eec83-c93b-4199-9642-b5727eb6dff1", entete.uuid_transaction);
+        assert_eq!("f5488642-01f3-42a0-9423-5f895bfed17a", entete.uuid_transaction);
         assert_eq!("oui!", contenu.get("texte").expect("texte").as_str().expect("str"));
         assert_eq!(true, contenu.get("alpaca").expect("texte").as_bool().expect("bool"));
         assert_eq!(1, contenu.get("valeur").expect("texte").as_i64().expect("i64"));
+    }
+
+    #[tokio::test]
+    async fn valider_message_millegrille() {
+        setup("valider_message_millegrille");
+        let (validateur_arc, _) = charger_enveloppe_privee_env();
+        let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
+
+        let validateur = validateur_arc.as_ref().as_ref();
+        let resultat = message.valider(validateur, None).await.expect("valider");
+        assert_eq!(true, resultat.signature_valide);
+        assert_eq!(true, resultat.certificat_valide);
+        assert_eq!(None, resultat.hachage_valide);
+    }
+
+    #[tokio::test]
+    async fn valider_message_corrompu() {
+        setup("valider_message_millegrille");
+        let (validateur_arc, _) = charger_enveloppe_privee_env();
+        let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
+
+        // Corrompre le message
+        message.parsed.contenu.insert(String::from("corruption"), Value::String(String::from("je te corromps!")));
+
+        let validateur = validateur_arc.as_ref().as_ref();
+        let resultat = message.valider(validateur, None).await.expect("valider");
+        assert_eq!(false, resultat.signature_valide);
+        assert_eq!(true, resultat.certificat_valide);
+        assert_eq!(Some(false), resultat.hachage_valide);
     }
 
 }

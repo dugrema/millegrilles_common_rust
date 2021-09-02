@@ -48,7 +48,8 @@ pub async fn transmettre_evenement_persistance(
 pub async fn charger_transaction(middleware: &(impl ValidateurX509 + MongoDao), m: &MessageValideAction) -> Result<TransactionImpl, String> {
     debug!("Traitement d'une transaction : {:?}", m);
     let trigger = &m.message;
-    let uuid_transaction = trigger.get_message().get("uuid_transaction").expect("uuid_transaction").as_str().expect("str");
+    let entete = trigger.get_entete();
+    let uuid_transaction = entete.uuid_transaction.as_str();
 
     // Charger transaction a partir de la base de donnees
     let collection = middleware.get_collection(PKI_COLLECTION_TRANSACTIONS_NOM)?;

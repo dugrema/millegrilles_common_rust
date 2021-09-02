@@ -19,6 +19,7 @@ use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::middleware::{formatter_message_certificat, formatter_message_enveloppe_privee, IsConfigurationPki, MiddlewareDbPki, ValidateurX509Database};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
 use crate::verificateur::{verifier_hachage, verifier_message, verifier_signature};
+use crate::MessageSerialise;
 
 /// Thread de traitement des messages
 pub async fn recevoir_messages(
@@ -48,7 +49,7 @@ pub async fn recevoir_messages(
         };
 
         // Extraire le contenu du message
-        let contenu = match parse(&delivery.data) {
+        let mut contenu = match parse(&delivery.data) {
             Ok(c) => c,
             Err(e) => {
                 debug!("Erreur parsing message : {:?}", e);
@@ -56,16 +57,8 @@ pub async fn recevoir_messages(
             }
         };
 
-        let entete = contenu.get_message().get("en-tete");
-        let fingerprint_certificat = match entete {
-            Some(e) => {
-                match e.get("fingerprint_certificat") {
-                    Some(fp) => fp.as_str(),
-                    None => None,
-                }
-            },
-            None => None,
-        };
+        let entete = contenu.get_entete();
+        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
 
         // Extraire routing key pour gerer messages qui ne requierent pas de validation
         let (mut routing_key, type_message, domaine, action) = {
@@ -90,22 +83,22 @@ pub async fn recevoir_messages(
             }
         };
 
-        // Verifier s'il y a un certificat attache. S'assurer qu'il est dans le cache local.
-        let enveloppe_certificat = match contenu.get_message().get("_certificat") {
-            Some(c) => {
-                match traiter_certificat_attache(middleware.as_ref(), c, fingerprint_certificat).await {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        debug!("Erreur chargement certificat attache\n{:?}", e);
-                        None
-                    },
-                }
-            },
-            None => None,
-        };
+        // // Verifier s'il y a un certificat attache. S'assurer qu'il est dans le cache local.
+        // let enveloppe_certificat = match contenu.certificat {
+        //     Some(c) => {
+        //         match traiter_certificat_attache(middleware.as_ref(), c, Some(fingerprint_certificat)).await {
+        //             Ok(c) => Some(c),
+        //             Err(e) => {
+        //                 debug!("Erreur chargement certificat attache\n{:?}", e);
+        //                 None
+        //             },
+        //         }
+        //     },
+        //     None => None,
+        // };
 
         // Valider le message. Si on a deja le certificat, on fait juste l'extraire du Option.
-        let enveloppe_certificat = match valider_message(middleware.as_ref(), &contenu, enveloppe_certificat).await {
+        match valider_message(middleware.as_ref(), &mut contenu).await {
             Ok(t) => t,
             Err(e) => {
                 debug!("Message invalide, faire traitements divers, erreur : {:?}", e);
@@ -114,8 +107,8 @@ pub async fn recevoir_messages(
 
                 if let ErreurVerification::CertificatInconnu(fingerprint) = e {
                     // Verifier si le message contient le certificat (vieille approche)
-                    if let Some(chaine_pem) = contenu.get_message().get("chaine_pem") {
-                        if let Some(fingerprint_dans_message) = contenu.get_message().get("fingerprint") {
+                    if let Some(chaine_pem) = contenu.get_msg().contenu.get("chaine_pem") {
+                        if let Some(fingerprint_dans_message) = contenu.get_msg().contenu.get("fingerprint") {
                             let chaine_pem_vec = match chaine_pem.as_array() {
                                 Some(chaine_values) => {
                                     let mut vec = Vec::new();
@@ -143,7 +136,7 @@ pub async fn recevoir_messages(
                 // Il n'y a plus rien a faire pour recuperer le message, on l'abandonne.
                 continue
             },
-        };
+        }
 
         let mut exchange = {
             let ex = delivery.exchange.as_str();
@@ -168,7 +161,6 @@ pub async fn recevoir_messages(
             Some(inner_action) => {
                 TypeMessage::ValideAction(MessageValideAction {
                     message: contenu,
-                    enveloppe_certificat: Some(enveloppe_certificat.clone()),
                     reply_q,
                     correlation_id: correlation_id.clone(),
                     routing_key: routing_key.expect("routing key inconnue"),
@@ -181,7 +173,6 @@ pub async fn recevoir_messages(
             None => {
                 TypeMessage::Valide(MessageValide {
                     message: contenu,
-                    enveloppe_certificat: Some(enveloppe_certificat.clone()),
                     reply_q,
                     correlation_id: correlation_id.clone(),
                     routing_key,
@@ -318,7 +309,7 @@ async fn traiter_certificat_attache(validateur: &impl ValidateurX509, certificat
     Ok(enveloppe)
 }
 
-fn parse(data: &Vec<u8>) -> Result<MessageJson, String> {
+fn parse(data: &Vec<u8>) -> Result<MessageSerialise, String> {
     let data = match String::from_utf8(data.to_owned()) {
         Ok(data) => data,
         Err(e) => {
@@ -326,19 +317,23 @@ fn parse(data: &Vec<u8>) -> Result<MessageJson, String> {
         }
     };
 
-    let map_doc: serde_json::Result<Value> = serde_json::from_str(data.as_str());
-    let contenu = match map_doc {
-        Ok(v) => Ok(MessageJson::new(v)),
-        Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}\n{}", e, data)),
-    }?;
+    let message_serialise = match MessageSerialise::from_str(data.as_str()) {
+        Ok(m) => m,
+        Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}\n{}", e, data))?,
+    };
 
-    Ok(contenu)
+    // let map_doc: serde_json::Result<Value> = serde_json::from_str(data.as_str());
+    // let contenu = match map_doc {
+    //     Ok(v) => Ok(MessageJson::new(v)),
+    //     Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}\n{}", e, data)),
+    // }?;
+
+    Ok(message_serialise)
 }
 
 #[derive(Debug)]
 pub struct MessageValide {
-    pub message: MessageJson,
-    pub enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
+    pub message: MessageSerialise,
     pub reply_q: Option<String>,
     pub correlation_id: Option<String>,
     pub routing_key: Option<String>,
@@ -349,8 +344,7 @@ pub struct MessageValide {
 
 #[derive(Debug)]
 pub struct MessageValideAction {
-    pub message: MessageJson,
-    pub enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
+    pub message: MessageSerialise,
     pub reply_q: Option<String>,
     pub correlation_id: Option<String>,
     pub routing_key: String,
@@ -396,31 +390,45 @@ pub enum ErreurVerification {
 
 async fn valider_message(
     middleware: &(impl ValidateurX509 + GenerateurMessages + IsConfigurationPki),
-    message: &MessageJson,
-    enveloppe_certificat: Option<Arc<EnveloppeCertificat>>
-) -> Result<Arc<EnveloppeCertificat>, ErreurVerification> {
+    message: &mut MessageSerialise
+) -> Result<(), ErreurVerification> {
 
-    let enveloppe = match enveloppe_certificat {
-        Some(e) => Ok(e),
+    match &message.certificat {
+        Some(e) => (),
         None => {
-            let entete = match message.get_message().get("en-tete") {
-                Some(e) => Ok(e),
-                None => Err(ErreurVerification::EnteteManquante),
+            let entete = message.get_entete();
+            let fingerprint = entete.fingerprint_certificat.as_str();
+            let certificat = match &message.get_msg().certificat {
+                Some(c) => {
+                    // Utiliser certificat attache au besoin
+                    match middleware.charger_enveloppe(&c, Some(fingerprint)).await {
+                        Ok(e) => {
+                            // Set le certificat dans le message
+                            Ok(e)
+                        },
+                        Err(e) => {
+                            error!("Erreur chargement certificat {:?}", e);
+                            Err(ErreurVerification::ErreurGenerique)?
+                        }
+                    }
+                },
+                None => {
+                    match middleware.get_certificat(fingerprint).await {
+                        Some(e) => {
+                            Ok(e)
+                        },
+                        None => Err(ErreurVerification::CertificatInconnu(fingerprint.into()))?,
+                    }
+                }
             }?;
-            let fingerprint = entete.get("fingerprint_certificat").expect("fingerprint");
-            let fp_str = fingerprint.as_str().expect("fingerprint str");
-            // Tenter de charger l'enveloppe a partir du validateur (cache, db, etc.)
-            match middleware.get_certificat(fp_str).await {
-                Some(e) => Ok(e),
-                None => Err(ErreurVerification::CertificatInconnu(fp_str.into())),
-            }
+            message.set_certificat(certificat);
         }
-    }?;
+    };
 
-    match verifier_message(message, enveloppe.as_ref(), middleware.idmg(), None) {
+    match verifier_message(message, middleware.idmg(), None) {
         Ok(v) => {
             if v.valide() == true {
-                Ok(enveloppe)
+                Ok(())
             } else if v.signature_valide == false {
                 Err(ErreurVerification::SignatureInvalide)
             } else if v.certificat_valide == false {
