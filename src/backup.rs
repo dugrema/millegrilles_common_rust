@@ -982,7 +982,7 @@ mod backup_tests {
         let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signer");
 
         let mut compresseur = CompresseurBytes::new().expect("compresseur");
-        compresseur.write(catalogue_signe.message.as_bytes()).await;
+        compresseur.write(catalogue_signe.get_str().as_bytes()).await;
         let (catalogue_xz, _) = compresseur.fermer().expect("xz");
 
         let mut buf_reader = BufReader::new(catalogue_xz.as_slice());
@@ -1127,7 +1127,7 @@ mod test_integration {
 
             let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None)
                 .await.expect("write catalogue");
-            writer_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
+            writer_catalogue.write(catalogue_signe.get_str().as_bytes()).await.expect("write");
             let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer");
 
             debug!("Multihash catalogue : {}", mh_catalogue);
@@ -1195,14 +1195,14 @@ mod test_integration {
 
             // Compresser catalogue et commande maitre des cles en XZ
             let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
-            compresseur_catalogue.write(catalogue_signe.message.as_bytes()).await.expect("write");
+            compresseur_catalogue.write(catalogue_signe.get_str().as_bytes()).await.expect("write");
             let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
 
             let commande_bytes = match commande_cles {
                 Some(c) => {
                     let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
-                    debug!("Commande maitre cles : {}", c.message);
-                    compresseur_commande.write(c.message.as_bytes()).await.expect("write");
+                    debug!("Commande maitre cles : {}", c.get_str());
+                    compresseur_commande.write(c.get_str().as_bytes()).await.expect("write");
                     let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
 
                     Some(commande_bytes)

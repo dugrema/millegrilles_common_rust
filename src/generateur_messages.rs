@@ -14,7 +14,7 @@ use crate::formatteur_messages::{FormatteurMessage, MessageJson, MessageSerialis
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 use crate::Formatteur;
-use std::fmt::Error;
+use std::error::Error;
 
 #[async_trait]
 pub trait GenerateurMessages: Send + Sync {
@@ -219,7 +219,7 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
 }
 
 impl Formatteur for GenerateurMessagesImpl {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Error> {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn Error>> {
         self.formatteur.formatter_value(message, domaine)
     }
 }

@@ -498,7 +498,7 @@ async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel:
             None => "",
         };
         let options = BasicPublishOptions::default();
-        let payload = contenu.message.as_bytes().to_vec();
+        let payload = contenu.get_str().as_bytes().to_vec();
         let mut properties = BasicProperties::default()
             .with_correlation_id(correlation_id.into());
 

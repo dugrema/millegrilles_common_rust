@@ -24,7 +24,7 @@ use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
 use crate::{Formatteur, MessageSerialise, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message};
-use std::fmt::Error;
+use std::error::Error;
 
 /// Version speciale du middleware avec un acces direct au sous-domaine Pki dans MongoDB
 pub fn preparer_middleware_pki(
@@ -211,7 +211,7 @@ impl GenerateurMessages for MiddlewareDbPki {
 }
 
 impl Formatteur for MiddlewareDbPki {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Error> {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn Error>> {
         self.generateur_messages.formatter_value(message, domaine)
     }
 }

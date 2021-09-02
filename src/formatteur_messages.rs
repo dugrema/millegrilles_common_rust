@@ -111,7 +111,7 @@ pub struct MessageMilleGrille {
 
 impl MessageMilleGrille {
 
-    pub fn new_signer(enveloppe_privee: &EnveloppePrivee, contenu: &impl Serialize) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new_signer(enveloppe_privee: &EnveloppePrivee, contenu: &impl Serialize, domaine: Option<&str>) -> Result<Self, Box<dyn std::error::Error>> {
 
         // Serialiser le contenu
         let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
@@ -119,14 +119,19 @@ impl MessageMilleGrille {
         // Calculer le hachage du contenu
 
         // Generer l'entete
-        let entete = Entete::builder(
+        let mut entete_builder = Entete::builder(
             enveloppe_privee.fingerprint(),
             "hachage",
             enveloppe_privee.idmg().expect("idmg").as_str()
         )
             .estampille(DateEpochSeconds::now())
-            .version(1)
-            .build();
+            .version(1);
+
+        match domaine {
+            Some(d) => entete_builder = entete_builder.domaine(d.to_owned()),
+            None => (),
+        }
+        let entete = entete_builder.build();
 
         let pems: Vec<String> = {
             let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
@@ -216,6 +221,7 @@ impl MessageMilleGrille {
 
 }
 
+/// Serialiser message de MilleGrille. Met les elements en ordre.
 impl Serialize for MessageMilleGrille {
     fn serialize<'a, S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
 
@@ -260,16 +266,56 @@ impl Serialize for MessageMilleGrille {
 
 #[derive(Clone, Debug)]
 pub struct MessageSerialise {
-    pub message: String,
     pub entete: Entete,
-    enveloppe: Option<Arc<EnveloppeCertificat>>,
+    message: String,
+    parsed: MessageMilleGrille,
+    certificat: Option<Arc<EnveloppeCertificat>>,
 }
 
 impl MessageSerialise {
+    pub fn from_parsed(msg: MessageMilleGrille) -> Result<Self, Box<dyn std::error::Error>> {
+        let msg_str = serde_json::to_string(&msg)?;
+        Ok(MessageSerialise {
+            entete: msg.entete.clone(),
+            message: msg_str,
+            parsed: msg,
+            certificat: None,
+        })
+    }
+
+    pub fn from_str(msg: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        MessageSerialise::from_string(msg.to_owned())
+    }
+
+    pub fn from_string(msg: String) -> Result<Self, Box<dyn std::error::Error>> {
+        let msg_parsed: MessageMilleGrille = serde_json::from_str(&msg)?;
+        Ok(MessageSerialise {
+            message: msg,
+            entete: msg_parsed.entete.clone(),
+            parsed: msg_parsed,
+            certificat: None,
+        })
+    }
+
+    pub fn set_certificat(&mut self, certificat: Arc<EnveloppeCertificat>) {
+        self.certificat = Some(certificat);
+    }
+
+    pub fn get_entete(&self) -> &Entete {
+        &self.entete
+    }
+
+    pub fn get_str(&self) -> &str {
+        self.message.as_str()
+    }
+
+    pub fn get_msg(&self) -> &MessageMilleGrille {
+        &self.parsed
+    }
 }
 
 pub trait Formatteur: Send + Sync {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Error>;
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>>;
 }
 
 pub struct FormatteurMessage {
@@ -286,88 +332,99 @@ impl FormatteurMessage {
 impl Formatteur for FormatteurMessage {
 
     /// Prepare en-tete, _signature et _certificat dans un message
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Error> {
+    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>> {
 
-        // Copier tous les champs qui ne commencent pas par _
-        let (mut message_modifie, mut champs_retires): (BTreeMap<String, Value>, HashMap<&String, &Value, RandomState>) = nettoyer_message(message);
-        // debug!("Message filtre : {:?}", message_modifie);
+        let message_signe = MessageMilleGrille::new_signer(
+            self.enveloppe_privee.as_ref(),
+            &message.message_json,
+            domaine
+        )?;
 
-        // Serialiser en json pour calculer le hachage du message
-        let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-        // debug!("Message contenu serialise : {}", contenu_str);
-        let hachage = hacher_message(&contenu_str);
-        // debug!("Hachage du message : {}\n{}", hachage, contenu_str);
-        // assert_eq!("mEiAQASuxJobNtWMPmaxxLo+NLs/wfmkMl+wtiVq8vLkYaA", hachage);
+        let mut message_serialise = MessageSerialise::from_parsed(message_signe)?;
+        message_serialise.set_certificat(self.enveloppe_privee.enveloppe.clone());
 
-        // Valeurs generees pour l'entete
-        let uuid_message: Uuid = Uuid::new_v4();
-        let estampille: Duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        Ok(message_serialise)
 
-        let enveloppe_privee: &EnveloppePrivee = &self.enveloppe_privee;
-
-        // Ajouter l'entete
-        // let entete = json!({
-        //     "estampille": estampille.as_secs(),
-        //     "fingerprint_certificat": enveloppe_privee.fingerprint(),
-        //     "hachage_contenu": hachage,
-        //     "idmg": self.validateur.idmg(),
-        //     "uuid_transaction": uuid_message,
-        //     "version": 1,
-        // });
-        // let mut entete_modifie: Map<String, Value> = entete.as_object().unwrap().to_owned();
-        // match domaine {
-        //     Some(d) => {
-        //         entete_modifie.insert(String::from("domaine"), Value::from(d));
-        //     },
-        //     None => (),
+        // // Copier tous les champs qui ne commencent pas par _
+        // let (mut message_modifie, mut champs_retires): (BTreeMap<String, Value>, HashMap<&String, &Value, RandomState>) = nettoyer_message(message);
+        // // debug!("Message filtre : {:?}", message_modifie);
+        //
+        // // Serialiser en json pour calculer le hachage du message
+        // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
+        // // debug!("Message contenu serialise : {}", contenu_str);
+        // let hachage = hacher_message(&contenu_str);
+        // // debug!("Hachage du message : {}\n{}", hachage, contenu_str);
+        // // assert_eq!("mEiAQASuxJobNtWMPmaxxLo+NLs/wfmkMl+wtiVq8vLkYaA", hachage);
+        //
+        // // Valeurs generees pour l'entete
+        // let uuid_message: Uuid = Uuid::new_v4();
+        // let estampille: Duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        //
+        // let enveloppe_privee: &EnveloppePrivee = &self.enveloppe_privee;
+        //
+        // // Ajouter l'entete
+        // // let entete = json!({
+        // //     "estampille": estampille.as_secs(),
+        // //     "fingerprint_certificat": enveloppe_privee.fingerprint(),
+        // //     "hachage_contenu": hachage,
+        // //     "idmg": self.validateur.idmg(),
+        // //     "uuid_transaction": uuid_message,
+        // //     "version": 1,
+        // // });
+        // // let mut entete_modifie: Map<String, Value> = entete.as_object().unwrap().to_owned();
+        // // match domaine {
+        // //     Some(d) => {
+        // //         entete_modifie.insert(String::from("domaine"), Value::from(d));
+        // //     },
+        // //     None => (),
+        // // }
+        // // let mut entete: BTreeMap<String, Value> = BTreeMap::new();
+        // // entete.extend(entete_modifie);
+        //
+        // let entete = Entete::builder(
+        //     enveloppe_privee.fingerprint(),
+        //     &hachage,
+        //     self.validateur.idmg()
+        // ).build();
+        //
+        // let key_entete = String::from(ENTETE);
+        // let entete_value = serde_json::to_value(&entete).expect("entete");
+        // message_modifie.insert(key_entete, entete_value);
+        //
+        // // Serialiser en json pour signer
+        // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
+        // // debug!("Message serialise avec entete : {}", contenu_str);
+        // let signature = signer_message(enveloppe_privee.cle_privee(), contenu_str.as_bytes()).unwrap();
+        //
+        // // Reintroduire les champs retires
+        // for item in champs_retires {
+        //     message_modifie.insert(item.0.to_owned(), item.1.to_owned());
         // }
-        // let mut entete: BTreeMap<String, Value> = BTreeMap::new();
-        // entete.extend(entete_modifie);
-
-        let entete = Entete::builder(
-            enveloppe_privee.fingerprint(),
-            &hachage,
-            self.validateur.idmg()
-        ).build();
-
-        let key_entete = String::from(ENTETE);
-        let entete_value = serde_json::to_value(&entete).expect("entete");
-        message_modifie.insert(key_entete, entete_value);
-
-        // Serialiser en json pour signer
-        let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-        // debug!("Message serialise avec entete : {}", contenu_str);
-        let signature = signer_message(enveloppe_privee.cle_privee(), contenu_str.as_bytes()).unwrap();
-
-        // Reintroduire les champs retires
-        for item in champs_retires {
-            message_modifie.insert(item.0.to_owned(), item.1.to_owned());
-        }
-
-        // Conserver signature
-        let key_signature = String::from(SIGNATURE);
-        let signature_value = Value::String(signature);
-        message_modifie.insert(key_signature, signature_value);
-
-        // Inserer certificats
-        let key_certificats = String::from(CERTIFICATS);
-        let mut certificats_pem: Vec<Value> = Vec::new();
-        for cert in self.enveloppe_privee.chaine_pem() {
-            certificats_pem.push(Value::String(cert.to_owned()));
-        }
-        let certificats_pem = Value::Array(certificats_pem);
-        message_modifie.insert(key_certificats, certificats_pem);
-
-        // debug!("Message avec signature : {:?}", message_modifie);
-
-        let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-        let resultat = MessageSerialise {
-            message: contenu_str,
-            entete,
-            enveloppe: Some(enveloppe_privee.enveloppe.clone())
-        };
-
-        Ok(resultat)
+        //
+        // // Conserver signature
+        // let key_signature = String::from(SIGNATURE);
+        // let signature_value = Value::String(signature);
+        // message_modifie.insert(key_signature, signature_value);
+        //
+        // // Inserer certificats
+        // let key_certificats = String::from(CERTIFICATS);
+        // let mut certificats_pem: Vec<Value> = Vec::new();
+        // for cert in self.enveloppe_privee.chaine_pem() {
+        //     certificats_pem.push(Value::String(cert.to_owned()));
+        // }
+        // let certificats_pem = Value::Array(certificats_pem);
+        // message_modifie.insert(key_certificats, certificats_pem);
+        //
+        // // debug!("Message avec signature : {:?}", message_modifie);
+        //
+        // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
+        // let resultat = MessageSerialise {
+        //     message: contenu_str,
+        //     entete,
+        //     enveloppe: Some(enveloppe_privee.enveloppe.clone())
+        // };
+        //
+        // Ok(resultat)
     }
 
 }
@@ -708,7 +765,7 @@ mod serialization_tests {
             "texte": "oui!",
             "alpaca": true,
         });
-        let message = MessageMilleGrille::new_signer(&enveloppe_privee, &val).expect("map");
+        let message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         debug!("Message MilleGrille serialise : {}", message_str)
