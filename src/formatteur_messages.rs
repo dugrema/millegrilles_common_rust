@@ -96,6 +96,8 @@ impl EnteteBuilder {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+/// Structure a utiliser pour creer un nouveau message
+/// Utiliser methode MessageMilleGrille::new_signer().
 pub struct MessageMilleGrille {
     #[serde(rename = "en-tete")]
     pub entete: Entete,
@@ -172,8 +174,8 @@ impl MessageMilleGrille {
         Ok(signature)
     }
 
+    /// Genere une String avec le contenu serialise correctement pour hachage / validation.
     pub fn preparer_pour_hachage(contenu: &Map<String, Value>) -> Result<String, Box<dyn Error>> {
-                // let ordered: BTreeMap<_, _> = contenu.iter().collect();
         let mut ordered = BTreeMap::new();
 
         // Copier dans une BTreeMap. Retirer champs _ et en-tete
@@ -186,8 +188,8 @@ impl MessageMilleGrille {
         Ok(serde_json::to_string(&ordered)?)
     }
 
+    /// Generer une String avec le contenu et l'entete serialises correctement pour signature / validation.
     pub fn preparer_pour_signature(entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn Error>> {
-        // let ordered: BTreeMap<_, _> = contenu.iter().collect();
         let mut ordered = BTreeMap::new();
 
         // Copier dans une BTreeMap. Retirer champs _ et en-tete
@@ -202,8 +204,7 @@ impl MessageMilleGrille {
         ordered.insert("en-tete", &entete_value);
 
         // Serialiser en json pour signer
-        let message_string = serde_json::to_string(&ordered)?;
-        Ok(message_string)
+        Ok(serde_json::to_string(&ordered)?)
     }
 
     fn signer(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
@@ -212,24 +213,8 @@ impl MessageMilleGrille {
         Ok(())
     }
 
-    // pub fn set_contenu(&mut self, map: Map<String, Value>) {
-    //     for (k, v) in map {
-    //         self.contenu.insert(k, v);
-    //     }
-    // }
-    //
-    // pub fn set_objet(&mut self, objet: &impl Serialize) -> Result<(), Box<dyn std::error::Error>> {
-    //     let contenu: Map<String, Value> = serde_json::to_value(objet).expect("value").as_object().expect("object").to_owned();
-    //     self.set_contenu(contenu);
-    //
-    //     Ok(())
-    // }
-
     /// Sert a retirer les certificats pour serialisation (e.g. backup, transaction Mongo, etc)
-    pub fn retirer_certificats(&mut self) {
-        self.certificat = None;
-    }
-
+    pub fn retirer_certificats(&mut self) { self.certificat = None }
 }
 
 /// Serialiser message de MilleGrille. Met les elements en ordre.
@@ -908,6 +893,31 @@ mod serialization_tests {
         assert_eq!(false, resultat.signature_valide);
         assert_eq!(false, resultat.certificat_valide);
         assert_eq!(Some(true), resultat.hachage_valide);
+    }
+
+    #[test]
+    fn retirer_certificats() {
+        setup("creer_message_millegrille");
+        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
+        // let entete = Entete::builder("dummy", "hachage", "idmg").build();
+
+        let val = json!({
+            "valeur": 1,
+            "texte": "oui!",
+            "alpaca": true,
+        });
+        let mut message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None).expect("map");
+
+        let message_str = serde_json::to_string(&message).expect("string");
+        let idx_certificat = message_str.find("\"_certificat\"");
+        debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
+        assert_eq!(Some(1), idx_certificat);
+
+        message.retirer_certificats();
+        let message_str = serde_json::to_string(&message).expect("string");
+        let idx_certificat = message_str.find("\"_certificat\"");
+        debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
+        assert_eq!(true, idx_certificat.is_none());
     }
 
 }
