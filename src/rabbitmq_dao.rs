@@ -485,7 +485,7 @@ async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel:
         debug!("Emettre_message {}, On a recu de quoi", compteur);
         let contenu = message.message;
 
-        let entete = &contenu.entete;
+        let entete = contenu.get_entete();
         debug!("Emettre_message {:?}", entete);
 
         let correlation_id = match &message.correlation_id {
@@ -579,7 +579,7 @@ impl MessageOut {
         }
 
         let uuid_transaction = {
-            let entete = &message.entete;
+            let entete = message.get_entete();
             entete.uuid_transaction.clone()
         };
 

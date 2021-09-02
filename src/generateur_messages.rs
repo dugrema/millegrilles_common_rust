@@ -93,7 +93,7 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
         let (tx_delivery, mut rx_delivery) = oneshot::channel();
 
         let correlation_id = {
-            let entete = &message_out.message.entete;
+            let entete = message_out.message.get_entete();
             entete.uuid_transaction.clone()
         };
 
@@ -145,7 +145,7 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
             exchanges
         );
 
-        let entete = &message_out.message.entete;
+        let entete = message_out.message.get_entete();
         let correlation_id = entete.uuid_transaction.clone();
 
         let (tx_delivery, mut rx_delivery) = oneshot::channel();
