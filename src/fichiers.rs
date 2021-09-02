@@ -241,6 +241,20 @@ impl DecompresseurBytes {
         })
     }
 
+    pub fn update_bytes(&mut self, data: &[u8]) -> Result<(), Box<dyn Error>> {
+        debug!("Decompresser bytes : {:?}", data);
+        let mut xz_output = Vec::new();
+        xz_output.reserve(data.len()*10);
+        let status = self.xz_decoder.process_vec(data, &mut xz_output, stream::Action::Run).expect("xz-output");
+        if status != stream::Status::Ok && status != stream::Status::StreamEnd {
+            Err(format!("Erreur traitement stream : {:?}", status))?;
+        }
+
+        self.output.append(&mut xz_output);
+
+        Ok(())
+    }
+
     pub async fn update<'a>(&mut self, data: &mut (impl AsyncRead + Unpin + 'a)) -> Result<(), Box<dyn Error>> {
         let mut buffer = [0u8; DecompresseurBytes::BUFFER_SIZE/2];
         let mut xz_output = Vec::new();
@@ -314,6 +328,7 @@ pub async fn parse_tar(stream: impl futures::io::AsyncRead+Send+Sync+Unpin, proc
 
     let mut entries = reader.entries().expect("entries");
     while let Some(entry) = entries.next().await {
+        debug!("Entry! : {:?}", entry);
         let mut file = entry.expect("file");
         let file_path = file.path().expect("path").into_owned();
 

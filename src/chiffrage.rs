@@ -194,6 +194,12 @@ impl DecipherMgs2 {
 
 }
 
+impl Debug for DecipherMgs2 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DecipherMgs2")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Mgs2CipherKeys {
     cles_chiffrees: Vec<FingerprintCleChiffree>,
@@ -288,7 +294,7 @@ pub struct Mgs2CipherData {
 }
 
 impl Mgs2CipherData {
-    pub fn new(cle_chiffree: &String, iv: &String, tag: &String) -> Result<Self, Box<dyn Error>> {
+    pub fn new(cle_chiffree: &str, iv: &str, tag: &str) -> Result<Self, Box<dyn Error>> {
         let cle_chiffree_bytes: Vec<u8> = decode(cle_chiffree)?.1;
         let iv_bytes: Vec<u8> = decode(iv)?.1;
         let tag_bytes: Vec<u8> = decode(tag)?.1;

@@ -381,6 +381,23 @@ pub struct CatalogueHoraire {
     format: Option<String>,
 }
 
+impl CatalogueHoraire {
+    pub fn get_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
+        match &self.cle {
+            Some(c) => {
+                let iv = self.iv.as_ref().expect("iv");
+                let tag = self.tag.as_ref().expect("tag");
+                Mgs2CipherData::new(
+                    c.as_str(),
+                    iv,
+                    tag
+                )
+            },
+            None => Err("Non chiffre")?,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CatalogueHoraireBuilder {
     heure: DateEpochSeconds,
@@ -685,16 +702,20 @@ fn bytes_to_part(filename: &str, contenu: Vec<u8>, mimetype: Option<&str>) -> Pa
 }
 
 struct ProcesseurFichierBackup {
+    enveloppe_privee: Arc<EnveloppePrivee>,
     middleware: Arc<dyn ValidateurX509>,
     catalogue: Option<CatalogueHoraire>,
+    decipher: Option<DecipherMgs2>,
 }
 
 impl ProcesseurFichierBackup {
 
-    fn new(middleware: Arc<dyn ValidateurX509>) -> Self {
+    fn new(enveloppe_privee: Arc<EnveloppePrivee>, middleware: Arc<dyn ValidateurX509>) -> Self {
         ProcesseurFichierBackup {
+            enveloppe_privee,
             middleware,
             catalogue: None,
+            decipher: None,
         }
     }
 
@@ -729,7 +750,25 @@ impl ProcesseurFichierBackup {
 
         let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
 
-        debug!("Catalogue json Value : {:?}", catalogue);
+        let mut cle = match catalogue.get_cipher_data() {
+            Ok(c) => Some(c),
+            Err(e) => None,
+        };
+
+        // Tenter de dechiffrer la cle
+        if let Some(mut cipher_data) = cle {
+            match cipher_data.dechiffrer_cle(self.enveloppe_privee.cle_privee()) {
+                Ok(_) => {
+                    // Creer Cipher
+                    self.decipher = Some(DecipherMgs2::new(&cipher_data)?);
+                },
+                Err(e) => {
+                    error!("Decipher incorrect, transactions ne seront pas lisibles : {:?}", e);
+                }
+            };
+        }
+
+        debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
         self.catalogue = Some(catalogue);
 
         Ok(())
@@ -737,6 +776,32 @@ impl ProcesseurFichierBackup {
 
     async fn parse_transactions(&mut self, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
         debug!("Parse transactions : {:?}", filepath);
+
+        let mut output = [0u8; 4096];
+        let mut output_decipher = [0u8; 4096];
+        // let mut vec_total: Vec<u8> = Vec::new();
+
+        let mut decompresseur = DecompresseurBytes::new()?;
+
+        loop {
+            let len = stream.read(&mut output).await?;
+            if len == 0 {break}
+
+            let buf = match self.decipher.as_mut() {
+                Some(mut d) => {
+                    d.update(&output[..len], &mut output_decipher);
+                    &output_decipher[..len]
+                },
+                None => {
+                    &output[..len]
+                }
+            };
+            // vec_total.extend_from_slice(buf);
+            decompresseur.update_bytes(buf)?;
+        }
+
+        let transasction_str = String::from_utf8(decompresseur.finish()?)?;
+        debug!("Bytes dechiffres de la transaction : {:?}", transasction_str);
 
         Ok(())
     }
@@ -991,7 +1056,8 @@ mod backup_tests {
 
         let mut buf_reader = BufReader::new(catalogue_xz.as_slice());
         let nom_fichier = async_std::path::PathBuf::from("catalogue.xz");
-        let mut processeur = ProcesseurFichierBackup::new(middleware.clone());
+        let enveloppe_privee = middleware.get_enveloppe_privee();
+        let mut processeur = ProcesseurFichierBackup::new(enveloppe_privee, middleware.clone());
 
         processeur.parse_catalogue(nom_fichier.as_path(), &mut buf_reader).await.expect("parsed");
 
@@ -1273,18 +1339,24 @@ mod test_integration {
 
         // Conserver fichier sur le disque (temporaire)
         // todo Trouver comment streamer en memoire
-        let mut stream = response.bytes_stream();
-        let mut file_output = File::create(PathBuf::from("/tmp/download.tar").as_path()).await.expect("create");
-        while let Some(item) = stream.next().await {
-            let content = item.expect("item");
-            file_output.write_all(content.as_ref()).await.expect("write");
+        {
+            let mut stream = response.bytes_stream();
+            let mut file_output = File::create(PathBuf::from("/tmp/download.tar").as_path()).await.expect("create");
+            while let Some(item) = stream.next().await {
+                let content = item.expect("item");
+                file_output.write_all(content.as_ref()).await.expect("write");
+            }
+            file_output.flush().await.expect("flush");
         }
 
         let mut fichier_tar = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
         // let mut tar_parse = TarParser::new();
         // tar_parse.parse(fichier_tar).await;
 
-        let mut processeur = ProcesseurFichierBackup::new(validateur.clone());
+        let mut processeur = ProcesseurFichierBackup::new(
+            Arc::new(enveloppe),
+            validateur.clone()
+        );
         parse_tar(&mut fichier_tar, &mut processeur).await.expect("parse");
     }
 
