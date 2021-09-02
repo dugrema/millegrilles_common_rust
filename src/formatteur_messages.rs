@@ -1,32 +1,40 @@
 use std::collections::{BTreeMap, HashMap};
-use std::collections::hash_map::RandomState;
 use std::error::Error;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::{format, DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use log::{debug, error, info};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use log::{debug, info};
 use num_traits::ToPrimitive;
-use openssl::pkey::{PKey, Private};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Visitor;
+use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message};
 use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
 use crate::signatures::signer_message;
-use crate::{EnveloppeCertificat, verifier_signature_str, verifier_message, ValidationOptions, ResultatValidation};
-use serde::ser::SerializeMap;
-use env_logger::fmt::TimestampPrecision::Micros;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
 const CERTIFICATS: &str = "_certificat";
 
+pub trait FormatteurMessage {
+    /// Retourne l'enveloppe privee utilisee pour signer le message
+    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>>;
+
+    /// Implementation de formattage et signature d'un message de MilleGrille
+    fn formatter_message(&self, contenu: &impl Serialize, domaine: Option<&str>, version: Option<u32>) -> Result<MessageMilleGrille, Box<dyn Error>> {
+        let enveloppe = self.get_enveloppe_privee();
+        MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, version)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Entete de messages de MilleGrille (champ "en-tete").
 pub struct Entete {
     // Note : s'assurer de conserver les champs en ordre alphabetique
     pub domaine: Option<String>,
@@ -44,6 +52,7 @@ impl Entete {
     }
 }
 
+/// Builder pour les entetes de messages.
 pub struct EnteteBuilder {
     domaine: Option<String>,
     estampille: DateEpochSeconds,
@@ -99,22 +108,26 @@ impl EnteteBuilder {
 /// Structure a utiliser pour creer un nouveau message
 /// Utiliser methode MessageMilleGrille::new_signer().
 pub struct MessageMilleGrille {
+    /// Entete du message. Contient domaine.action, hachage du contenu, fingerprint certificat, estampille, etc.
     #[serde(rename = "en-tete")]
     pub entete: Entete,
 
+    /// Chaine de certificats en format PEM. Inclus le certificat root (dernier de la liste).
     #[serde(rename = "_certificat", skip_serializing_if = "Option::is_none")]
     pub certificat: Option<Vec<String>>,
 
+    /// Signature encodee en multibase
     #[serde(rename = "_signature")]
     pub signature: Option<String>,
 
+    /// Contenu du message autre que les elements structurels.
     #[serde(flatten)]
     pub contenu: Map<String, Value>,
 }
 
 impl MessageMilleGrille {
 
-    pub fn new_signer(enveloppe_privee: &EnveloppePrivee, contenu: &impl Serialize, domaine: Option<&str>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new_signer(enveloppe_privee: &EnveloppePrivee, contenu: &impl Serialize, domaine: Option<&str>, version: Option<u32>) -> Result<Self, Box<dyn std::error::Error>> {
 
         // Serialiser le contenu
         let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
@@ -135,6 +148,12 @@ impl MessageMilleGrille {
             Some(d) => entete_builder = entete_builder.domaine(d.to_owned()),
             None => (),
         }
+
+        match version {
+            Some(v) => entete_builder = entete_builder.version(v),
+            None => (),
+        }
+
         let entete = entete_builder.build();
 
         let pems: Vec<String> = {
@@ -323,23 +342,6 @@ impl MessageSerialise {
             },
             None => Err("Certificat manquant")?,
         }
-
-        // if let Some(c) = &self.certificat {
-        //     // Valider la signature
-        //     let public_key = c.certificat().public_key()?;
-        //     let resultat = verifier_message(&self, validateur.idmg(), options)?;
-        //     valide = resultat.valide();
-        //     if valide {
-        //         debug!("Signature OK pour message {}", self.entete.uuid_transaction);
-        //     } else {
-        //         info!("Message invalide, detail : {:?}", resultat);
-        //     }
-        // } else {
-        //     info!("Certificat {} ne peut pas etre charge", self.entete.fingerprint_certificat.as_str());
-        //     valide = false;
-        // }
-        //
-        // Ok(valide)
     }
 
     async fn charger_certificat(&mut self, validateur: &dyn ValidateurX509) -> Result<Option<Arc<EnveloppeCertificat>>, Box<dyn Error>> {
@@ -358,144 +360,63 @@ impl MessageSerialise {
 
 }
 
-pub trait Formatteur: Send + Sync {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>>;
-}
+// pub trait Formatteur: Send + Sync {
+//     fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>>;
+// }
+//
+// pub struct FormatteurMessage {
+//     validateur: Arc<Box<ValidateurX509Impl>>,
+//     enveloppe_privee: Arc<Box<EnveloppePrivee>>,
+// }
+//
+// impl FormatteurMessage {
+//     pub fn new(validateur: Arc<Box<ValidateurX509Impl>>, enveloppe_privee: Arc<Box<EnveloppePrivee>>) -> Self {
+//         FormatteurMessage { validateur, enveloppe_privee }
+//     }
+// }
+//
+// impl Formatteur for FormatteurMessage {
+//
+//     /// Prepare en-tete, _signature et _certificat dans un message
+//     fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>> {
+//
+//         let message_signe = MessageMilleGrille::new_signer(
+//             self.enveloppe_privee.as_ref(),
+//             &message.message_json,
+//             domaine
+//         )?;
+//
+//         let mut message_serialise = MessageSerialise::from_parsed(message_signe)?;
+//         message_serialise.set_certificat(self.enveloppe_privee.enveloppe.clone());
+//
+//         Ok(message_serialise)
+//     }
+//
+// }
 
-pub struct FormatteurMessage {
-    validateur: Arc<Box<ValidateurX509Impl>>,
-    enveloppe_privee: Arc<Box<EnveloppePrivee>>,
-}
-
-impl FormatteurMessage {
-    pub fn new(validateur: Arc<Box<ValidateurX509Impl>>, enveloppe_privee: Arc<Box<EnveloppePrivee>>) -> Self {
-        FormatteurMessage { validateur, enveloppe_privee }
-    }
-}
-
-impl Formatteur for FormatteurMessage {
-
-    /// Prepare en-tete, _signature et _certificat dans un message
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>> {
-
-        let message_signe = MessageMilleGrille::new_signer(
-            self.enveloppe_privee.as_ref(),
-            &message.message_json,
-            domaine
-        )?;
-
-        let mut message_serialise = MessageSerialise::from_parsed(message_signe)?;
-        message_serialise.set_certificat(self.enveloppe_privee.enveloppe.clone());
-
-        Ok(message_serialise)
-
-        // // Copier tous les champs qui ne commencent pas par _
-        // let (mut message_modifie, mut champs_retires): (BTreeMap<String, Value>, HashMap<&String, &Value, RandomState>) = nettoyer_message(message);
-        // // debug!("Message filtre : {:?}", message_modifie);
-        //
-        // // Serialiser en json pour calculer le hachage du message
-        // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-        // // debug!("Message contenu serialise : {}", contenu_str);
-        // let hachage = hacher_message(&contenu_str);
-        // // debug!("Hachage du message : {}\n{}", hachage, contenu_str);
-        // // assert_eq!("mEiAQASuxJobNtWMPmaxxLo+NLs/wfmkMl+wtiVq8vLkYaA", hachage);
-        //
-        // // Valeurs generees pour l'entete
-        // let uuid_message: Uuid = Uuid::new_v4();
-        // let estampille: Duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        //
-        // let enveloppe_privee: &EnveloppePrivee = &self.enveloppe_privee;
-        //
-        // // Ajouter l'entete
-        // // let entete = json!({
-        // //     "estampille": estampille.as_secs(),
-        // //     "fingerprint_certificat": enveloppe_privee.fingerprint(),
-        // //     "hachage_contenu": hachage,
-        // //     "idmg": self.validateur.idmg(),
-        // //     "uuid_transaction": uuid_message,
-        // //     "version": 1,
-        // // });
-        // // let mut entete_modifie: Map<String, Value> = entete.as_object().unwrap().to_owned();
-        // // match domaine {
-        // //     Some(d) => {
-        // //         entete_modifie.insert(String::from("domaine"), Value::from(d));
-        // //     },
-        // //     None => (),
-        // // }
-        // // let mut entete: BTreeMap<String, Value> = BTreeMap::new();
-        // // entete.extend(entete_modifie);
-        //
-        // let entete = Entete::builder(
-        //     enveloppe_privee.fingerprint(),
-        //     &hachage,
-        //     self.validateur.idmg()
-        // ).build();
-        //
-        // let key_entete = String::from(ENTETE);
-        // let entete_value = serde_json::to_value(&entete).expect("entete");
-        // message_modifie.insert(key_entete, entete_value);
-        //
-        // // Serialiser en json pour signer
-        // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-        // // debug!("Message serialise avec entete : {}", contenu_str);
-        // let signature = signer_message(enveloppe_privee.cle_privee(), contenu_str.as_bytes()).unwrap();
-        //
-        // // Reintroduire les champs retires
-        // for item in champs_retires {
-        //     message_modifie.insert(item.0.to_owned(), item.1.to_owned());
-        // }
-        //
-        // // Conserver signature
-        // let key_signature = String::from(SIGNATURE);
-        // let signature_value = Value::String(signature);
-        // message_modifie.insert(key_signature, signature_value);
-        //
-        // // Inserer certificats
-        // let key_certificats = String::from(CERTIFICATS);
-        // let mut certificats_pem: Vec<Value> = Vec::new();
-        // for cert in self.enveloppe_privee.chaine_pem() {
-        //     certificats_pem.push(Value::String(cert.to_owned()));
-        // }
-        // let certificats_pem = Value::Array(certificats_pem);
-        // message_modifie.insert(key_certificats, certificats_pem);
-        //
-        // // debug!("Message avec signature : {:?}", message_modifie);
-        //
-        // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-        // let resultat = MessageSerialise {
-        //     message: contenu_str,
-        //     entete,
-        //     enveloppe: Some(enveloppe_privee.enveloppe.clone())
-        // };
-        //
-        // Ok(resultat)
-    }
-
-}
-
-pub fn nettoyer_message<'a>(message: &'a MessageJson) -> (BTreeMap<String, Value>, HashMap<&String, &Value>) {
-
-    let mut message_modifie: BTreeMap<String, Value> = BTreeMap::new();
-    let mut champs_retires: HashMap<&String, &Value> = HashMap::new();
-    for item in message.get_message().iter() {
-        let nom_champ = item.0;
-        let value: &'a Value = item.1;
-
-        if !nom_champ.starts_with("_") {
-            let new_value: Value;
-            match filtrer_value(&value) {
-                Some(v) => new_value = v,
-                None => new_value = value.to_owned()
-            }
-            message_modifie.insert(nom_champ.to_owned(), new_value);
-        } else {
-            // Conserver le champ temporairement
-            champs_retires.insert(nom_champ, value);
-        }
-    }
-
-    (message_modifie, champs_retires)
-}
+// pub fn nettoyer_message<'a>(message: &'a MessageJson) -> (BTreeMap<String, Value>, HashMap<&String, &Value>) {
+//
+//     let mut message_modifie: BTreeMap<String, Value> = BTreeMap::new();
+//     let mut champs_retires: HashMap<&String, &Value> = HashMap::new();
+//     for item in message.get_message().iter() {
+//         let nom_champ = item.0;
+//         let value: &'a Value = item.1;
+//
+//         if !nom_champ.starts_with("_") {
+//             let new_value: Value;
+//             match filtrer_value(&value) {
+//                 Some(v) => new_value = v,
+//                 None => new_value = value.to_owned()
+//             }
+//             message_modifie.insert(nom_champ.to_owned(), new_value);
+//         } else {
+//             // Conserver le champ temporairement
+//             champs_retires.insert(nom_champ, value);
+//         }
+//     }
+//
+//     (message_modifie, champs_retires)
+// }
 
 /// Filtrer certains formats speciaux de valeurs
 ///   - Les f64 qui se terminent par .0 doivent etre changes en i64  (support ECMAScript)
@@ -535,87 +456,88 @@ fn filtrer_value(value: &Value) -> Option<Value> {
     None
 }
 
-#[derive(Clone, Debug)]
-pub struct MessageJson {
-    message_json: Value
-}
-
-impl MessageJson {
-
-    pub fn new(message_json: Value) -> MessageJson {
-        // Test pour s'assurer que c'est une Map
-        message_json.as_object().expect("object");
-
-        MessageJson {
-            message_json,
-        }
-    }
-
-    pub fn parse(data: &Vec<u8>) -> Result<MessageJson, String> {
-        let data = match String::from_utf8(data.to_owned()) {
-            Ok(data) => Ok(data),
-            Err(e) => {
-                Err(format!("Erreur message n'est pas UTF-8 : {:?}", e))
-            }
-        }?;
-
-        let map_doc: serde_json::Result<Value> = serde_json::from_str(data.as_str());
-        let contenu = match map_doc {
-            Ok(v) => Ok(MessageJson::new(v)),
-            Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}\n{}", e, data)),
-        }?;
-
-        Ok(contenu)
-    }
-
-    pub fn ok() -> MessageJson {
-        MessageJson { message_json: json!({"ok": true}) }
-    }
-
-    pub fn get_message(&self) -> &Map<String, Value> {
-        self.message_json.as_object().expect("map")
-    }
-
-    pub fn get_entete(&self) -> Result<&Map<String,Value>, String> {
-        match self.get_message().get(TRANSACTION_CHAMP_ENTETE) {
-            Some(entete) => match entete.as_object() {
-                Some(entete) => Ok(entete),
-                None => Err("en-tete n'est pas un document".into()),
-            },
-            None => Err("en-tete manquante".into()),
-        }
-    }
-
-    pub fn get_idmg(&self) -> Result<String, String> {
-        let contenu = self.get_entete()?;
-        match contenu.get(TRANSACTION_CHAMP_IDMG) {
-            Some(idmg) => match idmg.as_str() {
-                Some(idmg) => Ok(idmg.to_owned()),
-                None => Err("idmg n'est pas un str".into()),
-            },
-            None => Err("idmg absent de l'entete".into())
-        }
-    }
-
-    pub fn get_estampille(&self) -> Result<DateTime<Utc>, String> {
-        let contenu = self.get_entete()?;
-        match contenu.get(TRANSACTION_CHAMP_ESTAMPILLE) {
-            Some(d) => lire_date_value(d),
-            None => Err("idmg absent de l'entete".into())
-        }
-    }
-}
-
-pub fn lire_date_value(date: &Value) -> Result<DateTime<Utc>, String> {
-    let date_epoch = match date.as_i64() {
-        Some(d) => Ok(d),
-        None => Err("Date n'est pas un i64"),
-    }?;
-    let date_naive = NaiveDateTime::from_timestamp(date_epoch, 0);
-    Ok(DateTime::from_utc(date_naive, Utc))
-}
+// #[derive(Clone, Debug)]
+// pub struct MessageJson {
+//     message_json: Value
+// }
+//
+// impl MessageJson {
+//
+//     pub fn new(message_json: Value) -> MessageJson {
+//         // Test pour s'assurer que c'est une Map
+//         message_json.as_object().expect("object");
+//
+//         MessageJson {
+//             message_json,
+//         }
+//     }
+//
+//     pub fn parse(data: &Vec<u8>) -> Result<MessageJson, String> {
+//         let data = match String::from_utf8(data.to_owned()) {
+//             Ok(data) => Ok(data),
+//             Err(e) => {
+//                 Err(format!("Erreur message n'est pas UTF-8 : {:?}", e))
+//             }
+//         }?;
+//
+//         let map_doc: serde_json::Result<Value> = serde_json::from_str(data.as_str());
+//         let contenu = match map_doc {
+//             Ok(v) => Ok(MessageJson::new(v)),
+//             Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}\n{}", e, data)),
+//         }?;
+//
+//         Ok(contenu)
+//     }
+//
+//     pub fn ok() -> MessageJson {
+//         MessageJson { message_json: json!({"ok": true}) }
+//     }
+//
+//     pub fn get_message(&self) -> &Map<String, Value> {
+//         self.message_json.as_object().expect("map")
+//     }
+//
+//     pub fn get_entete(&self) -> Result<&Map<String,Value>, String> {
+//         match self.get_message().get(TRANSACTION_CHAMP_ENTETE) {
+//             Some(entete) => match entete.as_object() {
+//                 Some(entete) => Ok(entete),
+//                 None => Err("en-tete n'est pas un document".into()),
+//             },
+//             None => Err("en-tete manquante".into()),
+//         }
+//     }
+//
+//     pub fn get_idmg(&self) -> Result<String, String> {
+//         let contenu = self.get_entete()?;
+//         match contenu.get(TRANSACTION_CHAMP_IDMG) {
+//             Some(idmg) => match idmg.as_str() {
+//                 Some(idmg) => Ok(idmg.to_owned()),
+//                 None => Err("idmg n'est pas un str".into()),
+//             },
+//             None => Err("idmg absent de l'entete".into())
+//         }
+//     }
+//
+//     pub fn get_estampille(&self) -> Result<DateTime<Utc>, String> {
+//         let contenu = self.get_entete()?;
+//         match contenu.get(TRANSACTION_CHAMP_ESTAMPILLE) {
+//             Some(d) => lire_date_value(d),
+//             None => Err("idmg absent de l'entete".into())
+//         }
+//     }
+// }
+//
+// pub fn lire_date_value(date: &Value) -> Result<DateTime<Utc>, String> {
+//     let date_epoch = match date.as_i64() {
+//         Some(d) => Ok(d),
+//         None => Err("Date n'est pas un i64"),
+//     }?;
+//     let date_naive = NaiveDateTime::from_timestamp(date_epoch, 0);
+//     Ok(DateTime::from_utc(date_naive, Utc))
+// }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Date a utiliser pour conserver compatibilite avec messages MilleGrille (format epoch secondes i64).
 pub struct DateEpochSeconds {
     date: DateTime<Utc>,
 }
@@ -736,10 +658,11 @@ where
 
 #[cfg(test)]
 mod serialization_tests {
+    use crate::certificats_tests::charger_enveloppe_privee_env;
+    use crate::test_setup::setup;
+
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
-    use crate::test_setup::setup;
-    use crate::certificats_tests::charger_enveloppe_privee_env;
 
     /// Sample
     const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUOhOPjxIYcu/2KtUKOfVf9gjtRWswDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgxMDExMzkzOFoXDTIxMDkwOTExNDEzOFowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBANQpo8awOOHgdRO56fwZ3/eQbAsqJSS8LNR/\nJHf/1ExHY0AbqH88w+X9Rhh2uU92ECQA1usueJHSMDsKeOSTAuw/7yZNxs5Pv/uu\nfgH4Yq1JnM0r1SqT2zeiLxpKyYuB06XgD1jA5+rz0nD593ARTpGP6bx1HQO7F5sj\nc1+N1Ujf/XHDA9SDptREbpsmwzgmgBgVlbTVm4VQrl99B1LZhQPjDX6nLomQ2jmc\n42CXJRzgihIh7Ym6wggKDgVqlOIevlIRuK4oxITaFRMgtzeBbhj7bw1nMZ8BjxYw\nUpvangdvT3W5s9zTg0C4LgRdihCtFMHIXZOR86J27x1DqhLvH7sCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQhkD483zW0QLedR2BlAZcR0glN6zAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEAPLe/7wTifOq24aGzbuB/BXcAbKm53CcnUQH7CbrnFh7VaHEM8WssZmKX5nYw\nKAts+ORk10xoLMddO9mEFtuKQD4QTjMFQe5EXnOuEuxzF51c3Gv2cY+b0Q/GcAcX\nu/UDN5Cw1SoRYd1SfYkvK8+8Deo7ds1Zib1gYehWmTYPA9ZD+bBIISd1pvgif6cz\nHl12aMusZ2F2m6Qhnot31vB90NPNa/hZ9cOAz+WnjwvcYXUXhCKV/wwuHtNWVNOS\nAphmpcYYJxAjqj1ok/EJF9L5/Z83NvTyz6omZbdptxa0ak4Qchql87rM1B6tGEVD\nkA1HOXEzYkfgtP4gGZZsKQhcxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAXnWu4SZaiBNJMJgc4cVH9XcMsqBphRHvupwQ12oOODFplqz2c4UOdJ1V69DBGcoUZDVYElATHEM7Esm35gADXJdc/hc9yeb6WRK7fMjup1+cYDajPr8yCNezQlPyO6No8wSO9v6BUTXTgLS8sYFY8QXumMQyXd5XfAuo0KL61gG3a++aViaJ8GWdm52i7Hy+FJnuU+gNf4YXRtWfMTOcrFz563y0zMHRYyXnXO72mcYnmkL4Z79TEMLJcBR8A11LSmAteYvBcSJVJnJHXIJEoRPLNPAUR2id+CPpJE3ZDKUECq0gW8ONrvtIt9a5ApLyteXBARaOuVDX5Sh0STtcTE","alpaca":true,"en-tete":{"domaine":null,"estampille":1630600162,"fingerprint_certificat":"zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds","hachage_contenu":"mEiCerWQ+xmJBauIR2JdRX1pBa+1wYlUNg/Q0dbhCGUOSww","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"f5488642-01f3-42a0-9423-5f895bfed17a","version":1},"texte":"oui!","valeur":1}"#;
@@ -812,7 +735,7 @@ mod serialization_tests {
             "texte": "oui!",
             "alpaca": true,
         });
-        let message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None).expect("map");
+        let message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None, None).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         debug!("Message MilleGrille serialise : {}", message_str)
@@ -906,7 +829,7 @@ mod serialization_tests {
             "texte": "oui!",
             "alpaca": true,
         });
-        let mut message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None).expect("map");
+        let mut message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None, None).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         let idx_certificat = message_str.find("\"_certificat\"");

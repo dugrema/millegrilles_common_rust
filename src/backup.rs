@@ -6,6 +6,7 @@ use std::io::Bytes;
 use std::iter::Map;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_std::fs::File;
@@ -35,11 +36,10 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Formatteur, Hacheur, MessageJson, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509};
+use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Hacheur, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509, FormatteurMessage, MessageMilleGrille};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
-use std::sync::Arc;
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collection: &str) -> Result<(), Box<dyn Error>> {
@@ -248,9 +248,9 @@ async fn serialiser_transactions(
 }
 
 async fn serialiser_catalogue(
-    middleware: &(impl Formatteur),
+    middleware: &(impl FormatteurMessage),
     builder: CatalogueHoraireBuilder
-) -> Result<(CatalogueHoraire, MessageSerialise, Option<MessageSerialise>), Box<dyn Error>> {
+) -> Result<(CatalogueHoraire, MessageMilleGrille, Option<MessageMilleGrille>), Box<dyn Error>> {
 
     let commande_signee = match &builder.cles {
         Some(cles) => {
@@ -267,10 +267,11 @@ async fn serialiser_catalogue(
             );
 
             let value_commande: Value = serde_json::to_value(commande_maitredescles).expect("commande");
-            let msg_commande = MessageJson::new(value_commande);
-            let commande_signee = middleware.formatter_value(
-                &msg_commande,
-                Some("MaitreDesCles.nouvelleCle")
+            // let msg_commande = MessageJson::new(value_commande);
+            let commande_signee = middleware.formatter_message(
+                &value_commande,
+                Some("MaitreDesCles.nouvelleCle"),
+                None
             )?;
 
             Some(commande_signee)
@@ -281,8 +282,8 @@ async fn serialiser_catalogue(
     // Signer et serialiser catalogue
     let catalogue = builder.build();
     let catalogue_value = serde_json::to_value(&catalogue)?;
-    let message_json = MessageJson::new(catalogue_value);
-    let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup"))?;
+    // let message_json = MessageJson::new(catalogue_value);
+    let catalogue_signe = middleware.formatter_message(&catalogue_value, Some("Backup"), None)?;
 
     // let mut writer_catalogue = FichierWriter::new(path_catalogue, None)
     //     .await.expect("write catalogue");
@@ -752,11 +753,11 @@ impl TraiterFichier for ProcesseurFichierBackup {
 mod backup_tests {
     use serde_json::json;
 
+    use crate::{CompresseurBytes, preparer_middleware_pki};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
+    use crate::test_setup::setup;
 
     use super::*;
-    use crate::{CompresseurBytes, preparer_middleware_pki};
-    use crate::test_setup::setup;
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -973,16 +974,19 @@ mod backup_tests {
 
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
-        let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
-        let catalogue = catalogue_builder.build();
-        let catalogue_value: Value = serde_json::to_value(catalogue).expect("value");
 
-        let message_json = MessageJson::new(catalogue_value);
-        let catalogue_signe = middleware.formatter_value(&message_json, Some("Backup")).expect("signer");
+        // let message_json = MessageJson::new(catalogue_value);
+        let message_serialise = {
+            let catalogue_builder = CatalogueHoraireBuilder::new(
+                heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+            let catalogue = catalogue_builder.build();
+            let catalogue_value: Value = serde_json::to_value(catalogue).expect("value");
+            let catalogue_signe = middleware.formatter_message(&catalogue_value, Some("Backup"), None).expect("signer");
+            MessageSerialise::from_parsed(catalogue_signe)
+        }.expect("build");
 
         let mut compresseur = CompresseurBytes::new().expect("compresseur");
-        compresseur.write(catalogue_signe.get_str().as_bytes()).await;
+        compresseur.write(message_serialise.get_str().as_bytes()).await;
         let (catalogue_xz, _) = compresseur.fermer().expect("xz");
 
         let mut buf_reader = BufReader::new(catalogue_xz.as_slice());
@@ -1005,7 +1009,7 @@ mod test_integration {
     use async_std::io::BufReader;
     use futures_util::stream::IntoAsyncRead;
 
-    use crate::{charger_transaction, CompresseurBytes, Formatteur, MiddlewareDbPki};
+    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
     use crate::test_setup::setup;
@@ -1125,9 +1129,11 @@ mod test_integration {
                 builder,
             ).await.expect("serialiser");
 
+            let message_serialise = MessageSerialise::from_parsed(catalogue_signe).expect("ser");
+
             let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None)
                 .await.expect("write catalogue");
-            writer_catalogue.write(catalogue_signe.get_str().as_bytes()).await.expect("write");
+            writer_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
             let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer");
 
             debug!("Multihash catalogue : {}", mh_catalogue);
@@ -1193,16 +1199,19 @@ mod test_integration {
                 builder,
             ).await.expect("serialiser");
 
+            let message_serialise = MessageSerialise::from_parsed(catalogue_signe).expect("ser");
+
             // Compresser catalogue et commande maitre des cles en XZ
             let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
-            compresseur_catalogue.write(catalogue_signe.get_str().as_bytes()).await.expect("write");
+            compresseur_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
             let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
 
             let commande_bytes = match commande_cles {
                 Some(c) => {
+                    let message_serialise = MessageSerialise::from_parsed(c).expect("ser");
                     let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
-                    debug!("Commande maitre cles : {}", c.get_str());
-                    compresseur_commande.write(c.get_str().as_bytes()).await.expect("write");
+                    debug!("Commande maitre cles : {}", message_serialise.get_str());
+                    compresseur_commande.write(message_serialise.get_str().as_bytes()).await.expect("write");
                     let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
 
                     Some(commande_bytes)

@@ -11,14 +11,14 @@ use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
 use crate::configuration::charger_configuration_avec_db;
-use crate::formatteur_messages::{FormatteurMessage, MessageJson};
+use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use TypeMessageOut as TypeMessageIn;
 
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
-use crate::middleware::{formatter_message_certificat, formatter_message_enveloppe_privee, IsConfigurationPki, MiddlewareDbPki, ValidateurX509Database};
+use crate::middleware::{formatter_message_certificat, IsConfigurationPki, MiddlewareDbPki, ValidateurX509Database};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
-use crate::verificateur::{verifier_hachage, verifier_message, verifier_signature};
+use crate::verificateur::{verifier_hachage, verifier_message};
 use crate::MessageSerialise;
 
 /// Thread de traitement des messages
@@ -215,7 +215,7 @@ pub struct RequeteCertificatInterne {
 }
 
 /// Task de requete et attente de reception de certificat
-pub async fn task_requetes_certificats(middleware: Arc<dyn GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>) {
+pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>) {
     while let Some(req_cert) = rx.recv().await {
         let delivery = req_cert.delivery;
         let fingerprint = req_cert.fingerprint;
@@ -223,22 +223,36 @@ pub async fn task_requetes_certificats(middleware: Arc<dyn GenerateurMessages>, 
         debug!("Faire une requete pour charger le certificat {}", fingerprint);
         let requete = json!({"fingerprint": fingerprint});
         let domaine_action = format!("requete.certificat.{}", fingerprint);
-        let message = MessageJson::new(requete);
-        let reponse = middleware.transmettre_requete(&domaine_action, &message, None)
-            .await;
-        debug!("Reponse de ma requete!!!");
-
-        // Re-send
-        match reponse {
+        // let message = MessageJson::new(requete);
+        let ok = match middleware.transmettre_requete(&domaine_action, &requete, None).await {
             Ok(r) => {
                 tx.send(MessageInterne::Delivery(delivery))
                     .await.expect("resend delivery avec certificat");
+                true
             },
             Err(e) => {
                 error!("Erreur / timeout sur demande certificat {} : {}", fingerprint, e);
-                tx.send(MessageInterne::CancelDemandeReponse(fingerprint))
-                    .await.expect("cancel demande certificat sur timeout");
+                false
             }
+        };
+        debug!("Reponse de ma requete!!!");
+
+        // // Re-send
+        // let ok = match reponse {
+        //     Ok(r) => {
+        //         tx.send(MessageInterne::Delivery(delivery))
+        //             .await.expect("resend delivery avec certificat");
+        //         true
+        //     },
+        //     Err(e) => {
+        //         error!("Erreur / timeout sur demande certificat {} : {}", fingerprint, e);
+        //         false
+        //     }
+        // };
+
+        if ! ok {
+            tx.send(MessageInterne::CancelDemandeReponse(fingerprint))
+                .await.expect("cancel demande certificat sur timeout");
         }
     }
 }
@@ -259,7 +273,7 @@ pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfi
                 let enveloppe_privee = middleware.get_enveloppe_privee();
                 let fingerprint = enveloppe_privee.fingerprint();
                 if fingerprint.as_str() == inner.action.as_str() {
-                    let message = formatter_message_enveloppe_privee(enveloppe_privee.as_ref());
+                    let message = formatter_message_certificat((enveloppe_privee.enveloppe.as_ref()));
                     if let Some(reply_q) = &inner.reply_q {
                         if let Some(correlation_id) = &inner.correlation_id {
                             debug!("Emettre certificat a demandeur sous correlation_id {}", correlation_id);
@@ -356,7 +370,7 @@ pub struct MessageValideAction {
 
 #[derive(Debug)]
 pub struct MessageTrigger {
-    pub message: MessageJson,
+    pub message: MessageMilleGrille,
     pub enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
     pub reply_q: Option<String>,
     pub correlation_id: Option<String>,

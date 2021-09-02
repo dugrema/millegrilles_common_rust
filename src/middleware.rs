@@ -17,14 +17,15 @@ use tokio::task::JoinHandle;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageJson};
+use crate::formatteur_messages::FormatteurMessage;
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
-use crate::{Formatteur, MessageSerialise, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message};
+use crate::{MessageSerialise, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message, MessageMilleGrille};
 use std::error::Error;
+use serde::Serialize;
 
 /// Version speciale du middleware avec un acces direct au sous-domaine Pki dans MongoDB
 pub fn preparer_middleware_pki(
@@ -97,19 +98,22 @@ fn configurer(queues: Vec<QueueType>, listeners: Option<Mutex<Callback<'static, 
 
     // Preparer instances utils
     let validateur = pki.get_validateur();
-    let enveloppe_privee = pki.get_enveloppe_privee();
-    let formatteur_message: Arc<FormatteurMessage> = Arc::new(FormatteurMessage::new(validateur.clone(), enveloppe_privee));
+    // let enveloppe_privee = pki.get_enveloppe_privee();
+    // let formatteur_message: Arc<FormatteurMessage> = Arc::new(FormatteurMessage::new(validateur.clone(), enveloppe_privee));
 
     // Connecter au middleware mongo et MQ
     let mongo: Arc<MongoDaoImpl> = Arc::new(initialiser_mongodb(configuration.as_ref()).expect("Erreur connexion MongoDB"));
     let mq_executor = executer_mq(
         configuration.clone(),
         Some(queues),
-        formatteur_message,
         listeners,
     ).expect("Erreur demarrage MQ");
 
-    let generateur_messages = GenerateurMessagesImpl::new(&mq_executor);
+    let generateur_messages = GenerateurMessagesImpl::new(
+        configuration.get_configuration_pki(),
+        &mq_executor
+    );
+
     (configuration, validateur, mongo, mq_executor, generateur_messages)
 }
 
@@ -189,19 +193,23 @@ impl ValidateurX509 for MiddlewareDbPki {
 #[async_trait]
 impl GenerateurMessages for MiddlewareDbPki {
 
-    async fn soumettre_transaction(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
+    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
+        self.generateur_messages.emettre_evenement( domaine, message, exchanges).await
     }
 
-    async fn transmettre_requete(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>) -> Result<TypeMessage, String> {
+    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>) -> Result<TypeMessage, String> {
         self.generateur_messages.transmettre_requete(domaine, message, exchange).await
     }
 
-    async fn emettre_evenement(&self, domaine: &str, message: &MessageJson, exchanges: Option<Vec<Securite>>) -> Result<(), String> {
-        self.generateur_messages.emettre_evenement(domaine, message, exchanges).await
+    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
     }
 
-    async fn repondre(&self, message: &MessageJson, reply_q: &str, correlation_id: &str) -> Result<(), String> {
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String> {
+        self.generateur_messages.transmettre_commande(domaine, message, exchange, blocking).await
+    }
+
+    async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
         self.generateur_messages.repondre(message, reply_q, correlation_id).await
     }
 
@@ -210,9 +218,9 @@ impl GenerateurMessages for MiddlewareDbPki {
     }
 }
 
-impl Formatteur for MiddlewareDbPki {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn Error>> {
-        self.generateur_messages.formatter_value(message, domaine)
+impl FormatteurMessage for MiddlewareDbPki {
+    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+        self.configuration.get_configuration_pki().get_enveloppe_privee()
     }
 }
 
@@ -279,12 +287,18 @@ impl ValidateurX509Database {
                 }
                 let pems = pem_vec.join("\n");
 
-                let message = MessageJson::new(json!({
+                let contenu = json!({
                     "pem": pems
-                }));
+                });
+                // let message = self.generateur_messages.formatter_message(
+                //     contenu,
+                //     Some(&domaine_action),
+                //     None
+                // );
+
                 match self.generateur_messages.soumettre_transaction(
                     &domaine_action,
-                    &message,
+                    &contenu,
                     Some(Securite::L3Protege),
                     false
                 ).await {
@@ -447,19 +461,23 @@ impl ValidateurX509 for MiddlewareDb {
 #[async_trait]
 impl GenerateurMessages for MiddlewareDb {
 
-    async fn soumettre_transaction(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
-    }
-
-    async fn transmettre_requete(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>) -> Result<TypeMessage, String> {
-        self.generateur_messages.transmettre_requete(domaine, message, exchange).await
-    }
-
-    async fn emettre_evenement(&self, domaine: &str, message: &MessageJson, exchanges: Option<Vec<Securite>>) -> Result<(), String> {
+    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
         self.generateur_messages.emettre_evenement(domaine, message, exchanges).await
     }
 
-    async fn repondre(&self, message: &MessageJson, reply_q: &str, correlation_id: &str) -> Result<(), String> {
+    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>) -> Result<TypeMessage, String> {
+        self.generateur_messages.transmettre_requete(domaine, message, exchange).await
+    }
+
+    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
+    }
+
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String> {
+        self.generateur_messages.transmettre_commande(domaine, message, exchange, blocking).await
+    }
+
+    async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
         self.generateur_messages.repondre(message, reply_q, correlation_id).await
     }
 
@@ -472,6 +490,12 @@ impl GenerateurMessages for MiddlewareDb {
 impl MongoDao for MiddlewareDb {
     fn get_database(&self) -> Result<Database, String> {
         self.mongo.get_database()
+    }
+}
+
+impl FormatteurMessage for MiddlewareDb {
+    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+        self.configuration.get_configuration_pki().get_enveloppe_privee()
     }
 }
 
@@ -520,15 +544,21 @@ impl IsConfigurationPki for MiddlewareDbPki {
 
 #[async_trait]
 impl EmetteurCertificat for MiddlewareDbPki {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
-        let enveloppe_privee = self.get_enveloppe_privee();
-        let message = formatter_message_enveloppe_privee(enveloppe_privee.as_ref());
-
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), Box<dyn Error>> {
+        let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+        let message = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
         let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
 
-        generateur_message.emettre_evenement(PKI_EVENEMENT_CERTIFICAT, &message, Some(exchanges)).await
+        Ok(generateur_message.emettre_evenement(PKI_EVENEMENT_CERTIFICAT, &message, Some(exchanges)).await?)
     }
 }
+
+// impl FormatteurMessage for MiddlewareDbPki {
+//     fn get_enveloppe_privee(&self) -> &EnveloppePrivee {
+//         self.configuration.get_configuration_pki().get_enveloppe_privee().as_ref()
+//     }
+// }
+
 
 // impl VerificateurMessage for MiddlewareDbPki {
 //     fn verifier_message(
@@ -636,14 +666,14 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
     }
 }
 
-pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + GenerateurMessages + ConfigMessages), nom_domaine: &str) -> Result<(), String> {
+pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + GenerateurMessages + ConfigMessages), nom_domaine: &str) -> Result<(), Box<dyn Error>> {
 
     let noeud_id = match &middleware.get_configuration_noeud().noeud_id {
         Some(n) => Some(n.clone()),
         None => None,
     };
 
-    let message = MessageJson::new(json!({
+    let message = json!({
         "idmg": middleware.idmg(),
         "noeud_id": noeud_id,
         "domaine": nom_domaine,
@@ -655,32 +685,33 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         //     "3.protege": ["requete.Principale.test"],
         // },
         "primaire": true,
-    }));
+    });
 
-    middleware.emettre_evenement(
+    Ok(middleware.emettre_evenement(
         EVENEMENT_PRESENCE_DOMAINE,
         &message,
         Some(vec!(Securite::L3Protege))
-    ).await
+    ).await?)
 }
 
 #[async_trait]
 pub trait EmetteurCertificat {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String>;
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), Box<dyn Error>>;
 }
 
 #[async_trait]
 impl EmetteurCertificat for ValidateurX509Impl {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), Box<dyn Error>> {
         todo!()
     }
 }
 
-pub fn formatter_message_enveloppe_privee(enveloppe: &EnveloppePrivee) -> MessageJson {
-    formatter_message_certificat(&enveloppe.enveloppe)
-}
+// pub fn formatter_message_enveloppe_privee(enveloppe: &EnveloppePrivee) -> MessageJson {
+//     // PKI_EVENEMENT_CERTIFICAT
+//     formatter_message_certificat(&enveloppe.enveloppe)
+// }
 
-pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> MessageJson {
+pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Value {
     let pem_vec = enveloppe.get_pem_vec();
     let mut pems = Vec::new();
     for cert in pem_vec {
@@ -691,5 +722,5 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> MessageJ
         "fingerprint": enveloppe.fingerprint(),
     });
 
-    MessageJson::new(reponse)
+    reponse
 }

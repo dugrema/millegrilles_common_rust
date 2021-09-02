@@ -10,10 +10,10 @@ use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, ValidateurX509};
 use crate::constantes::*;
-use crate::formatteur_messages::MessageJson;
 use crate::generateur_messages::GenerateurMessages;
 use crate::mongo_dao::MongoDao;
 use crate::recepteur_messages::MessageValideAction;
+use std::error::Error;
 
 pub async fn transmettre_evenement_persistance(
     middleware: &impl GenerateurMessages,
@@ -21,7 +21,7 @@ pub async fn transmettre_evenement_persistance(
     domaine: &str,
     reply_to: Option<String>,
     correlation_id: Option<String>
-) -> Result<(), String> {
+) -> Result<(), Box<dyn Error>> {
     let mut evenement = json!({
         "uuid_transaction": uuid_transaction,
         "evenement": EVENEMENT_TRANSACTION_PERSISTEE,
@@ -40,9 +40,9 @@ pub async fn transmettre_evenement_persistance(
 
     let rk = format!("evenement.{}.transaction_persistee", domaine);
 
-    let message = MessageJson::new(evenement);
+    // let message = MessageJson::new(evenement);
 
-    middleware.emettre_evenement(&rk, &message, Some(vec!(Securite::L4Secure))).await
+    Ok(middleware.emettre_evenement(&rk, &evenement, Some(vec!(Securite::L4Secure))).await?)
 }
 
 pub async fn charger_transaction(middleware: &(impl ValidateurX509 + MongoDao), m: &MessageValideAction) -> Result<TransactionImpl, String> {

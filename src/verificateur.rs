@@ -12,7 +12,6 @@ use openssl::sign::{RsaPssSaltlen, Verifier};
 use serde_json::{Map, Value};
 
 use crate::certificats::EnveloppeCertificat;
-use crate::formatteur_messages::{MessageJson, nettoyer_message};
 use crate::hachages::verifier_multihash;
 use crate::signatures::{SALT_LENGTH, VERSION_1};
 use std::error::Error;
@@ -150,29 +149,29 @@ pub fn verifier_hachage(message: &MessageMilleGrille) -> Result<bool, Box<dyn Er
     verifier_multihash(hachage_str, contenu_string.as_bytes())
 }
 
-pub fn verifier_signature(public_key: &PKey<Public>, message: &MessageJson) -> Result<bool, ErrorStack> {
-    let (mut message_modifie, _): (BTreeMap<String, Value>, _) = nettoyer_message(message);
-
-    let signature = message.get_message().get("_signature").unwrap().as_str().unwrap();
-    debug!("Signature : {}", signature);
-
-    let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-
-    debug!("Message a verifier (signature)\n{}", contenu_str);
-
-    let signature_bytes: (Base, Vec<u8>) = decode(signature).unwrap();
-    let version_signature = signature_bytes.1[0];
-    assert_eq!(VERSION_1, version_signature);
-
-    let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key).unwrap();
-    verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
-    verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
-    verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
-    verifier.update(contenu_str.as_bytes())?;
-
-    // Retourner la reponse
-    verifier.verify(&signature_bytes.1[1..])
-}
+// pub fn verifier_signature(public_key: &PKey<Public>, message: &MessageSerialise) -> Result<bool, ErrorStack> {
+//     // let (mut message_modifie, _): (BTreeMap<String, Value>, _) = nettoyer_message(message);
+//
+//     // let signature = message.get_message().get("_signature").unwrap().as_str().unwrap();
+//     // debug!("Signature : {}", signature);
+//
+//     // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
+//
+//     debug!("Message a verifier (signature)\n{}", contenu_str);
+//
+//     let signature_bytes: (Base, Vec<u8>) = decode(signature).unwrap();
+//     let version_signature = signature_bytes.1[0];
+//     assert_eq!(VERSION_1, version_signature);
+//
+//     let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key).unwrap();
+//     verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
+//     verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
+//     verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
+//     verifier.update(contenu_str.as_bytes())?;
+//
+//     // Retourner la reponse
+//     verifier.verify(&signature_bytes.1[1..])
+// }
 
 pub fn verifier_signature_str(public_key: &PKey<Public>, signature: &str, message: &str) -> Result<bool, Box<dyn Error>> {
     // let entete = message.get_entete();

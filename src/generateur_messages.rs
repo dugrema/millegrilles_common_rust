@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::marker::Send;
 
 use async_trait::async_trait;
 use log::{debug, error, info};
@@ -10,34 +11,37 @@ use tokio::time::error::Elapsed;
 use lapin::message::Delivery;
 
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageJson, MessageSerialise};
+use crate::formatteur_messages::MessageSerialise;
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
-use crate::Formatteur;
+use crate::formatteur_messages::MessageMilleGrille;
 use std::error::Error;
+use crate::{FormatteurMessage, EnveloppePrivee, ConfigurationPki};
+use serde::Serialize;
 
 #[async_trait]
 pub trait GenerateurMessages: Send + Sync {
-    async fn soumettre_transaction(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
-    async fn transmettre_requete(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>) -> Result<TypeMessage, String>;
-    async fn emettre_evenement(&self, domaine: &str, message: &MessageJson, exchanges: Option<Vec<Securite>>) -> Result<(), String>;
-    async fn repondre(&self, message: &MessageJson, reply_q: &str, correlation_id: &str) -> Result<(), String>;
+    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String>;
+    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>) -> Result<TypeMessage, String>;
+    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String>;
+    async fn repondre(&self, message: &(impl Serialize+Send+Sync), reply_q: &str, correlation_id: &str) -> Result<(), String>;
     fn mq_disponible(&self) -> bool;
 }
 
 pub struct GenerateurMessagesImpl {
     tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     tx_interne: Sender<MessageInterne>,
-    formatteur: Arc<FormatteurMessage>,
+    enveloppe_privee: Arc<Box<EnveloppePrivee>>,
 }
 
 impl GenerateurMessagesImpl {
 
-    pub fn new(mq: &RabbitMqExecutor) -> GenerateurMessagesImpl {
+    pub fn new(config: &ConfigurationPki, mq: &RabbitMqExecutor) -> GenerateurMessagesImpl {
         GenerateurMessagesImpl {
             tx_out: mq.tx_out.clone(),
             tx_interne: mq.tx_interne.clone(),
-            formatteur: mq.formatteur.clone(),
+            enveloppe_privee: config.get_enveloppe_privee(),
         }
     }
 
@@ -71,21 +75,101 @@ impl GenerateurMessagesImpl {
 }
 
 #[async_trait]
-impl<'a> GenerateurMessages for GenerateurMessagesImpl {
+impl GenerateurMessages for GenerateurMessagesImpl {
 
-    async fn soumettre_transaction(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        let message_signe = self.signer(Some(domaine), message);
+    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
+
+        let message_signe = match self.formatter_message(message, Some(domaine), None) {
+            Ok(m) => m,
+            Err(e) => Err(format!("Erreur formattage message {:?}", e))?
+        };
+
+        let exchanges_effectifs = match exchanges {
+            Some(e) => Some(e),
+            None => Some(vec!(Securite::L3Protege))
+        };
+
+        let message_out = MessageOut::new(
+            domaine,
+            message_signe,
+            TypeMessageOut::Evenement,
+            exchanges_effectifs
+        );
+
+        let _ = self.emettre(message_out).await?;
+
+        Ok(())
+    }
+
+    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>) -> Result<TypeMessage, String> {
+
+        let message_signe = match self.formatter_message(message, Some(domaine), None) {
+            Ok(m) => m,
+            Err(e) => Err(format!("Erreur transmission requete : {:?}", e))?
+        };
 
         let exchanges = match exchange {
             Some(inner) => Some(vec!(inner)),
             None => Some(vec!(Securite::L3Protege)),
         };
 
-        let domaine_action = format!("transaction.{}", domaine);
+        let message_out = MessageOut::new(
+            domaine,
+            message_signe,
+            TypeMessageOut::Requete,
+            exchanges
+        );
+
+        let entete = &message_out.message.entete;
+        let correlation_id = entete.uuid_transaction.clone();
+
+        let (tx_delivery, mut rx_delivery) = oneshot::channel();
+        let demande = MessageInterne::AttenteReponse(AttenteReponse {
+            correlation: correlation_id.clone(),
+            sender: tx_delivery,
+        });
+
+        // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
+        self.tx_interne.send(demande).await.expect("Erreur emission message interne");
+
+        // Emettre la requete sur MQ
+        debug!("Emettre requete correlation {}", correlation_id);
+        let _ = self.emettre(message_out).await?;
+
+        // Retourner le channel pour attendre la reponse
+        let reponse= timeout(Duration::from_millis(15_000), rx_delivery).await;
+        match reponse {
+            Ok(inner) => {
+                match inner {
+                    Ok(inner2) => Ok(inner2),
+                    Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
+                }
+            },
+            Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
+        }
+    }
+
+    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        let message_signe = match self.formatter_message(message, Some(domaine), None) {
+            Ok(m) => m,
+            Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
+        };
+
+        let routing_key = match &message_signe.entete.domaine {
+            Some(d) => format!("{}.{}", "transaction", d),
+            None => Err("Domaine manquant")?,
+        };
+
+        let exchanges = match exchange {
+            Some(inner) => Some(vec!(inner)),
+            None => Some(vec!(Securite::L3Protege)),
+        };
+
+        // let domaine_action = format!("transaction.{}", domaine);
 
         let message_out = MessageOut::new(
-            &domaine_action,
-            message_signe?,
+            &routing_key,
+            message_signe,
             TypeMessageOut::Transaction,
             exchanges
         );
@@ -93,7 +177,7 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
         let (tx_delivery, mut rx_delivery) = oneshot::channel();
 
         let correlation_id = {
-            let entete = message_out.message.get_entete();
+            let entete = &message_out.message.entete;
             entete.uuid_transaction.clone()
         };
 
@@ -118,10 +202,10 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
                 Ok(inner) => {
                     match inner {
                         Ok(inner2) => Ok(Some(inner2)),
-                        Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e)),
+                        Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
                     }
                 },
-                Err(t) => Err(format!("Timeout reponse {}", correlation_id)),
+                Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
             }
         } else {
             // Non-blocking, emission simple et on n'attend pas
@@ -129,77 +213,18 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
         }
     }
 
-    async fn transmettre_requete(&self, domaine: &str, message: &MessageJson, exchange: Option<Securite>) -> Result<TypeMessage, String> {
-
-        let message_signe = self.signer(Some(domaine), message);
-
-        let exchanges = match exchange {
-            Some(inner) => Some(vec!(inner)),
-            None => Some(vec!(Securite::L3Protege)),
-        };
-
-        let message_out = MessageOut::new(
-            domaine,
-            message_signe?,
-            TypeMessageOut::Requete,
-            exchanges
-        );
-
-        let entete = message_out.message.get_entete();
-        let correlation_id = entete.uuid_transaction.clone();
-
-        let (tx_delivery, mut rx_delivery) = oneshot::channel();
-        let demande = MessageInterne::AttenteReponse(AttenteReponse {
-            correlation: correlation_id.clone(),
-            sender: tx_delivery,
-        });
-
-        // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
-        self.tx_interne.send(demande).await.expect("Erreur emission message interne");
-
-        // Emettre la requete sur MQ
-        debug!("Emettre requete correlation {}", correlation_id);
-        let _ = self.emettre(message_out).await?;
-
-        // Retourner le channel pour attendre la reponse
-        let reponse= timeout(Duration::from_millis(15_000), rx_delivery).await;
-        match reponse {
-            Ok(inner) => {
-                match inner {
-                    Ok(inner2) => Ok(inner2),
-                    Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e)),
-                }
-            },
-            Err(t) => Err(format!("Timeout reponse {}", correlation_id)),
-        }
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String> {
+        todo!()
     }
 
-    async fn emettre_evenement(&self, domaine: &str, message: &MessageJson, exchanges: Option<Vec<Securite>>) -> Result<(), String> {
-
-        let message_signe = self.signer(Some(domaine), message);
-
-        let exchanges_effectifs = match exchanges {
-            Some(e) => Some(e),
-            None => Some(vec!(Securite::L3Protege))
+    async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
+        let message_signe = match self.formatter_message(message, None, None) {
+            Ok(m) => m,
+            Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
         };
-
-        let message_out = MessageOut::new(
-            domaine,
-            message_signe?,
-            TypeMessageOut::Evenement,
-            exchanges_effectifs
-        );
-
-        let _ = self.emettre(message_out).await?;
-
-        Ok(())
-    }
-
-    async fn repondre(&self, message: &MessageJson, reply_q: &str, correlation_id: &str) -> Result<(), String> {
-        let message_signe = self.signer(None, message);
 
         let message_out = MessageOut::new_reply(
-            message_signe?,
+            message_signe,
             correlation_id,
             reply_q
         );
@@ -216,21 +241,29 @@ impl<'a> GenerateurMessages for GenerateurMessagesImpl {
             None => false,
         }
     }
+
 }
 
-impl Formatteur for GenerateurMessagesImpl {
-    fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn Error>> {
-        self.formatteur.formatter_value(message, domaine)
+impl FormatteurMessage for GenerateurMessagesImpl {
+    // fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn Error>> {
+    //     self.formatteur.formatter_value(message, domaine)
+    // }
+
+    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+        self.enveloppe_privee.clone()
     }
 }
 
-impl GenerateurMessagesImpl {
-    fn signer(&self, domaine: Option<&str>, message: &MessageJson) -> Result<MessageSerialise, String> {
-        let message_signe = self.formatteur.formatter_value(message, domaine);
-        let message_signe = match message_signe {
-            Ok(m) => Ok(m),
-            Err(e) => Err(String::from("Erreur emission evenement sur signature message")),
-        }?;
-        Ok(message_signe)
-    }
-}
+// impl GenerateurMessagesImpl {
+//     fn signer(&self, domaine: Option<&str>, message: &MessageMilleGrille) -> Result<MessageSerialise, String> {
+//         // let message_signe = self.formatteur.formatter_value(message, domaine);
+//         // let message_signe = match message_signe {
+//         //     Ok(m) => Ok(m),
+//         //     Err(e) => Err(String::from("Erreur emission evenement sur signature message")),
+//         // }?;
+//         // Ok(message_signe)
+//
+//         Ok(MessageSerialise::from_parsed(message))
+//
+//     }
+// }

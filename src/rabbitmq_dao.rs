@@ -24,6 +24,7 @@ use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageSerialise};
 
 use crate::recepteur_messages::TypeMessage;
+use crate::MessageMilleGrille;
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 
@@ -102,7 +103,6 @@ fn get_tls_config(pki: &ConfigurationPki, mq: &ConfigurationMq) -> OwnedTLSConfi
 pub fn executer_mq<'a>(
     configuration: Arc<impl ConfigMessages + 'static>,
     queues: Option<Vec<QueueType>>,
-    formatteur: Arc<FormatteurMessage>,
     listeners: Option<Mutex<Callback<'static, EventMq>>>,
 ) -> Result<RabbitMqExecutor, String> {
 
@@ -126,7 +126,6 @@ pub fn executer_mq<'a>(
 
     Ok(RabbitMqExecutor {
         handle: boucle_execution,
-        formatteur,
         rx_messages: rx_traiter_message,
         rx_triggers: rx_traiter_trigger,
         tx_out: tx_message_out.clone(),
@@ -143,7 +142,6 @@ pub trait MqMessageSendInformation {
 
 pub struct RabbitMqExecutor {
     handle: JoinHandle<()>,
-    pub formatteur: Arc<FormatteurMessage>,
     pub rx_messages: Receiver<MessageInterne>,
     pub rx_triggers: Receiver<MessageInterne>,
     pub tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
@@ -483,24 +481,33 @@ async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel:
     while let Some(message) = rx.recv().await {
         compteur += 1;
         debug!("Emettre_message {}, On a recu de quoi", compteur);
-        let contenu = message.message;
+        let contenu = &message.message;
 
-        let entete = contenu.get_entete();
+        let entete = &contenu.entete;
         debug!("Emettre_message {:?}", entete);
 
         let correlation_id = match &message.correlation_id {
-            Some(c) => c.as_str(),
-            None => &entete.uuid_transaction.as_str()
+            Some(c) => c.to_owned(),
+            None => entete.uuid_transaction.to_owned()
         };
 
         let routing_key = match &message.domaine_action {
-            Some(rk) => rk.as_str(),
-            None => "",
+            Some(rk) => rk.to_owned(),
+            None => String::from(""),
         };
+
+        let message_serialise = match MessageSerialise::from_parsed(message.message) {
+            Ok(m) => m,
+            Err(e) => {
+                error!("Erreur traitement message, on drop : {:?}", e);
+                continue;
+            },
+        };
+
         let options = BasicPublishOptions::default();
-        let payload = contenu.get_str().as_bytes().to_vec();
+        let payload = message_serialise.get_str().as_bytes().to_vec();
         let mut properties = BasicProperties::default()
-            .with_correlation_id(correlation_id.into());
+            .with_correlation_id(correlation_id.clone().into());
 
         // if let Some(reply_q) = message.replying_to {
         //     debug!("Emission message vers reply_q {} avec correlation_id {}", reply_q, correlation_id);
@@ -512,7 +519,7 @@ async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel:
                 for exchange in inner {
                     let resultat = channel.basic_publish(
                         securite_str(&exchange),
-                        routing_key,
+                        &routing_key,
                         options,
                         payload.clone(),
                         properties.clone()
@@ -564,7 +571,7 @@ pub enum MessageInterne {
 
 #[derive(Clone, Debug)]
 pub struct MessageOut {
-    pub message: MessageSerialise,
+    pub message: MessageMilleGrille,
     type_message: TypeMessageOut,
     domaine_action: Option<String>,
     exchanges: Option<Vec<Securite>>,     // Utilise pour emission de message avec domaine_action
@@ -573,13 +580,13 @@ pub struct MessageOut {
 }
 
 impl MessageOut {
-    pub fn new(domaine_action: &str, message: MessageSerialise, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>) -> MessageOut {
+    pub fn new(domaine_action: &str, message: MessageMilleGrille, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>) -> MessageOut {
         if type_message == TypeMessageOut::Reponse {
             panic!("Reponse non supportee, utiliser MessageOut::new_reply()");
         }
 
         let uuid_transaction = {
-            let entete = message.get_entete();
+            let entete = &message.entete;
             entete.uuid_transaction.clone()
         };
 
@@ -598,7 +605,7 @@ impl MessageOut {
         }
     }
 
-    pub fn new_reply(message: MessageSerialise, correlation_id: &str, replying_to: &str) -> MessageOut {
+    pub fn new_reply(message: MessageMilleGrille, correlation_id: &str, replying_to: &str) -> MessageOut {
         MessageOut {
             message,
             type_message: TypeMessageOut::Reponse,
