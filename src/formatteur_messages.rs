@@ -24,7 +24,7 @@ const CERTIFICATS: &str = "_certificat";
 
 pub trait FormatteurMessage {
     /// Retourne l'enveloppe privee utilisee pour signer le message
-    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>>;
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 
     /// Implementation de formattage et signature d'un message de MilleGrille
     fn formatter_message(&self, contenu: &impl Serialize, domaine: Option<&str>, version: Option<u32>) -> Result<MessageMilleGrille, Box<dyn Error>> {
@@ -763,7 +763,7 @@ mod serialization_tests {
         let (validateur_arc, _) = charger_enveloppe_privee_env();
         let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
 
-        let validateur = validateur_arc.as_ref().as_ref();
+        let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(true, resultat.signature_valide);
         assert_eq!(true, resultat.certificat_valide);
@@ -779,7 +779,7 @@ mod serialization_tests {
         // Corrompre le message
         message.parsed.contenu.insert(String::from("corruption"), Value::String(String::from("je te corromps!")));
 
-        let validateur = validateur_arc.as_ref().as_ref();
+        let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(false, resultat.signature_valide);
         assert_eq!(true, resultat.certificat_valide);
@@ -795,7 +795,7 @@ mod serialization_tests {
         // Corrompre le message
         message.entete.uuid_transaction = String::from("CORROMPU");
 
-        let validateur = validateur_arc.as_ref().as_ref();
+        let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(false, resultat.signature_valide);
         assert_eq!(true, resultat.certificat_valide);
@@ -811,7 +811,7 @@ mod serialization_tests {
         // Corrompre le message
         message.entete.idmg = String::from("CORROMPU");
 
-        let validateur = validateur_arc.as_ref().as_ref();
+        let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(false, resultat.signature_valide);
         assert_eq!(false, resultat.certificat_valide);

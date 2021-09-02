@@ -32,7 +32,7 @@ pub trait GenerateurMessages: Send + Sync {
 pub struct GenerateurMessagesImpl {
     tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     tx_interne: Sender<MessageInterne>,
-    enveloppe_privee: Arc<Box<EnveloppePrivee>>,
+    enveloppe_privee: Arc<EnveloppePrivee>,
 }
 
 impl GenerateurMessagesImpl {
@@ -249,7 +249,7 @@ impl FormatteurMessage for GenerateurMessagesImpl {
     //     self.formatteur.formatter_value(message, domaine)
     // }
 
-    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
         self.enveloppe_privee.clone()
     }
 }

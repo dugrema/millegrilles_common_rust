@@ -113,16 +113,19 @@ fn charger_configuration_mongo(pki: &ConfigurationPki) -> Result<ConfigurationMo
 fn charger_configuration_pki() -> Result<ConfigurationPki, String> {
 
     let ca_certfile = PathBuf::from(std::env::var("CAFILE").unwrap_or_else(|_| "/run/secrets/pki.millegrille".into()));
-    let validateur: Arc<Box<ValidateurX509Impl>> = Arc::new(Box::new(build_store_path(ca_certfile.as_path()).expect("Erreur chargement store X509")));
+    let validateur: Arc<ValidateurX509Impl> = Arc::new(build_store_path(ca_certfile.as_path()).expect("Erreur chargement store X509"));
 
     let keyfile = PathBuf::from(std::env::var("KEYFILE").unwrap_or_else(|_| "/run/secrets/key.pem".into()));
     let certfile = PathBuf::from(std::env::var("CERTFILE").unwrap_or_else(|_| "/run/secrets/cert.pem".into()));
 
     // Preparer enveloppe privee
-    let enveloppe_privee = Arc::new(Box::new(
-        charger_enveloppe_privee(certfile.as_path(), keyfile.as_path(), validateur.clone())
-        .expect("Erreur chargement cle ou certificat")
-    ));
+    let enveloppe_privee = Arc::new(
+        charger_enveloppe_privee(
+            certfile.as_path(),
+            keyfile.as_path(),
+            validateur.clone()
+        ).expect("Erreur chargement cle ou certificat")
+    );
 
     Ok(ConfigurationPki {
         keyfile,
@@ -169,17 +172,17 @@ pub struct ConfigurationPki {
     pub keyfile: PathBuf,
     pub certfile: PathBuf,
     pub ca_certfile: PathBuf,
-    validateur: Arc<Box<ValidateurX509Impl>>,
-    enveloppe_privee: Arc<Box<EnveloppePrivee>>,
+    validateur: Arc<ValidateurX509Impl>,
+    enveloppe_privee: Arc<EnveloppePrivee>,
 }
 
 impl ConfigurationPki {
 
-    pub fn get_validateur(&self) -> Arc<Box<ValidateurX509Impl>> {
+    pub fn get_validateur(&self) -> Arc<ValidateurX509Impl> {
         self.validateur.clone()
     }
 
-    pub fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+    pub fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
         self.enveloppe_privee.clone()
     }
 

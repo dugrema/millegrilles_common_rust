@@ -245,7 +245,7 @@ pub fn build_store(ca_cert: &X509, check_time: bool) -> Result<X509Store, ErrorS
     Ok(builder.build())
 }
 
-pub fn charger_enveloppe_privee(path_cert: &Path, path_cle: &Path, validateur: Arc<Box<impl ValidateurX509>>) -> Result<EnveloppePrivee, ErrorStack> {
+pub fn charger_enveloppe_privee(path_cert: &Path, path_cle: &Path, validateur: Arc<impl ValidateurX509>) -> Result<EnveloppePrivee, ErrorStack> {
     let pem_cle = read_to_string(path_cle).unwrap();
     let cle_privee = Rsa::private_key_from_pem(pem_cle.as_bytes())?;
     let cle_privee: PKey<Private> = PKey::from_rsa(cle_privee)?;
@@ -942,12 +942,12 @@ yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
 qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 -----END CERTIFICATE-----"#;
 
-    pub fn charger_enveloppe_privee_env() -> (Arc<Box<ValidateurX509Impl>>, EnveloppePrivee) {
+    pub fn charger_enveloppe_privee_env() -> (Arc<ValidateurX509Impl>, EnveloppePrivee) {
         const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
         const DOMAINES_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.domaines.cert";
         const DOMAINES_KEY_PATH: &str = "/home/mathieu/mgdev/certs/pki.domaines.key";
         let validateur = build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store");
-        let validateur = Arc::new(Box::new(validateur));
+        let validateur = Arc::new(validateur);
         let enveloppe_privee = charger_enveloppe_privee(
             PathBuf::from(DOMAINES_CERT_PATH).as_path(),
             PathBuf::from(DOMAINES_KEY_PATH).as_path(),

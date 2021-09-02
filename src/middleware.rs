@@ -42,11 +42,11 @@ pub fn preparer_middleware_pki(
 
     let generateur_messages_arc = Arc::new(generateur_messages);
 
-    let validateur_db = Arc::new(Box::new(ValidateurX509Database::new(
+    let validateur_db = Arc::new(ValidateurX509Database::new(
         mongo.clone(),
         validateur.clone(),
         generateur_messages_arc.clone(),
-    )));
+    ));
 
     let middleware = Arc::new(MiddlewareDbPki {
         configuration,
@@ -86,7 +86,10 @@ pub fn preparer_middleware_pki(
     (middleware, rx_messages_verifies, rx_triggers, futures)
 }
 
-fn configurer(queues: Vec<QueueType>, listeners: Option<Mutex<Callback<'static, EventMq>>>) -> (Arc<ConfigurationMessagesDb>, Arc<Box<ValidateurX509Impl>>, Arc<MongoDaoImpl>, RabbitMqExecutor, GenerateurMessagesImpl) {
+fn configurer(
+    queues: Vec<QueueType>,
+    listeners: Option<Mutex<Callback<'static, EventMq>>>
+) -> (Arc<ConfigurationMessagesDb>, Arc<ValidateurX509Impl>, Arc<MongoDaoImpl>, RabbitMqExecutor, GenerateurMessagesImpl) {
     let configuration = Arc::new(charger_configuration_avec_db().expect("Erreur configuration"));
 
     let pki = configuration.get_configuration_pki();
@@ -136,12 +139,12 @@ pub struct MiddlewareDb {
 pub struct MiddlewareDbPki {
     configuration: Arc<ConfigurationMessagesDb>,
     pub mongo: Arc<MongoDaoImpl>,
-    pub validateur: Arc<Box<ValidateurX509Database>>,
+    pub validateur: Arc<ValidateurX509Database>,
     pub generateur_messages: Arc<GenerateurMessagesImpl>,
 }
 
 pub trait IsConfigurationPki {
-    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>>;
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 }
 
 #[async_trait]
@@ -219,7 +222,7 @@ impl GenerateurMessages for MiddlewareDbPki {
 }
 
 impl FormatteurMessage for MiddlewareDbPki {
-    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
         self.configuration.get_configuration_pki().get_enveloppe_privee()
     }
 }
@@ -250,13 +253,13 @@ impl ConfigMessages for MiddlewareDbPki {
 /// Permet de charger les certificats et generer les transactions pour les certificats inconnus.
 pub struct ValidateurX509Database {
     mongo_dao: Arc<MongoDaoImpl>,
-    validateur: Arc<Box<ValidateurX509Impl>>,
+    validateur: Arc<ValidateurX509Impl>,
     generateur_messages: Arc<GenerateurMessagesImpl>
 }
 
 impl ValidateurX509Database {
 
-    pub fn new(mongo_dao: Arc<MongoDaoImpl>, validateur: Arc<Box<ValidateurX509Impl>>, generateur_messages: Arc<GenerateurMessagesImpl>) -> ValidateurX509Database {
+    pub fn new(mongo_dao: Arc<MongoDaoImpl>, validateur: Arc<ValidateurX509Impl>, generateur_messages: Arc<GenerateurMessagesImpl>) -> ValidateurX509Database {
         ValidateurX509Database {
             mongo_dao,
             validateur,
@@ -494,13 +497,13 @@ impl MongoDao for MiddlewareDb {
 }
 
 impl FormatteurMessage for MiddlewareDb {
-    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
         self.configuration.get_configuration_pki().get_enveloppe_privee()
     }
 }
 
 impl IsConfigurationPki for MiddlewareDb {
-    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
 
         let pki = self.configuration.get_configuration_pki();
         pki.get_enveloppe_privee()
@@ -526,7 +529,7 @@ impl IsConfigurationPki for MiddlewareDb {
 // }
 
 impl IsConfigurationPki for MiddlewareDbPki {
-    fn get_enveloppe_privee(&self) -> Arc<Box<EnveloppePrivee>> {
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
 
         let pki = self.configuration.get_configuration_pki();
         pki.get_enveloppe_privee()

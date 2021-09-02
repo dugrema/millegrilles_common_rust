@@ -1009,7 +1009,7 @@ mod test_integration {
     use async_std::io::BufReader;
     use futures_util::stream::IntoAsyncRead;
 
-    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki};
+    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
     use crate::test_setup::setup;
@@ -1280,10 +1280,12 @@ mod test_integration {
             file_output.write_all(content.as_ref()).await.expect("write");
         }
 
-        let fichier_tar = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
+        let mut fichier_tar = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
         // let mut tar_parse = TarParser::new();
         // tar_parse.parse(fichier_tar).await;
 
+        let mut processeur = ProcesseurFichierBackup::new(validateur.clone());
+        parse_tar(&mut fichier_tar, &mut processeur).await.expect("parse");
     }
 
 }
