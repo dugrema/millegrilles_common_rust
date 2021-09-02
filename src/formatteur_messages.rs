@@ -878,4 +878,36 @@ mod serialization_tests {
         assert_eq!(Some(false), resultat.hachage_valide);
     }
 
+    #[tokio::test]
+    async fn valider_entete_corrompue() {
+        setup("valider_message_millegrille");
+        let (validateur_arc, _) = charger_enveloppe_privee_env();
+        let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
+
+        // Corrompre le message
+        message.entete.uuid_transaction = String::from("CORROMPU");
+
+        let validateur = validateur_arc.as_ref().as_ref();
+        let resultat = message.valider(validateur, None).await.expect("valider");
+        assert_eq!(false, resultat.signature_valide);
+        assert_eq!(true, resultat.certificat_valide);
+        assert_eq!(Some(true), resultat.hachage_valide);
+    }
+
+    #[tokio::test]
+    async fn valider_mauvais_idmg() {
+        setup("valider_message_millegrille");
+        let (validateur_arc, _) = charger_enveloppe_privee_env();
+        let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
+
+        // Corrompre le message
+        message.entete.idmg = String::from("CORROMPU");
+
+        let validateur = validateur_arc.as_ref().as_ref();
+        let resultat = message.valider(validateur, None).await.expect("valider");
+        assert_eq!(false, resultat.signature_valide);
+        assert_eq!(false, resultat.certificat_valide);
+        assert_eq!(Some(true), resultat.hachage_valide);
+    }
+
 }
