@@ -36,7 +36,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Hacheur, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509, FormatteurMessage, MessageMilleGrille};
+use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Hacheur, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509, FormatteurMessage, MessageMilleGrille, ValidationOptions, ResultatValidation};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -706,6 +706,7 @@ struct ProcesseurFichierBackup {
     middleware: Arc<dyn ValidateurX509>,
     catalogue: Option<CatalogueHoraire>,
     decipher: Option<DecipherMgs2>,
+    batch: Vec<MessageSerialise>,
 }
 
 impl ProcesseurFichierBackup {
@@ -716,10 +717,11 @@ impl ProcesseurFichierBackup {
             middleware,
             catalogue: None,
             decipher: None,
+            batch: Vec::new(),
         }
     }
 
-    async fn parse_file(&mut self, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+    async fn parse_file(&mut self, middleware: &impl ValidateurX509, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
         debug!("Parse fichier : {:?}", filepath);
 
         match filepath.extension() {
@@ -727,7 +729,7 @@ impl ProcesseurFichierBackup {
                 let type_ext = e.to_ascii_lowercase();
                 match type_ext.to_str().expect("str") {
                     "xz" => self.parse_catalogue(filepath, stream).await,
-                    "mgs2" => self.parse_transactions(filepath, stream).await,
+                    "mgs2" => self.parse_transactions(middleware, filepath, stream).await,
                     _ => {
                         warn ! ("Type fichier inconnu, on skip : {:?}", e);
                         Ok(())
@@ -774,7 +776,7 @@ impl ProcesseurFichierBackup {
         Ok(())
     }
 
-    async fn parse_transactions(&mut self, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+    async fn parse_transactions(&mut self, middleware: &impl ValidateurX509, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
         debug!("Parse transactions : {:?}", filepath);
 
         let mut output = [0u8; 4096];
@@ -800,17 +802,49 @@ impl ProcesseurFichierBackup {
             decompresseur.update_bytes(buf)?;
         }
 
-        let transasction_str = String::from_utf8(decompresseur.finish()?)?;
-        debug!("Bytes dechiffres de la transaction : {:?}", transasction_str);
+        let transactions_str = String::from_utf8(decompresseur.finish()?)?;
+        debug!("Bytes dechiffres de la transaction : {:?}", transactions_str);
+
+        let tr_iter = transactions_str.split("\n");
+        for transaction_str in tr_iter {
+            match self.ajouter_transaction(middleware, transaction_str).await {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Erreur traitement transaction : {:?}, on l'ignore\n{}", e, transaction_str);
+                }
+            }
+        }
+
+        debug!("Soumettre {} transactions pour restauration", self.batch.len());
 
         Ok(())
+    }
+
+    async fn ajouter_transaction(&mut self, middleware: &impl ValidateurX509, transaction_str: &str) -> Result<(), Box<dyn Error>>{
+        let mut msg = MessageSerialise::from_str(transaction_str)?;
+        let uuid_transaction = msg.get_entete().uuid_transaction.to_owned();
+
+        let validation_option = ValidationOptions::new(true, true, false);
+
+        let resultat_validation: ResultatValidation = msg.valider(middleware, Some(&validation_option)).await?;
+        match resultat_validation.signature_valide {
+            true => {
+                // Ajouter la transaction a liste de la batch
+                self.batch.push(msg);
+                debug!("Restaurer transaction {}", uuid_transaction);
+                Ok(())
+            },
+            false => {
+                Err(format!("Signature invalide pour transaction {}, on l'ignore", uuid_transaction))?
+            }
+        }
     }
 }
 
 #[async_trait]
 impl TraiterFichier for ProcesseurFichierBackup {
-    async fn traiter_fichier(&mut self, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>> {
-        self.parse_file(nom_fichier, stream).await
+    async fn traiter_fichier(&mut self, middleware: &impl ValidateurX509, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>> {
+        self.parse_file(middleware, nom_fichier, stream).await
     }
 }
 
@@ -1357,7 +1391,7 @@ mod test_integration {
             Arc::new(enveloppe),
             validateur.clone()
         );
-        parse_tar(&mut fichier_tar, &mut processeur).await.expect("parse");
+        parse_tar(validateur.as_ref(), &mut fichier_tar, &mut processeur).await.expect("parse");
     }
 
 }

@@ -44,6 +44,16 @@ pub struct ValidationOptions {
     toujours_verifier_hachage: bool,
 }
 
+impl ValidationOptions {
+    pub fn new(utiliser_idmg_message: bool, utiliser_date_message: bool, toujours_verifier_hachage: bool) -> Self {
+        ValidationOptions {
+            utiliser_idmg_message,
+            utiliser_date_message,
+            toujours_verifier_hachage,
+        }
+    }
+}
+
 pub fn verifier_message(
     message: &MessageSerialise,
     idmg_local: &str,
