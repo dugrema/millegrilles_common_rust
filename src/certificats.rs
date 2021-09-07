@@ -759,12 +759,40 @@ impl CollectionCertificatsPem {
     pub fn len(&self) -> usize {
         self.certificats.len()
     }
+
+    pub async fn get_enveloppe(&self, validateur: &impl ValidateurX509, fingerprint_certificat: &str) -> Option<Arc<EnveloppeCertificat>> {
+        // Trouver la chaine avec le fingerprint (position 0)
+        let res_chaine = self.certificats.iter().filter(|chaine| {
+            if let Some(fp) = chaine.get(0) {
+                fp.as_str() == fingerprint_certificat
+            } else {
+                false
+            }
+        }).next();
+
+        // Generer enveloppe a partir des PEMs individuels
+        if let Some(chaine) = res_chaine {
+            debug!("Fingerprints trouves (chaine): {:?}", chaine);
+            let pems: Vec<String> = chaine.into_iter().map(|fp| self.pems.get(fp.as_str()).expect("pem").to_owned()).collect();
+            match validateur.charger_enveloppe(&pems, Some(fingerprint_certificat)).await {
+                Ok(e) => Some(e),
+                Err(e) => {
+                    error!("Erreur chargement enveloppe {}", fingerprint_certificat);
+                    None
+                },
+            }
+        } else {
+            None
+        }
+
+    }
 }
 
 #[cfg(test)]
 pub mod certificats_tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+    use crate::test_setup::setup;
 
     pub const CERT_MILLEGRILLE: &str = r#"
 -----BEGIN CERTIFICATE-----
@@ -1010,4 +1038,24 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 
         // println!("Value certificats : {:?}", value);
     }
+
+    #[tokio::test]
+    async fn recuperer_enveloppe() {
+        setup("recuperer_enveloppe");
+        const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
+        let validateur = Arc::new(build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store"));
+
+        let certificat = prep_enveloppe(CERT_DOMAINES);
+        let mut collection_pems = CollectionCertificatsPem::new();
+        collection_pems.ajouter_certificat(&certificat).expect("ajouter");
+
+        let enveloppe = collection_pems.get_enveloppe(
+            validateur.as_ref(),
+            "zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds"
+        ).await.expect("enveloppe");
+
+        debug!("Enveloppe chargee : {:?}", enveloppe);
+        assert_eq!("zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds", enveloppe.fingerprint);
+    }
+
 }

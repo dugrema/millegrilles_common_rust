@@ -823,6 +823,18 @@ impl ProcesseurFichierBackup {
     async fn ajouter_transaction(&mut self, middleware: &impl ValidateurX509, transaction_str: &str) -> Result<(), Box<dyn Error>>{
         let mut msg = MessageSerialise::from_str(transaction_str)?;
         let uuid_transaction = msg.get_entete().uuid_transaction.to_owned();
+        let fingerprint_certificat = msg.get_entete().fingerprint_certificat.to_owned();
+
+        if let Some(catalogue) = &self.catalogue {
+            match catalogue.certificats.get_enveloppe(middleware, fingerprint_certificat.as_str()).await {
+                Some(c) => {
+                    println!("CERT PEM!!! {:?}", c);
+                },
+                None => {
+                    println!("Pas de PEM");
+                }
+            }
+        }
 
         let validation_option = ValidationOptions::new(true, true, false);
 
