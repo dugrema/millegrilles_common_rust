@@ -231,12 +231,18 @@ async fn serialiser_transactions(
                 // Valider la transaction avec le certificat
                 let mut transaction = MessageSerialise::from_serializable(&d)?;
                 debug!("Transaction serialisee pour validation :\n{:?}", transaction);
-                let options = ValidationOptions::new(true, true, false);
+                let options = ValidationOptions::new(true, true, true);
                 let resultat = transaction.valider(middleware, Some(&options)).await?;
-                debug!("Resultat validation: {:?}", resultat);
+
+                if ! ( resultat.signature_valide && resultat.certificat_valide && resultat.hachage_valide.expect("hachage") ) {
+                    warn!("Resultat validation invalide pour {}: {:?}", uuid_transaction, resultat);
+                    continue;
+                }
+
             },
             None => {
-                // debug!("Warn certificat {} inconnu", fingerprint_certificat)
+                warn!("Certificat {} inconnu, transaction {} ne peut pas etre mise dans le backup", fingerprint_certificat, uuid_transaction);
+                continue;
             },
         }
 
@@ -840,7 +846,7 @@ impl ProcesseurFichierBackup {
             }
         }
 
-        let validation_option = ValidationOptions::new(true, true, false);
+        let validation_option = ValidationOptions::new(true, true, true);
 
         let resultat_validation: ResultatValidation = msg.valider(middleware, Some(&validation_option)).await?;
         match resultat_validation.signature_valide {
@@ -1148,7 +1154,7 @@ mod test_integration {
                 &info
             ).await.expect("groupes");
 
-            // debug!("Groupes : {:?}", groupes);
+            debug!("Groupes : {:?}", groupes);
 
         }));
         // Execution async du test
@@ -1168,7 +1174,7 @@ mod test_integration {
 
             // Test
             let info = BackupInformation::new("Pki.rust", None, None).expect("info");
-            let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
+            let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
             let mut builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
 
             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
@@ -1185,6 +1191,7 @@ mod test_integration {
             ).await.expect("serialiser");
 
             // debug!("Resultat extraction transactions : {:?}", resultat);
+            assert_eq!(4, builder.uuid_transactions.len());
 
         }));
         // Execution async du test
@@ -1217,7 +1224,7 @@ mod test_integration {
                 Some(certificats_chiffrage.clone()),
                 None
             ).expect("info");
-            let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
+            let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
             let domaine = "Pki";
             let mut builder = CatalogueHoraire::builder(heure.clone(), domaine.into(), "Pki.rust".into());
 
@@ -1288,7 +1295,7 @@ mod test_integration {
             Some(certificats_chiffrage.clone()),
             None
         ).expect("info");
-        let heure = DateEpochSeconds::from_heure(2021, 08, 20, 12);
+        let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
         let domaine = "Pki";
         let mut builder = CatalogueHoraire::builder(heure.clone(), domaine.into(), "Pki.rust".into());
 
@@ -1411,6 +1418,8 @@ mod test_integration {
             validateur.clone()
         );
         parse_tar(validateur.as_ref(), &mut fichier_tar, &mut processeur).await.expect("parse");
+
+        assert_eq!(4, processeur.batch.len());
     }
 
 }
