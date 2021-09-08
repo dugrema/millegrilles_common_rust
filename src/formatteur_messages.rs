@@ -4,7 +4,7 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use log::{debug, info};
+use log::{debug, info, warn};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Visitor;
@@ -27,9 +27,24 @@ pub trait FormatteurMessage {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 
     /// Implementation de formattage et signature d'un message de MilleGrille
-    fn formatter_message(&self, contenu: &impl Serialize, domaine: Option<&str>, version: Option<u32>) -> Result<MessageMilleGrille, Box<dyn Error>> {
+    fn formatter_message<S>(&self, contenu: &S, domaine: Option<&str>, version: Option<u32>) -> Result<MessageMilleGrille, Box<dyn Error>>
+    where
+        S: Serialize,
+    {
         let enveloppe = self.get_enveloppe_privee();
         MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, version)
+    }
+
+    fn signer_message(&self, message: &mut MessageMilleGrille, domaine: Option<&str>, version: Option<u32>) -> Result<(), Box<dyn Error>> {
+        if message.signature.is_some() {
+            Err(format!("Message {} est deja signe", message.entete.uuid_transaction))?
+        }
+        message.signer(self.get_enveloppe_privee().as_ref(), domaine, version)
+    }
+
+    fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {
+        let reponse = json!({"ok": ok, "message": message});
+        self.formatter_message(&reponse, None, None)
     }
 }
 
@@ -194,18 +209,22 @@ impl MessageMilleGrille {
     }
 
     pub fn set_value(&mut self, name: &str, value: Value) {
+        if self.signature.is_some() { panic!("set_value sur message signe") }
         self.contenu.insert(name.to_owned(), value);
     }
 
     pub fn set_int(&mut self, name: &str, value: i64) {
+        if self.signature.is_some() { panic!("set_int sur message signe") }
         self.contenu.insert(name.to_owned(), Value::from(value));
     }
 
     pub fn set_float(&mut self, name: &str, value: f64) {
+        if self.signature.is_some() { panic!("set_float sur message signe") }
         self.contenu.insert(name.to_owned(), Value::from(value));
     }
 
     pub fn set_bool(&mut self, name: &str, value: bool) {
+        if self.signature.is_some() { panic!("set_bool sur message signe") }
         self.contenu.insert(name.to_owned(), Value::from(value));
     }
 
@@ -213,6 +232,8 @@ impl MessageMilleGrille {
     where
         S: Serialize,
     {
+        if self.signature.is_some() { panic!("set_serializable sur message signe") }
+
         let val_ser = serde_json::to_value(value)?;
         self.contenu.insert(name.to_owned(), val_ser);
         Ok(())
@@ -273,6 +294,10 @@ impl MessageMilleGrille {
     }
 
     fn signer(&mut self, enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
+        if self.signature.is_some() {
+            warn!("appel signer() sur message deja signe, on ignore");
+            return Ok(())
+        }
 
         let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, version, &self.contenu)?;
 
@@ -287,6 +312,7 @@ impl MessageMilleGrille {
 
     /// Sert a retirer les certificats pour serialisation (e.g. backup, transaction Mongo, etc)
     pub fn retirer_certificats(&mut self) { self.certificat = None }
+
 }
 
 /// Serialiser message de MilleGrille. Met les elements en ordre.
@@ -382,18 +408,6 @@ impl MessageSerialise {
         })
     }
 
-    // pub fn from_value(value: Value) -> Result<Self, Box<dyn std::error::Error>> {
-    //     let msg_parsed: MessageMilleGrille = serde_json::from_value(value)?;
-    //     let msg = serde_json::to_string(&msg_parsed)?;
-    //     // debug!("Comparaison message original:\n{}\nParsed\n{:?}", msg, msg_parsed);
-    //     Ok(MessageSerialise {
-    //         message: msg,
-    //         entete: msg_parsed.entete.clone(),
-    //         parsed: msg_parsed,
-    //         certificat: None,
-    //     })
-    // }
-
     pub fn set_certificat(&mut self, certificat: Arc<EnveloppeCertificat>) {
         self.certificat = Some(certificat);
     }
@@ -449,64 +463,6 @@ impl MessageSerialise {
 
 }
 
-// pub trait Formatteur: Send + Sync {
-//     fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>>;
-// }
-//
-// pub struct FormatteurMessage {
-//     validateur: Arc<Box<ValidateurX509Impl>>,
-//     enveloppe_privee: Arc<Box<EnveloppePrivee>>,
-// }
-//
-// impl FormatteurMessage {
-//     pub fn new(validateur: Arc<Box<ValidateurX509Impl>>, enveloppe_privee: Arc<Box<EnveloppePrivee>>) -> Self {
-//         FormatteurMessage { validateur, enveloppe_privee }
-//     }
-// }
-//
-// impl Formatteur for FormatteurMessage {
-//
-//     /// Prepare en-tete, _signature et _certificat dans un message
-//     fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn std::error::Error>> {
-//
-//         let message_signe = MessageMilleGrille::new_signer(
-//             self.enveloppe_privee.as_ref(),
-//             &message.message_json,
-//             domaine
-//         )?;
-//
-//         let mut message_serialise = MessageSerialise::from_parsed(message_signe)?;
-//         message_serialise.set_certificat(self.enveloppe_privee.enveloppe.clone());
-//
-//         Ok(message_serialise)
-//     }
-//
-// }
-
-// pub fn nettoyer_message<'a>(message: &'a MessageJson) -> (BTreeMap<String, Value>, HashMap<&String, &Value>) {
-//
-//     let mut message_modifie: BTreeMap<String, Value> = BTreeMap::new();
-//     let mut champs_retires: HashMap<&String, &Value> = HashMap::new();
-//     for item in message.get_message().iter() {
-//         let nom_champ = item.0;
-//         let value: &'a Value = item.1;
-//
-//         if !nom_champ.starts_with("_") {
-//             let new_value: Value;
-//             match filtrer_value(&value) {
-//                 Some(v) => new_value = v,
-//                 None => new_value = value.to_owned()
-//             }
-//             message_modifie.insert(nom_champ.to_owned(), new_value);
-//         } else {
-//             // Conserver le champ temporairement
-//             champs_retires.insert(nom_champ, value);
-//         }
-//     }
-//
-//     (message_modifie, champs_retires)
-// }
-
 /// Filtrer certains formats speciaux de valeurs
 ///   - Les f64 qui se terminent par .0 doivent etre changes en i64  (support ECMAScript)
 fn filtrer_value(value: &Value) -> Option<Value> {
@@ -544,86 +500,6 @@ fn filtrer_value(value: &Value) -> Option<Value> {
 
     None
 }
-
-// #[derive(Clone, Debug)]
-// pub struct MessageJson {
-//     message_json: Value
-// }
-//
-// impl MessageJson {
-//
-//     pub fn new(message_json: Value) -> MessageJson {
-//         // Test pour s'assurer que c'est une Map
-//         message_json.as_object().expect("object");
-//
-//         MessageJson {
-//             message_json,
-//         }
-//     }
-//
-//     pub fn parse(data: &Vec<u8>) -> Result<MessageJson, String> {
-//         let data = match String::from_utf8(data.to_owned()) {
-//             Ok(data) => Ok(data),
-//             Err(e) => {
-//                 Err(format!("Erreur message n'est pas UTF-8 : {:?}", e))
-//             }
-//         }?;
-//
-//         let map_doc: serde_json::Result<Value> = serde_json::from_str(data.as_str());
-//         let contenu = match map_doc {
-//             Ok(v) => Ok(MessageJson::new(v)),
-//             Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}\n{}", e, data)),
-//         }?;
-//
-//         Ok(contenu)
-//     }
-//
-//     pub fn ok() -> MessageJson {
-//         MessageJson { message_json: json!({"ok": true}) }
-//     }
-//
-//     pub fn get_message(&self) -> &Map<String, Value> {
-//         self.message_json.as_object().expect("map")
-//     }
-//
-//     pub fn get_entete(&self) -> Result<&Map<String,Value>, String> {
-//         match self.get_message().get(TRANSACTION_CHAMP_ENTETE) {
-//             Some(entete) => match entete.as_object() {
-//                 Some(entete) => Ok(entete),
-//                 None => Err("en-tete n'est pas un document".into()),
-//             },
-//             None => Err("en-tete manquante".into()),
-//         }
-//     }
-//
-//     pub fn get_idmg(&self) -> Result<String, String> {
-//         let contenu = self.get_entete()?;
-//         match contenu.get(TRANSACTION_CHAMP_IDMG) {
-//             Some(idmg) => match idmg.as_str() {
-//                 Some(idmg) => Ok(idmg.to_owned()),
-//                 None => Err("idmg n'est pas un str".into()),
-//             },
-//             None => Err("idmg absent de l'entete".into())
-//         }
-//     }
-//
-//     pub fn get_estampille(&self) -> Result<DateTime<Utc>, String> {
-//         let contenu = self.get_entete()?;
-//         match contenu.get(TRANSACTION_CHAMP_ESTAMPILLE) {
-//             Some(d) => lire_date_value(d),
-//             None => Err("idmg absent de l'entete".into())
-//         }
-//     }
-// }
-//
-// pub fn lire_date_value(date: &Value) -> Result<DateTime<Utc>, String> {
-//     let date_epoch = match date.as_i64() {
-//         Some(d) => Ok(d),
-//         None => Err("Date n'est pas un i64"),
-//     }?;
-//     let date_naive = NaiveDateTime::from_timestamp(date_epoch, 0);
-//     Ok(DateTime::from_utc(date_naive, Utc))
-// }
 
 #[derive(Clone, Debug, PartialEq)]
 /// Date a utiliser pour conserver compatibilite avec messages MilleGrille (format epoch secondes i64).
@@ -951,7 +827,24 @@ mod serialization_tests {
         assert_eq!(message.certificat.is_some(), true);
         assert_eq!(message.signature.is_some(), true);
         assert_eq!(message.entete.version, 2);
-        assert_eq!(message.entete.domaine.expect("domaine"), "MonDomaine");
+        assert_eq!(message.entete.domaine.as_ref().expect("domaine").as_str(), "MonDomaine");
+
+        // Signer a nouveau, devrait juste lancer un warning
+        message.signer(&enveloppe_privee, Some("MonDomaine"), Some(2)).expect("signer");
+    }
+
+    #[test]
+    #[should_panic]
+    fn creer_message_panic_set() {
+        setup("creer_message_panic_set");
+        let (validateur, enveloppe_privee) = charger_enveloppe_privee_env();
+
+        // Creer et signer le message
+        let mut message = MessageMilleGrille::new();
+        message.signer(&enveloppe_privee, Some("MonDomaine"), Some(2)).expect("signer");
+
+        // Panic, le messsage est signe (immuable)
+        message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
     }
 
 }
