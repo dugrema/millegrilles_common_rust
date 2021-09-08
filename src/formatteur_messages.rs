@@ -127,11 +127,46 @@ pub struct MessageMilleGrille {
 
 impl MessageMilleGrille {
 
-    pub fn new_signer(enveloppe_privee: &EnveloppePrivee, contenu: &impl Serialize, domaine: Option<&str>, version: Option<u32>) -> Result<Self, Box<dyn std::error::Error>> {
+    /// Creer un nouveau message et inserer les valeurs a la main.
+    pub fn new() -> Self {
+        const PLACEHOLDER: &str = "PLACEHOLDER";
+        MessageMilleGrille {
+            entete: Entete::builder(PLACEHOLDER, PLACEHOLDER, PLACEHOLDER).build(),
+            certificat: None,
+            signature: None,
+            contenu: Map::new(),
+        }
+    }
 
+    pub fn new_signer<S>(enveloppe_privee: &EnveloppePrivee, contenu: &S, domaine: Option<&str>, version: Option<u32>) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        S: Serialize,
+    {
         // Serialiser le contenu
         let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
 
+        let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, version, &value)?;
+
+        let pems: Vec<String> = {
+            let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
+            let mut pem_str: Vec<String> = Vec::new();
+            for p in pem_vec.iter().map(|c| c.pem.as_str()) {
+                pem_str.push(p.to_owned());
+            }
+            pem_str
+        };
+
+        let signature = MessageMilleGrille::signer_message(enveloppe_privee, &entete, &value)?;
+
+        Ok(MessageMilleGrille {
+            entete,
+            certificat: Some(pems),
+            signature: Some(signature),
+            contenu: value,
+        })
+    }
+
+    fn creer_entete(enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<u32>, value: &Map<String, Value>) -> Result<Entete, Box<dyn Error>> {
         // Calculer le hachage du contenu
         let hachage = MessageMilleGrille::calculer_hachage_contenu(&value)?;
 
@@ -155,27 +190,38 @@ impl MessageMilleGrille {
         }
 
         let entete = entete_builder.build();
-
-        let pems: Vec<String> = {
-            let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
-            let mut pem_str: Vec<String> = Vec::new();
-            for p in pem_vec.iter().map(|c| c.pem.as_str()) {
-                pem_str.push(p.to_owned());
-            }
-            pem_str
-        };
-
-        let signature = MessageMilleGrille::signer_message(enveloppe_privee, &entete, &value)?;
-
-        Ok(MessageMilleGrille {
-            entete,
-            certificat: Some(pems),
-            signature: Some(signature),
-            contenu: value,
-        })
+        Ok(entete)
     }
 
-    fn serialiser_contenu(contenu: &impl Serialize) -> Result<Map<String, Value>, Box<dyn std::error::Error>> {
+    pub fn set_value(&mut self, name: &str, value: Value) {
+        self.contenu.insert(name.to_owned(), value);
+    }
+
+    pub fn set_int(&mut self, name: &str, value: i64) {
+        self.contenu.insert(name.to_owned(), Value::from(value));
+    }
+
+    pub fn set_float(&mut self, name: &str, value: f64) {
+        self.contenu.insert(name.to_owned(), Value::from(value));
+    }
+
+    pub fn set_bool(&mut self, name: &str, value: bool) {
+        self.contenu.insert(name.to_owned(), Value::from(value));
+    }
+
+    pub fn set_serializable<S>(&mut self, name: &str, value: &S) -> Result<(), Box<dyn Error>>
+    where
+        S: Serialize,
+    {
+        let val_ser = serde_json::to_value(value)?;
+        self.contenu.insert(name.to_owned(), val_ser);
+        Ok(())
+    }
+
+    fn serialiser_contenu<S>(contenu: &S) -> Result<Map<String, Value>, Box<dyn std::error::Error>>
+    where
+        S: Serialize,
+    {
         Ok(serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned())
     }
 
@@ -226,7 +272,14 @@ impl MessageMilleGrille {
         Ok(serde_json::to_string(&ordered)?)
     }
 
-    fn signer(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
+    fn signer(&mut self, enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
+
+        let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, version, &self.contenu)?;
+
+        // Remplacer l'entete
+        self.entete = entete;
+        self.certificat = Some(enveloppe_privee.chaine_pem().to_owned());
+
         let signature = MessageMilleGrille::signer_message(enveloppe_privee, &self.entete, &self.contenu)?;
         self.signature = Some(signature);
         Ok(())
@@ -877,6 +930,28 @@ mod serialization_tests {
         let idx_certificat = message_str.find("\"_certificat\"");
         debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
         assert_eq!(true, idx_certificat.is_none());
+    }
+
+    #[test]
+    fn creer_message_manuellement() {
+        setup("creer_message_manuellement");
+        let (validateur, enveloppe_privee) = charger_enveloppe_privee_env();
+
+        let mut message = MessageMilleGrille::new();
+        message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
+        message.set_serializable("contenu_String", &String::from("J'ai du contenu"));
+        message.set_int("contenu_int", 22);
+        message.set_float("contenu_float", 22.89);
+        message.set_bool("contenu_bool", true);
+
+        // Signer le message
+        message.signer(&enveloppe_privee, Some("MonDomaine"), Some(2)).expect("signer");
+        debug!("creer_message_manuellement message signe : {:?}", message);
+
+        assert_eq!(message.certificat.is_some(), true);
+        assert_eq!(message.signature.is_some(), true);
+        assert_eq!(message.entete.version, 2);
+        assert_eq!(message.entete.domaine.expect("domaine"), "MonDomaine");
     }
 
 }
