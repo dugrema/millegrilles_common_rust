@@ -93,26 +93,26 @@ pub fn verifier_message(
 
     }
 
-    if utiliser_date_message == true {
-        // Utiliser la date du message pour confirmer que le certificat est valide
-        todo!()
-    } else {
-        // Le certificat doit etre valide presentement
-        if certificat.presentement_valide {
-            // Le certificat est presentement valide, on s'assure que l'estampille du message correspond.
-            certificat_date_valide = estampille <= &certificat.not_valid_after()? &&
-                estampille >= &certificat.not_valid_before()?;
+    if utiliser_date_message == true && ! certificat.presentement_valide {
+        // Valider que le certificat est valide pour la date de l'estampille
+        todo!("Valider certificat pour la date de l'estampille");
+    }
 
-            if certificat_date_valide == false {
-                debug!("Message invalide, date estampille {} n'est pas entre {:?} et {:?}",
-                    estampille, certificat.not_valid_before(), certificat.not_valid_after());
-            }
+    // Le certificat doit etre valide presentement
+    if certificat.presentement_valide {
+        // Le certificat est presentement valide, on s'assure que l'estampille du message correspond.
+        certificat_date_valide = estampille <= &certificat.not_valid_after()? &&
+            estampille >= &certificat.not_valid_before()?;
 
-        } else if certificat_idmg_valide == true {
-            // Le certificat pourrait ne pas etre valide parce que le idmg est celui d'un tiers
-            //certificat.
-            todo!()
+        if certificat_date_valide == false {
+            Err(format!("Message invalide, date estampille {} n'est pas entre {:?} et {:?}",
+                estampille, certificat.not_valid_before(), certificat.not_valid_after()))?;
         }
+
+    } else if certificat_idmg_valide == true {
+        // Le certificat pourrait ne pas etre valide parce que le idmg est celui d'un tiers
+        //certificat.
+        todo!()
     }
 
     // On verifie la signature - si valide, court-circuite le reste de la validation.
@@ -122,7 +122,6 @@ pub fn verifier_message(
     }?;
 
     let contenu_string = MessageMilleGrille::preparer_pour_signature(entete, &message.get_msg().contenu)?;
-    debug!("Message a verifier (signature)\n{}", contenu_string);
 
     let resultat_verifier_signature = match verifier_signature_str(&public_key, signature, contenu_string.as_str()) {
         Ok(r) => Ok(r),
@@ -136,7 +135,9 @@ pub fn verifier_message(
             hachage_valide: None,
             certificat_valide: certificat_idmg_valide && certificat_date_valide,
         })
-    };
+    } else if resultat_verifier_signature == false {
+        debug!("Signature invalide pour message {}", entete.uuid_transaction);
+    }
 
     // La signature n'est pas valide, on verifie le hachage (troubleshooting)
     let hachage_valide = match verifier_hachage(message.get_msg()) {
@@ -145,7 +146,7 @@ pub fn verifier_message(
     }?;
 
     Ok(ResultatValidation{
-        signature_valide: false,
+        signature_valide: resultat_verifier_signature,
         hachage_valide: Some(hachage_valide),
         certificat_valide: certificat_idmg_valide && certificat_date_valide,
     })
@@ -184,26 +185,14 @@ pub fn verifier_hachage(message: &MessageMilleGrille) -> Result<bool, Box<dyn Er
 // }
 
 pub fn verifier_signature_str(public_key: &PKey<Public>, signature: &str, message: &str) -> Result<bool, Box<dyn Error>> {
-    // let entete = message.get_entete();
-    // let contenu = &message.get_msg().contenu;
-    //
-    // let signature = match &message.get_msg().signature {
-    //     Some(s) => s.as_str(),
-    //     None => Err("Signature manquante")?,
-    // };
-    // let certificat = match &message.certificat {
-    //     Some(c) => c.as_ref(),
-    //     None => Err("Certificat manquant")?,
-    // };
-    // let public_key = certificat.certificat().public_key()?;
-    // debug!("Signature : {}, certificat {:?}", signature, certificat);
-
     // let contenu_str = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
-    debug!("Message a verifier (signature)\n{}", message);
+    debug!("verifier_signature_str (signature: {}, public key: {:?})\n{}", signature, public_key, message);
 
     let signature_bytes: (Base, Vec<u8>) = decode(signature).unwrap();
     let version_signature = signature_bytes.1[0];
-    assert_eq!(VERSION_1, version_signature);
+    if version_signature != VERSION_1 {
+        Err(format!("La version de la signature n'est pas 1"))?;
+    }
 
     let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key).unwrap();
     verifier.set_rsa_padding(Padding::PKCS1_PSS)?;

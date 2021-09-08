@@ -304,6 +304,7 @@ impl MessageSerialise {
 
     pub fn from_string(msg: String) -> Result<Self, Box<dyn std::error::Error>> {
         let msg_parsed: MessageMilleGrille = serde_json::from_str(&msg)?;
+        // debug!("Comparaison message original:\n{}\nParsed\n{:?}", msg, msg_parsed);
         Ok(MessageSerialise {
             message: msg,
             entete: msg_parsed.entete.clone(),
@@ -311,6 +312,34 @@ impl MessageSerialise {
             certificat: None,
         })
     }
+
+    pub fn from_serializable<T>(value: T) -> Result<MessageSerialise, Box<dyn Error>>
+    where
+        T: Serialize,
+    {
+        let ser_value = serde_json::to_value(value)?;
+        let msg_parsed: MessageMilleGrille = serde_json::from_value(ser_value)?;
+        let msg = serde_json::to_string(&msg_parsed)?;
+        // debug!("Comparaison message original:\n{}\nParsed\n{:?}", msg, msg_parsed);
+        Ok(MessageSerialise {
+            message: msg,
+            entete: msg_parsed.entete.clone(),
+            parsed: msg_parsed,
+            certificat: None,
+        })
+    }
+
+    // pub fn from_value(value: Value) -> Result<Self, Box<dyn std::error::Error>> {
+    //     let msg_parsed: MessageMilleGrille = serde_json::from_value(value)?;
+    //     let msg = serde_json::to_string(&msg_parsed)?;
+    //     // debug!("Comparaison message original:\n{}\nParsed\n{:?}", msg, msg_parsed);
+    //     Ok(MessageSerialise {
+    //         message: msg,
+    //         entete: msg_parsed.entete.clone(),
+    //         parsed: msg_parsed,
+    //         certificat: None,
+    //     })
+    // }
 
     pub fn set_certificat(&mut self, certificat: Arc<EnveloppeCertificat>) {
         self.certificat = Some(certificat);
@@ -328,19 +357,26 @@ impl MessageSerialise {
         &self.parsed
     }
 
-    pub async fn valider(&mut self, validateur: &dyn ValidateurX509, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
-        // S'assurer d'avoir le certificat
-        let enveloppe : Option<Arc<EnveloppeCertificat>> = self.charger_certificat(validateur).await?;
-        self.certificat = enveloppe;
-
-        // let mut valide = true;
+    pub async fn valider<V>(&mut self, validateur: &V, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>>
+    where
+        V: ValidateurX509,
+    {
         match &self.certificat {
-            Some(c) => {
-                // Valider la signature
-                let public_key = c.certificat().public_key()?;
+            Some(_) => {
+                // Ok, on a un certificat. Valider la signature.
                 verifier_message(&self, validateur.idmg(), options)
             },
-            None => Err("Certificat manquant")?,
+            None => {
+                // Tenter de charger le certificat
+                // let enveloppe : Option<Arc<EnveloppeCertificat>> = self.charger_certificat(validateur).await?;
+                match self.charger_certificat(validateur).await? {
+                    Some(e) => {
+                        self.certificat = Some(e);
+                        verifier_message(&self, validateur.idmg(), options)
+                    },
+                    None => Err("Certificat manquant")?
+                }
+            },
         }
     }
 

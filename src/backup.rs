@@ -226,7 +226,14 @@ async fn serialiser_transactions(
         match middleware.get_certificat(fingerprint_certificat).await {
             Some(c) => {
                 // debug!("OK Certificat ajoute : {}", fingerprint_certificat);
-                builder.ajouter_certificat(c.as_ref())
+                builder.ajouter_certificat(c.as_ref());
+
+                // Valider la transaction avec le certificat
+                let mut transaction = MessageSerialise::from_serializable(&d)?;
+                debug!("Transaction serialisee pour validation :\n{:?}", transaction);
+                let options = ValidationOptions::new(true, true, false);
+                let resultat = transaction.valider(middleware, Some(&options)).await?;
+                debug!("Resultat validation: {:?}", resultat);
             },
             None => {
                 // debug!("Warn certificat {} inconnu", fingerprint_certificat)
@@ -825,14 +832,11 @@ impl ProcesseurFichierBackup {
         let uuid_transaction = msg.get_entete().uuid_transaction.to_owned();
         let fingerprint_certificat = msg.get_entete().fingerprint_certificat.to_owned();
 
+        // Charger le certificat a partir du catalogue
         if let Some(catalogue) = &self.catalogue {
             match catalogue.certificats.get_enveloppe(middleware, fingerprint_certificat.as_str()).await {
-                Some(c) => {
-                    println!("CERT PEM!!! {:?}", c);
-                },
-                None => {
-                    println!("Pas de PEM");
-                }
+                Some(c) => msg.set_certificat(c),
+                None => warn!("Pas de PEM charge pour fingerprint {}", fingerprint_certificat)
             }
         }
 
@@ -1366,6 +1370,9 @@ mod test_integration {
     #[tokio::test]
     async fn download_backup() {
         setup("download_backup");
+
+        const FICHIER_DOWNLOAD: &str = "/tmp/download_backup.tar";
+
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
         let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
         let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
@@ -1387,7 +1394,7 @@ mod test_integration {
         // todo Trouver comment streamer en memoire
         {
             let mut stream = response.bytes_stream();
-            let mut file_output = File::create(PathBuf::from("/tmp/download.tar").as_path()).await.expect("create");
+            let mut file_output = File::create(PathBuf::from(FICHIER_DOWNLOAD).as_path()).await.expect("create");
             while let Some(item) = stream.next().await {
                 let content = item.expect("item");
                 file_output.write_all(content.as_ref()).await.expect("write");
@@ -1395,7 +1402,7 @@ mod test_integration {
             file_output.flush().await.expect("flush");
         }
 
-        let mut fichier_tar = async_std::fs::File::open(PathBuf::from("/tmp/download.tar")).await.expect("open");
+        let mut fichier_tar = async_std::fs::File::open(PathBuf::from(FICHIER_DOWNLOAD)).await.expect("open");
         // let mut tar_parse = TarParser::new();
         // tar_parse.parse(fichier_tar).await;
 
