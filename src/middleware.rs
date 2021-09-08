@@ -547,12 +547,15 @@ impl IsConfigurationPki for MiddlewareDbPki {
 
 #[async_trait]
 impl EmetteurCertificat for MiddlewareDbPki {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), Box<dyn Error>> {
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
         let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
         let message = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
         let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
 
-        Ok(generateur_message.emettre_evenement(PKI_EVENEMENT_CERTIFICAT, &message, Some(exchanges)).await?)
+        match generateur_message.emettre_evenement(PKI_EVENEMENT_CERTIFICAT, &message, Some(exchanges)).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Erreur emettre_certificat: {:?}", e)),
+        }
     }
 }
 
@@ -698,13 +701,13 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
 }
 
 #[async_trait]
-pub trait EmetteurCertificat {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), Box<dyn Error>>;
+pub trait EmetteurCertificat: Send + Sync {
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String>;
 }
 
 #[async_trait]
 impl EmetteurCertificat for ValidateurX509Impl {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), Box<dyn Error>> {
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
         todo!()
     }
 }

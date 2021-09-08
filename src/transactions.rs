@@ -21,7 +21,7 @@ pub async fn transmettre_evenement_persistance(
     domaine: &str,
     reply_to: Option<String>,
     correlation_id: Option<String>
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), String> {
     let mut evenement = json!({
         "uuid_transaction": uuid_transaction,
         "evenement": EVENEMENT_TRANSACTION_PERSISTEE,
@@ -35,7 +35,7 @@ pub async fn transmettre_evenement_persistance(
     }
 
     if let Some(correlation_id) = correlation_id {
-        evenement_map.insert("reply_to".into(), Value::from(correlation_id));
+        evenement_map.insert("correlation_id".into(), Value::from(correlation_id));
     }
 
     let rk = format!("evenement.{}.transaction_persistee", domaine);
@@ -49,7 +49,13 @@ pub async fn charger_transaction(middleware: &(impl ValidateurX509 + MongoDao), 
     debug!("Traitement d'une transaction : {:?}", m);
     let trigger = &m.message;
     let entete = trigger.get_entete();
-    let uuid_transaction = entete.uuid_transaction.as_str();
+    let uuid_transaction = match trigger.get_msg().contenu.get("uuid_transaction") {
+        Some(v) => match v.as_str() {
+            Some(inner_v) => inner_v,
+            None => Err(format!("Charger transaction : uuid_transaction mauvais format {:?}, on skip", v))?,
+        },
+        None => Err("Charger transaction : uuid_transaction manquant, on skip")?,
+    };
 
     // Charger transaction a partir de la base de donnees
     let collection = middleware.get_collection(PKI_COLLECTION_TRANSACTIONS_NOM)?;
