@@ -6,13 +6,14 @@ use bson::{Bson, Document};
 use futures::stream::FuturesUnordered;
 use lapin::message::Delivery;
 use log::{debug, error, info, warn};
-use mongodb::{bson::{doc, to_bson}, Client, Collection, Database};
-use mongodb::options::{AuthMechanism, ClientOptions, Credential, TlsOptions, UpdateOptions};
+use mongodb::{bson::{doc, to_bson}, Client, Collection, Database, Cursor};
+use mongodb::options::{AuthMechanism, ClientOptions, Credential, TlsOptions, UpdateOptions, FindOptions, Hint};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde_json::{json, Map, Value};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
@@ -23,7 +24,7 @@ use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImp
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
-use crate::{MessageSerialise, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message, MessageMilleGrille};
+use crate::{MessageSerialise, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message, MessageMilleGrille, TypeMessageOut};
 use std::error::Error;
 use serde::Serialize;
 
@@ -754,4 +755,93 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Value {
     });
 
     reponse
+}
+
+pub async fn regenerer<M, T>(middleware: &M, nom_collection_transactions: &str, noms_collections_docs: Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
+where
+    M: ValidateurX509 + GenerateurMessages + MongoDao,
+    T: TraiterTransaction,
+{
+    // Supprimer contenu des collections
+    for nom_collection in noms_collections_docs {
+        let collection = middleware.get_collection(nom_collection.as_str())?;
+        let resultat_delete = collection.delete_many(doc! {}, None).await?;
+        debug!("Delete collection {} documents : {:?}", nom_collection, resultat_delete);
+    }
+
+    // Creer curseur sur les transactions en ordre de traitement
+    let mut resultat_transactions = {
+        let filtre = doc! {
+            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
+        };
+        let sort = doc! {
+            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: 1,
+        };
+
+        let options = FindOptions::builder()
+            .sort(sort)
+            .hint(Hint::Name(String::from("backup_transactions")))
+            .build();
+
+        let collection_transactions = middleware.get_collection(nom_collection_transactions)?;
+        collection_transactions.find(filtre, options).await
+    }?;
+
+    middleware.set_regeneration(); // Desactiver emission de messages
+
+    // Executer toutes les transactions du curseur en ordre
+    let resultat = regenerer_transactions(middleware, &mut resultat_transactions, processor).await;
+
+    middleware.reset_regeneration(); // Reactiver emission de messages
+
+    resultat
+}
+
+async fn regenerer_transactions<M, T>(middleware: &M, curseur: &mut Cursor<Document>, processor: &T) -> Result<(), Box<dyn Error>>
+where
+    M: ValidateurX509 + GenerateurMessages + MongoDao,
+    T: TraiterTransaction,
+{
+    while let Some(result) = curseur.next().await {
+        let transaction = result?;
+        debug!("Transaction a charger : {:?}", transaction);
+
+        let message = MessageSerialise::from_serializable(transaction)?;
+
+        let (uuid_transaction, domaine, action) = match message.get_entete().domaine.as_ref() {
+            Some(inner_d) => {
+                let entete = message.get_entete();
+                let uuid_transaction = entete.uuid_transaction.to_owned();
+                let mut d_split = inner_d.split(".");
+                let domaine: String = d_split.next().expect("Domaine manquant de la RK").into();
+                let action: String = d_split.last().expect("Action manquante de la RK").into();
+                (uuid_transaction, domaine, action)
+            },
+            None => {
+                warn!("Transaction sans domaine - invalide: {:?}", message);
+                continue  // Skip
+            }
+        };
+
+        let transaction_prep = MessageValideAction {
+            message,
+            reply_q: None,
+            correlation_id: Some(uuid_transaction.to_owned()),
+            routing_key: String::from("regeneration"),
+            domaine,
+            action,
+            exchange: None,
+            type_message: TypeMessageOut::Transaction,
+        };
+
+        processor.traiter_transaction("Pki", middleware, transaction_prep).await?;
+    }
+
+    Ok(())
+}
+
+#[async_trait]
+pub trait TraiterTransaction {
+    async fn traiter_transaction<M>(&self, domaine: &str, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
+        where M: ValidateurX509 + GenerateurMessages + MongoDao;
 }
