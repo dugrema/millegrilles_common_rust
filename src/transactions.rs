@@ -15,7 +15,7 @@ use crate::mongo_dao::MongoDao;
 use crate::recepteur_messages::MessageValideAction;
 use std::error::Error;
 use serde::Serialize;
-use crate::MessageSerialise;
+use crate::{MessageSerialise, MessageMilleGrille};
 use mongodb::error::{ErrorKind, BulkWriteFailure, BulkWriteError};
 
 pub async fn transmettre_evenement_persistance(
@@ -298,7 +298,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
     Ok(())
 }
 
-pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageSerialise>) -> Result<ResultatBatchInsert, String>
+pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageMilleGrille>) -> Result<ResultatBatchInsert, String>
 where
     M: MongoDao,
 {
@@ -306,9 +306,8 @@ where
     let mut transactions_bson = Vec::new();
     transactions_bson.reserve(transactions.len());
     while let Some(t) = transactions.pop() {
-        let m = t.get_msg();
-        debug!("Message a serialiser en bson : {:?}", m);
-        let bson_doc = bson::to_document(m).expect("serialiser bson");
+        debug!("Message a serialiser en bson : {:?}", t);
+        let bson_doc = bson::to_document(&t).expect("serialiser bson");
         transactions_bson.push(bson_doc);
     }
 

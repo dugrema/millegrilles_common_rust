@@ -461,6 +461,17 @@ impl MessageSerialise {
         Ok(enveloppe)
     }
 
+    /// Sert a extraire le message pour une restauration - deplace (move) le message.
+    pub fn preparation_restaurer(mut self) -> MessageMilleGrille {
+        let mut message = self.parsed;
+        let evenements = message.contenu
+            .get_mut("_evenements").expect("evenements")
+            .as_object_mut().expect("object");
+        evenements.insert(String::from("backup_flag"), Value::Bool(true));
+        evenements.insert(String::from("transaction_restauree"), serde_json::to_value(bson::DateTime::now()).expect("date") );
+
+        message
+    }
 }
 
 /// Filtrer certains formats speciaux de valeurs

@@ -869,8 +869,10 @@ impl ProcesseurFichierBackup {
         // Deplacer messages vers nouveau vecteur
         let mut transactions = Vec::new();
         transactions.reserve(self.batch.len());
-        while let Some(t) = self.batch.pop() {
-            transactions.push(t);
+        while let Some(mut t) = self.batch.pop() {
+            // Marquer transaction comme "restauree", avec flag backup = true
+            let transaction_restauree = t.preparation_restaurer();
+            transactions.push(transaction_restauree);
         }
 
         // Inserer transactions
