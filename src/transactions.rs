@@ -4,7 +4,7 @@ use bson::{Bson, Document};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::{bson::{doc, to_bson}, Client, Database};
-use mongodb::options::{FindOptions, Hint, UpdateOptions};
+use mongodb::options::{FindOptions, Hint, UpdateOptions, InsertManyOptions};
 use serde_json::{json, Value, Map};
 use tokio_stream::StreamExt;
 
@@ -16,6 +16,7 @@ use crate::recepteur_messages::MessageValideAction;
 use std::error::Error;
 use serde::Serialize;
 use crate::MessageSerialise;
+use mongodb::error::{ErrorKind, BulkWriteFailure, BulkWriteError};
 
 pub async fn transmettre_evenement_persistance(
     middleware: &impl GenerateurMessages,
@@ -297,30 +298,101 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
     Ok(())
 }
 
-pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageSerialise>) -> Result<(), String>
+pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageSerialise>) -> Result<ResultatBatchInsert, String>
 where
     M: MongoDao,
 {
+    // Serialiser les transactions vers le format bson
+    let mut transactions_bson = Vec::new();
+    transactions_bson.reserve(transactions.len());
+    while let Some(t) = transactions.pop() {
+        let m = t.get_msg();
+        debug!("Message a serialiser en bson : {:?}", m);
+        let bson_doc = bson::to_document(m).expect("serialiser bson");
+        transactions_bson.push(bson_doc);
+    }
+
+    debug!("Soumettre batch transactions dans collection {} : {:?}", nom_collection, transactions_bson);
     let collection = match middleware.get_collection(nom_collection) {
         Ok(c) => c,
         Err(e) => Err(format!("Erreur ouverture collection {}", nom_collection))?
     };
 
-    let mut transactions_bson = Vec::new();
-    transactions_bson.reserve(transactions.len());
-    while let Some(t) = transactions.pop() {
-        let m = t.get_msg();
-        let mut v: Value = serde_json::to_value(m).expect("value");
-        let mut obj = v.as_object_mut().expect("obj");
-        let mut entete = obj.get_mut("en-tete").expect("entete").as_object_mut().expect("obj");
-        // entete.remove("estampille").expect("estampille");
-        // entete.remove("version").expect("version");
-        debug!("Message a serialiser en bson : {:?}", obj);
-        let bson_doc = bson::to_document(obj).expect("serialiser bson");
-        transactions_bson.push(bson_doc);
+    let options = InsertManyOptions::builder()
+        .ordered(false)
+        .build();
+
+    let nombre_transactions = transactions_bson.len() as u32;
+    let resultat = match collection.insert_many(transactions_bson, Some(options)).await {
+        Ok(r) => {
+            let mut res_insert = ResultatBatchInsert::new();
+            res_insert.inserted = r.inserted_ids.len() as u32;
+            Ok(res_insert)
+        },
+        Err(e) => {
+            let mut res_insert = ResultatBatchInsert::new();
+            match e.kind.as_ref() {
+                ErrorKind::BulkWrite(failure) => {
+                    // Verifier si toutes les erreurs sont des duplicatas (code 11000)
+                    debug!("Erreur bulk write : {:?}", failure);
+
+                    let autres_erreurs = match &failure.write_errors {
+                        Some(we) => {
+                            let mut res = Vec::new();
+                            for bwe in we {
+                                // Separer erreurs duplication (11000) des autres
+                                if bwe.code == 11000 {
+                                    // Erreur duplication, OK.
+                                    res_insert.duplicate += 1;
+                                } else {
+                                    res.push(bwe.to_owned());
+                                    res_insert.errors += 1;
+                                }
+                            }
+
+                            if res.len() > 0 {
+                                Some(res)
+                            } else {
+                                None
+                            }
+                        },
+                        None => None,
+                    };
+
+                    if autres_erreurs.is_some() {
+                        Err(format!("Erreurs d'ecriture : {:?}", autres_erreurs))?;
+                        res_insert.error_vec = autres_erreurs;
+                    }
+
+                    // Calculer le nombre d'insertion avec la difference entre total, dups et erreurs
+                    res_insert.inserted = nombre_transactions - res_insert.duplicate - res_insert.errors;
+
+                    Ok((res_insert))
+                },
+                _ => Err(format!("Erreur non supportee : {:?}", e))
+            }
+        }
+    }?;
+    // debug!("Resultat insertion transactions sous {} : {:?}", nom_collection, resultat);
+
+    Ok(resultat)
+}
+
+#[derive(Clone, Debug)]
+pub struct ResultatBatchInsert {
+    pub inserted: u32,
+    pub duplicate: u32,
+    pub errors: u32,
+    pub error_vec: Option<Vec<BulkWriteError>>,
+}
+
+impl ResultatBatchInsert {
+    pub fn new() -> Self {
+        ResultatBatchInsert {
+            inserted: 0,
+            duplicate: 0,
+            errors: 0,
+            error_vec: None,
+        }
     }
-
-    debug!("Resultat : {:?}", transactions_bson);
-
-    Ok(())
 }
