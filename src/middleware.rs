@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use bson::Bson;
+use bson::{Bson, Document};
 use futures::stream::FuturesUnordered;
 use lapin::message::Delivery;
 use log::{debug, error, info, warn};
 use mongodb::{bson::{doc, to_bson}, Client, Collection, Database};
-use mongodb::options::{AuthMechanism, ClientOptions, Credential, StreamAddress, TlsOptions, UpdateOptions};
+use mongodb::options::{AuthMechanism, ClientOptions, Credential, TlsOptions, UpdateOptions};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde_json::{json, Map, Value};
@@ -347,7 +347,7 @@ impl ValidateurX509 for ValidateurX509Database {
                 match self.mongo_dao.get_database() {
                     Ok(db) => {
 
-                        let collection = db.collection(PKI_COLLECTION_CERTIFICAT_NOM);
+                        let collection = db.collection::<Document>(PKI_COLLECTION_CERTIFICAT_NOM);
                         let filtre = doc! {
                             PKI_DOCUMENT_CHAMP_FINGERPRINT: fingerprint,
                         };
@@ -582,7 +582,7 @@ impl EmetteurCertificat for MiddlewareDbPki {
 //     }
 // }
 
-pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection, dirty: Option<bool>) -> Result<Option<String>, String> {
+pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection<Document>, dirty: Option<bool>) -> Result<Option<String>, String> {
     let fingerprint = enveloppe.fingerprint();
 
     let filtre = doc! { "fingerprint": fingerprint };

@@ -545,7 +545,7 @@ impl Default for DateEpochSeconds {
 impl Serialize for DateEpochSeconds {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         let ts = self.date.timestamp();
-        serializer.serialize_i64(ts)
+        serializer.serialize_i32(ts as i32)
     }
 }
 

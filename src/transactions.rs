@@ -118,7 +118,7 @@ impl TransactionImpl {
         let uuid_transaction = String::from(entete.get_str(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("domaine"));
 
         let evenements = contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements");
-        let estampille = evenements.get_datetime("_estampille").expect("_estampille").to_owned();
+        let estampille = evenements.get_datetime("_estampille").expect("_estampille").to_chrono();
 
         TransactionImpl {
             contenu,
@@ -312,11 +312,9 @@ where
         let m = t.get_msg();
         let mut v: Value = serde_json::to_value(m).expect("value");
         let mut obj = v.as_object_mut().expect("obj");
-        // obj.remove("_evenements");
         let mut entete = obj.get_mut("en-tete").expect("entete").as_object_mut().expect("obj");
-        entete.remove("estampille");
-        entete.remove("version");
-        // obj.remove("en-tete");
+        // entete.remove("estampille").expect("estampille");
+        // entete.remove("version").expect("version");
         debug!("Message a serialiser en bson : {:?}", obj);
         let bson_doc = bson::to_document(obj).expect("serialiser bson");
         transactions_bson.push(bson_doc);

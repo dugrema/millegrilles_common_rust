@@ -6,18 +6,19 @@ use bson::document::Document;
 use log::{debug, error, info};
 use mongodb::{bson::doc, Client, Collection, Database};
 use mongodb::error::Result as ResultMongo;
-use mongodb::options::{AuthMechanism, ClientOptions, Credential, StreamAddress, TlsOptions};
+use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
 use serde_json::{json, Map, Value};
 
 use crate::constantes::*;
 
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
+use std::path::PathBuf;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
     fn get_database(&self) -> Result<Database, String>;
-    fn get_collection(&self, nom_collection: &str) -> Result<Collection, String> {
+    fn get_collection(&self, nom_collection: &str) -> Result<Collection<Document>, String> {
         let database = self.get_database()?;
         Ok(database.collection(nom_collection))
     }
@@ -64,8 +65,8 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
     // Note : Convertir cle PKCS8 en format RSA
 
     let tls_options = TlsOptions::builder()
-        .ca_file_path(Some(pki.ca_certfile.to_str().expect("Erreur conversion path CA").to_owned()))
-        .cert_key_file_path(Some(mongo_configuration.keycert_file.to_str().expect("Erreur conversion key/cert path").to_owned()))
+        .ca_file_path(Some(PathBuf::from(pki.ca_certfile.to_str().expect("Erreur conversion path CA"))))
+        .cert_key_file_path(Some(PathBuf::from(mongo_configuration.keycert_file.to_str().expect("Erreur conversion key/cert path"))))
         .build();
 
     let credential = Credential::builder()
@@ -74,8 +75,8 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
 
     let options = ClientOptions::builder()
         .hosts(vec![
-            StreamAddress {
-                hostname: mongo_configuration.host.to_owned(),
+            ServerAddress::Tcp {
+                host: mongo_configuration.host.to_owned(),
                 port: Some(mongo_configuration.port),
             }
         ])

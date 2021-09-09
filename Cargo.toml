@@ -42,8 +42,8 @@ chrono = { version = "0.4.19" }
 uuid = { version = "0.8.2", features = ["serde", "v4"] }
 
 # MongoDB
-mongodb = { version = "1.2.2", default-features = false, features = ["async-std-runtime"] }
-bson = "1.2.3"
+mongodb = { version = "2.0.0", default-features = false, features = ["tokio-runtime", "bson-chrono-0_4"] }
+bson = "2.0.0"
 
 # RabbitMQ
 lapin = { "version" = "1.7.1" }

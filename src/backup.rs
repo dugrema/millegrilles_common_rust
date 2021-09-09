@@ -178,7 +178,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     Ok(builders)
 }
 
-async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueHoraireBuilder) -> Result<Cursor, Box<dyn Error>> {
+async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueHoraireBuilder) -> Result<Cursor<Document>, Box<dyn Error>> {
     let nom_collection = &info.nom_collection_transactions;
     let collection = middleware.get_collection(nom_collection)?;
 
@@ -204,7 +204,7 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
 
 async fn serialiser_transactions(
     middleware: &(impl ValidateurX509),
-    curseur: &mut Cursor,
+    curseur: &mut Cursor<Document>,
     builder: &mut CatalogueHoraireBuilder,
     path_transactions: &Path,
     certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>
