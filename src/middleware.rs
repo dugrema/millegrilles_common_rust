@@ -219,6 +219,18 @@ impl GenerateurMessages for MiddlewareDbPki {
     fn mq_disponible(&self) -> bool {
         self.generateur_messages.mq_disponible()
     }
+
+    fn set_regeneration(&self) {
+        self.generateur_messages.set_regeneration();
+    }
+
+    fn reset_regeneration(&self) {
+        self.generateur_messages.reset_regeneration();
+    }
+
+    fn get_mode_regeneration(&self) -> bool {
+        self.generateur_messages.as_ref().get_mode_regeneration()
+    }
 }
 
 impl FormatteurMessage for MiddlewareDbPki {
@@ -487,6 +499,19 @@ impl GenerateurMessages for MiddlewareDb {
     fn mq_disponible(&self) -> bool {
         self.generateur_messages.mq_disponible()
     }
+
+    fn set_regeneration(&self) {
+        self.generateur_messages.set_regeneration();
+    }
+
+    fn reset_regeneration(&self) {
+        self.generateur_messages.reset_regeneration();
+    }
+
+    fn get_mode_regeneration(&self) -> bool {
+        self.generateur_messages.get_mode_regeneration()
+    }
+
 }
 
 #[async_trait]

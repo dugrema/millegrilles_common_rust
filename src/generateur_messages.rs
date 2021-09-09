@@ -27,12 +27,22 @@ pub trait GenerateurMessages: Send + Sync {
     async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String>;
     async fn repondre(&self, message: &(impl Serialize+Send+Sync), reply_q: &str, correlation_id: &str) -> Result<(), String>;
     fn mq_disponible(&self) -> bool;
+
+    /// Active le mode regeneration
+    fn set_regeneration(&self);
+
+    /// Desactive le mode regeneration
+    fn reset_regeneration(&self);
+
+    /// Retourne l'etat du mode regeneration (true = actif)
+    fn get_mode_regeneration(&self) -> bool;
 }
 
 pub struct GenerateurMessagesImpl {
     tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     tx_interne: Sender<MessageInterne>,
     enveloppe_privee: Arc<EnveloppePrivee>,
+    mode_regeneration: Mutex<bool>,
 }
 
 impl GenerateurMessagesImpl {
@@ -42,10 +52,16 @@ impl GenerateurMessagesImpl {
             tx_out: mq.tx_out.clone(),
             tx_interne: mq.tx_interne.clone(),
             enveloppe_privee: config.get_enveloppe_privee(),
+            mode_regeneration: Mutex::new(false),
         }
     }
 
     async fn emettre(&self, message: MessageOut) -> Result<(), String> {
+
+        if self.get_mode_regeneration() {
+            // Rien a faire
+            return Ok(())
+        }
 
         // Faire un clone du sender
         let mut sender = {
@@ -79,6 +95,11 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
     async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
 
+        if self.get_mode_regeneration() {
+            // Rien a faire
+            return Ok(())
+        }
+
         let message_signe = match self.formatter_message(message, Some(domaine), None) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur formattage message {:?}", e))?
@@ -102,6 +123,11 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     }
 
     async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>) -> Result<TypeMessage, String> {
+
+        if self.get_mode_regeneration() {
+            // Rien a faire
+            return Ok(TypeMessage::Regeneration)
+        }
 
         let message_signe = match self.formatter_message(message, Some(domaine), None) {
             Ok(m) => m,
@@ -150,6 +176,12 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     }
 
     async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+
+        if self.get_mode_regeneration() {
+            // Rien a faire
+            return Ok(Some(TypeMessage::Regeneration))
+        }
+
         let message_signe = match self.formatter_message(message, Some(domaine), None) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
@@ -214,10 +246,20 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     }
 
     async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String> {
+        if self.get_mode_regeneration() {
+            // Rien a faire
+            return Ok(TypeMessage::Regeneration)
+        }
+
         todo!()
     }
 
     async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
+        if self.get_mode_regeneration() {
+            // Rien a faire
+            return Ok(())
+        }
+
         let message_signe = match self.formatter_message(message, None, None) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
@@ -240,6 +282,25 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             Some(_) => true,
             None => false,
         }
+    }
+
+    fn set_regeneration(&self) {
+        let mode = &self.mode_regeneration;
+        let mut guard = mode.lock().expect("guard");
+        *guard = true;
+    }
+
+    /// Desactive le mode regeneration
+    fn reset_regeneration(&self) {
+        let mode = &self.mode_regeneration;
+        let mut guard = mode.lock().expect("guard");
+        *guard = false;
+    }
+
+    /// Retourne l'etat du mode regeneration (true = actif)
+    fn get_mode_regeneration(&self) -> bool {
+        let mode = &self.mode_regeneration;
+        *mode.lock().expect("lock")
     }
 
 }

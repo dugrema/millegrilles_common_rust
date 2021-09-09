@@ -48,17 +48,14 @@ pub async fn transmettre_evenement_persistance(
     Ok(middleware.emettre_evenement(&rk, &evenement, Some(vec!(Securite::L4Secure))).await?)
 }
 
-pub async fn charger_transaction(middleware: &(impl ValidateurX509 + MongoDao), m: &MessageValideAction) -> Result<TransactionImpl, String> {
+pub async fn charger_transaction<M>(middleware: &M, m: &MessageValideAction) -> Result<TransactionImpl, String>
+where
+    M: ValidateurX509 + MongoDao,
+{
     debug!("Traitement d'une transaction : {:?}", m);
     let trigger = &m.message;
     let entete = trigger.get_entete();
-    let uuid_transaction = match trigger.get_msg().contenu.get("uuid_transaction") {
-        Some(v) => match v.as_str() {
-            Some(inner_v) => inner_v,
-            None => Err(format!("Charger transaction : uuid_transaction mauvais format {:?}, on skip", v))?,
-        },
-        None => Err("Charger transaction : uuid_transaction manquant, on skip")?,
-    };
+    let uuid_transaction = entete.uuid_transaction.as_str();
 
     // Charger transaction a partir de la base de donnees
     let collection = middleware.get_collection(PKI_COLLECTION_TRANSACTIONS_NOM)?;

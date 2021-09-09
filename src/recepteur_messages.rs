@@ -297,6 +297,7 @@ pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfi
             debug!("Message evenement certificat, message intercepte");
             true
         },
+        TypeMessage::Regeneration => true,  // Rien a faire
     }
 }
 
@@ -390,6 +391,7 @@ pub enum TypeMessage {
     Valide(MessageValide),
     ValideAction(MessageValideAction),
     Certificat(MessageCertificat),
+    Regeneration,
 }
 
 #[derive(Clone, Debug)]
