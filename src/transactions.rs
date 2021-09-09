@@ -333,7 +333,7 @@ where
             match e.kind.as_ref() {
                 ErrorKind::BulkWrite(failure) => {
                     // Verifier si toutes les erreurs sont des duplicatas (code 11000)
-                    debug!("Erreur bulk write : {:?}", failure);
+                    debug!("Resultat bulk write : {:?}", failure);
 
                     let autres_erreurs = match &failure.write_errors {
                         Some(we) => {

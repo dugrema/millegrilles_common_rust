@@ -719,7 +719,7 @@ struct ProcesseurFichierBackup {
     middleware: Arc<dyn ValidateurX509>,
     catalogue: Option<CatalogueHoraire>,
     decipher: Option<DecipherMgs2>,
-    batch: Vec<MessageSerialise>,
+    batch: Vec<MessageMilleGrille>,
 }
 
 impl ProcesseurFichierBackup {
@@ -852,7 +852,8 @@ impl ProcesseurFichierBackup {
         match resultat_validation.signature_valide {
             true => {
                 // Ajouter la transaction a liste de la batch
-                self.batch.push(msg);
+                // Marquer transaction comme "restauree", avec flag backup = true
+                self.batch.push(msg.preparation_restaurer());
                 debug!("Restaurer transaction {}", uuid_transaction);
                 Ok(())
             },
@@ -870,9 +871,7 @@ impl ProcesseurFichierBackup {
         let mut transactions = Vec::new();
         transactions.reserve(self.batch.len());
         while let Some(mut t) = self.batch.pop() {
-            // Marquer transaction comme "restauree", avec flag backup = true
-            let transaction_restauree = t.preparation_restaurer();
-            transactions.push(transaction_restauree);
+            transactions.push(t);
         }
 
         // Inserer transactions
