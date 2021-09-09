@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::error::Error;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -6,27 +8,25 @@ use bson::{Bson, Document};
 use futures::stream::FuturesUnordered;
 use lapin::message::Delivery;
 use log::{debug, error, info, warn};
-use mongodb::{bson::{doc, to_bson}, Client, Collection, Database, Cursor};
-use mongodb::options::{AuthMechanism, ClientOptions, Credential, TlsOptions, UpdateOptions, FindOptions, Hint};
+use mongodb::{bson::{doc, to_bson}, Client, Collection, Cursor, Database};
+use mongodb::options::{AuthMechanism, ClientOptions, Credential, FindOptions, Hint, TlsOptions, UpdateOptions};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
+use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message};
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::constantes::*;
 use crate::formatteur_messages::FormatteurMessage;
-use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
-
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
+use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
-use crate::{MessageSerialise, VerificateurMessage, ValidationOptions, ResultatValidation, verifier_message, MessageMilleGrille, TypeMessageOut};
-use std::error::Error;
-use serde::Serialize;
 
 /// Version speciale du middleware avec un acces direct au sous-domaine Pki dans MongoDB
 pub fn preparer_middleware_pki(
@@ -840,8 +840,80 @@ where
     Ok(())
 }
 
+pub async fn sauvegarder_transaction<M>(middleware: &M, m: MessageValideAction, domaine: &str, nom_collection: &str) -> Result<(), String>
+where
+    M: ValidateurX509 + GenerateurMessages + MongoDao,
+{
+    debug!("Sauvegarder transaction avec document {:?}", &m.message);
+    let msg = m.message.get_msg();
+
+    // Serialiser le message en serde::Value - permet de convertir en Document bson
+    let val = match serde_json::to_value(msg) {
+        Ok(v) => match v.as_object() {
+            Some(o) => o.to_owned(),
+            None => Err(format!("Erreur sauvegarde transaction, mauvais type objet JSON"))?,
+        },
+        Err(e) => Err(format!("Erreur sauvegarde transaction, conversion : {:?}", e))?,
+    };
+
+    let mut contenu_doc = match Document::try_from(val) {
+        Ok(c) => Ok(c),
+        Err(e) => {
+            error!("Erreur conversion json -> bson\n{:?}", e.to_string());
+            Err(format!("Erreur sauvegarde transaction, conversion json -> bson : {:?}", e))
+        },
+    }?;
+    debug!("Transaction en format bson : {:?}", contenu_doc);
+
+    let date_courante = chrono::Utc::now();
+    let entete = &msg.entete;
+    let uuid_transaction = entete.uuid_transaction.as_str();
+    let estampille = &entete.estampille;
+
+    let params_evenements = doc! {
+        "document_persiste": date_courante,
+        "_estampille": estampille.get_datetime(),
+        "transaction_complete": false,
+        "backup_flag": false,
+        "signature_verifiee": date_courante,
+    };
+
+    debug!("evenements tags : {:?}", params_evenements);
+
+    // let mut contenu_doc_mut = contenu_doc.as_document_mut().expect("mut");
+    contenu_doc.insert("_evenements", params_evenements);
+
+    contenu_doc.remove("_certificat");
+
+    debug!("Inserer nouvelle transaction\n:{:?}", contenu_doc);
+
+    let collection = middleware.get_collection(nom_collection)?;
+    match collection.insert_one(contenu_doc, None).await {
+        Ok(_) => {
+            debug!("Transaction sauvegardee dans collection de reception");
+            Ok(())
+        },
+        Err(e) => {
+            error!("Erreur sauvegarde transaction dans MongoDb : {:?}", e);
+            Err(format!("Erreur sauvegarde transaction dans MongoDb : {:?}", e))
+        }
+    }?;
+
+    transmettre_evenement_persistance(
+        middleware,
+        uuid_transaction,
+        domaine,
+        m.reply_q.clone(),
+        m.correlation_id.clone()
+    ).await?;
+
+    Ok(())
+}
+
 #[async_trait]
 pub trait TraiterTransaction {
+    // async fn sauvegarder_transaction<M>(&self, middleware: &M, m: MessageValideAction, domaine: &str, nom_collection: &str) -> Result<(), String>
+    //     where M: ValidateurX509 + GenerateurMessages + MongoDao;
     async fn traiter_transaction<M>(&self, domaine: &str, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao;
 }
