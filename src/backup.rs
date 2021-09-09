@@ -36,7 +36,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Hacheur, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509, FormatteurMessage, MessageMilleGrille, ValidationOptions, ResultatValidation};
+use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Hacheur, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509, FormatteurMessage, MessageMilleGrille, ValidationOptions, ResultatValidation, sauvegarder_batch};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -861,6 +861,24 @@ impl ProcesseurFichierBackup {
             }
         }
     }
+
+    async fn sauvegarder_batch<M>(&mut self, middleware: &M, nom_collection: &str) -> Result<(), Box<dyn Error>>
+    where
+        M: MongoDao,
+    {
+        // Deplacer messages vers nouveau vecteur
+        let mut transactions = Vec::new();
+        transactions.reserve(self.batch.len());
+        while let Some(t) = self.batch.pop() {
+            transactions.push(t);
+        }
+
+        // Inserer transactions
+        let resultat = sauvegarder_batch(middleware, nom_collection, transactions).await?;
+        debug!("Resultat sauvegarder batch : {:?}", resultat);
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -1381,6 +1399,8 @@ mod test_integration {
         const FICHIER_DOWNLOAD: &str = "/tmp/download_backup.tar";
 
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+
         let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
         let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
         let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
@@ -1420,6 +1440,9 @@ mod test_integration {
         parse_tar(validateur.as_ref(), &mut fichier_tar, &mut processeur).await.expect("parse");
 
         assert_eq!(4, processeur.batch.len());
+
+        // Upload les transactions valides
+        processeur.sauvegarder_batch(middleware.as_ref(), "Pki.rust").await.expect("batch");
     }
 
 }

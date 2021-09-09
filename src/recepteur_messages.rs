@@ -402,10 +402,13 @@ pub enum ErreurVerification {
     ErreurGenerique,
 }
 
-async fn valider_message(
-    middleware: &(impl ValidateurX509 + GenerateurMessages + IsConfigurationPki),
+async fn valider_message<M>(
+    middleware: &M,
     message: &mut MessageSerialise
-) -> Result<(), ErreurVerification> {
+) -> Result<(), ErreurVerification>
+where
+    M: ValidateurX509 + GenerateurMessages + IsConfigurationPki,
+{
 
     match &message.certificat {
         Some(e) => (),
@@ -439,7 +442,7 @@ async fn valider_message(
         }
     };
 
-    match verifier_message(message, middleware.idmg(), None) {
+    match verifier_message(message, middleware, None) {
         Ok(v) => {
             if v.valide() == true {
                 Ok(())

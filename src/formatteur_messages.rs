@@ -27,7 +27,7 @@ pub trait FormatteurMessage {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 
     /// Implementation de formattage et signature d'un message de MilleGrille
-    fn formatter_message<S>(&self, contenu: &S, domaine: Option<&str>, version: Option<u32>) -> Result<MessageMilleGrille, Box<dyn Error>>
+    fn formatter_message<S>(&self, contenu: &S, domaine: Option<&str>, version: Option<i32>) -> Result<MessageMilleGrille, Box<dyn Error>>
     where
         S: Serialize,
     {
@@ -35,7 +35,7 @@ pub trait FormatteurMessage {
         MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, version)
     }
 
-    fn signer_message(&self, message: &mut MessageMilleGrille, domaine: Option<&str>, version: Option<u32>) -> Result<(), Box<dyn Error>> {
+    fn signer_message(&self, message: &mut MessageMilleGrille, domaine: Option<&str>, version: Option<i32>) -> Result<(), Box<dyn Error>> {
         if message.signature.is_some() {
             Err(format!("Message {} est deja signe", message.entete.uuid_transaction))?
         }
@@ -58,7 +58,7 @@ pub struct Entete {
     pub hachage_contenu: String,
     pub idmg: String,
     pub uuid_transaction: String,
-    pub version: u32,
+    pub version: i32,
 }
 
 impl Entete {
@@ -75,7 +75,7 @@ pub struct EnteteBuilder {
     hachage_contenu: String,
     idmg: String,
     uuid_transaction: String,
-    version: u32,
+    version: i32,
 }
 
 impl EnteteBuilder {
@@ -101,7 +101,7 @@ impl EnteteBuilder {
         self
     }
 
-    pub fn version(mut self, version: u32) -> EnteteBuilder {
+    pub fn version(mut self, version: i32) -> EnteteBuilder {
         self.version = version;
         self
     }
@@ -153,7 +153,7 @@ impl MessageMilleGrille {
         }
     }
 
-    pub fn new_signer<S>(enveloppe_privee: &EnveloppePrivee, contenu: &S, domaine: Option<&str>, version: Option<u32>) -> Result<Self, Box<dyn std::error::Error>>
+    pub fn new_signer<S>(enveloppe_privee: &EnveloppePrivee, contenu: &S, domaine: Option<&str>, version: Option<i32>) -> Result<Self, Box<dyn std::error::Error>>
     where
         S: Serialize,
     {
@@ -181,7 +181,7 @@ impl MessageMilleGrille {
         })
     }
 
-    fn creer_entete(enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<u32>, value: &Map<String, Value>) -> Result<Entete, Box<dyn Error>> {
+    fn creer_entete(enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<i32>, value: &Map<String, Value>) -> Result<Entete, Box<dyn Error>> {
         // Calculer le hachage du contenu
         let hachage = MessageMilleGrille::calculer_hachage_contenu(&value)?;
 
@@ -293,7 +293,7 @@ impl MessageMilleGrille {
         Ok(serde_json::to_string(&ordered)?)
     }
 
-    fn signer(&mut self, enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<u32>) -> Result<(), Box<dyn std::error::Error>> {
+    fn signer(&mut self, enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<i32>) -> Result<(), Box<dyn std::error::Error>> {
         if self.signature.is_some() {
             warn!("appel signer() sur message deja signe, on ignore");
             return Ok(())
@@ -431,7 +431,7 @@ impl MessageSerialise {
         match &self.certificat {
             Some(_) => {
                 // Ok, on a un certificat. Valider la signature.
-                verifier_message(&self, validateur.idmg(), options)
+                verifier_message(&self, validateur, options)
             },
             None => {
                 // Tenter de charger le certificat
@@ -439,7 +439,7 @@ impl MessageSerialise {
                 match self.charger_certificat(validateur).await? {
                     Some(e) => {
                         self.certificat = Some(e);
-                        verifier_message(&self, validateur.idmg(), options)
+                        verifier_message(&self, validateur, options)
                     },
                     None => Err("Certificat manquant")?
                 }

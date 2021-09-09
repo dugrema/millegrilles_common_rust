@@ -15,7 +15,7 @@ use crate::certificats::EnveloppeCertificat;
 use crate::hachages::verifier_multihash;
 use crate::signatures::{SALT_LENGTH, VERSION_1};
 use std::error::Error;
-use crate::{MessageMilleGrille, MqMessageSendInformation, MessageSerialise};
+use crate::{MessageMilleGrille, MqMessageSendInformation, MessageSerialise, ValidateurX509};
 
 pub trait VerificateurMessage {
     fn verifier_message(
@@ -54,11 +54,14 @@ impl ValidationOptions {
     }
 }
 
-pub fn verifier_message(
+pub fn verifier_message<V>(
     message: &MessageSerialise,
-    idmg_local: &str,
+    validateur: &V,
     options: Option<&ValidationOptions>
-) -> Result<ResultatValidation, Box<dyn Error>> {
+) -> Result<ResultatValidation, Box<dyn Error>>
+where
+    V: ValidateurX509,
+{
 
     let (utiliser_idmg_message, utiliser_date_message, toujours_verifier_hachage) = match options {
         Some(o) => (o.utiliser_idmg_message, o.utiliser_date_message, o.toujours_verifier_hachage),
@@ -77,43 +80,23 @@ pub fn verifier_message(
         None => Err("Signature manquante")?,
     };
 
-    let mut certificat_idmg_valide = false;
-    let mut certificat_date_valide = false;
+    let certificat_idmg_valide = match utiliser_idmg_message {
+        true => idmg == certificat.idmg()?,
+        false => idmg == validateur.idmg()
+    };
+    let certificat_date_valide = match utiliser_date_message {
+        true => validateur.valider_pour_date(certificat, estampille)?,
+        false => certificat.presentement_valide
+    };
 
-    if utiliser_idmg_message == true {
-        // S'assurer que le certificat correspond au idmg du message
-        certificat_idmg_valide = idmg == certificat.idmg()?;
-    } else {
-        // Utiliser le IDMG de la MilleGrille locale
-        certificat_idmg_valide = idmg == idmg_local;
+    // Le certificat est valide pour le message, on s'assure que l'estampille du message correspond.
+    let message_date_valide = estampille <= &certificat.not_valid_after()? &&
+        estampille >= &certificat.not_valid_before()?;
 
-        if certificat_idmg_valide == false {
-            debug!("Message invalide, idmg certificat {} ne correspond pas au idmg local {}", idmg, idmg_local);
-        }
-
-    }
-
-    if utiliser_date_message == true && ! certificat.presentement_valide {
-        // Valider que le certificat est valide pour la date de l'estampille
-        todo!("Valider certificat pour la date de l'estampille");
-    }
-
-    // Le certificat doit etre valide presentement
-    if certificat.presentement_valide {
-        // Le certificat est presentement valide, on s'assure que l'estampille du message correspond.
-        certificat_date_valide = estampille <= &certificat.not_valid_after()? &&
-            estampille >= &certificat.not_valid_before()?;
-
-        if certificat_date_valide == false {
-            Err(format!("Message invalide, date estampille {} n'est pas entre {:?} et {:?}",
-                estampille, certificat.not_valid_before(), certificat.not_valid_after()))?;
-        }
-
-    } else if certificat_idmg_valide == true {
-        // Le certificat pourrait ne pas etre valide parce que le idmg est celui d'un tiers
-        //certificat.
-        todo!()
-    }
+    // if message_date_valide == false {
+    //     Err(format!("Message invalide, date estampille {} n'est pas entre {:?} et {:?}",
+    //         estampille, certificat.not_valid_before(), certificat.not_valid_after()))?;
+    // }
 
     // On verifie la signature - si valide, court-circuite le reste de la validation.
     let public_key = match certificat.certificat().public_key() {
@@ -133,7 +116,7 @@ pub fn verifier_message(
         return Ok(ResultatValidation{
             signature_valide: true,
             hachage_valide: None,
-            certificat_valide: certificat_idmg_valide && certificat_date_valide,
+            certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
         })
     } else if resultat_verifier_signature == false {
         debug!("Signature invalide pour message {}", entete.uuid_transaction);
@@ -148,7 +131,7 @@ pub fn verifier_message(
     Ok(ResultatValidation{
         signature_valide: resultat_verifier_signature,
         hachage_valide: Some(hachage_valide),
-        certificat_valide: certificat_idmg_valide && certificat_date_valide,
+        certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
     })
 }
 

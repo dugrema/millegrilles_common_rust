@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::{bson::{doc, to_bson}, Client, Database};
 use mongodb::options::{FindOptions, Hint, UpdateOptions};
-use serde_json::{json, Value};
+use serde_json::{json, Value, Map};
 use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, ValidateurX509};
@@ -14,6 +14,8 @@ use crate::generateur_messages::GenerateurMessages;
 use crate::mongo_dao::MongoDao;
 use crate::recepteur_messages::MessageValideAction;
 use std::error::Error;
+use serde::Serialize;
+use crate::MessageSerialise;
 
 pub async fn transmettre_evenement_persistance(
     middleware: &impl GenerateurMessages,
@@ -291,6 +293,36 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
         }
 
     }
+
+    Ok(())
+}
+
+pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageSerialise>) -> Result<(), String>
+where
+    M: MongoDao,
+{
+    let collection = match middleware.get_collection(nom_collection) {
+        Ok(c) => c,
+        Err(e) => Err(format!("Erreur ouverture collection {}", nom_collection))?
+    };
+
+    let mut transactions_bson = Vec::new();
+    transactions_bson.reserve(transactions.len());
+    while let Some(t) = transactions.pop() {
+        let m = t.get_msg();
+        let mut v: Value = serde_json::to_value(m).expect("value");
+        let mut obj = v.as_object_mut().expect("obj");
+        // obj.remove("_evenements");
+        let mut entete = obj.get_mut("en-tete").expect("entete").as_object_mut().expect("obj");
+        entete.remove("estampille");
+        entete.remove("version");
+        // obj.remove("en-tete");
+        debug!("Message a serialiser en bson : {:?}", obj);
+        let bson_doc = bson::to_document(obj).expect("serialiser bson");
+        transactions_bson.push(bson_doc);
+    }
+
+    debug!("Resultat : {:?}", transactions_bson);
 
     Ok(())
 }
