@@ -12,7 +12,7 @@ use mongodb::{bson::{doc, to_bson}, Client, Collection, Cursor, Database};
 use mongodb::options::{AuthMechanism, ClientOptions, Credential, FindOptions, Hint, TlsOptions, UpdateOptions};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use serde_json::{json, Map, Value};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
@@ -50,11 +50,17 @@ pub fn preparer_middleware_pki(
     ));
 
     // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-    let cles_chiffrage: Vec<FingerprintCertPublicKey> = {
+    let cles_chiffrage = {
         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
         let cert_local = env_privee.enveloppe.as_ref();
         let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-        fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()).collect()
+
+        let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
+        for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
+            map.insert(f.fingerprint.clone(), f);
+        }
+
+        map
     };
 
     let middleware = Arc::new(MiddlewareDbPki {
@@ -151,7 +157,7 @@ pub struct MiddlewareDbPki {
     pub mongo: Arc<MongoDaoImpl>,
     pub validateur: Arc<ValidateurX509Database>,
     pub generateur_messages: Arc<GenerateurMessagesImpl>,
-    cles_chiffrage: Mutex<Vec<FingerprintCertPublicKey>>,
+    cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
 }
 
 pub trait IsConfigurationPki {
@@ -171,6 +177,55 @@ impl MiddlewareDbPki {
         };
 
         debug!("Message reponse : {:?}", message_reponse);
+        let message = match message_reponse {
+            TypeMessage::Valide(m) => m,
+            _ => {
+                error!("Reponse de type non gere : {:?}", message_reponse);
+                return  // Abort
+            }
+        };
+
+        let m = message.message.get_msg();
+        let rep_cert: ReponseCertificatMaitredescles = match serde_json::from_value(Value::Object(m.contenu.clone())) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Erreur lecture message reponse certificats maitre des cles : {:?}", e);
+                return  // Abort
+            }
+        };
+
+        let cert_chiffrage = match rep_cert.get_enveloppe_maitredescles(self).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Erreur chargement enveloppe certificat chiffrage maitredescles : {:?}", e);
+                return  // Abort
+            }
+        };
+
+        debug!("Certificat de maitre des cles charges dans {:?}", cert_chiffrage.as_ref());
+
+        // Stocker cles chiffrage du maitre des cles
+        {
+            let fps = cert_chiffrage.fingerprint_cert_publickeys().expect("public keys");
+            let mut guard = self.cles_chiffrage.lock().expect("lock");
+            for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
+                guard.insert(fp.fingerprint.clone(), fp.clone());
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ReponseCertificatMaitredescles {
+    certificat: Vec<String>,
+    certificat_millegrille: String,
+}
+impl ReponseCertificatMaitredescles {
+    async fn get_enveloppe_maitredescles<V>(&self, validateur: &V) -> Result<Arc<EnveloppeCertificat>, Box<dyn Error>>
+    where
+        V: ValidateurX509,
+    {
+        Ok(validateur.charger_enveloppe(&self.certificat, None).await?)
     }
 }
 
@@ -950,10 +1005,8 @@ mod serialization_tests {
         let (tx_triggers, rx_pki_triggers) = mpsc::channel::<TypeMessage>(1);
 
         let mut map_senders: HashMap<String, Sender<TypeMessage>> = HashMap::new();
-        // map_senders.insert(String::from("Pki"), tx_pki_messages.clone());
         // map_senders.insert(String::from("Core"), tx_pki_messages.clone());
         // map_senders.insert(String::from("certificat"), tx_pki_messages.clone());
-        // map_senders.insert(String::from("Pki/triggers"), tx_pki_triggers.clone());
         // map_senders.insert(String::from("Core/triggers"), tx_pki_triggers.clone());
         futures.push(tokio::spawn(consommer( middleware.clone(), rx_messages_verifies, map_senders.clone())));
         futures.push(tokio::spawn(consommer( middleware.clone(), rx_triggers, map_senders.clone())));
@@ -1037,10 +1090,12 @@ mod serialization_tests {
             debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
 
             debug!("Sleeping");
-            tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+            tokio::time::sleep(tokio::time::Duration::new(4, 0)).await;
             debug!("Fin sleep");
 
             middleware.charger_certificats_chiffrage().await;
+
+            debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
 
             tx_messages.is_closed();
             tx_triggers.is_closed();
