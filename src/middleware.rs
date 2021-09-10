@@ -267,7 +267,7 @@ impl ValidateurX509 for MiddlewareDbPki {
 
         self.validateur.entretien().await;
 
-        self.charger_certificats_chiffrage();
+        self.charger_certificats_chiffrage().await;
 
         match emettre_presence_domaine(self, PKI_DOMAINE_NOM).await {
             Ok(()) => (),
@@ -349,7 +349,12 @@ impl ConfigMessages for MiddlewareDbPki {
 
 impl Chiffreur for MiddlewareDbPki {
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-        todo!()
+        let guard = self.cles_chiffrage.lock().expect("lock");
+
+        // Copier les cles (extraire du mutex), retourner dans un vecteur
+        let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
+
+        vals
     }
 }
 
@@ -1097,8 +1102,48 @@ mod serialization_tests {
 
             debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
 
-            tx_messages.is_closed();
-            tx_triggers.is_closed();
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+
+    /// Test d'acces au MaitreDesCles. Doit creer une cle secrete, la chiffrer avec les certificats
+    /// recus, emettre la cle puis recuperer une version dechiffrable localement.
+    #[tokio::test]
+    async fn roundtrip_cle_secrete() {
+        setup("connecter_middleware_pki");
+
+        // Connecter mongo
+        //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        let (
+            middleware,
+            mut futures,
+            mut tx_messages,
+            mut tx_triggers
+        ) = build().await;
+        futures.push(tokio::spawn(async move {
+            debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
+
+            debug!("Sleeping");
+            tokio::time::sleep(tokio::time::Duration::new(4, 0)).await;
+            debug!("Fin sleep");
+            middleware.charger_certificats_chiffrage().await;
+
+            debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
+
+            let (vec_output, cipher_keys) = {
+                let mut vec_output: Vec<u8> = Vec::new();
+                let mut cipher = middleware.get_cipher();
+                let mut output = [0u8; 40];
+                let len_output = cipher.update(b"Du data a chiffrer", &mut output).expect("update");
+                vec_output.extend_from_slice(&output[..len_output]);
+                let len_output = cipher.finalize(&mut output).expect("finalize");
+                vec_output.extend_from_slice(&output[..len_output]);
+
+                (vec_output, cipher.get_cipher_keys().expect("cipher keys"))
+            };
+
+            debug!("Data chiffre : {:?}\nCipher keys : {:?}", vec_output, cipher_keys);
 
         }));
         // Execution async du test

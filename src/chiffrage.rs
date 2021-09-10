@@ -5,6 +5,7 @@ use std::fmt::{Debug, Formatter};
 use std::io::Write;
 use std::iter::Map;
 
+use async_trait::async_trait;
 use multibase::{Base, decode, encode};
 use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
@@ -14,24 +15,32 @@ use openssl::symm::{Cipher, Crypter, encrypt, Mode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
+use crate::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey};
 use crate::certificats::ordered_map;
-use crate::{FingerprintCertPublicKey, EnveloppeCertificat};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {
     mgs2,
 }
 
-fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> [u8; 256] {
-    let mut cle_chiffree = [0u8; 256];
+fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Vec<u8> {
+    const SIZE_MAX: usize = 4096/8;
+    if public_key.size() > SIZE_MAX {
+        panic!("Taille de la cle ({}) est trop grande pour le buffer ({})", public_key.size(), SIZE_MAX);
+    }
+
+    let mut cle_chiffree = [0u8; SIZE_MAX];
 
     let mut encrypter = Encrypter::new(public_key).expect("encrypter");
     encrypter.set_rsa_padding(Padding::PKCS1_OAEP).expect("padding");
     encrypter.set_rsa_mgf1_md(MessageDigest::sha256()).expect("mgf1");
     encrypter.set_rsa_oaep_md(MessageDigest::sha256()).expect("oaep");
-    encrypter.encrypt(cle_symmetrique, &mut cle_chiffree).expect("encrypt PK");
+    let size = encrypter.encrypt(cle_symmetrique, &mut cle_chiffree).expect("encrypt PK");
 
-    cle_chiffree
+    let mut buffer_ajuste = Vec::new();
+    buffer_ajuste.extend_from_slice(&cle_chiffree[..size]);
+
+    buffer_ajuste
 }
 
 fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Vec<u8> {
@@ -331,6 +340,26 @@ pub trait Chiffreur {
     fn get_cipher(&self) -> CipherMgs2 {
         let fp_public_keys = self.get_publickeys_chiffrage();
         CipherMgs2::new(&fp_public_keys)
+    }
+}
+
+/// Permet de recuperer un Decipher deja initialise pour une cle
+#[async_trait]
+pub trait Dechiffreur {
+    /// Appel au MaitreDesCles pour une version dechiffrable de la cle
+    async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>>;
+
+    /// Cle privee locale pour dechiffrage
+    fn get_enveloppe_privee_dechiffrage(&self) -> EnveloppePrivee;
+
+    /// Retourne une instance de Decipher pleinement initialisee et prete a dechiffrer
+    async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs2, Box<dyn Error>> {
+        let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
+        let env_privee = self.get_enveloppe_privee_dechiffrage();
+        let cle_privee = env_privee.cle_privee();
+        info_cle.dechiffrer_cle(cle_privee)?;
+
+        Ok(DecipherMgs2::new(&info_cle)?)
     }
 }
 
