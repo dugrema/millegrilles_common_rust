@@ -742,7 +742,7 @@ mod serialization_tests {
         let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(true, resultat.signature_valide);
-        assert_eq!(true, resultat.certificat_valide);
+        assert_eq!(false, resultat.certificat_valide);  // Expire
         assert_eq!(None, resultat.hachage_valide);
     }
 
@@ -758,7 +758,7 @@ mod serialization_tests {
         let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(false, resultat.signature_valide);
-        assert_eq!(true, resultat.certificat_valide);
+        assert_eq!(false, resultat.certificat_valide);  // expire
         assert_eq!(Some(false), resultat.hachage_valide);
     }
 
@@ -774,7 +774,7 @@ mod serialization_tests {
         let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(false, resultat.signature_valide);
-        assert_eq!(true, resultat.certificat_valide);
+        assert_eq!(false, resultat.certificat_valide);  // expire
         assert_eq!(Some(true), resultat.hachage_valide);
     }
 

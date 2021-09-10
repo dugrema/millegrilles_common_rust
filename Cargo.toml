@@ -21,7 +21,7 @@ xz2 = { version = "0.1.6", features = ["tokio"] }
 # Tokio, async
 async-recursion = "*"
 async-trait = "0.1.51"
-tokio = { version = "1.9.0", features = ["full"] }
+tokio = { version = "1.11.0", features = ["full"] }
 tokio-stream = { version = "0.1.7" }
 # tokio-tar = { version = "0.3.0" }
 tokio-util = { version = "*", features = ["codec", "io"] }

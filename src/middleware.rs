@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
-use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message};
+use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message, Chiffreur, CipherMgs2, FingerprintCertPublicKey};
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::constantes::*;
@@ -49,11 +49,20 @@ pub fn preparer_middleware_pki(
         generateur_messages_arc.clone(),
     ));
 
+    // Extraire le cert millegrille comme base pour chiffrer les cles secretes
+    let cles_chiffrage: Vec<FingerprintCertPublicKey> = {
+        let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
+        let cert_local = env_privee.enveloppe.as_ref();
+        let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+        fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()).collect()
+    };
+
     let middleware = Arc::new(MiddlewareDbPki {
         configuration,
         mongo,
         validateur: validateur_db.clone(),
         generateur_messages: generateur_messages_arc.clone(),
+        cles_chiffrage,
     });
 
     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(3);
@@ -142,6 +151,7 @@ pub struct MiddlewareDbPki {
     pub mongo: Arc<MongoDaoImpl>,
     pub validateur: Arc<ValidateurX509Database>,
     pub generateur_messages: Arc<GenerateurMessagesImpl>,
+    cles_chiffrage: Vec<FingerprintCertPublicKey>,
 }
 
 pub trait IsConfigurationPki {
@@ -258,6 +268,12 @@ impl ConfigMessages for MiddlewareDbPki {
 
     fn get_configuration_noeud(&self) -> &ConfigurationNoeud {
         self.configuration.get_configuration_noeud()
+    }
+}
+
+impl Chiffreur for MiddlewareDbPki {
+    fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+        todo!()
     }
 }
 
@@ -530,44 +546,15 @@ impl FormatteurMessage for MiddlewareDb {
 
 impl IsConfigurationPki for MiddlewareDb {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-
         let pki = self.configuration.get_configuration_pki();
         pki.get_enveloppe_privee()
-
-        // match self.configuration.as_ref() {
-        //     TypeConfiguration::ConfigurationMessages {mq: _mq, pki} => {
-        //         pki.get_enveloppe_privee().clone()
-        //     },
-        //     TypeConfiguration::ConfigurationMessagesDb {mq: _mq, mongo: _mongo, pki} => {
-        //         pki.get_enveloppe_privee().clone()
-        //     }
-        // }
     }
 }
 
-// impl VerificateurMessage for MiddlewareDb {
-//     fn verifier_message(
-//         message: &MessageJson,
-//         options: Option<ValidationOptions>
-//     ) -> Result<ResultatValidation, Box<dyn std::error::Error>> {
-//         Ok(verifier_message(message, certificat, idmg_local, options)?)
-//     }
-// }
-
 impl IsConfigurationPki for MiddlewareDbPki {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-
         let pki = self.configuration.get_configuration_pki();
         pki.get_enveloppe_privee()
-
-        // match self.configuration.as_ref() {
-        //     TypeConfiguration::ConfigurationMessages {mq: _mq, pki} => {
-        //         pki.get_enveloppe_privee().clone()
-        //     },
-        //     TypeConfiguration::ConfigurationMessagesDb {mq: _mq, mongo: _mongo, pki} => {
-        //         pki.get_enveloppe_privee().clone()
-        //     }
-        // }
     }
 }
 
@@ -584,29 +571,6 @@ impl EmetteurCertificat for MiddlewareDbPki {
         }
     }
 }
-
-// impl FormatteurMessage for MiddlewareDbPki {
-//     fn get_enveloppe_privee(&self) -> &EnveloppePrivee {
-//         self.configuration.get_configuration_pki().get_enveloppe_privee().as_ref()
-//     }
-// }
-
-
-// impl VerificateurMessage for MiddlewareDbPki {
-//     fn verifier_message(
-//         &self,
-//         message: &MessageJson,
-//         options: Option<ValidationOptions>
-//     ) -> Result<ResultatValidation, Box<dyn std::error::Error>> {
-//
-//         let entete = message.get_entete()?;
-//         let validateur_x509 = self.configuration.get_configuration_pki().get_validateur();
-//         let idmg_local = validateur_x509.idmg().as_str();
-//         let certificat_message = message.get_message().get("_certificat");
-//
-//         Ok(verifier_message(message, certificat, idmg_local, options)?)
-//     }
-// }
 
 pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection<Document>, dirty: Option<bool>) -> Result<Option<String>, String> {
     let fingerprint = enveloppe.fingerprint();
@@ -916,4 +880,24 @@ pub trait TraiterTransaction {
     //     where M: ValidateurX509 + GenerateurMessages + MongoDao;
     async fn traiter_transaction<M>(&self, domaine: &str, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao;
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use crate::certificats_tests::charger_enveloppe_privee_env;
+    use crate::test_setup::setup;
+    use super::*;
+
+    #[tokio::test]
+    async fn connecter_middleware_pki() {
+        setup("connecter_middleware_pki");
+
+        // Connecter mongo
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        futures.push(tokio::spawn(async move {
+            debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
 }

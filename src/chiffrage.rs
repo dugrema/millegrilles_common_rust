@@ -15,7 +15,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::certificats::ordered_map;
-use crate::FingerprintCertPublicKey;
+use crate::{FingerprintCertPublicKey, EnveloppeCertificat};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {
@@ -318,6 +318,19 @@ impl Mgs2CipherData {
 impl Debug for Mgs2CipherData {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(format!("Mgs2CipherData iv: {:?}, tag: {:?}", self.iv, self.tag).as_str())
+    }
+}
+
+/// Permet de recuperer un Cipher deja initalise avec les certificats de MaitreDesCles.
+pub trait Chiffreur {
+    /// Retourne les certificats qui peuvent etre utilises pour chiffrer une cle secrete.
+    /// Devrait inclure le certificat de MilleGrille avec flag est_cle_millegrille==true.
+    fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey>;
+
+    /// Recupere un cipher initialise avec les cles publiques
+    fn get_cipher(&self) -> CipherMgs2 {
+        let fp_public_keys = self.get_publickeys_chiffrage();
+        CipherMgs2::new(&fp_public_keys)
     }
 }
 
