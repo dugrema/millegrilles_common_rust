@@ -63,7 +63,8 @@ pub async fn recevoir_messages(
         // Extraire routing key pour gerer messages qui ne requierent pas de validation
         let (mut routing_key, type_message, domaine, action) = {
             let rk = delivery.routing_key.as_str();
-            if rk == "" {
+            let ex = delivery.exchange.as_str();
+            if ex == "" {
                 (None, Some(TypeMessageIn::Reponse), None, None)
             } else {
                 let copie_rk = rk.to_owned();

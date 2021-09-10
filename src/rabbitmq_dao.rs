@@ -54,6 +54,7 @@ pub struct ReplyQueue {
     pub fingerprint_certificat: String,
     pub securite: Securite,
     pub ttl: Option<u32>,
+    pub reply_q_name: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -113,6 +114,8 @@ pub fn executer_mq<'a>(
     // Preparer recepteur de tx_message_out pour emettre des messages vers MQ (cree dans la boucle)
     let tx_message_out = Arc::new(Mutex::new(None));
 
+    let reply_q =  Arc::new(Mutex::new(None));
+
     let boucle_execution = tokio::spawn(
         boucle_execution(
             configuration,
@@ -121,6 +124,7 @@ pub fn executer_mq<'a>(
             tx_traiter_trigger.clone(),
             tx_message_out.clone(),
             listeners,
+            reply_q.clone(),
         )
     );
 
@@ -130,7 +134,7 @@ pub fn executer_mq<'a>(
         rx_triggers: rx_traiter_trigger,
         tx_out: tx_message_out.clone(),
         tx_interne: tx_traiter_message.clone(),
-        reply_q: Arc::new(Mutex::new(None)),
+        reply_q,
     })
 }
 
@@ -177,7 +181,8 @@ async fn boucle_execution(
     tx_traiter_delivery: Sender<MessageInterne>,
     tx_traiter_trigger: Sender<MessageInterne>,
     tx_message_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
-    listeners: Option<Mutex<Callback<'_, EventMq>>>
+    listeners: Option<Mutex<Callback<'_, EventMq>>>,
+    reply_q: Arc<Mutex<Option<String>>>
 ) {
 
     let vec_queues = match queues {
@@ -218,6 +223,7 @@ async fn boucle_execution(
                     fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
                     securite: Securite::L3Protege,
                     ttl: Some(300000),
+                    reply_q_name: reply_q.clone(),  // Permet de maj le nom de la reply_q globalement
                 };
                 futures.push(task::spawn(ecouter_consumer(
                     channel_reponses,
@@ -242,7 +248,7 @@ async fn boucle_execution(
 
             // Demarrer tasks de traitement de messages
             // futures.push(task::spawn(task_pretraiter_messages(rx_delivery, tx_traiter_message.clone())));
-            futures.push(task::spawn(task_emettre_messages(configuration.clone(), channel_out, rx_out)));
+            futures.push(task::spawn(task_emettre_messages(configuration.clone(), channel_out, rx_out, reply_q.clone())));
 
             // Emettre message connexion completee
             match &listeners {
@@ -332,6 +338,12 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
     }
 
     debug!("Creation reply-Q exclusive {:?}", reply_queue);
+
+    {
+        // Conserver le nom de la Q globalement
+        let mut ql = rq.reply_q_name.lock().expect("lock");
+        *ql = Some(reply_queue.name().as_str().into());
+    }
 
     reply_queue
 }
@@ -468,14 +480,17 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
     }
 }
 
-async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel: Channel, mut rx: Receiver<MessageOut>) {
-    let mut compteur: u64 = 0;
+async fn task_emettre_messages<C>(configuration: Arc<C>, channel: Channel, mut rx: Receiver<MessageOut>, reply_q: Arc<Mutex<Option<String>>>)
+where
+    C: ConfigMessages,
+{
+    let mut compteur: usize = 0;
     let mq = configuration.get_configuration_mq();
     // let mq = match configuration.as_ref() {
     //     TypeConfiguration::ConfigurationMessages {mq, pki} => mq,
     //     TypeConfiguration::ConfigurationMessagesDb {mq, mongo, pki} => mq,
     // };
-    let exchange_defaut = &mq.exchange_default;
+    let exchange_defaut = mq.exchange_default.as_str();
     debug!("rabbitmq_dao.emettre_message : Demarrage thread, exchange defaut {}", exchange_defaut);
 
     while let Some(message) = rx.recv().await {
@@ -492,7 +507,13 @@ async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel:
         };
 
         let routing_key = match &message.domaine_action {
-            Some(rk) => rk.to_owned(),
+            Some(da) => match &message.type_message {
+                TypeMessageOut::Requete => format!("requete.{}", da),
+                TypeMessageOut::Commande => format!("commande.{}", da),
+                TypeMessageOut::Transaction => format!("transaction.{}", da),
+                TypeMessageOut::Reponse => String::from(""),  // La reponse est traitee separement
+                TypeMessageOut::Evenement => format!("evenement.{}", da),
+            },
             None => String::from(""),
         };
 
@@ -506,8 +527,21 @@ async fn task_emettre_messages(configuration: Arc<impl ConfigMessages>, channel:
 
         let options = BasicPublishOptions::default();
         let payload = message_serialise.get_str().as_bytes().to_vec();
-        let mut properties = BasicProperties::default()
-            .with_correlation_id(correlation_id.clone().into());
+
+        let properties = {
+            let mut properties = BasicProperties::default()
+                .with_correlation_id(correlation_id.clone().into());
+            let lock_reply_q = reply_q.lock().expect("lock");
+            debug!("Emission message, reply_q : {:?}", lock_reply_q);
+            match lock_reply_q.as_ref() {
+                Some(qs) => {
+                    properties = properties.with_reply_to(qs.as_str().into());
+                },
+                None => ()
+            };
+
+            properties
+        };
 
         // if let Some(reply_q) = message.replying_to {
         //     debug!("Emission message vers reply_q {} avec correlation_id {}", reply_q, correlation_id);

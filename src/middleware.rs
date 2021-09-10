@@ -62,7 +62,7 @@ pub fn preparer_middleware_pki(
         mongo,
         validateur: validateur_db.clone(),
         generateur_messages: generateur_messages_arc.clone(),
-        cles_chiffrage,
+        cles_chiffrage: Mutex::new(cles_chiffrage),
     });
 
     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(3);
@@ -151,11 +151,27 @@ pub struct MiddlewareDbPki {
     pub mongo: Arc<MongoDaoImpl>,
     pub validateur: Arc<ValidateurX509Database>,
     pub generateur_messages: Arc<GenerateurMessagesImpl>,
-    cles_chiffrage: Vec<FingerprintCertPublicKey>,
+    cles_chiffrage: Mutex<Vec<FingerprintCertPublicKey>>,
 }
 
 pub trait IsConfigurationPki {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
+}
+
+impl MiddlewareDbPki {
+    async fn charger_certificats_chiffrage(&self) {
+        debug!("Charger les certificats de maitre des cles pour chiffrage");
+        let requete = json!({});
+        let message_reponse = match self.generateur_messages.transmettre_requete("MaitreDesCles.certMaitreDesCles", &requete, None).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Erreur demande certificats : {}", e);
+                return
+            }
+        };
+
+        debug!("Message reponse : {:?}", message_reponse);
+    }
 }
 
 #[async_trait]
@@ -196,6 +212,8 @@ impl ValidateurX509 for MiddlewareDbPki {
 
         self.validateur.entretien().await;
 
+        self.charger_certificats_chiffrage();
+
         match emettre_presence_domaine(self, PKI_DOMAINE_NOM).await {
             Ok(()) => (),
             Err(e) => warn!("Erreur emission presence du domaine : {}", e),
@@ -211,7 +229,10 @@ impl GenerateurMessages for MiddlewareDbPki {
         self.generateur_messages.emettre_evenement( domaine, message, exchanges).await
     }
 
-    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>) -> Result<TypeMessage, String> {
+    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    where
+        M: Serialize + Send + Sync,
+    {
         self.generateur_messages.transmettre_requete(domaine, message, exchange).await
     }
 
@@ -497,7 +518,10 @@ impl GenerateurMessages for MiddlewareDb {
         self.generateur_messages.emettre_evenement(domaine, message, exchanges).await
     }
 
-    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>) -> Result<TypeMessage, String> {
+    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    where
+        M: Serialize + Send + Sync,
+    {
         self.generateur_messages.transmettre_requete(domaine, message, exchange).await
     }
 
@@ -888,14 +912,139 @@ mod serialization_tests {
     use crate::test_setup::setup;
     use super::*;
 
+    async fn build() -> (Arc<MiddlewareDbPki>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>) {
+        // Preparer configuration
+        let queues = Vec::new();
+
+        let (tx, rx) = mpsc::channel(1);
+
+        let listeners = {
+            let mut callbacks: Callback<EventMq> = Callback::new();
+            callbacks.register(Box::new(move |event| {
+                debug!("Ceci est un test de callback sur connexion, event : {:?}", event);
+                // tx.blocking_send(event).expect("Event connexion MQ");
+                let tx_ref = tx.clone();
+                let _ = tokio::spawn(async move{
+                    match tx_ref.send(event).await {
+                        Ok(_) => (),
+                        Err(e) => error!("Erreur queuing via callback : {:?}", e)
+                    }
+                });
+            }));
+
+            Some(Mutex::new(callbacks))
+        };
+
+        let (
+            middleware,
+            rx_messages_verifies,
+            rx_triggers,
+            future_recevoir_messages
+        ) = preparer_middleware_pki(queues, listeners);
+
+        // Demarrer threads
+        let mut futures : FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
+
+        // Thread consommation
+        let (tx_messages, rx_messages) = mpsc::channel::<TypeMessage>(1);
+        let (tx_triggers, rx_pki_triggers) = mpsc::channel::<TypeMessage>(1);
+
+        let mut map_senders: HashMap<String, Sender<TypeMessage>> = HashMap::new();
+        // map_senders.insert(String::from("Pki"), tx_pki_messages.clone());
+        // map_senders.insert(String::from("Core"), tx_pki_messages.clone());
+        // map_senders.insert(String::from("certificat"), tx_pki_messages.clone());
+        // map_senders.insert(String::from("Pki/triggers"), tx_pki_triggers.clone());
+        // map_senders.insert(String::from("Core/triggers"), tx_pki_triggers.clone());
+        futures.push(tokio::spawn(consommer( middleware.clone(), rx_messages_verifies, map_senders.clone())));
+        futures.push(tokio::spawn(consommer( middleware.clone(), rx_triggers, map_senders.clone())));
+
+        // Thread d'entretien
+        //futures.push(tokio::spawn(entretien(middleware.clone(), rx)));
+
+        // Thread ecoute et validation des messages
+        for f in future_recevoir_messages {
+            futures.push(f);
+        }
+
+        futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_messages)));
+        futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_pki_triggers)));
+
+        // debug!("domaines_middleware: Demarrage traitement domaines middleware");
+        // let arret = futures.next().await;
+        // debug!("domaines_middleware: Fermeture du contexte, task daemon terminee : {:?}", arret);
+
+        (middleware, futures, tx_messages, tx_triggers)
+    }
+
+    async fn consommer(
+        _middleware: Arc<impl ValidateurX509 + GenerateurMessages + MongoDao>,
+        mut rx: Receiver<TypeMessage>,
+        map_senders: HashMap<String, Sender<TypeMessage>>
+    ) {
+        while let Some(message) = rx.recv().await {
+            match &message {
+                TypeMessage::Valide(m) => {
+                    debug!("traiter_messages_valides: Message valide sans routing key/action : {:?}", m.message);
+                },
+                TypeMessage::ValideAction(m) => {
+                    let contenu = &m.message;
+                    let rk = &m.routing_key;
+                    let action = &m.action;
+                    debug!("domaines_middleware.consommer: Traiter message valide (action: {}, rk: {}): {:?}", action, rk, contenu);
+
+                    // match map_senders.get(m.domaine.as_str()) {
+                    //     Some(sender) => {sender.send(message).await.expect("send message vers sous-domaine")},
+                    //     None => error!("Message de domaine inconnu {}, on le drop", m.domaine),
+                    // }
+                },
+                TypeMessage::Certificat(_) => (),  // Rien a faire
+                TypeMessage::Regeneration => (),   // Rien a faire
+            }
+        }
+
+        debug!("Fin consommer");
+    }
+
+    pub async fn consommer_messages(middleware: Arc<MiddlewareDbPki>, mut rx: Receiver<TypeMessage>) {
+        while let Some(message) = rx.recv().await {
+            debug!("Message PKI recu : {:?}", message);
+
+            match message {
+                TypeMessage::ValideAction(inner) => {debug!("Message ValideAction recu : {:?}", inner)},
+                TypeMessage::Valide(_inner) => {warn!("Recu MessageValide sur thread consommation"); todo!()},
+                TypeMessage::Certificat(_inner) => {warn!("Recu MessageCertificat sur thread consommation"); todo!()},
+                TypeMessage::Regeneration => {continue}, // Rien a faire, on boucle
+            };
+
+        }
+
+        debug!("Fin consommer_messages");
+    }
+
     #[tokio::test]
     async fn connecter_middleware_pki() {
         setup("connecter_middleware_pki");
 
         // Connecter mongo
-        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        let (
+            middleware,
+            mut futures,
+            mut tx_messages,
+            mut tx_triggers
+        ) = build().await;
         futures.push(tokio::spawn(async move {
-            debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
+            debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
+
+            debug!("Sleeping");
+            tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+            debug!("Fin sleep");
+
+            middleware.charger_certificats_chiffrage().await;
+
+            tx_messages.is_closed();
+            tx_triggers.is_closed();
+
         }));
         // Execution async du test
         futures.next().await.expect("resultat").expect("ok");

@@ -104,6 +104,8 @@ where
         Err(e) => Err(format!("Erreur extraction public_key du certificat : {:?}", e)),
     }?;
 
+    debug!("Contenu message complte pour verification signature :\n{:?}", message);
+
     let contenu_string = MessageMilleGrille::preparer_pour_signature(entete, &message.get_msg().contenu)?;
 
     let resultat_verifier_signature = match verifier_signature_str(&public_key, signature, contenu_string.as_str()) {

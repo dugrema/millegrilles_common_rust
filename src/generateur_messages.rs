@@ -22,7 +22,10 @@ use serde::Serialize;
 #[async_trait]
 pub trait GenerateurMessages: Send + Sync {
     async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String>;
-    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>) -> Result<TypeMessage, String>;
+
+    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+        where M: Serialize + Send + Sync;
+
     async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
     async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String>;
     async fn repondre(&self, message: &(impl Serialize+Send+Sync), reply_q: &str, correlation_id: &str) -> Result<(), String>;
@@ -122,7 +125,10 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         Ok(())
     }
 
-    async fn transmettre_requete(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>) -> Result<TypeMessage, String> {
+    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    where
+        M: Serialize + Send + Sync,
+    {
 
         if self.get_mode_regeneration() {
             // Rien a faire

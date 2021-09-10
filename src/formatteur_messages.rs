@@ -52,6 +52,7 @@ pub trait FormatteurMessage {
 /// Entete de messages de MilleGrille (champ "en-tete").
 pub struct Entete {
     // Note : s'assurer de conserver les champs en ordre alphabetique
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub domaine: Option<String>,
     pub estampille: DateEpochSeconds,
     pub fingerprint_certificat: String,
