@@ -15,8 +15,10 @@ use openssl::symm::{Cipher, Crypter, encrypt, Mode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey};
+use crate::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, Hacheur};
 use crate::certificats::ordered_map;
+use multihash::Code;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {
@@ -67,6 +69,7 @@ pub struct CipherMgs2 {
     iv: String,
     cles_chiffrees: Vec<FingerprintCleChiffree>,
     fp_cle_millegrille: Option<String>,
+    hacheur: Hacheur,
 }
 
 // Structure qui conserve une cle chiffree pour un fingerprint de certificat
@@ -106,24 +109,37 @@ impl CipherMgs2 {
             Some(iv)
         ).unwrap();
 
+        let hacheur = Hacheur::builder()
+            .digester(Code::Sha2_512)
+            .base(Base::Base58Btc)
+            .build();
+
         CipherMgs2 {
             encrypter,
             iv: encode(Base::Base64, iv),
             cles_chiffrees: fp_cles,
             fp_cle_millegrille,
+            hacheur,
         }
     }
 
     pub fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String> {
         match self.encrypter.update(data, out) {
-            Ok(s) => Ok(s),
+            Ok(s) => {
+                self.hacheur.update(&out[..s]);  // Calculer hachage output
+                Ok(s)
+            },
             Err(e) => Err(format!("Erreur update : {:?}", e))
         }
     }
 
     pub fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.encrypter.finalize(out) {
-            Ok(s) => Ok(s),
+            Ok(s) => {
+                self.hacheur.update(&out[..s]);  // Calculer hachage output
+                self.hacheur.finalize();
+                Ok(s)
+            },
             Err(e) => Err(format!("Erreur update : {:?}", e)),
         }
     }
@@ -143,6 +159,7 @@ impl CipherMgs2 {
             self.cles_chiffrees.clone(),
             self.iv.clone(),
             self.get_tag()?.clone(),
+            self.hacheur.hachage_bytes.as_ref().expect("hachage").to_owned(),
         );
         cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
 
@@ -197,7 +214,7 @@ impl DecipherMgs2 {
     pub fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.decrypter.finalize(out) {
             Ok(s) => Ok(s),
-            Err(e) => Err(format!("Erreur update : {:?}", e)),
+            Err(e) => Err(format!("Erreur finalize : {:?}", e)),
         }
     }
 
@@ -214,12 +231,13 @@ pub struct Mgs2CipherKeys {
     cles_chiffrees: Vec<FingerprintCleChiffree>,
     pub iv: String,
     pub tag: String,
-    pub fingerprint_cert_millegrille: Option<String>
+    pub fingerprint_cert_millegrille: Option<String>,
+    pub hachage_bytes: String,
 }
 
 impl Mgs2CipherKeys {
-    pub fn new(cles_chiffrees: Vec<FingerprintCleChiffree>, iv: String, tag: String) -> Self {
-        Mgs2CipherKeys { cles_chiffrees, iv, tag, fingerprint_cert_millegrille: None }
+    pub fn new(cles_chiffrees: Vec<FingerprintCleChiffree>, iv: String, tag: String, hachage_bytes: String) -> Self {
+        Mgs2CipherKeys { cles_chiffrees, iv, tag, fingerprint_cert_millegrille: None, hachage_bytes }
     }
 
     pub fn set_fingerprint_cert_millegrille(&mut self, fingerprint_cert_millegrille: &str) {
@@ -250,12 +268,11 @@ impl Mgs2CipherKeys {
 
     pub fn get_commande_sauvegarder_cles(
         &self,
-        hachage_bytes: &str,
         domaine: &str,
         identificateurs_document: HashMap<String, String>
     ) -> CommandeSauvegarderCle {
         CommandeSauvegarderCle {
-            hachage_bytes: hachage_bytes.to_owned(),
+            hachage_bytes: self.hachage_bytes.clone(),
             cles: self.cles_to_map(),
             iv: self.iv.clone(),
             tag: self.tag.clone(),
@@ -287,7 +304,7 @@ pub struct CommandeSauvegarderCle {
     cles: HashMap<String, String>,
     domaine: String,
     format: FormatChiffrage,
-    hachage_bytes: String,
+    pub hachage_bytes: String,
     #[serde(serialize_with = "ordered_map")]
     identificateurs_document: HashMap<String, String>,
     iv: String,
@@ -350,7 +367,7 @@ pub trait Dechiffreur {
     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>>;
 
     /// Cle privee locale pour dechiffrage
-    fn get_enveloppe_privee_dechiffrage(&self) -> EnveloppePrivee;
+    fn get_enveloppe_privee_dechiffrage(&self) -> Arc<EnveloppePrivee>;
 
     /// Retourne une instance de Decipher pleinement initialisee et prete a dechiffrer
     async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs2, Box<dyn Error>> {

@@ -506,7 +506,7 @@ mod fichiers_tests {
         id_docs.insert(String::from("dummy_id"), String::from("dummy_valeur"));
         let commande_cles = cipher_keys
             .expect("cles")
-            .get_commande_sauvegarder_cles(mh.as_str(), "dummy", id_docs);
+            .get_commande_sauvegarder_cles("dummy", id_docs);
 
         debug!("Commande cles : {:?}", commande_cles);
     }

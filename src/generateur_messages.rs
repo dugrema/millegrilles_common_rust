@@ -27,7 +27,7 @@ pub trait GenerateurMessages: Send + Sync {
         where M: Serialize + Send + Sync;
 
     async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String>;
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
     async fn repondre(&self, message: &(impl Serialize+Send+Sync), reply_q: &str, correlation_id: &str) -> Result<(), String>;
     fn mq_disponible(&self) -> bool;
 
@@ -135,50 +135,58 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(TypeMessage::Regeneration)
         }
 
-        let message_signe = match self.formatter_message(message, Some(domaine), None) {
-            Ok(m) => m,
-            Err(e) => Err(format!("Erreur transmission requete : {:?}", e))?
-        };
-
-        let exchanges = match exchange {
-            Some(inner) => Some(vec!(inner)),
-            None => Some(vec!(Securite::L3Protege)),
-        };
-
-        let message_out = MessageOut::new(
-            domaine,
-            message_signe,
-            TypeMessageOut::Requete,
-            exchanges
-        );
-
-        let entete = &message_out.message.entete;
-        let correlation_id = entete.uuid_transaction.clone();
-
-        let (tx_delivery, mut rx_delivery) = oneshot::channel();
-        let demande = MessageInterne::AttenteReponse(AttenteReponse {
-            correlation: correlation_id.clone(),
-            sender: tx_delivery,
-        });
-
-        // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
-        self.tx_interne.send(demande).await.expect("Erreur emission message interne");
-
-        // Emettre la requete sur MQ
-        debug!("Emettre requete correlation {}", correlation_id);
-        let _ = self.emettre(message_out).await?;
-
-        // Retourner le channel pour attendre la reponse
-        let reponse= timeout(Duration::from_millis(15_000), rx_delivery).await;
-        match reponse {
-            Ok(inner) => {
-                match inner {
-                    Ok(inner2) => Ok(inner2),
-                    Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
-                }
+        match self.emettre_message(domaine, message, exchange, true, TypeMessageOut::Requete).await {
+            Ok(r) => match r {
+                Some(m) => Ok(m),
+                None => Err(String::from("Aucune reponse")),
             },
-            Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
+            Err(e) => Err(e),
         }
+
+        // let message_signe = match self.formatter_message(message, Some(domaine), None) {
+        //     Ok(m) => m,
+        //     Err(e) => Err(format!("Erreur transmission requete : {:?}", e))?
+        // };
+        //
+        // let exchanges = match exchange {
+        //     Some(inner) => Some(vec!(inner)),
+        //     None => Some(vec!(Securite::L3Protege)),
+        // };
+        //
+        // let message_out = MessageOut::new(
+        //     domaine,
+        //     message_signe,
+        //     TypeMessageOut::Requete,
+        //     exchanges
+        // );
+        //
+        // let entete = &message_out.message.entete;
+        // let correlation_id = entete.uuid_transaction.clone();
+        //
+        // let (tx_delivery, mut rx_delivery) = oneshot::channel();
+        // let demande = MessageInterne::AttenteReponse(AttenteReponse {
+        //     correlation: correlation_id.clone(),
+        //     sender: tx_delivery,
+        // });
+        //
+        // // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
+        // self.tx_interne.send(demande).await.expect("Erreur emission message interne");
+        //
+        // // Emettre la requete sur MQ
+        // debug!("Emettre requete correlation {}", correlation_id);
+        // let _ = self.emettre(message_out).await?;
+        //
+        // // Retourner le channel pour attendre la reponse
+        // let reponse= timeout(Duration::from_millis(15_000), rx_delivery).await;
+        // match reponse {
+        //     Ok(inner) => {
+        //         match inner {
+        //             Ok(inner2) => Ok(inner2),
+        //             Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
+        //         }
+        //     },
+        //     Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
+        // }
     }
 
     async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
@@ -188,76 +196,16 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(Some(TypeMessage::Regeneration))
         }
 
-        let message_signe = match self.formatter_message(message, Some(domaine), None) {
-            Ok(m) => m,
-            Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
-        };
-
-        let routing_key = match &message_signe.entete.domaine {
-            Some(d) => format!("{}.{}", "transaction", d),
-            None => Err("Domaine manquant")?,
-        };
-
-        let exchanges = match exchange {
-            Some(inner) => Some(vec!(inner)),
-            None => Some(vec!(Securite::L3Protege)),
-        };
-
-        // let domaine_action = format!("transaction.{}", domaine);
-
-        let message_out = MessageOut::new(
-            &routing_key,
-            message_signe,
-            TypeMessageOut::Transaction,
-            exchanges
-        );
-
-        let (tx_delivery, mut rx_delivery) = oneshot::channel();
-
-        let correlation_id = {
-            let entete = &message_out.message.entete;
-            entete.uuid_transaction.clone()
-        };
-
-        if blocking {
-            let demande = MessageInterne::AttenteReponse(AttenteReponse {
-                correlation: correlation_id.clone(),
-                sender: tx_delivery,
-            });
-
-            // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
-            self.tx_interne.send(demande).await.expect("Erreur emission message interne");
-        }
-
-        // Emettre la requete sur MQ
-        debug!("Emettre requete correlation {}", correlation_id);
-        let _ = self.emettre(message_out).await?;
-
-        // Retourner le channel pour attendre la reponse
-        if blocking {
-            let reponse= timeout(Duration::from_millis(15_000), rx_delivery).await;
-            match reponse {
-                Ok(inner) => {
-                    match inner {
-                        Ok(inner2) => Ok(Some(inner2)),
-                        Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
-                    }
-                },
-                Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
-            }
-        } else {
-            // Non-blocking, emission simple et on n'attend pas
-            Ok(None)
-        }
+        self.emettre_message(domaine, message, exchange, blocking, TypeMessageOut::Transaction).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String> {
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
         if self.get_mode_regeneration() {
             // Rien a faire
-            return Ok(TypeMessage::Regeneration)
+            return Ok(Some(TypeMessage::Regeneration))
         }
 
-        todo!()
+        self.emettre_message(domaine, message, exchange, blocking, TypeMessageOut::Commande).await
     }
 
     async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
@@ -311,6 +259,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
 }
 
+
 impl FormatteurMessage for GenerateurMessagesImpl {
     // fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn Error>> {
     //     self.formatteur.formatter_value(message, domaine)
@@ -334,3 +283,71 @@ impl FormatteurMessage for GenerateurMessagesImpl {
 //
 //     }
 // }
+impl GenerateurMessagesImpl {
+    async fn emettre_message<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>, blocking: bool, type_message_out: TypeMessageOut) -> Result<Option<TypeMessage>, String>
+    where
+        M: Serialize + Send + Sync,
+    {
+        let message_signe = match self.formatter_message(message, Some(domaine), None) {
+            Ok(m) => m,
+            Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
+        };
+
+        let routing_key = match &message_signe.entete.domaine {
+            Some(d) => d.to_owned(),
+            None => Err("Domaine manquant")?,
+        };
+
+        let exchanges = match exchange {
+            Some(inner) => Some(vec!(inner)),
+            None => Some(vec!(Securite::L3Protege)),
+        };
+
+        // let domaine_action = format!("transaction.{}", domaine);
+
+        let message_out = MessageOut::new(
+            &routing_key,
+            message_signe,
+            type_message_out,
+            exchanges
+        );
+
+        let (tx_delivery, mut rx_delivery) = oneshot::channel();
+
+        let correlation_id = {
+            let entete = &message_out.message.entete;
+            entete.uuid_transaction.clone()
+        };
+
+        if blocking {
+            let demande = MessageInterne::AttenteReponse(AttenteReponse {
+                correlation: correlation_id.clone(),
+                sender: tx_delivery,
+            });
+
+            // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
+            self.tx_interne.send(demande).await.expect("Erreur emission message interne");
+        }
+
+        // Emettre la requete sur MQ
+        debug!("Emettre requete correlation {}", correlation_id);
+        let _ = self.emettre(message_out).await?;
+
+        // Retourner le channel pour attendre la reponse
+        if blocking {
+            let reponse = timeout(Duration::from_millis(15_000), rx_delivery).await;
+            match reponse {
+                Ok(inner) => {
+                    match inner {
+                        Ok(inner2) => Ok(Some(inner2)),
+                        Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
+                    }
+                },
+                Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
+            }
+        } else {
+            // Non-blocking, emission simple et on n'attend pas
+            Ok(None)
+        }
+    }
+}

@@ -71,7 +71,6 @@ pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collectio
                 identificateurs_document.insert(String::from("heure"), String::from("...heure..."));
 
                 let commande = k.get_commande_sauvegarder_cles(
-                    builder.transactions_hachage.as_str(),
                     "Backup",
                     identificateurs_document
                 );
@@ -274,7 +273,6 @@ async fn serialiser_catalogue(
             identificateurs_document.insert("heure".into(), format!("{}00", builder.heure.format_ymdh()));
 
             let commande_maitredescles = cles.get_commande_sauvegarder_cles(
-                builder.transactions_hachage.as_str(),
                 "Backup",
                 identificateurs_document,
             );

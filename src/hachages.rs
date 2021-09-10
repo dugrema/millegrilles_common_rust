@@ -64,6 +64,7 @@ pub struct Hacheur {
     hacheur_interne: Box<dyn HacheurInterne>,
     digester: Code,
     base: Base,
+    pub hachage_bytes: Option<String>,
 }
 
 impl Hacheur {
@@ -76,8 +77,16 @@ impl Hacheur {
     }
 
     pub fn finalize(&mut self) -> String {
-        let mh_bytes = self.hacheur_interne.finalize();
-        encode(self.base, mh_bytes)
+        match &self.hachage_bytes {
+            Some(h) => h.clone(),
+            None => {
+                let mh_bytes = self.hacheur_interne.finalize();
+                let hachage_bytes = encode(self.base, mh_bytes);
+                self.hachage_bytes = Some(hachage_bytes.clone());
+
+                hachage_bytes
+            }
+        }
     }
 }
 
@@ -116,6 +125,7 @@ impl HacheurBuilder {
             hacheur_interne,
             digester: self.digester,
             base: self.base,
+            hachage_bytes: None,
         }
     }
 }
@@ -162,6 +172,7 @@ mod backup_tests {
             hacheur_interne,
             digester: Code::Sha2_512,
             base: Base::Base64,
+            hachage_bytes: None,
         };
 
         hacheur.update("Allo le test".as_bytes());

@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
-use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message, Chiffreur, CipherMgs2, FingerprintCertPublicKey};
+use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message, Chiffreur, CipherMgs2, FingerprintCertPublicKey, Dechiffreur, Mgs2CipherData};
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::constantes::*;
@@ -295,7 +295,7 @@ impl GenerateurMessages for MiddlewareDbPki {
         self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String> {
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
         self.generateur_messages.transmettre_commande(domaine, message, exchange, blocking).await
     }
 
@@ -358,6 +358,68 @@ impl Chiffreur for MiddlewareDbPki {
     }
 }
 
+#[async_trait]
+impl Dechiffreur for MiddlewareDbPki {
+
+    async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>> {
+        let requete = {
+            let mut liste_hachage_bytes = Vec::new();
+            liste_hachage_bytes.push(hachage_bytes);
+            json!({
+                "liste_hachage_bytes": liste_hachage_bytes,
+            })
+        };
+        let reponse_cle_rechiffree = self.transmettre_requete(
+            "MaitreDesCles.dechiffrage", &requete, None).await?;
+
+        let m = match reponse_cle_rechiffree {
+            TypeMessage::Valide(m) => m.message,
+            _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
+        };
+
+        let contenu_dechiffrage: ReponseDechiffrageCle = serde_json::from_value(Value::Object(m.get_msg().contenu.clone()))?;
+
+        contenu_dechiffrage.to_cipher_data()
+    }
+
+    fn get_enveloppe_privee_dechiffrage(&self) -> Arc<EnveloppePrivee> {
+        self.configuration.get_configuration_pki().get_enveloppe_privee().clone()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ReponseDechiffrageCle {
+    acces: String,
+    pub cles: HashMap<String, ReponseDechiffrageCleInfo>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ReponseDechiffrageCleInfo {
+    acces: String,
+    cle: String,
+    domaine: String,
+    format: String,
+    identificateurs_document: Option<HashMap<String, String>>,
+    iv: String,
+    tag: String,
+}
+
+impl ReponseDechiffrageCle {
+    pub fn to_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
+        if self.cles.len() == 1 {
+            let (_, cle) = self.cles.iter().next().expect("cle");
+            cle.to_cipher_data()
+        } else {
+            Err(String::from("Plusieurs cles presentes"))?
+        }
+    }
+}
+
+impl ReponseDechiffrageCleInfo {
+    pub fn to_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
+        Mgs2CipherData::new(&self.cle, &self.iv, &self.tag)
+    }
+}
 
 /// Validateur X509 backe par une base de donnees (Mongo)
 /// Permet de charger les certificats et generer les transactions pour les certificats inconnus.
@@ -589,7 +651,7 @@ impl GenerateurMessages for MiddlewareDb {
         self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<TypeMessage, String> {
+    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
         self.generateur_messages.transmettre_commande(domaine, message, exchange, blocking).await
     }
 
@@ -1144,6 +1206,38 @@ mod serialization_tests {
             };
 
             debug!("Data chiffre : {:?}\nCipher keys : {:?}", vec_output, cipher_keys);
+
+            let mut id_docs = HashMap::new();
+            id_docs.insert(String::from("test"), String::from("dummy"));
+            let commande = cipher_keys.get_commande_sauvegarder_cles("Test", id_docs);
+            let hachage_bytes = commande.hachage_bytes.clone();
+            debug!("Commande sauvegarder cles : {:?}", commande);
+
+            let reponse_sauvegarde = middleware.transmettre_commande(
+                "MaitreDesCles.sauvegarderCle", &commande, None, true)
+                .await.expect("reponse");
+
+            debug!("Reponse sauvegarde cle : {:?}", reponse_sauvegarde);
+
+            let requete = {
+                let mut liste_hachage_bytes = Vec::new();
+                liste_hachage_bytes.push(hachage_bytes.clone());
+                json!({
+                    "liste_hachage_bytes": liste_hachage_bytes,
+                })
+            };
+            let reponse_cle_rechiffree = middleware.transmettre_requete(
+                "MaitreDesCles.dechiffrage", &requete, None).await.expect("requete cle");
+            debug!("Reponse cle rechiffree : {:?}", reponse_cle_rechiffree);
+
+            let mut decipher = middleware.get_decipher(&hachage_bytes).await.expect("decipher");
+            let mut buffer_output = [0u8; 40];
+            let dechiffre = decipher.update(vec_output.as_slice(), &mut buffer_output).expect("update");
+            let mut vec_buffer = Vec::new();
+            vec_buffer.extend(&buffer_output[..dechiffre]);
+            let message_dechiffre = String::from_utf8(vec_buffer).expect("utf-8");
+            debug!("Data dechiffre : {}", message_dechiffre);
+            let output = decipher.finalize(&mut buffer_output).expect("finalize dechiffrer");
 
         }));
         // Execution async du test
