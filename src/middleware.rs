@@ -1248,8 +1248,9 @@ mod serialization_tests {
             let message_dechiffre = String::from_utf8(vec_buffer).expect("utf-8");
             debug!("Data dechiffre : {}", message_dechiffre);
             {
-                let mut buffer_output = [0u8; 1024];
+                let mut buffer_output = [0u8; 0];
                 let output = decipher.finalize(&mut buffer_output).expect("finalize dechiffrer");
+                assert_eq!(0, output);
             }
 
         }));
