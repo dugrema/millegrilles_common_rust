@@ -16,7 +16,7 @@ use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqEx
 use crate::recepteur_messages::TypeMessage;
 use crate::formatteur_messages::MessageMilleGrille;
 use std::error::Error;
-use crate::{FormatteurMessage, EnveloppePrivee, ConfigurationPki};
+use crate::{FormatteurMessage, EnveloppePrivee, ConfigurationPki, IsConfigurationPki};
 use serde::Serialize;
 
 #[async_trait]
@@ -259,12 +259,10 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
 }
 
-
 impl FormatteurMessage for GenerateurMessagesImpl {
-    // fn formatter_value(&self, message: &MessageJson, domaine: Option<&str>) -> Result<MessageSerialise, Box<dyn Error>> {
-    //     self.formatteur.formatter_value(message, domaine)
-    // }
+}
 
+impl IsConfigurationPki for GenerateurMessagesImpl {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
         self.enveloppe_privee.clone()
     }

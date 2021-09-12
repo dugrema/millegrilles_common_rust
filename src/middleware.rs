@@ -320,11 +320,13 @@ impl GenerateurMessages for MiddlewareDbPki {
     }
 }
 
-impl FormatteurMessage for MiddlewareDbPki {
+impl IsConfigurationPki for MiddlewareDbPki {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
         self.configuration.get_configuration_pki().get_enveloppe_privee()
     }
 }
+
+impl FormatteurMessage for MiddlewareDbPki {}
 
 #[async_trait]
 impl MongoDao for MiddlewareDbPki {
@@ -685,9 +687,9 @@ impl MongoDao for MiddlewareDb {
 }
 
 impl FormatteurMessage for MiddlewareDb {
-    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-        self.configuration.get_configuration_pki().get_enveloppe_privee()
-    }
+    // fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
+    //     self.configuration.get_configuration_pki().get_enveloppe_privee()
+    // }
 }
 
 impl IsConfigurationPki for MiddlewareDb {
@@ -697,12 +699,12 @@ impl IsConfigurationPki for MiddlewareDb {
     }
 }
 
-impl IsConfigurationPki for MiddlewareDbPki {
-    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-        let pki = self.configuration.get_configuration_pki();
-        pki.get_enveloppe_privee()
-    }
-}
+// impl IsConfigurationPki for MiddlewareDbPki {
+//     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
+//         let pki = self.configuration.get_configuration_pki();
+//         pki.get_enveloppe_privee()
+//     }
+// }
 
 #[async_trait]
 impl EmetteurCertificat for MiddlewareDbPki {

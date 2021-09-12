@@ -12,7 +12,7 @@ use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message};
+use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message, IsConfigurationPki};
 use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
@@ -22,9 +22,9 @@ const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
 const CERTIFICATS: &str = "_certificat";
 
-pub trait FormatteurMessage {
-    /// Retourne l'enveloppe privee utilisee pour signer le message
-    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
+pub trait FormatteurMessage: IsConfigurationPki {
+    // /// Retourne l'enveloppe privee utilisee pour signer le message
+    // fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 
     /// Implementation de formattage et signature d'un message de MilleGrille
     fn formatter_message<S>(&self, contenu: &S, domaine: Option<&str>, version: Option<i32>) -> Result<MessageMilleGrille, Box<dyn Error>>

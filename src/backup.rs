@@ -12,19 +12,18 @@ use std::task::{Context, Poll};
 use async_std::fs::File;
 use async_std::io::BufReader;
 use async_trait::async_trait;
-use bson::Document;
+use bson::{doc, Document};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use futures::Stream;
 use futures::stream::TryStreamExt;
 use log::{debug, error, info, warn};
-use mongodb::bson::doc;
 use mongodb::Cursor;
 use mongodb::options::{AggregateOptions, FindOptions, Hint};
 use multibase::Base;
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
-use reqwest::Body;
+use reqwest::{Body, Response};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -36,20 +35,24 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, Hacheur, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, TraiterFichier, ValidateurX509, FormatteurMessage, MessageMilleGrille, ValidationOptions, ResultatValidation, sauvegarder_batch};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collection: &str) -> Result<(), Box<dyn Error>> {
+pub async fn backup<M>(middleware: &M, nom_collection_transactions: &str, chiffrer: bool) -> Result<(), Box<dyn Error>>
+where
+    M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
+{
 
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
+    debug!("Backup vers tmp : {:?}", workdir);
 
     let info_backup = BackupInformation::new(
-        nom_collection,
-        None,
+        nom_collection_transactions,
+        chiffrer,
         Some(workdir.path().to_owned())
     )?;
 
@@ -58,8 +61,8 @@ pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collectio
 
     for mut builder in builders {
         // Creer fichier de transactions
-        let mut path_fichier_transactions = info_backup.workpath.clone();
-        path_fichier_transactions.push(PathBuf::from("transactions.xz"));
+        let mut path_fichier_transactions = workdir.path().to_owned();
+        path_fichier_transactions.push(PathBuf::from(builder.get_nomfichier_transactions()));
 
         let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
         let cipher_keys = serialiser_transactions(middleware, &mut curseur, &mut builder, path_fichier_transactions.as_path(), None).await?;
@@ -68,7 +71,7 @@ pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collectio
             Some(k) => {
                 let mut identificateurs_document = HashMap::new();
                 identificateurs_document.insert(String::from("domaine"), builder.nom_domaine.clone());
-                identificateurs_document.insert(String::from("heure"), String::from("...heure..."));
+                identificateurs_document.insert(String::from("heure"), String::from(builder.heure.format_ymdh()));
 
                 let commande = k.get_commande_sauvegarder_cles(
                     "Backup",
@@ -79,13 +82,15 @@ pub async fn backup(middleware: &(impl MongoDao + ValidateurX509), nom_collectio
             None => None,
         };
 
-        // Generer catalogue
-        let catalogue_horaire = builder.build();
-
-        let catalogue_horaire = uploader_backup(catalogue_horaire, transaction_maitredescles).await?;
+        // Signer et serialiser catalogue
+        let (catalogue_horaire, catalogue_signe, commande_cles) = serialiser_catalogue(
+            middleware, builder).await?;
+        debug!("Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
+        let reponse = uploader_backup(middleware, path_fichier_transactions.as_path(), &catalogue_horaire, &catalogue_signe, commande_cles).await?;
+        debug!("Reponse backup catalogue : {:?}", reponse);
 
         // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
-        todo!("soumettre catalogue horaire");
+        let _ = middleware.soumettre_transaction("Backup.backupQuotidien", &catalogue_signe, None, true).await?;
 
         // Marquer transactions du backup comme completees
         marquer_transaction_backup_complete(
@@ -170,7 +175,12 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
 
         let date = DateEpochSeconds::from_heure(annee, mois, jour, heure);
 
-        let builder = CatalogueHoraireBuilder::new(date, sousdomaine_str.to_owned(), backup_information.uuid_backup.clone());
+        let builder = CatalogueHoraireBuilder::new(
+            date,
+            sousdomaine_str.to_owned(),
+            backup_information.uuid_backup.clone(),
+            backup_information.chiffrer
+        );
         builders.push(builder);
     }
 
@@ -304,15 +314,80 @@ async fn serialiser_catalogue(
     Ok((catalogue, catalogue_signe, commande_signee))
 }
 
-async fn uploader_backup(catalogue: CatalogueHoraire, commande_cles: Option<CommandeSauvegarderCle>) -> Result<CatalogueHoraire, Box<dyn Error>> {
-    // Conserver hachage transactions dans info
+async fn uploader_backup<M>(
+    middleware: &M,
+    path_transactions: &Path,
+    catalogue: &CatalogueHoraire,
+    catalogue_signe: &MessageMilleGrille,
+    commande_cles: Option<MessageMilleGrille>
+) -> Result<Response, Box<dyn Error>>
+where
+    M: IsConfigurationPki,
+{
+    let message_serialise = MessageSerialise::from_parsed(catalogue_signe.clone()).expect("ser");
 
-    // Build et serialiser catalogue + transaction maitre des cles
+    // Compresser catalogue et commande maitre des cles en XZ
+    let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
+    compresseur_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
+    let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
 
-    // Uploader backup
+    let commande_bytes = match commande_cles {
+        Some(c) => {
+            let message_serialise = MessageSerialise::from_parsed(c).expect("ser");
+            let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
+            debug!("Commande maitre cles : {}", message_serialise.get_str());
+            compresseur_commande.write(message_serialise.get_str().as_bytes()).await.expect("write");
+            let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
 
-    todo!();
-    Ok(catalogue)
+            Some(commande_bytes)
+        },
+        None => None
+    };
+
+    // let mut path_transactions = workdir.to_owned();
+    // path_transactions.push(PathBuf::from(catalogue.transactions_nomfichier.as_str()));
+
+    if ! path_transactions.exists() {
+        Err(format!("Fichier {:?} n'existe pas", path_transactions))?;
+    }
+
+    let enveloppe = middleware.get_enveloppe_privee().clone();
+    let ca_cert_pem = enveloppe.chaine_pem().last().expect("last").as_str();
+    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
+    let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
+
+    let fichier_transactions_read = File_tokio::open(path_transactions).await.expect("open");
+
+    // Uploader fichiers et contenu backup
+    let form = {
+        let mut form = reqwest::multipart::Form::new()
+            .text("timestamp_backup", catalogue.heure.format_ymdh())
+            .part("transactions", file_to_part(catalogue.transactions_nomfichier.as_str(), fichier_transactions_read).await)
+            .part("catalogue", bytes_to_part(catalogue.catalogue_nomfichier.as_str(), catalogue_bytes, Some("application/xz")));
+
+        if let Some(b) = commande_bytes {
+            form = form.part("cles", bytes_to_part(
+                "commande_maitredescles.json", b, Some("text/json")));
+        }
+
+        form
+    };
+
+    let client = reqwest::Client::builder()
+        .add_root_certificate(root_ca)
+        .identity(identity)
+        .https_only(true)
+        .use_rustls_tls()
+        .timeout(core::time::Duration::new(20, 0))
+        .build()?;
+
+    let url_put = format!("https://{}/backup/domaine/{}", "mg-dev4:3021", catalogue.catalogue_nomfichier);
+    let mut request = client.put(url_put).multipart(form);
+
+    let response = request.send().await?;
+    debug!("Resultat {} : {:?}", response.status(), response);
+
+    Ok(response)
 }
 
 async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_collection: &str, catalogue_horaire: &CatalogueHoraire) -> Result<(), Box<dyn Error>> {
@@ -346,12 +421,12 @@ trait BackupHandler {
 struct BackupInformation {
     /// Nom complet de la collection de transactions mongodb
     nom_collection_transactions: String,
-    /// Options de chiffrage
-    certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>,
     /// Path de travail pour conserver les fichiers temporaires de chiffrage
     workpath: PathBuf,
     /// Identificateur unique du backup (collateur)
     uuid_backup: String,
+    /// Flag de chiffrage
+    chiffrer: bool,
     /// Repertoire temporaire qui est supprime automatiquement apres le backup.
     tmp_workdir: Option<TempDir>,
 }
@@ -414,6 +489,7 @@ struct CatalogueHoraireBuilder {
     heure: DateEpochSeconds,
     nom_domaine: String,
     uuid_backup: String,
+    chiffrer: bool,
 
     certificats: CollectionCertificatsPem,
     uuid_transactions: Vec<String>,
@@ -426,10 +502,9 @@ impl BackupInformation {
     /// Creation d'une nouvelle structure de backup
     pub fn new(
         nom_collection_transactions: &str,
-        certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>,
+        chiffrer: bool,
         workpath: Option<PathBuf>
     ) -> Result<BackupInformation, Box<dyn Error>> {
-
         let (workpath_inner, tmp_workdir): (PathBuf, Option<TempDir>) = match workpath {
             Some(wp) => (wp, None),
             None => {
@@ -444,9 +519,9 @@ impl BackupInformation {
 
         Ok(BackupInformation {
             nom_collection_transactions: nom_collection_transactions.to_owned(),
-            certificats_chiffrage,
             workpath: workpath_inner,
             uuid_backup,
+            chiffrer,
             tmp_workdir,
         })
     }
@@ -461,16 +536,16 @@ impl BackupHandler for BackupInformation {
 }
 
 impl CatalogueHoraire {
-    fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String) -> CatalogueHoraireBuilder {
-        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup)
+    fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool) -> CatalogueHoraireBuilder {
+        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup, chiffrer)
     }
 }
 
 impl CatalogueHoraireBuilder {
 
-    fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String) -> Self {
+    fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool) -> Self {
         CatalogueHoraireBuilder {
-            heure, nom_domaine, uuid_backup,
+            heure, nom_domaine, uuid_backup, chiffrer,
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
             transactions_hachage: "".to_owned(),
@@ -492,6 +567,16 @@ impl CatalogueHoraireBuilder {
 
     fn set_cles(&mut self, cles: &Mgs2CipherKeys) {
         self.cles = Some(cles.clone());
+    }
+
+    fn get_nomfichier_catalogue(&self) -> PathBuf {
+        let date_str = self.heure.format_ymdh();
+        PathBuf::from(format!("{}_{}.json.xz", &self.nom_domaine, date_str))
+    }
+
+    fn get_nomfichier_transactions(&self) -> PathBuf {
+        let date_str = self.heure.format_ymdh();
+        PathBuf::from(format!("{}_{}.jsonl.xz.mgs2", &self.nom_domaine, date_str))
     }
 
     fn build(self) -> CatalogueHoraire {
@@ -694,7 +779,7 @@ async fn file_to_part(filename: &str, file: File_tokio) -> Part {
     let body = Body::wrap_stream(stream);
 
     Part::stream_with_length(body, len)
-        .mime_str("application/xz").expect("mimetype")
+        .mime_str("application/octet-stream").expect("mimetype")
         .file_name(filename.to_owned())
 }
 
@@ -904,7 +989,7 @@ mod backup_tests {
     fn init_backup_information() {
         let info = BackupInformation::new(
             NOM_COLLECTION_BACKUP,
-            None,
+            false,
             None
         ).expect("init");
 
@@ -912,7 +997,7 @@ mod backup_tests {
 
         assert_eq!(&info.nom_collection_transactions, NOM_COLLECTION_BACKUP);
         // assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
-        assert_eq!(info.certificats_chiffrage.is_none(), true);
+        assert_eq!(info.chiffrer, false);
         assert_eq!(workpath.starts_with("/tmp/."), true);
     }
 
@@ -922,7 +1007,7 @@ mod backup_tests {
         let uuid_backup = Uuid::new_v4().to_string();
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup, false);
 
         assert_eq!(catalogue_builder.heure.get_datetime().timestamp(), heure.get_datetime().timestamp());
         assert_eq!(&catalogue_builder.nom_domaine, NOM_DOMAINE_BACKUP);
@@ -934,7 +1019,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
 
         let catalogue = catalogue_builder.build();
 
@@ -952,7 +1037,7 @@ mod backup_tests {
         let transactions_hachage = "zABCD1234";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
 
         catalogue_builder.transactions_hachage(transactions_hachage.to_owned());
 
@@ -967,7 +1052,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
 
         let catalogue = catalogue_builder.build();
 
@@ -982,7 +1067,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
 
         let catalogue = catalogue_builder.build();
 
@@ -1001,7 +1086,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
 
         let certificat = prep_enveloppe(CERT_DOMAINES);
         // debug!("!!! Enveloppe : {:?}", certificat);
@@ -1116,7 +1201,7 @@ mod backup_tests {
         // let message_json = MessageJson::new(catalogue_value);
         let message_serialise = {
             let catalogue_builder = CatalogueHoraireBuilder::new(
-                heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned());
+                heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
             let catalogue = catalogue_builder.build();
             let catalogue_value: Value = serde_json::to_value(catalogue).expect("value");
             let catalogue_signe = middleware.formatter_message(&catalogue_value, Some("Backup"), None).expect("signer");
@@ -1155,6 +1240,22 @@ mod test_integration {
 
     use super::*;
 
+    const NOM_DOMAINE: &str = "Pki";
+    const NOM_COLLECTION_TRANSACTIONS: &str = "Pki.rust";
+
+    async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str)
+    where
+        M: MongoDao,
+    {
+        let collection = middleware.get_collection(nom_collection_transactions).expect("coll");
+        let filtre = doc! { TRANSACTION_CHAMP_BACKUP_FLAG: true };
+        let ops = doc! {
+            "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: false},
+            "$unset": {TRANSACTION_CHAMP_BACKUP_HORAIRE: true},
+        };
+        collection.update_many(filtre, ops, None).await.expect("reset");
+    }
+
     #[tokio::test]
     async fn grouper_transactions() {
         setup("grouper_transactions");
@@ -1163,7 +1264,7 @@ mod test_integration {
         futures.push(tokio::spawn(async move {
 
             // Test
-            let info = BackupInformation::new("Pki.rust", None, None).expect("info");
+            let info = BackupInformation::new(NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
 
             let workdir = tempfile::tempdir().expect("tmpdir");
             let groupes = grouper_backups(
@@ -1190,9 +1291,10 @@ mod test_integration {
         futures.push(tokio::spawn(async move {
 
             // Test
-            let info = BackupInformation::new("Pki.rust", None, None).expect("info");
-            let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
-            let mut builder = CatalogueHoraire::builder(heure, "Pki".into(), "Pki.rust".into());
+            let info = BackupInformation::new(NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
+            let heure = DateEpochSeconds::from_heure(2021, 09, 12, 12);
+            let mut builder = CatalogueHoraire::builder(
+                heure, NOM_DOMAINE.into(), NOM_COLLECTION_TRANSACTIONS.into(), false);
 
             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
 
@@ -1208,7 +1310,7 @@ mod test_integration {
             ).await.expect("serialiser");
 
             // debug!("Resultat extraction transactions : {:?}", resultat);
-            assert_eq!(4, builder.uuid_transactions.len());
+            assert_eq!(10, builder.uuid_transactions.len());
 
         }));
         // Execution async du test
@@ -1237,13 +1339,14 @@ mod test_integration {
 
             // Test
             let info = BackupInformation::new(
-                "Pki.rust",
-                Some(certificats_chiffrage.clone()),
+                NOM_COLLECTION_TRANSACTIONS,
+                true,
                 None
             ).expect("info");
             let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
             let domaine = "Pki";
-            let mut builder = CatalogueHoraire::builder(heure.clone(), domaine.into(), "Pki.rust".into());
+            let mut builder = CatalogueHoraire::builder(
+                heure.clone(), domaine.into(), NOM_COLLECTION_TRANSACTIONS.into(), true);
 
             // Path fichiers transactions et catalogue
             let mut path_transactions = workdir.clone();
@@ -1308,13 +1411,14 @@ mod test_integration {
         // Generer transactions, catalogue, commande maitredescles
         // Test
         let info = BackupInformation::new(
-            "Pki.rust",
-            Some(certificats_chiffrage.clone()),
+            NOM_COLLECTION_TRANSACTIONS,
+            true,
             None
         ).expect("info");
         let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
         let domaine = "Pki";
-        let mut builder = CatalogueHoraire::builder(heure.clone(), domaine.into(), "Pki.rust".into());
+        let mut builder = CatalogueHoraire::builder(
+            heure.clone(), domaine.into(), NOM_COLLECTION_TRANSACTIONS.into(), false);
 
         // Connecter mongo
         let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
@@ -1339,50 +1443,14 @@ mod test_integration {
                 builder,
             ).await.expect("serialiser");
 
-            let message_serialise = MessageSerialise::from_parsed(catalogue_signe).expect("ser");
-
-            // Compresser catalogue et commande maitre des cles en XZ
-            let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
-            compresseur_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
-            let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
-
-            let commande_bytes = match commande_cles {
-                Some(c) => {
-                    let message_serialise = MessageSerialise::from_parsed(c).expect("ser");
-                    let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
-                    debug!("Commande maitre cles : {}", message_serialise.get_str());
-                    compresseur_commande.write(message_serialise.get_str().as_bytes()).await.expect("write");
-                    let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
-
-                    Some(commande_bytes)
-                },
-                None => None
-            };
-
-            let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
-            let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
-            let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
-            let client = reqwest::Client::builder()
-                .add_root_certificate(root_ca)
-                .identity(identity)
-                .https_only(true)
-                .use_rustls_tls()
-                .build().expect("client");
-
-            let fichier_transactions_read = File_tokio::open(path_transactions.as_path()).await.expect("open");
-
-            // Uploader fichiers et contenu backup
-            let form = reqwest::multipart::Form::new()
-                .text("timestamp_backup", timestamp_backup)
-                .part("transactions", file_to_part("transactions.jsonl.xz.mgs2", fichier_transactions_read).await)
-                .part("catalogue", bytes_to_part("catalogue.json.xz", catalogue_bytes, Some("application/xz")))
-                .part("cles", bytes_to_part("commande_maitredescles.json",commande_bytes.expect("commande"),Some("text/json")));
-
-            let mut request = client.put("https://mg-dev4:3021/backup/domaine/nom_catalogue.json.xz")
-                .multipart(form);
-
-            let resultat = request.send().await.expect("resultat");
-            debug!("Resultat {} : {:?}", resultat.status(), resultat);
+            let response = uploader_backup(
+                middleware.as_ref(),
+                path_transactions.as_path(),
+                &catalogue,
+                &catalogue_signe,
+                commande_cles
+            ).await.expect("upload");
+            debug!("Response upload catalogue : {:?}", response);
 
         }));
 
@@ -1441,7 +1509,19 @@ mod test_integration {
         assert_eq!(4, processeur.batch.len());
 
         // Upload les transactions valides
-        processeur.sauvegarder_batch(middleware.as_ref(), "Pki.rust").await.expect("batch");
+        processeur.sauvegarder_batch(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await.expect("batch");
+    }
+
+    #[tokio::test]
+    async fn effectuer_backup() {
+        setup("effectuer_backup");
+
+        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+
+        // Reset backup flags pour le domaine
+        reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
+
+        backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
     }
 
 }
