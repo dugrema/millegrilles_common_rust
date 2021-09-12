@@ -67,7 +67,7 @@ pub const PKI_DOMAINE_CERTIFICAT_NOM: &str = "certificat";
 pub const PKI_COLLECTION_TRANSACTIONS_NOM: &str = "Pki.rust";
 pub const PKI_COLLECTION_CERTIFICAT_NOM: &str = "Pki.rust/certificat";
 
-pub const PKI_EVENEMENT_CERTIFICAT: &str = "evenement.certificat.infoCertificat";
+pub const PKI_EVENEMENT_CERTIFICAT: &str = "certificat.infoCertificat";
 
 pub const PKI_REQUETE_CERTIFICAT: &str = "infoCertificat";
 pub const PKI_REQUETE_CERTIFICAT_PAR_PK: &str = "certificatParPk";

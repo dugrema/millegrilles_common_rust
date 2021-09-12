@@ -1,22 +1,22 @@
+use std::error::Error;
 use std::sync::Arc;
 
 use bson::{Bson, Document};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::{bson::{doc, to_bson}, Client, Database};
-use mongodb::options::{FindOptions, Hint, UpdateOptions, InsertManyOptions};
-use serde_json::{json, Value, Map};
+use mongodb::error::{BulkWriteError, BulkWriteFailure, ErrorKind};
+use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
+use crate::{MessageMilleGrille, MessageSerialise, MessageTrigger};
 use crate::certificats::{EnveloppeCertificat, ValidateurX509};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
 use crate::mongo_dao::MongoDao;
 use crate::recepteur_messages::MessageValideAction;
-use std::error::Error;
-use serde::Serialize;
-use crate::{MessageSerialise, MessageMilleGrille};
-use mongodb::error::{ErrorKind, BulkWriteFailure, BulkWriteError};
 
 pub async fn transmettre_evenement_persistance(
     middleware: &impl GenerateurMessages,
@@ -41,21 +41,29 @@ pub async fn transmettre_evenement_persistance(
         evenement_map.insert("correlation_id".into(), Value::from(correlation_id));
     }
 
-    let rk = format!("evenement.{}.transaction_persistee", domaine);
+    let rk = format!("{}.transaction_persistee", domaine);
 
     // let message = MessageJson::new(evenement);
 
     Ok(middleware.emettre_evenement(&rk, &evenement, Some(vec!(Securite::L4Secure))).await?)
 }
 
-pub async fn charger_transaction<M>(middleware: &M, m: &MessageValideAction) -> Result<TransactionImpl, String>
+#[derive(Clone, Debug, Deserialize)]
+pub struct TriggerTransaction {
+    domaine: String,
+    evenement: String,
+    uuid_transaction: String,
+}
+
+pub async fn charger_transaction<M>(middleware: &M, trigger: &TriggerTransaction) -> Result<TransactionImpl, String>
 where
     M: ValidateurX509 + MongoDao,
 {
-    debug!("Traitement d'une transaction : {:?}", m);
-    let trigger = &m.message;
-    let entete = trigger.get_entete();
-    let uuid_transaction = entete.uuid_transaction.as_str();
+    debug!("Traitement d'une transaction : {:?}", trigger);
+    // let trigger = &m.message;
+    // let entete = trigger.get_entete();
+    // let contenu = &m.message.get_msg().contenu;
+    let uuid_transaction = trigger.uuid_transaction.as_str();
 
     // Charger transaction a partir de la base de donnees
     let collection = middleware.get_collection(PKI_COLLECTION_TRANSACTIONS_NOM)?;

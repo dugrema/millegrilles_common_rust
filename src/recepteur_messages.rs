@@ -223,7 +223,7 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
 
         debug!("Faire une requete pour charger le certificat {}", fingerprint);
         let requete = json!({"fingerprint": fingerprint});
-        let domaine_action = format!("requete.certificat.{}", fingerprint);
+        let domaine_action = format!("certificat.{}", fingerprint);
         // let message = MessageJson::new(requete);
         let ok = match middleware.transmettre_requete(&domaine_action, &requete, None).await {
             Ok(r) => {
