@@ -6,6 +6,7 @@ use std::io::Write;
 use std::iter::Map;
 
 use async_trait::async_trait;
+use log::{debug};
 use multibase::{Base, decode, encode};
 use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
@@ -70,6 +71,8 @@ pub struct CipherMgs2 {
     cles_chiffrees: Vec<FingerprintCleChiffree>,
     fp_cle_millegrille: Option<String>,
     hacheur: Hacheur,
+    hachage_bytes: Option<String>,
+    tag: Option<String>,
 }
 
 // Structure qui conserve une cle chiffree pour un fingerprint de certificat
@@ -120,6 +123,8 @@ impl CipherMgs2 {
             cles_chiffrees: fp_cles,
             fp_cle_millegrille,
             hacheur,
+            hachage_bytes: None,
+            tag: None,
         }
     }
 
@@ -134,32 +139,50 @@ impl CipherMgs2 {
     }
 
     pub fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
+
+        if self.tag.is_some() {
+            Err("Deja finalise")?;
+        }
+
         match self.encrypter.finalize(out) {
             Ok(s) => {
                 self.hacheur.update(&out[..s]);  // Calculer hachage output
-                self.hacheur.finalize();
+
+                // Calculer et conserver hachage
+                let hachage_bytes = self.hacheur.finalize();
+                self.hachage_bytes = Some(hachage_bytes);
+
+                // Conserver le compute tag
+                let mut tag = [0u8; 16];
+                let tag_b64 = match self.encrypter.get_tag(&mut tag) {
+                    Ok(()) => Ok(encode(Base::Base64, &tag)),
+                    Err(e) => Err(format!("Erreur tag : {:?}", e)),
+                }?;
+                self.tag = Some(tag_b64);
+
                 Ok(s)
             },
             Err(e) => Err(format!("Erreur update : {:?}", e)),
         }
     }
 
-    pub fn get_tag(&self) -> Result<String, String> {
-        let mut tag = [0u8; 16];
-        match self.encrypter.get_tag(&mut tag) {
-            Ok(()) => {
-                Ok(encode(Base::Base64, &tag))
-            },
-            Err(e) => Err(format!("Erreur tag : {:?}", e)),
-        }
-    }
-
     pub fn get_cipher_keys(&self) -> Result<Mgs2CipherKeys, String> {
+
+        let hachage_bytes = match &self.hachage_bytes {
+            Some(t) => Ok(t.to_owned()),
+            None => Err(String::from("Hachage_bytes pas encore calcule")),
+        }?;
+
+        let tag = match &self.tag {
+            Some(t) => Ok(t.to_owned()),
+            None => Err(String::from("Tag pas encore calcule")),
+        }?;
+
         let mut cipher_keys = Mgs2CipherKeys::new(
             self.cles_chiffrees.clone(),
             self.iv.clone(),
-            self.get_tag()?.clone(),
-            self.hacheur.hachage_bytes.as_ref().expect("hachage").to_owned(),
+            tag,
+            hachage_bytes,
         );
         cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
 
@@ -192,12 +215,14 @@ impl DecipherMgs2 {
             None => Err("Cle n'est pas dechiffree")?,
         };
 
-        let decrypter = Crypter::new(
+        let mut decrypter = Crypter::new(
             Cipher::aes_256_gcm(),
             Mode::Decrypt,
             cle_dechiffree,
             Some(&decipher_data.iv)
         ).unwrap();
+
+        decrypter.set_tag(decipher_data.tag.as_slice());
 
         Ok(DecipherMgs2 {
             decrypter
@@ -214,7 +239,10 @@ impl DecipherMgs2 {
     pub fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.decrypter.finalize(out) {
             Ok(s) => Ok(s),
-            Err(e) => Err(format!("Erreur finalize : {:?}", e)),
+            Err(e) => {
+                debug!("Erreur finalize {:?}", e);
+                Err(format!("Erreur finalize : {:?}", e))
+            },
         }
     }
 
@@ -444,7 +472,7 @@ mod backup_tests {
         assert_eq!(len_output, input.len());
 
         let len_output = cipher.finalize(&mut output).expect("finalize");
-        let tag = cipher.get_tag().expect("tag");
+        let tag = cipher.tag.as_ref().expect("tag").to_owned();
         assert_eq!(tag.len(), 23);
 
         // println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));

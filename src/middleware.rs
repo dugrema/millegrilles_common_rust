@@ -1157,7 +1157,7 @@ mod serialization_tests {
             debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
 
             debug!("Sleeping");
-            tokio::time::sleep(tokio::time::Duration::new(4, 0)).await;
+            tokio::time::sleep(tokio::time::Duration::new(3, 0)).await;
             debug!("Fin sleep");
 
             middleware.charger_certificats_chiffrage().await;
@@ -1193,6 +1193,8 @@ mod serialization_tests {
 
             debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
 
+            const VALEUR_TEST: &[u8] = b"Du data a chiffrer";
+
             let (vec_output, cipher_keys) = {
                 let mut vec_output: Vec<u8> = Vec::new();
                 let mut cipher = middleware.get_cipher();
@@ -1200,6 +1202,7 @@ mod serialization_tests {
                 let len_output = cipher.update(b"Du data a chiffrer", &mut output).expect("update");
                 vec_output.extend_from_slice(&output[..len_output]);
                 let len_output = cipher.finalize(&mut output).expect("finalize");
+                debug!("Finalize cipher : {:?}", &output[..len_output]);
                 vec_output.extend_from_slice(&output[..len_output]);
 
                 (vec_output, cipher.get_cipher_keys().expect("cipher keys"))
@@ -1231,13 +1234,23 @@ mod serialization_tests {
             debug!("Reponse cle rechiffree : {:?}", reponse_cle_rechiffree);
 
             let mut decipher = middleware.get_decipher(&hachage_bytes).await.expect("decipher");
-            let mut buffer_output = [0u8; 40];
-            let dechiffre = decipher.update(vec_output.as_slice(), &mut buffer_output).expect("update");
-            let mut vec_buffer = Vec::new();
-            vec_buffer.extend(&buffer_output[..dechiffre]);
+            let mut vec_buffer = {
+                let mut buffer_output = [0u8; 40];
+                let len_dechiffre = decipher.update(vec_output.as_slice(), &mut buffer_output).expect("update");
+                let mut vec_buffer = Vec::new();
+                vec_buffer.extend(&buffer_output[..len_dechiffre]);
+
+                vec_buffer
+            };
+
+            assert_eq!(VALEUR_TEST, vec_buffer.as_slice());
+
             let message_dechiffre = String::from_utf8(vec_buffer).expect("utf-8");
             debug!("Data dechiffre : {}", message_dechiffre);
-            let output = decipher.finalize(&mut buffer_output).expect("finalize dechiffrer");
+            {
+                let mut buffer_output = [0u8; 1024];
+                let output = decipher.finalize(&mut buffer_output).expect("finalize dechiffrer");
+            }
 
         }));
         // Execution async du test
