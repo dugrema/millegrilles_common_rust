@@ -1031,12 +1031,12 @@ pub trait TraiterTransaction {
 }
 
 #[cfg(test)]
-mod serialization_tests {
+pub mod serialization_tests {
     use crate::certificats_tests::charger_enveloppe_privee_env;
     use crate::test_setup::setup;
     use super::*;
 
-    async fn build() -> (Arc<MiddlewareDbPki>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>) {
+    pub async fn build() -> (Arc<MiddlewareDbPki>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>) {
         // Preparer configuration
         let queues = Vec::new();
 

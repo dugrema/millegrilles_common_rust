@@ -59,6 +59,8 @@ where
     // Generer liste builders domaine/heures
     let builders = grouper_backups(middleware, &info_backup).await?;
 
+    debug!("Backup collection {} : {:?}", nom_collection_transactions, builders);
+
     for mut builder in builders {
         // Creer fichier de transactions
         let mut path_fichier_transactions = workdir.path().to_owned();
@@ -87,10 +89,11 @@ where
             middleware, builder).await?;
         debug!("Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
         let reponse = uploader_backup(middleware, path_fichier_transactions.as_path(), &catalogue_horaire, &catalogue_signe, commande_cles).await?;
-        debug!("Reponse backup catalogue : {:?}", reponse);
+        //debug!("Reponse backup catalogue : {:?}", reponse);
 
-        // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
-        let _ = middleware.soumettre_transaction("Backup.backupQuotidien", &catalogue_signe, None, true).await?;
+        if ! reponse.status().is_success() {
+            Err(format!("Erreur upload fichier : {:?}", reponse))?;
+        }
 
         // Marquer transactions du backup comme completees
         marquer_transaction_backup_complete(
@@ -98,6 +101,10 @@ where
             info_backup.nom_collection_transactions.as_str(),
             &catalogue_horaire
         ).await?;
+
+        // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
+        let reponse_catalogue = middleware.soumettre_transaction("Backup.catalogueHoraire", &catalogue_signe, None, true).await?;
+        debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
     }
 
     Ok(())
@@ -154,7 +161,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     let mut builders = Vec::new();
 
     while let Some(entree) = curseur.next().await {
-        // debug!("Entree aggregation : {:?}", entree);
+        debug!("Entree aggregation : {:?}", entree);
         let tmp_id = entree?;
         let info_id = tmp_id.get("_id").expect("id").as_document().expect("doc id");
 
@@ -283,7 +290,7 @@ async fn serialiser_catalogue(
             identificateurs_document.insert("heure".into(), format!("{}00", builder.heure.format_ymdh()));
 
             let commande_maitredescles = cles.get_commande_sauvegarder_cles(
-                "Backup",
+                BACKUP_NOM_DOMAINE,
                 identificateurs_document,
             );
 
@@ -291,7 +298,7 @@ async fn serialiser_catalogue(
             // let msg_commande = MessageJson::new(value_commande);
             let commande_signee = middleware.formatter_message(
                 &value_commande,
-                Some("MaitreDesCles.nouvelleCle"),
+                Some(MAITREDESCLES_COMMANDE_NOUVELLE_CLE),
                 None
             )?;
 
@@ -304,7 +311,11 @@ async fn serialiser_catalogue(
     let catalogue = builder.build();
     let catalogue_value = serde_json::to_value(&catalogue)?;
     // let message_json = MessageJson::new(catalogue_value);
-    let catalogue_signe = middleware.formatter_message(&catalogue_value, Some("Backup"), None)?;
+    let catalogue_signe = middleware.formatter_message(
+        &catalogue_value,
+        Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
+        None
+    )?;
 
     // let mut writer_catalogue = FichierWriter::new(path_catalogue, None)
     //     .await.expect("write catalogue");
@@ -391,6 +402,8 @@ where
 }
 
 async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_collection: &str, catalogue_horaire: &CatalogueHoraire) -> Result<(), Box<dyn Error>> {
+    debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, catalogue_horaire.uuid_transactions);
+
     let collection = middleware.get_collection(nom_collection)?;
     let filtre = doc! {
         TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: {"$in": &catalogue_horaire.uuid_transactions}
@@ -1233,12 +1246,14 @@ mod test_integration {
     use async_std::io::BufReader;
     use futures_util::stream::IntoAsyncRead;
 
-    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar};
+    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar, TypeMessage};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
     use crate::test_setup::setup;
 
     use super::*;
+    use tokio::sync::mpsc::{Receiver, Sender};
+    use crate::middleware::serialization_tests::build;
 
     const NOM_DOMAINE: &str = "Pki";
     const NOM_COLLECTION_TRANSACTIONS: &str = "Pki.rust";
@@ -1334,7 +1349,12 @@ mod test_integration {
         ];
 
         // Connecter mongo
-        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        let (
+            middleware,
+            mut rx_messages,
+            mut rx_triggers,
+            mut futures
+        ) = preparer_middleware_pki(Vec::new(), None);
         futures.push(tokio::spawn(async move {
 
             // Test
@@ -1516,12 +1536,26 @@ mod test_integration {
     async fn effectuer_backup() {
         setup("effectuer_backup");
 
-        let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        let (
+            middleware,
+            mut futures,
+            mut tx_messages,
+            mut tx_triggers
+        ) = build().await;
+
+        // let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
 
         // Reset backup flags pour le domaine
         reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
 
-        backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+        futures.push(tokio::spawn(async move {
+
+            backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+
+        }));
+
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
     }
 
 }

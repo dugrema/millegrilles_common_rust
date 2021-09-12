@@ -83,5 +83,15 @@ pub const PKI_DOCUMENT_CHAMP_CERTIFICAT: &str = "certificat";
 
 
 // Maitre des cles
+pub const MAITREDESCLES_COMMANDE_NOUVELLE_CLE: &str = "MaitreDesCles.nouvelleCle";
+
 pub const MAITREDESCLES_CHAMP_HACHAGE_BYTES: &str = "hachage_bytes";
 pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
+
+
+// Backup
+pub const BACKUP_NOM_DOMAINE: &str = "Backup";
+
+pub const BACKUP_TRANSACTION_CATALOGUE_HORAIRE: &str = "Backup.catalogueHoraire";
+
+pub const BACKUP_CHAMP_FUUID_GROSFICHIERS: &str = "fuuid_grosfichiers";
