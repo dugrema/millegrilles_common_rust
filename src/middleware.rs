@@ -165,7 +165,7 @@ pub trait IsConfigurationPki {
 }
 
 impl MiddlewareDbPki {
-    async fn charger_certificats_chiffrage(&self) {
+    pub async fn charger_certificats_chiffrage(&self) {
         debug!("Charger les certificats de maitre des cles pour chiffrage");
         let requete = json!({});
         let message_reponse = match self.generateur_messages.transmettre_requete(
@@ -393,7 +393,7 @@ impl Dechiffreur for MiddlewareDbPki {
 #[derive(Clone, Debug, Deserialize)]
 struct ReponseDechiffrageCle {
     acces: String,
-    pub cles: HashMap<String, ReponseDechiffrageCleInfo>,
+    pub cles: Option<HashMap<String, ReponseDechiffrageCleInfo>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -409,11 +409,18 @@ struct ReponseDechiffrageCleInfo {
 
 impl ReponseDechiffrageCle {
     pub fn to_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
-        if self.cles.len() == 1 {
-            let (_, cle) = self.cles.iter().next().expect("cle");
-            cle.to_cipher_data()
-        } else {
-            Err(String::from("Plusieurs cles presentes"))?
+        match &self.cles {
+            Some(cles) => {
+                if cles.len() == 1 {
+                    let (_, cle) = cles.iter().next().expect("cle");
+                    cle.to_cipher_data()
+                } else {
+                    Err(String::from("Plusieurs cles presentes"))?
+                }
+            },
+            None => {
+                Err(String::from("Aucunes cles presentes"))?
+            }
         }
     }
 }

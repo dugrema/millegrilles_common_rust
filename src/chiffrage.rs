@@ -47,7 +47,7 @@ fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Ve
 }
 
 fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Vec<u8> {
-    let mut cle_dechiffree = [0u8; 256];
+    let mut cle_dechiffree = [0u8; 512];  // Cle max 4096 bits (512 bytes)
 
     let mut decrypter = Decrypter::new(private_key).expect("decrypter");
 
@@ -390,7 +390,7 @@ pub trait Chiffreur {
 
 /// Permet de recuperer un Decipher deja initialise pour une cle
 #[async_trait]
-pub trait Dechiffreur {
+pub trait Dechiffreur: Send + Sync {
     /// Appel au MaitreDesCles pour une version dechiffrable de la cle
     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>>;
 

@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki, Dechiffreur};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -74,20 +74,24 @@ where
             path_fichier_transactions.as_path()
         ).await?;
 
-        let transaction_maitredescles = match cipher_keys {
-            Some(k) => {
-                let mut identificateurs_document = HashMap::new();
-                identificateurs_document.insert(String::from("domaine"), builder.nom_domaine.clone());
-                identificateurs_document.insert(String::from("heure"), String::from(builder.heure.format_ymdh()));
-
-                let commande = k.get_commande_sauvegarder_cles(
-                    "Backup",
-                    identificateurs_document
-                );
-                Some(commande)
-            },
-            None => None,
-        };
+        // let transaction_maitredescles = match cipher_keys {
+        //     Some(k) => {
+        //         debug!("Conserver information chiffrage pour backup {} : {}", builder.nom_domaine, builder.heure.format_ymdh());
+        //         let mut identificateurs_document = HashMap::new();
+        //         identificateurs_document.insert(String::from("domaine"), builder.nom_domaine.clone());
+        //         identificateurs_document.insert(String::from("heure"), String::from(builder.heure.format_ymdh()));
+        //
+        //         let commande = k.get_commande_sauvegarder_cles(
+        //             "Backup",
+        //             identificateurs_document
+        //         );
+        //         Some(commande)
+        //     },
+        //     None => {
+        //         debug!("Fichier complete pour backup {} : {} (non chiffre)", builder.nom_domaine, builder.heure.format_ymdh());
+        //         None
+        //     },
+        // };
 
         // Signer et serialiser catalogue
         let (catalogue_horaire, catalogue_signe, commande_cles) = serialiser_catalogue(
@@ -221,16 +225,14 @@ async fn serialiser_transactions<M>(
     curseur: &mut Cursor<Document>,
     builder: &mut CatalogueHoraireBuilder,
     path_transactions: &Path,
-) -> Result<Option<Mgs2CipherKeys>, Box<dyn Error>>
+) -> Result<(), Box<dyn Error>>
 where
     M: ValidateurX509 + Chiffreur,
 {
 
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
     let mut transaction_writer = match builder.chiffrer {
-        true => {
-            TransactionWriter::new(path_transactions, Some(middleware)).await?
-        },
+        true => TransactionWriter::new(path_transactions, Some(middleware)).await?,
         false => TransactionWriter::new(path_transactions, None::<&MiddlewareDbPki>).await?,
     };
 
@@ -274,8 +276,12 @@ where
     let (hachage, cipher_keys) = transaction_writer.fermer().await?;
 
     builder.transactions_hachage = hachage;
+    match &cipher_keys {
+        Some(k) => builder.set_cles(k),
+        None => (),
+    }
 
-    Ok(cipher_keys)
+    Ok(())
 }
 
 async fn serialiser_catalogue(
@@ -601,7 +607,11 @@ impl CatalogueHoraireBuilder {
 
     fn get_nomfichier_transactions(&self) -> PathBuf {
         let date_str = self.heure.format_ymdh();
-        PathBuf::from(format!("{}_{}.jsonl.xz.mgs2", &self.nom_domaine, date_str))
+        let nom_fichier = match self.chiffrer {
+            true => format!("{}_{}.jsonl.xz.mgs2", &self.nom_domaine, date_str),
+            false => format!("{}_{}.jsonl.xz", &self.nom_domaine, date_str),
+        };
+        PathBuf::from(nom_fichier)
     }
 
     fn build(self) -> CatalogueHoraire {
@@ -609,8 +619,8 @@ impl CatalogueHoraireBuilder {
         let date_str = self.heure.format_ymdh();
 
         // Build collections de certificats
-        let transactions_hachage = self.transactions_hachage;
-        let transactions_nomfichier = format!("{}_{}.jsonl.xz", &self.nom_domaine, date_str);
+        let transactions_hachage = self.transactions_hachage.clone();
+        let transactions_nomfichier = self.get_nomfichier_transactions().to_str().expect("str").to_owned();
         let catalogue_nomfichier = format!("{}_{}.json.xz", &self.nom_domaine, date_str);
 
         let (format, cle, iv, tag) = match(self.cles) {
@@ -843,7 +853,9 @@ impl ProcesseurFichierBackup {
         }
     }
 
-    async fn parse_file(&mut self, middleware: &impl ValidateurX509, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+    async fn parse_file<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
+    where M: ValidateurX509 + Dechiffreur
+    {
         debug!("Parse fichier : {:?}", filepath);
 
         match filepath.extension() {
@@ -854,7 +866,7 @@ impl ProcesseurFichierBackup {
                         let path_str = filepath.to_str().expect("str");
                         if path_str.ends_with(".json.xz") {
                             // Catalogue
-                            self.parse_catalogue(filepath, stream).await
+                            self.parse_catalogue(middleware, filepath, stream).await
                         } else if path_str.ends_with(".jsonl.xz") {
                             // Transactions non chiffrees
                             self.parse_transactions(middleware, filepath, stream).await
@@ -877,7 +889,9 @@ impl ProcesseurFichierBackup {
         }
     }
 
-    async fn parse_catalogue(&mut self, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+    async fn parse_catalogue<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
+    where M: Dechiffreur
+    {
         debug!("Parse catalogue : {:?}", filepath);
 
         let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
@@ -886,23 +900,34 @@ impl ProcesseurFichierBackup {
 
         let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
 
-        let mut cle = match catalogue.get_cipher_data() {
-            Ok(c) => Some(c),
-            Err(e) => None,
+        // Recuperer cle et creer decipher au besoin
+        self.decipher = match catalogue.cle {
+            Some(_) => {
+                let transactions_hachage_bytes = catalogue.transactions_hachage.as_str();
+                let dechiffreur = middleware.get_decipher(transactions_hachage_bytes).await?;
+                Some(dechiffreur)
+            },
+            None => None,
         };
 
-        // Tenter de dechiffrer la cle
-        if let Some(mut cipher_data) = cle {
-            match cipher_data.dechiffrer_cle(self.enveloppe_privee.cle_privee()) {
-                Ok(_) => {
-                    // Creer Cipher
-                    self.decipher = Some(DecipherMgs2::new(&cipher_data)?);
-                },
-                Err(e) => {
-                    error!("Decipher incorrect, transactions ne seront pas lisibles : {:?}", e);
-                }
-            };
-        }
+        // let mut cle = match catalogue.get_cipher_data() {
+        //     Ok(c) => Some(c),
+        //     Err(e) => None,
+        // };
+        //
+        // // Tenter de dechiffrer la cle
+        // if let Some(mut cipher_data) = cle {
+        //     debug!("Creer cipher pour {:?}", cipher_data);
+        //     match cipher_data.dechiffrer_cle(self.enveloppe_privee.cle_privee()) {
+        //         Ok(_) => {
+        //             // Creer Cipher
+        //             self.decipher = Some(DecipherMgs2::new(&cipher_data)?);
+        //         },
+        //         Err(e) => {
+        //             error!("Decipher incorrect, transactions ne seront pas lisibles : {:?}", e);
+        //         }
+        //     };
+        // }
 
         debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
         self.catalogue = Some(catalogue);
@@ -1005,7 +1030,9 @@ impl ProcesseurFichierBackup {
 
 #[async_trait]
 impl TraiterFichier for ProcesseurFichierBackup {
-    async fn traiter_fichier(&mut self, middleware: &impl ValidateurX509, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>> {
+    async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>>
+    where M: ValidateurX509 + Dechiffreur
+    {
         self.parse_file(middleware, nom_fichier, stream).await
     }
 }
@@ -1264,7 +1291,7 @@ mod backup_tests {
         let enveloppe_privee = middleware.get_enveloppe_privee();
         let mut processeur = ProcesseurFichierBackup::new(enveloppe_privee, middleware.clone());
 
-        processeur.parse_catalogue(nom_fichier.as_path(), &mut buf_reader).await.expect("parsed");
+        processeur.parse_catalogue(middleware.as_ref(), nom_fichier.as_path(), &mut buf_reader).await.expect("parsed");
 
         assert_eq!(processeur.catalogue.is_none(), false);
         debug!("Catalogue charge : {:?}", processeur.catalogue);
@@ -1413,14 +1440,14 @@ mod test_integration {
 
             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
 
-            let cles = serialiser_transactions(
+            serialiser_transactions(
                 middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
                 path_transactions.as_path()
-            ).await.expect("serialiser").expect("cles");
+            ).await.expect("serialiser");
 
-            builder.set_cles(&cles);
+            // builder.set_cles(&cles);
 
             // Signer et serialiser catalogue
             let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
@@ -1483,14 +1510,14 @@ mod test_integration {
             // Path fichiers transactions et catalogue
             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
 
-            let cles = serialiser_transactions(
+            serialiser_transactions(
                 middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
                 path_transactions.as_path()
-            ).await.expect("serialiser").expect("cles");
+            ).await.expect("serialiser");
 
-            builder.set_cles(&cles);
+            // builder.set_cles(&cles);
 
             // Signer et serialiser catalogue
             let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
@@ -1539,6 +1566,10 @@ mod test_integration {
 
         debug!("Response get backup {} : {:?}", response.status(), response);
 
+        debug!("Attente MQ");
+        tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+        debug!("Fin sleep");
+
         // Conserver fichier sur le disque (temporaire)
         // todo Trouver comment streamer en memoire
         {
@@ -1559,7 +1590,7 @@ mod test_integration {
             Arc::new(enveloppe),
             validateur.clone()
         );
-        parse_tar(validateur.as_ref(), &mut fichier_tar, &mut processeur).await.expect("parse");
+        parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await.expect("parse");
 
         assert_eq!(9, processeur.batch.len());
 
@@ -1584,8 +1615,12 @@ mod test_integration {
         futures.push(tokio::spawn(async move {
 
             debug!("Attente MQ");
-            tokio::time::sleep(tokio::time::Duration::new(3, 0)).await;
+            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
             debug!("Fin sleep");
+
+            debug!("S'assurer d'avoir les certificats de chiffrage");
+            middleware.charger_certificats_chiffrage().await;
+            debug!("Certificats de chiffrage recus : {:?}", middleware.get_publickeys_chiffrage());
 
             backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
 
