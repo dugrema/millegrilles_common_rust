@@ -222,10 +222,15 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     let debut_heure = builder.heure.get_datetime();
     let fin_heure = debut_heure.clone() + chrono::Duration::hours(1);
 
+    let doc_transaction_traitee = match builder.snapshot {
+        true => doc! {"$exists": true}, // Snapshot, on prend toutes les transactions traitees
+        false => doc! {"$gte": debut_heure, "$lt": &fin_heure},  // Backup heure specifique
+    };
+
     let filtre = doc! {
         TRANSACTION_CHAMP_BACKUP_FLAG: false,
         TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
-        TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$gte": debut_heure, "$lt": &fin_heure},
+        TRANSACTION_CHAMP_TRANSACTION_TRAITEE: doc_transaction_traitee,
     };
 
     let sort = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
@@ -315,6 +320,9 @@ async fn serialiser_catalogue(
             let mut identificateurs_document: HashMap<String, String> = HashMap::new();
             identificateurs_document.insert("domaine".into(), builder.nom_domaine.clone());
             identificateurs_document.insert("heure".into(), format!("{}00", builder.heure.format_ymdh()));
+            if builder.snapshot {
+                identificateurs_document.insert("snapshot".into(), format!("true"));
+            }
 
             let commande_maitredescles = cles.get_commande_sauvegarder_cles(
                 BACKUP_NOM_DOMAINE,
