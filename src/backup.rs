@@ -850,7 +850,19 @@ impl ProcesseurFichierBackup {
             Some(e) => {
                 let type_ext = e.to_ascii_lowercase();
                 match type_ext.to_str().expect("str") {
-                    "xz" => self.parse_catalogue(filepath, stream).await,
+                    "xz" => {
+                        let path_str = filepath.to_str().expect("str");
+                        if path_str.ends_with(".json.xz") {
+                            // Catalogue
+                            self.parse_catalogue(filepath, stream).await
+                        } else if path_str.ends_with(".jsonl.xz") {
+                            // Transactions non chiffrees
+                            self.parse_transactions(middleware, filepath, stream).await
+                        } else {
+                            warn ! ("Type fichier inconnu, on skip : {:?}", filepath);
+                            Ok(())
+                        }
+                    },
                     "mgs2" => self.parse_transactions(middleware, filepath, stream).await,
                     _ => {
                         warn ! ("Type fichier inconnu, on skip : {:?}", e);
@@ -1549,7 +1561,7 @@ mod test_integration {
         );
         parse_tar(validateur.as_ref(), &mut fichier_tar, &mut processeur).await.expect("parse");
 
-        assert_eq!(4, processeur.batch.len());
+        assert_eq!(9, processeur.batch.len());
 
         // Upload les transactions valides
         processeur.sauvegarder_batch(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await.expect("batch");
