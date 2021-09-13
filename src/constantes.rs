@@ -46,6 +46,7 @@ pub const TRANSACTION_CHAMP_UUID_TRANSACTION: &str = "uuid_transaction";
 pub const TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: &str = "en-tete.uuid_transaction";
 pub const TRANSACTION_CHAMP_ENTETE_PARTITION: &str = "en-tete.partition";
 pub const TRANSACTION_CHAMP_DOMAINE: &str = "domaine";
+pub const TRANSACTION_CHAMP_ACTION: &str = "action";
 pub const TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT: &str = "fingerprint_certificat";
 pub const TRANSACTION_CHAMP_EVENEMENTS: &str = "_evenements";
 pub const TRANSACTION_CHAMP_IDMG: &str = "idmg";

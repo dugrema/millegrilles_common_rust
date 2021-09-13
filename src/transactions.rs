@@ -41,11 +41,11 @@ pub async fn transmettre_evenement_persistance(
         evenement_map.insert("correlation_id".into(), Value::from(correlation_id));
     }
 
-    let rk = format!("{}.transaction_persistee", domaine);
+    // let rk = format!("{}.transaction_persistee", domaine);
 
     // let message = MessageJson::new(evenement);
 
-    Ok(middleware.emettre_evenement(&rk, EVENEMENT_TRANSACTION_PERSISTEE, None, &evenement, Some(vec!(Securite::L4Secure))).await?)
+    Ok(middleware.emettre_evenement(domaine, EVENEMENT_TRANSACTION_PERSISTEE, None, &evenement, Some(vec!(Securite::L4Secure))).await?)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -115,11 +115,12 @@ impl TransactionImpl {
     pub fn new(contenu: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> TransactionImpl {
 
         let entete = contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
-        let domaine_action = String::from(entete.get_str(TRANSACTION_CHAMP_DOMAINE).expect("domaine"));
+        let domaine = String::from(entete.get_str(TRANSACTION_CHAMP_DOMAINE).expect("domaine"));
+        let action = String::from(entete.get_str(TRANSACTION_CHAMP_ACTION).expect("action"));
 
-        let mut domaine_split = domaine_action.split(".");
-        let domaine = domaine_split.next().expect("domaine").to_owned();
-        let action = domaine_split.last().expect("action").to_owned();
+        // let mut domaine_split = domaine_action.split(".");
+        // let domaine = domaine_split.next().expect("domaine").to_owned();
+        // let action = domaine_split.last().expect("action").to_owned();
 
         let uuid_transaction = String::from(entete.get_str(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("domaine"));
 
