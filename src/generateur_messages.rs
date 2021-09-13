@@ -21,13 +21,13 @@ use serde::Serialize;
 
 #[async_trait]
 pub trait GenerateurMessages: Send + Sync {
-    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String>;
+    async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String>;
 
-    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
         where M: Serialize + Send + Sync;
 
-    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
+    async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
+    async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
     async fn repondre(&self, message: &(impl Serialize+Send+Sync), reply_q: &str, correlation_id: &str) -> Result<(), String>;
     fn mq_disponible(&self) -> bool;
 
@@ -96,14 +96,20 @@ impl GenerateurMessagesImpl {
 #[async_trait]
 impl GenerateurMessages for GenerateurMessagesImpl {
 
-    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
+    async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
 
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(())
         }
 
-        let message_signe = match self.formatter_message(message, Some(domaine), None) {
+        let message_signe = match self.formatter_message(
+            message,
+            Some(domaine),
+            Some(action),
+            partition,
+            None
+        ) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur formattage message {:?}", e))?
         };
@@ -115,6 +121,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
         let message_out = MessageOut::new(
             domaine,
+            action,
+            partition,
             message_signe,
             TypeMessageOut::Evenement,
             exchanges_effectifs
@@ -125,7 +133,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         Ok(())
     }
 
-    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
     where
         M: Serialize + Send + Sync,
     {
@@ -135,7 +143,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(TypeMessage::Regeneration)
         }
 
-        match self.emettre_message(domaine, message, exchange, true, TypeMessageOut::Requete).await {
+        match self.emettre_message(domaine, action, partition, message, exchange, true, TypeMessageOut::Requete).await {
             Ok(r) => match r {
                 Some(m) => Ok(m),
                 None => Err(String::from("Aucune reponse")),
@@ -189,23 +197,23 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         // }
     }
 
-    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+    async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
 
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(Some(TypeMessage::Regeneration))
         }
 
-        self.emettre_message(domaine, message, exchange, blocking, TypeMessageOut::Transaction).await
+        self.emettre_message(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Transaction).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+    async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(Some(TypeMessage::Regeneration))
         }
 
-        self.emettre_message(domaine, message, exchange, blocking, TypeMessageOut::Commande).await
+        self.emettre_message(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Commande).await
     }
 
     async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
@@ -214,7 +222,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(())
         }
 
-        let message_signe = match self.formatter_message(message, None, None) {
+        let message_signe = match self.formatter_message(message, None, None, None, None) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
         };
@@ -282,18 +290,22 @@ impl IsConfigurationPki for GenerateurMessagesImpl {
 //     }
 // }
 impl GenerateurMessagesImpl {
-    async fn emettre_message<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>, blocking: bool, type_message_out: TypeMessageOut) -> Result<Option<TypeMessage>, String>
+    async fn emettre_message<M>(
+        &self,
+        domaine: &str,
+        action: &str,
+        partition: Option<&str>,
+        message: &M,
+        exchange: Option<Securite>,
+        blocking: bool,
+        type_message_out: TypeMessageOut
+    ) -> Result<Option<TypeMessage>, String>
     where
         M: Serialize + Send + Sync,
     {
-        let message_signe = match self.formatter_message(message, Some(domaine), None) {
+        let message_signe = match self.formatter_message(message, Some(domaine), Some(action), partition, None) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
-        };
-
-        let routing_key = match &message_signe.entete.domaine {
-            Some(d) => d.to_owned(),
-            None => Err("Domaine manquant")?,
         };
 
         let exchanges = match exchange {
@@ -304,7 +316,9 @@ impl GenerateurMessagesImpl {
         // let domaine_action = format!("transaction.{}", domaine);
 
         let message_out = MessageOut::new(
-            &routing_key,
+            domaine,
+            action,
+            partition,
             message_signe,
             type_message_out,
             exchanges

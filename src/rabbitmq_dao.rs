@@ -480,6 +480,28 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
     }
 }
 
+fn concatener_rk(message: &MessageOut) -> Result<String, String> {
+    let domaine = match &message.domaine {
+        Some(d) => d.as_str(),
+        None => Err("Domaine manquant")?,
+    };
+
+    let mut vec_rk = Vec::new();
+
+    vec_rk.push(domaine);
+    if let Some(partition) = message.partition.as_ref() {
+        vec_rk.push(partition.as_str());
+    }
+
+    if let Some(action) = message.action.as_ref() {
+        vec_rk.push(action.as_str());
+    }
+
+    let routing_key: String = vec_rk.join(".").into();
+
+    Ok(routing_key)
+}
+
 async fn task_emettre_messages<C>(configuration: Arc<C>, channel: Channel, mut rx: Receiver<MessageOut>, reply_q: Arc<Mutex<Option<String>>>)
 where
     C: ConfigMessages,
@@ -506,13 +528,23 @@ where
             None => entete.uuid_transaction.to_owned()
         };
 
-        let routing_key = match &message.domaine_action {
-            Some(da) => match &message.type_message {
-                TypeMessageOut::Requete => format!("requete.{}", da),
-                TypeMessageOut::Commande => format!("commande.{}", da),
-                TypeMessageOut::Transaction => format!("transaction.{}", da),
-                TypeMessageOut::Reponse => String::from(""),  // La reponse est traitee separement
-                TypeMessageOut::Evenement => format!("evenement.{}", da),
+        let routing_key = match &message.domaine {
+            Some(_) => {
+                let rk = match concatener_rk(&message) {
+                    Ok(rk) => rk,
+                    Err(e) => {
+                        error!("Erreur preparation routing key {:?}", e);
+                        continue
+                    }
+                };
+
+                match &message.type_message {
+                    TypeMessageOut::Requete => format!("requete.{}", rk),
+                    TypeMessageOut::Commande => format!("commande.{}", rk),
+                    TypeMessageOut::Transaction => format!("transaction.{}", rk),
+                    TypeMessageOut::Reponse => panic!("Reponse avec domaine non supportee"),
+                    TypeMessageOut::Evenement => format!("evenement.{}", rk),
+                }
             },
             None => String::from(""),
         };
@@ -607,14 +639,16 @@ pub enum MessageInterne {
 pub struct MessageOut {
     pub message: MessageMilleGrille,
     type_message: TypeMessageOut,
-    domaine_action: Option<String>,
+    domaine: Option<String>,
+    action: Option<String>,
+    partition: Option<String>,
     exchanges: Option<Vec<Securite>>,     // Utilise pour emission de message avec domaine_action
     correlation_id: Option<String>,
     replying_to: Option<String>,    // Utilise pour une reponse
 }
 
 impl MessageOut {
-    pub fn new(domaine_action: &str, message: MessageMilleGrille, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>) -> MessageOut {
+    pub fn new(domaine: &str, action: &str, partition: Option<&str>, message: MessageMilleGrille, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>) -> MessageOut {
         if type_message == TypeMessageOut::Reponse {
             panic!("Reponse non supportee, utiliser MessageOut::new_reply()");
         }
@@ -629,10 +663,17 @@ impl MessageOut {
             None => vec!(Securite::L3Protege),
         };
 
+        let partition_owned = match partition {
+            Some(p) => Some(p.to_owned()),
+            None => None,
+        };
+
         MessageOut {
             message,
             type_message,
-            domaine_action: Some(domaine_action.to_owned()),
+            domaine: Some(domaine.to_owned()),
+            action: Some(action.to_owned()),
+            partition: partition_owned,
             exchanges: Some(exchange_effectif),
             correlation_id: Some(uuid_transaction),
             replying_to: None,
@@ -643,7 +684,9 @@ impl MessageOut {
         MessageOut {
             message,
             type_message: TypeMessageOut::Reponse,
-            domaine_action: None,
+            domaine: None,
+            action: None,
+            partition: None,
             exchanges: None,
             correlation_id: Some(correlation_id.to_owned()),
             replying_to: Some(replying_to.to_owned()),

@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 use async_std::fs::File;
 use async_std::io::BufReader;
 use async_trait::async_trait;
-use bson::{doc, Document};
+use bson::{bson, doc, Document};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use futures::Stream;
@@ -103,7 +103,8 @@ where
         ).await?;
 
         // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
-        let reponse_catalogue = middleware.soumettre_transaction("Backup.catalogueHoraire", &catalogue_signe, None, true).await?;
+        let reponse_catalogue = middleware.soumettre_transaction(
+            "Backup", "catalogueHoraire", None, &catalogue_signe, None, true).await?;
         debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
     }
 
@@ -113,7 +114,14 @@ where
 /// Identifie les sousdomaines/heures a inclure dans le backup.
 async fn grouper_backups(middleware: &impl MongoDao, backup_information: &BackupInformation) -> Result<Vec<CatalogueHoraireBuilder>, Box<dyn Error>> {
 
-    let nom_collection = &backup_information.nom_collection_transactions;
+    let nom_collection = backup_information.nom_collection_transactions.as_str();
+
+
+
+    let partition = match backup_information.partition.as_ref() {
+        Some(p) => bson!(p),
+        None => bson!({"$exists": false})
+    };
 
     let collection = middleware.get_collection(nom_collection)?;
     let pipeline = vec! [
@@ -121,29 +129,18 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
             TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
             TRANSACTION_CHAMP_BACKUP_FLAG: false,
             TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
+            TRANSACTION_CHAMP_ENTETE_PARTITION: partition,
         }},
 
         // Grouper par domaines et heure
         doc! {"$group": {
             "_id": {
                 "domaine": "$en-tete.domaine",
-                "sousdomaine": {"$slice": [
-                    {"$split": ["$en-tete.domaine", "."]},
-                    {"$add": [{"$size": {"$split": ["$en-tete.domaine", "."]}}, -1]}
-                ]},
                 "heure": {
                     "year": {"$year": "$_evenements.transaction_traitee"},
                     "month": {"$month": "$_evenements.transaction_traitee"},
                     "day": {"$dayOfMonth": "$_evenements.transaction_traitee"},
                     "hour": {"$hour": "$_evenements.transaction_traitee"},
-                }
-            },
-            "sousdomaine": {
-                "$addToSet": {
-                    "$slice": [
-                        {"$split": ["$en-tete.domaine", "."]},
-                        {"$add": [{"$size": {"$split": ["$en-tete.domaine", "."]}}, -1]}
-                    ]
                 }
             },
         }},
@@ -165,14 +162,14 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
         let tmp_id = entree?;
         let info_id = tmp_id.get("_id").expect("id").as_document().expect("doc id");
 
-        let sousdomaine = info_id.get("sousdomaine").expect("domaine").as_array().expect("array");
-        let sousdomaines_str = sousdomaine.iter().map(|d| d.as_str().expect("str"));
-        let mut sousdomaine_vec = Vec::new();
-        for s in sousdomaines_str {
-            sousdomaine_vec.push(s)
-        }
-        let sousdomaine_str = sousdomaine_vec.as_slice().join(".");
-        // debug!("Resultat : {:?}", sousdomaine_str);
+        let domaine = info_id.get("domaine").expect("domaine").as_str().expect("str");
+        // let sousdomaines_str = sousdomaine.iter().map(|d| d.as_str().expect("str"));
+        // let mut sousdomaine_vec = Vec::new();
+        // for s in sousdomaines_str {
+        //     sousdomaine_vec.push(s)
+        // }
+        // let sousdomaine_str = sousdomaine_vec.as_slice().join(".");
+        // // debug!("Resultat : {:?}", sousdomaine_str);
 
         let doc_heure = info_id.get("heure").expect("heure").as_document().expect("doc heure");
         let annee = doc_heure.get("year").expect("year").as_i32().expect("i32");
@@ -182,14 +179,20 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
 
         let date = DateEpochSeconds::from_heure(annee, mois, jour, heure);
 
+        let snapshot = false;
+
         let builder = CatalogueHoraireBuilder::new(
             date,
-            sousdomaine_str.to_owned(),
+            domaine.to_owned(),
             backup_information.uuid_backup.clone(),
-            backup_information.chiffrer
+            backup_information.chiffrer,
+            snapshot,
         );
         builders.push(builder);
     }
+
+    // Ajouter un builder pour snapshot
+
 
     Ok(builders)
 }
@@ -299,6 +302,8 @@ async fn serialiser_catalogue(
             let commande_signee = middleware.formatter_message(
                 &value_commande,
                 Some(MAITREDESCLES_COMMANDE_NOUVELLE_CLE),
+                None,
+                None,
                 None
             )?;
 
@@ -313,7 +318,9 @@ async fn serialiser_catalogue(
     // let message_json = MessageJson::new(catalogue_value);
     let catalogue_signe = middleware.formatter_message(
         &catalogue_value,
+        Some(BACKUP_NOM_DOMAINE),
         Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
+        None,
         None
     )?;
 
@@ -434,6 +441,8 @@ trait BackupHandler {
 struct BackupInformation {
     /// Nom complet de la collection de transactions mongodb
     nom_collection_transactions: String,
+    /// Partition (groupe logique) du backup.
+    partition: Option<String>,
     /// Path de travail pour conserver les fichiers temporaires de chiffrage
     workpath: PathBuf,
     /// Identificateur unique du backup (collateur)
@@ -448,6 +457,8 @@ struct BackupInformation {
 pub struct CatalogueHoraire {
     /// Heure du backup (minutes = 0, secs = 0)
     heure: DateEpochSeconds,
+    /// True si c'est un snapshot
+    snapshot: bool,
     /// Nom du domaine ou sous-domaine
     domaine: String,
     /// Identificateur unique du groupe de backup (collateur)
@@ -503,6 +514,7 @@ struct CatalogueHoraireBuilder {
     nom_domaine: String,
     uuid_backup: String,
     chiffrer: bool,
+    snapshot: bool,
 
     certificats: CollectionCertificatsPem,
     uuid_transactions: Vec<String>,
@@ -532,6 +544,7 @@ impl BackupInformation {
 
         Ok(BackupInformation {
             nom_collection_transactions: nom_collection_transactions.to_owned(),
+            partition: None,
             workpath: workpath_inner,
             uuid_backup,
             chiffrer,
@@ -549,16 +562,16 @@ impl BackupHandler for BackupInformation {
 }
 
 impl CatalogueHoraire {
-    fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool) -> CatalogueHoraireBuilder {
-        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup, chiffrer)
+    fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool, snapshot: bool) -> CatalogueHoraireBuilder {
+        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup, chiffrer, snapshot)
     }
 }
 
 impl CatalogueHoraireBuilder {
 
-    fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool) -> Self {
+    fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool, snapshot: bool) -> Self {
         CatalogueHoraireBuilder {
-            heure, nom_domaine, uuid_backup, chiffrer,
+            heure, nom_domaine, uuid_backup, chiffrer, snapshot,
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
             transactions_hachage: "".to_owned(),
@@ -610,6 +623,7 @@ impl CatalogueHoraireBuilder {
 
         CatalogueHoraire {
             heure: self.heure,
+            snapshot: self.snapshot,
             domaine: self.nom_domaine,
             uuid_backup: self.uuid_backup,
             catalogue_nomfichier,
@@ -621,10 +635,7 @@ impl CatalogueHoraireBuilder {
             uuid_transactions: self.uuid_transactions,
 
             backup_precedent: None,  // todo mettre bon type
-            cle,
-            iv,
-            tag,
-            format,
+            cle, iv, tag, format,
         }
     }
 
@@ -1020,7 +1031,7 @@ mod backup_tests {
         let uuid_backup = Uuid::new_v4().to_string();
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup, false, false);
 
         assert_eq!(catalogue_builder.heure.get_datetime().timestamp(), heure.get_datetime().timestamp());
         assert_eq!(&catalogue_builder.nom_domaine, NOM_DOMAINE_BACKUP);
@@ -1032,7 +1043,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
 
         let catalogue = catalogue_builder.build();
 
@@ -1050,7 +1061,7 @@ mod backup_tests {
         let transactions_hachage = "zABCD1234";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
 
         catalogue_builder.transactions_hachage(transactions_hachage.to_owned());
 
@@ -1065,7 +1076,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
 
         let catalogue = catalogue_builder.build();
 
@@ -1080,7 +1091,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
 
         let catalogue = catalogue_builder.build();
 
@@ -1099,7 +1110,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
 
         let certificat = prep_enveloppe(CERT_DOMAINES);
         // debug!("!!! Enveloppe : {:?}", certificat);
@@ -1214,10 +1225,16 @@ mod backup_tests {
         // let message_json = MessageJson::new(catalogue_value);
         let message_serialise = {
             let catalogue_builder = CatalogueHoraireBuilder::new(
-                heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false);
+                heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
             let catalogue = catalogue_builder.build();
             let catalogue_value: Value = serde_json::to_value(catalogue).expect("value");
-            let catalogue_signe = middleware.formatter_message(&catalogue_value, Some("Backup"), None).expect("signer");
+            let catalogue_signe = middleware.formatter_message(
+                &catalogue_value,
+                Some("Backup"),
+                Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
+                None,
+                None
+            ).expect("signer");
             MessageSerialise::from_parsed(catalogue_signe)
         }.expect("build");
 
@@ -1279,7 +1296,11 @@ mod test_integration {
         futures.push(tokio::spawn(async move {
 
             // Test
-            let info = BackupInformation::new(NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
+            let info = BackupInformation::new(
+                NOM_COLLECTION_TRANSACTIONS,
+                false,
+                None
+            ).expect("info");
 
             let workdir = tempfile::tempdir().expect("tmpdir");
             let groupes = grouper_backups(
@@ -1309,7 +1330,7 @@ mod test_integration {
             let info = BackupInformation::new(NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
             let heure = DateEpochSeconds::from_heure(2021, 09, 12, 12);
             let mut builder = CatalogueHoraire::builder(
-                heure, NOM_DOMAINE.into(), NOM_COLLECTION_TRANSACTIONS.into(), false);
+                heure, NOM_DOMAINE.into(), NOM_COLLECTION_TRANSACTIONS.into(), false, false);
 
             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
 
@@ -1366,7 +1387,7 @@ mod test_integration {
             let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
             let domaine = "Pki";
             let mut builder = CatalogueHoraire::builder(
-                heure.clone(), domaine.into(), NOM_COLLECTION_TRANSACTIONS.into(), true);
+                heure.clone(), domaine.into(), NOM_COLLECTION_TRANSACTIONS.into(), true, false);
 
             // Path fichiers transactions et catalogue
             let mut path_transactions = workdir.clone();
@@ -1438,7 +1459,7 @@ mod test_integration {
         let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
         let domaine = "Pki";
         let mut builder = CatalogueHoraire::builder(
-            heure.clone(), domaine.into(), NOM_COLLECTION_TRANSACTIONS.into(), false);
+            heure.clone(), domaine.into(), NOM_COLLECTION_TRANSACTIONS.into(), false, false);
 
         // Connecter mongo
         let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
@@ -1543,14 +1564,16 @@ mod test_integration {
             mut tx_triggers
         ) = build().await;
 
-        // let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
-
         // Reset backup flags pour le domaine
         reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
 
         futures.push(tokio::spawn(async move {
 
-            backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+            debug!("Attente MQ");
+            tokio::time::sleep(tokio::time::Duration::new(3, 0)).await;
+            debug!("Fin sleep");
+
+            // backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
 
         }));
 

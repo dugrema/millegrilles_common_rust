@@ -27,24 +27,38 @@ pub trait FormatteurMessage: IsConfigurationPki {
     // fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 
     /// Implementation de formattage et signature d'un message de MilleGrille
-    fn formatter_message<S>(&self, contenu: &S, domaine: Option<&str>, version: Option<i32>) -> Result<MessageMilleGrille, Box<dyn Error>>
+    fn formatter_message<S>(
+        &self,
+        contenu: &S,
+        domaine: Option<&str>,
+        action: Option<&str>,
+        partition: Option<&str>,
+        version: Option<i32>
+    ) -> Result<MessageMilleGrille, Box<dyn Error>>
     where
         S: Serialize,
     {
         let enveloppe = self.get_enveloppe_privee();
-        MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, version)
+        MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, action, partition, version)
     }
 
-    fn signer_message(&self, message: &mut MessageMilleGrille, domaine: Option<&str>, version: Option<i32>) -> Result<(), Box<dyn Error>> {
+    fn signer_message(
+        &self,
+        message: &mut MessageMilleGrille,
+        domaine: Option<&str>,
+        action: Option<&str>,
+        partition: Option<&str>,
+        version: Option<i32>
+    ) -> Result<(), Box<dyn Error>> {
         if message.signature.is_some() {
             Err(format!("Message {} est deja signe", message.entete.uuid_transaction))?
         }
-        message.signer(self.get_enveloppe_privee().as_ref(), domaine, version)
+        message.signer(self.get_enveloppe_privee().as_ref(), domaine, action, partition, version)
     }
 
     fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {
         let reponse = json!({"ok": ok, "message": message});
-        self.formatter_message(&reponse, None, None)
+        self.formatter_message(&reponse, None, None, None, None)
     }
 }
 
@@ -53,11 +67,15 @@ pub trait FormatteurMessage: IsConfigurationPki {
 pub struct Entete {
     // Note : s'assurer de conserver les champs en ordre alphabetique
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub domaine: Option<String>,
     pub estampille: DateEpochSeconds,
     pub fingerprint_certificat: String,
     pub hachage_contenu: String,
     pub idmg: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition: Option<String>,
     pub uuid_transaction: String,
     pub version: i32,
 }
@@ -70,11 +88,13 @@ impl Entete {
 
 /// Builder pour les entetes de messages.
 pub struct EnteteBuilder {
+    action: Option<String>,
     domaine: Option<String>,
     estampille: DateEpochSeconds,
     fingerprint_certificat: String,
     hachage_contenu: String,
     idmg: String,
+    partition: Option<String>,
     uuid_transaction: String,
     version: i32,
 }
@@ -82,14 +102,21 @@ pub struct EnteteBuilder {
 impl EnteteBuilder {
     pub fn new(fingerprint_certificat: String, hachage_contenu: String, idmg: String) -> EnteteBuilder {
         EnteteBuilder {
+            action: None,
             domaine: None,
             estampille: DateEpochSeconds::now(),
             fingerprint_certificat,
             hachage_contenu,
             idmg,
+            partition: None,
             uuid_transaction: Uuid::new_v4().to_string(),
             version: 1,
         }
+    }
+
+    pub fn action(mut self, action: String) -> EnteteBuilder {
+        self.action = Some(action);
+        self
     }
 
     pub fn domaine(mut self, domaine: String) -> EnteteBuilder {
@@ -102,6 +129,11 @@ impl EnteteBuilder {
         self
     }
 
+    pub fn partition(mut self, partition: String) -> EnteteBuilder {
+        self.action = Some(partition);
+        self
+    }
+
     pub fn version(mut self, version: i32) -> EnteteBuilder {
         self.version = version;
         self
@@ -109,11 +141,13 @@ impl EnteteBuilder {
 
     pub fn build(self) -> Entete {
         Entete {
+            action: self.action,
             domaine: self.domaine,
             estampille: self.estampille,
             fingerprint_certificat: self.fingerprint_certificat,
             hachage_contenu: self.hachage_contenu,
             idmg: self.idmg,
+            partition: self.partition,
             uuid_transaction: self.uuid_transaction,
             version: self.version,
         }
@@ -154,14 +188,22 @@ impl MessageMilleGrille {
         }
     }
 
-    pub fn new_signer<S>(enveloppe_privee: &EnveloppePrivee, contenu: &S, domaine: Option<&str>, version: Option<i32>) -> Result<Self, Box<dyn std::error::Error>>
+    pub fn new_signer<S>(
+        enveloppe_privee: &EnveloppePrivee,
+        contenu: &S,
+        domaine: Option<&str>,
+        action: Option<&str>,
+        partition: Option<&str>,
+        version: Option<i32>
+    ) -> Result<Self, Box<dyn std::error::Error>>
     where
         S: Serialize,
     {
         // Serialiser le contenu
         let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
 
-        let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, version, &value)?;
+        let entete = MessageMilleGrille::creer_entete(
+            enveloppe_privee, domaine, action, partition, version, &value)?;
 
         let pems: Vec<String> = {
             let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
@@ -182,7 +224,14 @@ impl MessageMilleGrille {
         })
     }
 
-    fn creer_entete(enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<i32>, value: &Map<String, Value>) -> Result<Entete, Box<dyn Error>> {
+    fn creer_entete(
+        enveloppe_privee: &EnveloppePrivee,
+        domaine: Option<&str>,
+        action: Option<&str>,
+        partition: Option<&str>,
+        version: Option<i32>,
+        value: &Map<String, Value>
+    ) -> Result<Entete, Box<dyn Error>> {
         // Calculer le hachage du contenu
         let hachage = MessageMilleGrille::calculer_hachage_contenu(&value)?;
 
@@ -197,6 +246,16 @@ impl MessageMilleGrille {
 
         match domaine {
             Some(d) => entete_builder = entete_builder.domaine(d.to_owned()),
+            None => (),
+        }
+
+        match action {
+            Some(a) => entete_builder = entete_builder.action(a.to_owned()),
+            None => (),
+        }
+
+        match partition {
+            Some(p) => entete_builder = entete_builder.partition(p.to_owned()),
             None => (),
         }
 
@@ -294,13 +353,21 @@ impl MessageMilleGrille {
         Ok(serde_json::to_string(&ordered)?)
     }
 
-    fn signer(&mut self, enveloppe_privee: &EnveloppePrivee, domaine: Option<&str>, version: Option<i32>) -> Result<(), Box<dyn std::error::Error>> {
+    fn signer(
+        &mut self,
+        enveloppe_privee: &EnveloppePrivee,
+        domaine: Option<&str>,
+        action: Option<&str>,
+        partition: Option<&str>,
+        version: Option<i32>
+    ) -> Result<(), Box<dyn std::error::Error>> {
+
         if self.signature.is_some() {
             warn!("appel signer() sur message deja signe, on ignore");
             return Ok(())
         }
 
-        let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, version, &self.contenu)?;
+        let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, action, partition, version, &self.contenu)?;
 
         // Remplacer l'entete
         self.entete = entete;
@@ -308,6 +375,7 @@ impl MessageMilleGrille {
 
         let signature = MessageMilleGrille::signer_message(enveloppe_privee, &self.entete, &self.contenu)?;
         self.signature = Some(signature);
+
         Ok(())
     }
 
@@ -712,7 +780,8 @@ mod serialization_tests {
             "texte": "oui!",
             "alpaca": true,
         });
-        let message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None, None).expect("map");
+        let message = MessageMilleGrille::new_signer(
+            &enveloppe_privee, &val, None, None, None, None).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         debug!("Message MilleGrille serialise : {}", message_str)
@@ -806,7 +875,7 @@ mod serialization_tests {
             "texte": "oui!",
             "alpaca": true,
         });
-        let mut message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None, None).expect("map");
+        let mut message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None, None, None, None).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         let idx_certificat = message_str.find("\"_certificat\"");
@@ -833,7 +902,7 @@ mod serialization_tests {
         message.set_bool("contenu_bool", true);
 
         // Signer le message
-        message.signer(&enveloppe_privee, Some("MonDomaine"), Some(2)).expect("signer");
+        message.signer(&enveloppe_privee, Some("MonDomaine"), None, None, Some(2)).expect("signer");
         debug!("creer_message_manuellement message signe : {:?}", message);
 
         assert_eq!(message.certificat.is_some(), true);
@@ -842,7 +911,7 @@ mod serialization_tests {
         assert_eq!(message.entete.domaine.as_ref().expect("domaine").as_str(), "MonDomaine");
 
         // Signer a nouveau, devrait juste lancer un warning
-        message.signer(&enveloppe_privee, Some("MonDomaine"), Some(2)).expect("signer");
+        message.signer(&enveloppe_privee, Some("MonDomaine"), None, None, Some(2)).expect("signer");
     }
 
     #[test]
@@ -853,7 +922,7 @@ mod serialization_tests {
 
         // Creer et signer le message
         let mut message = MessageMilleGrille::new();
-        message.signer(&enveloppe_privee, Some("MonDomaine"), Some(2)).expect("signer");
+        message.signer(&enveloppe_privee, Some("MonDomaine"), None, None, Some(2)).expect("signer");
 
         // Panic, le messsage est signe (immuable)
         message.set_value("ma_valeur", Value::String(String::from("mon contenu")));

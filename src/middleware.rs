@@ -168,7 +168,8 @@ impl MiddlewareDbPki {
     async fn charger_certificats_chiffrage(&self) {
         debug!("Charger les certificats de maitre des cles pour chiffrage");
         let requete = json!({});
-        let message_reponse = match self.generateur_messages.transmettre_requete("MaitreDesCles.certMaitreDesCles", &requete, None).await {
+        let message_reponse = match self.generateur_messages.transmettre_requete(
+            "MaitreDesCles", "certMaitreDesCles", None, &requete, None).await {
             Ok(r) => r,
             Err(e) => {
                 error!("Erreur demande certificats : {}", e);
@@ -280,23 +281,23 @@ impl ValidateurX509 for MiddlewareDbPki {
 #[async_trait]
 impl GenerateurMessages for MiddlewareDbPki {
 
-    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
-        self.generateur_messages.emettre_evenement( domaine, message, exchanges).await
+    async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
+        self.generateur_messages.emettre_evenement( domaine, action, partition, message, exchanges).await
     }
 
-    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
     where
         M: Serialize + Send + Sync,
     {
-        self.generateur_messages.transmettre_requete(domaine, message, exchange).await
+        self.generateur_messages.transmettre_requete(domaine, action, partition, message, exchange).await
     }
 
-    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
+    async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.soumettre_transaction(domaine, action, partition, message, exchange, blocking).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.transmettre_commande(domaine, message, exchange, blocking).await
+    async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.transmettre_commande(domaine, action, partition, message, exchange, blocking).await
     }
 
     async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
@@ -372,7 +373,7 @@ impl Dechiffreur for MiddlewareDbPki {
             })
         };
         let reponse_cle_rechiffree = self.transmettre_requete(
-            "MaitreDesCles.dechiffrage", &requete, None).await?;
+            "MaitreDesCles.dechiffrage", "dechiffrage", None, &requete, None).await?;
 
         let m = match reponse_cle_rechiffree {
             TypeMessage::Valide(m) => m.message,
@@ -455,7 +456,7 @@ impl ValidateurX509Database {
         match upsert_certificat(enveloppe, collection, None).await? {
             Some(upserted_id) => {
                 debug!("Certificat upserted, creer transaction pour sauvegarde permanente");
-                let domaine_action = format!("{}.{}", PKI_DOMAINE_NOM, PKI_TRANSACTION_NOUVEAU_CERTIFICAT);
+                // let domaine_action = format!("{}.{}", PKI_DOMAINE_NOM, PKI_TRANSACTION_NOUVEAU_CERTIFICAT);
 
                 let fingerprint_certs = enveloppe.get_pem_vec();
                 let mut pem_vec = Vec::new();
@@ -474,7 +475,9 @@ impl ValidateurX509Database {
                 // );
 
                 match self.generateur_messages.soumettre_transaction(
-                    &domaine_action,
+                    PKI_DOMAINE_NOM,
+                    PKI_TRANSACTION_NOUVEAU_CERTIFICAT,
+                    None,
                     &contenu,
                     Some(Securite::L3Protege),
                     false
@@ -638,23 +641,23 @@ impl ValidateurX509 for MiddlewareDb {
 #[async_trait]
 impl GenerateurMessages for MiddlewareDb {
 
-    async fn emettre_evenement(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
-        self.generateur_messages.emettre_evenement(domaine, message, exchanges).await
+    async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
+        self.generateur_messages.emettre_evenement(domaine, action, partition, message, exchanges).await
     }
 
-    async fn transmettre_requete<M>(&self, domaine: &str, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
     where
         M: Serialize + Send + Sync,
     {
-        self.generateur_messages.transmettre_requete(domaine, message, exchange).await
+        self.generateur_messages.transmettre_requete(domaine, action, partition, message, exchange).await
     }
 
-    async fn soumettre_transaction(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.soumettre_transaction(domaine, message, exchange, blocking).await
+    async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.soumettre_transaction(domaine, action, partition, message, exchange, blocking).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.transmettre_commande(domaine, message, exchange, blocking).await
+    async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.transmettre_commande(domaine, action, partition, message, exchange, blocking).await
     }
 
     async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
@@ -713,7 +716,7 @@ impl EmetteurCertificat for MiddlewareDbPki {
         let message = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
         let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
 
-        match generateur_message.emettre_evenement(PKI_EVENEMENT_CERTIFICAT, &message, Some(exchanges)).await {
+        match generateur_message.emettre_evenement("certificat", "infoCertificat", None, &message, Some(exchanges)).await {
             Ok(_) => Ok(()),
             Err(e) => Err(format!("Erreur emettre_certificat: {:?}", e)),
         }
@@ -832,7 +835,9 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
     });
 
     Ok(middleware.emettre_evenement(
-        EVENEMENT_PRESENCE_DOMAINE,
+        "presence",
+          "domaine",
+        None,
         &message,
         Some(vec!(Securite::L3Protege))
     ).await?)
@@ -1165,6 +1170,8 @@ pub mod serialization_tests {
             middleware.charger_certificats_chiffrage().await;
 
             debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
+            let cles = middleware.cles_chiffrage.lock().expect("lock");
+            assert_eq!(2, cles.len());
 
         }));
         // Execution async du test
@@ -1219,7 +1226,7 @@ pub mod serialization_tests {
             debug!("Commande sauvegarder cles : {:?}", commande);
 
             let reponse_sauvegarde = middleware.transmettre_commande(
-                "MaitreDesCles.sauvegarderCle", &commande, None, true)
+                "MaitreDesCles.sauvegarderCle", "sauvegarderCle", None, &commande, None, true)
                 .await.expect("reponse");
 
             debug!("Reponse sauvegarde cle : {:?}", reponse_sauvegarde);
@@ -1232,7 +1239,7 @@ pub mod serialization_tests {
                 })
             };
             let reponse_cle_rechiffree = middleware.transmettre_requete(
-                "MaitreDesCles.dechiffrage", &requete, None).await.expect("requete cle");
+                "MaitreDesCles.dechiffrage", "dechiffrage", None, &requete, None).await.expect("requete cle");
             debug!("Reponse cle rechiffree : {:?}", reponse_cle_rechiffree);
 
             let mut decipher = middleware.get_decipher(&hachage_bytes).await.expect("decipher");

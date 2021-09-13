@@ -44,6 +44,7 @@ pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
 pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";
 pub const TRANSACTION_CHAMP_UUID_TRANSACTION: &str = "uuid_transaction";
 pub const TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: &str = "en-tete.uuid_transaction";
+pub const TRANSACTION_CHAMP_ENTETE_PARTITION: &str = "en-tete.partition";
 pub const TRANSACTION_CHAMP_DOMAINE: &str = "domaine";
 pub const TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT: &str = "fingerprint_certificat";
 pub const TRANSACTION_CHAMP_EVENEMENTS: &str = "_evenements";
@@ -92,6 +93,6 @@ pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
 // Backup
 pub const BACKUP_NOM_DOMAINE: &str = "Backup";
 
-pub const BACKUP_TRANSACTION_CATALOGUE_HORAIRE: &str = "Backup.catalogueHoraire";
+pub const BACKUP_TRANSACTION_CATALOGUE_HORAIRE: &str = "catalogueHoraire";
 
 pub const BACKUP_CHAMP_FUUID_GROSFICHIERS: &str = "fuuid_grosfichiers";

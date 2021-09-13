@@ -45,7 +45,7 @@ pub async fn transmettre_evenement_persistance(
 
     // let message = MessageJson::new(evenement);
 
-    Ok(middleware.emettre_evenement(&rk, &evenement, Some(vec!(Securite::L4Secure))).await?)
+    Ok(middleware.emettre_evenement(&rk, EVENEMENT_TRANSACTION_PERSISTEE, None, &evenement, Some(vec!(Securite::L4Secure))).await?)
 }
 
 #[derive(Clone, Debug, Deserialize)]
