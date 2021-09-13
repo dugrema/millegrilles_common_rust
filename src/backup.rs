@@ -1,6 +1,6 @@
 use std::{io, io::Write};
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::io::Bytes;
 use std::iter::Map;
@@ -13,7 +13,7 @@ use async_std::fs::File;
 use async_std::io::BufReader;
 use async_trait::async_trait;
 use bson::{bson, doc, Document};
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, TimeZone, Utc, Timelike};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use futures::Stream;
 use futures::stream::TryStreamExt;
@@ -41,16 +41,20 @@ use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<M>(middleware: &M, nom_collection_transactions: &str, chiffrer: bool) -> Result<(), Box<dyn Error>>
+pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<(), Box<dyn Error>>
 where
     M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
+    S: Into<&'a str>,
 {
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
     debug!("Backup vers tmp : {:?}", workdir);
 
+    let nom_coll_str = nom_collection_transactions.into();
+
     let info_backup = BackupInformation::new(
-        nom_collection_transactions,
+        nom_domaine.into(),
+        nom_coll_str,
         chiffrer,
         Some(workdir.path().to_owned())
     )?;
@@ -58,7 +62,7 @@ where
     // Generer liste builders domaine/heures
     let builders = grouper_backups(middleware, &info_backup).await?;
 
-    debug!("Backup collection {} : {:?}", nom_collection_transactions, builders);
+    debug!("Backup collection {} : {:?}", nom_coll_str, builders);
 
     for mut builder in builders {
         // Creer fichier de transactions
@@ -131,10 +135,18 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
         None => bson!({"$exists": false})
     };
 
+    let limite_snapshot = {
+        let mut limite_snapshot = Utc::now() - Duration::hours(1);
+        limite_snapshot.with_minute(0);
+        limite_snapshot.with_second(0);
+        limite_snapshot.with_nanosecond(0);
+        limite_snapshot
+    };
+
     let collection = middleware.get_collection(nom_collection)?;
     let pipeline = vec! [
         doc! {"$match": {
-            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
+            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$lt": limite_snapshot},
             TRANSACTION_CHAMP_BACKUP_FLAG: false,
             TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
             TRANSACTION_CHAMP_ENTETE_PARTITION: partition,
@@ -179,20 +191,26 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
 
         let date = DateEpochSeconds::from_heure(annee, mois, jour, heure);
 
-        let snapshot = false;
-
         let builder = CatalogueHoraireBuilder::new(
             date,
             domaine.to_owned(),
             backup_information.uuid_backup.clone(),
             backup_information.chiffrer,
-            snapshot,
+            false,
         );
         builders.push(builder);
     }
 
-    // Ajouter un builder pour snapshot
-
+    // Ajouter builder pour snapshot
+    let date_snapshot = DateEpochSeconds::from(limite_snapshot.clone());
+    let builder_snapshot = CatalogueHoraireBuilder::new(
+        date_snapshot,
+        backup_information.domaine.clone(),
+        backup_information.uuid_backup.clone(),
+        backup_information.chiffrer,
+        true,
+    );
+    builders.push(builder_snapshot);
 
     Ok(builders)
 }
@@ -507,6 +525,8 @@ trait BackupHandler {
 struct BackupInformation {
     /// Nom complet de la collection de transactions mongodb
     nom_collection_transactions: String,
+    /// Nom du domaine
+    domaine: String,
     /// Partition (groupe logique) du backup.
     partition: Option<String>,
     /// Path de travail pour conserver les fichiers temporaires de chiffrage
@@ -591,11 +611,14 @@ struct CatalogueHoraireBuilder {
 impl BackupInformation {
 
     /// Creation d'une nouvelle structure de backup
-    pub fn new(
-        nom_collection_transactions: &str,
+    pub fn new<S>(
+        domaine: S,
+        nom_collection_transactions: S,
         chiffrer: bool,
         workpath: Option<PathBuf>
-    ) -> Result<BackupInformation, Box<dyn Error>> {
+    ) -> Result<BackupInformation, Box<dyn Error>>
+    where S: Into<String>
+    {
         let (workpath_inner, tmp_workdir): (PathBuf, Option<TempDir>) = match workpath {
             Some(wp) => (wp, None),
             None => {
@@ -609,7 +632,8 @@ impl BackupInformation {
         let uuid_backup = Uuid::new_v4().to_string();
 
         Ok(BackupInformation {
-            nom_collection_transactions: nom_collection_transactions.to_owned(),
+            nom_collection_transactions: nom_collection_transactions.into(),
+            domaine: domaine.into(),
             partition: None,
             workpath: workpath_inner,
             uuid_backup,
@@ -1115,6 +1139,7 @@ mod backup_tests {
     #[test]
     fn init_backup_information() {
         let info = BackupInformation::new(
+            NOM_DOMAINE_BACKUP,
             NOM_COLLECTION_BACKUP,
             false,
             None
@@ -1403,6 +1428,7 @@ mod test_integration {
 
             // Test
             let info = BackupInformation::new(
+                NOM_DOMAINE,
                 NOM_COLLECTION_TRANSACTIONS,
                 false,
                 None
@@ -1433,7 +1459,8 @@ mod test_integration {
         futures.push(tokio::spawn(async move {
 
             // Test
-            let info = BackupInformation::new(NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
+            let info = BackupInformation::new(
+                NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
             let heure = DateEpochSeconds::from_heure(2021, 09, 12, 12);
             let mut builder = CatalogueHoraire::builder(
                 heure, NOM_DOMAINE.into(), NOM_COLLECTION_TRANSACTIONS.into(), false, false);
@@ -1485,6 +1512,7 @@ mod test_integration {
 
             // Test
             let info = BackupInformation::new(
+                NOM_DOMAINE,
                 NOM_COLLECTION_TRANSACTIONS,
                 true,
                 None
@@ -1556,6 +1584,7 @@ mod test_integration {
         // Generer transactions, catalogue, commande maitredescles
         // Test
         let info = BackupInformation::new(
+            NOM_DOMAINE,
             NOM_COLLECTION_TRANSACTIONS,
             true,
             None
@@ -1649,7 +1678,7 @@ mod test_integration {
             middleware.charger_certificats_chiffrage().await;
             debug!("Certificats de chiffrage recus : {:?}", middleware.get_publickeys_chiffrage());
 
-            backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+            backup(middleware.as_ref(), NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
 
         }));
 

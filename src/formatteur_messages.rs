@@ -622,6 +622,12 @@ impl Default for DateEpochSeconds {
     }
 }
 
+impl From<DateTime<Utc>> for DateEpochSeconds {
+    fn from(dt: DateTime<Utc>) -> Self {
+        DateEpochSeconds {date: dt}
+    }
+}
+
 impl Serialize for DateEpochSeconds {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         let ts = self.date.timestamp();
