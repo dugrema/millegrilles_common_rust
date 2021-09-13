@@ -2,7 +2,10 @@ use std::error::Error;
 use std::path::Path;
 
 use async_recursion::async_recursion;
+use async_std::io::ReadExt;
 use async_tar::{Archive, Entry};
+use async_trait::async_trait;
+use bytes::BufMut;
 use futures::Stream;
 use log::{debug, error, info, warn};
 use multibase::Base;
@@ -12,14 +15,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio_stream::{Iter, StreamExt};
 use tokio_util::codec::{BytesCodec, FramedRead};
 use xz2::stream;
-use async_std::io::ReadExt;
-use bytes::BufMut;
-
-use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader, ValidateurX509, Chiffreur, Dechiffreur};
-use crate::constantes::*;
 use xz2::stream::Status;
+
+use crate::{Chiffreur, CipherMgs2, Dechiffreur, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader, ValidateurX509};
 use crate::backup::CatalogueHoraire;
-use async_trait::async_trait;
+use crate::constantes::*;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
@@ -441,14 +441,14 @@ pub mod fichiers_tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    use async_std::future::Future;
     use tokio_util::codec::{BytesCodec, FramedRead};
 
-    use crate::test_setup::setup;
+    use crate::{MiddlewareDbPki, ValidateurX509};
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
+    use crate::test_setup::setup;
 
     use super::*;
-    use async_std::future::Future;
-    use crate::{ValidateurX509, MiddlewareDbPki};
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
     const BYTES_TEST: &[u8] = b"des bytes a ecrire";

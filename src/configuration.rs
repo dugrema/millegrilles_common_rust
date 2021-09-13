@@ -14,15 +14,19 @@ use openssl::x509::X509;
 use rand::Rng;
 
 use crate::certificats::{build_store_path, charger_enveloppe, charger_enveloppe_privee, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
+use url::Url;
 
-pub trait ConfigMessages: Send + Sync {
+pub trait ConfigMessages: IsConfigNoeud + Send + Sync {
     fn get_configuration_mq(&self) -> &ConfigurationMq;
     fn get_configuration_pki(&self) -> &ConfigurationPki;
-    fn get_configuration_noeud(&self) -> &ConfigurationNoeud;
 }
 
 pub trait ConfigDb: Send + Sync {
     fn get_configuraiton_mongo(&self) -> &ConfigurationMongo;
+}
+
+pub trait IsConfigNoeud: Send + Sync {
+    fn get_configuration_noeud(&self) -> &ConfigurationNoeud;
 }
 
 pub struct ConfigurationMessages {
@@ -39,12 +43,18 @@ pub struct ConfigurationMessagesDb {
 impl ConfigMessages for ConfigurationMessages {
     fn get_configuration_mq(&self) -> &ConfigurationMq { &self.mq }
     fn get_configuration_pki(&self) -> &ConfigurationPki { &self.pki }
+}
+
+impl IsConfigNoeud for ConfigurationMessages {
     fn get_configuration_noeud(&self) -> &ConfigurationNoeud { &self.noeud }
 }
 
 impl ConfigMessages for ConfigurationMessagesDb {
     fn get_configuration_mq(&self) -> &ConfigurationMq { &self.configuration_messages.mq }
     fn get_configuration_pki(&self) -> &ConfigurationPki { &self.configuration_messages.pki }
+}
+
+impl IsConfigNoeud for ConfigurationMessagesDb {
     fn get_configuration_noeud(&self) -> &ConfigurationNoeud { &self.configuration_messages.noeud }
 }
 
@@ -139,10 +149,22 @@ fn charger_configuration_pki() -> Result<ConfigurationPki, String> {
 fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let noeud_id = match std::env::var("MG_NOEUD_ID") {
         Ok(v) => Some(v),
-        Err(e) => None,
+        Err(_) => None,
     };
+
+    let fichiers_url = match std::env::var("MG_FICHIERS_URL") {
+        Ok(url_str) => {
+            match Url::parse(url_str.as_str()) {
+                Ok(url) => Some(url),
+                Err(e) => Err(format!("Erreur parse url fichiers : {}", url_str))?,
+            }
+        },
+        Err(_) => None,
+    };
+
     Ok(ConfigurationNoeud{
         noeud_id,
+        fichiers_url,
     })
 }
 
@@ -165,6 +187,7 @@ pub struct ConfigurationMongo {
 #[derive(Clone, Debug)]
 pub struct ConfigurationNoeud {
     pub noeud_id: Option<String>,
+    pub fichiers_url: Option<Url>,
 }
 
 #[derive(Debug)]

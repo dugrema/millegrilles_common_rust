@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki, Dechiffreur};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki, Dechiffreur, regenerer, TraiterTransaction, parse_tar, IsConfigNoeud};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -45,7 +45,6 @@ pub async fn backup<M>(middleware: &M, nom_collection_transactions: &str, chiffr
 where
     M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
 {
-
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
     debug!("Backup vers tmp : {:?}", workdir);
@@ -74,31 +73,17 @@ where
             path_fichier_transactions.as_path()
         ).await?;
 
-        // let transaction_maitredescles = match cipher_keys {
-        //     Some(k) => {
-        //         debug!("Conserver information chiffrage pour backup {} : {}", builder.nom_domaine, builder.heure.format_ymdh());
-        //         let mut identificateurs_document = HashMap::new();
-        //         identificateurs_document.insert(String::from("domaine"), builder.nom_domaine.clone());
-        //         identificateurs_document.insert(String::from("heure"), String::from(builder.heure.format_ymdh()));
-        //
-        //         let commande = k.get_commande_sauvegarder_cles(
-        //             "Backup",
-        //             identificateurs_document
-        //         );
-        //         Some(commande)
-        //     },
-        //     None => {
-        //         debug!("Fichier complete pour backup {} : {} (non chiffre)", builder.nom_domaine, builder.heure.format_ymdh());
-        //         None
-        //     },
-        // };
-
         // Signer et serialiser catalogue
         let (catalogue_horaire, catalogue_signe, commande_cles) = serialiser_catalogue(
             middleware, builder).await?;
         debug!("Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
-        let reponse = uploader_backup(middleware, path_fichier_transactions.as_path(), &catalogue_horaire, &catalogue_signe, commande_cles).await?;
-        //debug!("Reponse backup catalogue : {:?}", reponse);
+        let reponse = uploader_backup(
+            middleware,
+            path_fichier_transactions.as_path(),
+            &catalogue_horaire,
+            &catalogue_signe,
+            commande_cles
+        ).await?;
 
         if ! reponse.status().is_success() {
             Err(format!("Erreur upload fichier : {:?}", reponse))?;
@@ -117,6 +102,19 @@ where
         debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
     }
 
+    Ok(())
+}
+
+pub async fn restaurer<M, T>(middleware: &M, nom_collection_transactions: &str, noms_collections_docs: Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
+where
+    M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages,
+    T: TraiterTransaction,
+{
+
+
+    debug!("Restauration des transactions termines, debut regeneration {}", nom_collection_transactions);
+    regenerer(middleware, nom_collection_transactions, noms_collections_docs, processor).await?;
+    debug!("Fin regeneration {}", nom_collection_transactions);
     Ok(())
 }
 
@@ -433,6 +431,66 @@ async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_coll
             r.matched_count
         ))?;
     }
+
+    Ok(())
+}
+
+async fn download_backup<M>(middleware: Arc<M>, nom_domaine: &str, nom_collection_transactions: &str, workdir: &Path) -> Result<(), Box<dyn Error>>
+where M: MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + 'static {
+    let path_fichier = {
+        let mut path_fichier = PathBuf::from(workdir);
+        path_fichier.push(PathBuf::from("download_backup.tar"));
+        path_fichier
+    };
+
+    let enveloppe_privee = middleware.get_enveloppe_privee();
+    let ca_cert_pem = match enveloppe_privee.chaine_pem().last() {
+        Some(cert) => cert.as_str(),
+        None => Err(format!("Certificat CA manquant"))?,
+    };
+    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+    let identity = reqwest::Identity::from_pem(enveloppe_privee.clecert_pem.as_bytes())?;
+
+    let client = reqwest::Client::builder()
+        .add_root_certificate(root_ca)
+        .identity(identity)
+        .https_only(true)
+        .use_rustls_tls()
+        .build()?;
+
+    let mut url_fichiers = match &middleware.get_configuration_noeud().fichiers_url {
+        Some(u) => u.to_owned(),
+        None => Err("Erreur backup - configuration serveur fichiers absente")?,
+    };
+    url_fichiers.set_path(format!("/backup/restaurerDomaine/{}", nom_domaine).as_str());
+    debug!("Download backup url : {:?}", url_fichiers);
+    let response = client.get(url_fichiers)
+        .send()
+        .await?;
+
+    debug!("Response get backup {} : {:?}", response.status(), response);
+
+    // Conserver fichier sur le disque (temporaire)
+    // todo Trouver comment streamer en memoire
+    {
+        let mut stream = response.bytes_stream();
+        let mut file_output = File::create(path_fichier.as_path()).await?;
+        while let Some(item) = stream.next().await {
+            let content = item.expect("item");
+            file_output.write_all(content.as_ref()).await?;
+        }
+        file_output.flush().await?;
+    }
+
+    let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
+    let mut processeur = ProcesseurFichierBackup::new(
+        enveloppe_privee.clone(),
+        middleware.clone()
+    );
+    parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
+
+    // Upload les transactions valides
+    processeur.sauvegarder_batch(middleware.as_ref(), nom_collection_transactions).await?;
 
     Ok(())
 }
@@ -1542,60 +1600,25 @@ mod test_integration {
     }
 
     #[tokio::test]
-    async fn download_backup() {
+    async fn download_backup_test() {
         setup("download_backup");
 
-        const FICHIER_DOWNLOAD: &str = "/tmp/download_backup.tar";
+        let workdir = PathBuf::from("/tmp");
 
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
         let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
-
-        let ca_cert_pem = enveloppe.chaine_pem().last().expect("last");
-        let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
-        let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
-        let client = reqwest::Client::builder()
-            .add_root_certificate(root_ca)
-            .identity(identity)
-            .https_only(true)
-            .use_rustls_tls()
-            .build().expect("client");
-
-        let response = client.get("https://mg-dev4:3021/backup/restaurerDomaine/Pki")
-            .send()
-            .await.expect("download backup");
-
-        debug!("Response get backup {} : {:?}", response.status(), response);
 
         debug!("Attente MQ");
         tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
         debug!("Fin sleep");
 
-        // Conserver fichier sur le disque (temporaire)
-        // todo Trouver comment streamer en memoire
-        {
-            let mut stream = response.bytes_stream();
-            let mut file_output = File::create(PathBuf::from(FICHIER_DOWNLOAD).as_path()).await.expect("create");
-            while let Some(item) = stream.next().await {
-                let content = item.expect("item");
-                file_output.write_all(content.as_ref()).await.expect("write");
-            }
-            file_output.flush().await.expect("flush");
-        }
+        download_backup(
+            middleware.clone(),
+            NOM_DOMAINE,
+            NOM_COLLECTION_TRANSACTIONS,
+            workdir.as_path()
+        ).await.expect("download");
 
-        let mut fichier_tar = async_std::fs::File::open(PathBuf::from(FICHIER_DOWNLOAD)).await.expect("open");
-        // let mut tar_parse = TarParser::new();
-        // tar_parse.parse(fichier_tar).await;
-
-        let mut processeur = ProcesseurFichierBackup::new(
-            Arc::new(enveloppe),
-            validateur.clone()
-        );
-        parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await.expect("parse");
-
-        assert_eq!(9, processeur.batch.len());
-
-        // Upload les transactions valides
-        processeur.sauvegarder_batch(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await.expect("batch");
     }
 
     #[tokio::test]

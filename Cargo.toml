@@ -39,6 +39,7 @@ serde_json = "1.0"
 
 # Formats
 chrono = { version = "0.4.19" }
+url = { version = "2.2.2", features = ["serde"] }
 uuid = { version = "0.8.2", features = ["serde", "v4"] }
 
 # MongoDB

@@ -16,7 +16,7 @@ use openssl::symm::{Cipher, Crypter, encrypt, Mode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, Hacheur};
+use crate::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, Hacheur, IsConfigurationPki};
 use crate::certificats::ordered_map;
 use multihash::Code;
 use std::sync::Arc;
@@ -390,17 +390,17 @@ pub trait Chiffreur {
 
 /// Permet de recuperer un Decipher deja initialise pour une cle
 #[async_trait]
-pub trait Dechiffreur: Send + Sync {
+pub trait Dechiffreur: IsConfigurationPki + Send + Sync {
     /// Appel au MaitreDesCles pour une version dechiffrable de la cle
     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>>;
 
     /// Cle privee locale pour dechiffrage
-    fn get_enveloppe_privee_dechiffrage(&self) -> Arc<EnveloppePrivee>;
+    // fn get_enveloppe_privee_dechiffrage(&self) -> Arc<EnveloppePrivee>;
 
     /// Retourne une instance de Decipher pleinement initialisee et prete a dechiffrer
     async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs2, Box<dyn Error>> {
         let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
-        let env_privee = self.get_enveloppe_privee_dechiffrage();
+        let env_privee = self.get_enveloppe_privee();
         let cle_privee = env_privee.cle_privee();
         info_cle.dechiffrer_cle(cle_privee)?;
 
