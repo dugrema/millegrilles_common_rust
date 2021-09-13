@@ -15,7 +15,7 @@ use xz2::stream;
 use async_std::io::ReadExt;
 use bytes::BufMut;
 
-use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader, ValidateurX509};
+use crate::{CipherMgs2, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader, ValidateurX509, Chiffreur};
 use crate::constantes::*;
 use xz2::stream::Status;
 use crate::backup::CatalogueHoraire;
@@ -33,15 +33,18 @@ impl<'a> FichierWriter<'a> {
 
     const BUFFER_SIZE: usize = 64 * 1024;
 
-    pub async fn new(path_fichier: &'a Path, certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>) -> Result<FichierWriter<'a>, Box<dyn Error>> {
+    pub async fn new<C>(path_fichier: &'a Path, chiffreur: Option<&C>) -> Result<FichierWriter<'a>, Box<dyn Error>>
+    where
+        C: Chiffreur,
+    {
         let output_file = tokio::fs::File::create(path_fichier).await?;
         // let xz_encodeur = XzEncoder::new(output_file, 9);
         let xz_encodeur = stream::Stream::new_easy_encoder(9, stream::Check::Crc64).expect("stream");
         let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base58Btc).build();
 
-        let chiffreur = match certificats_chiffrage {
+        let chiffreur = match chiffreur {
             Some(c) => {
-                Some(CipherMgs2::new(&c))
+                Some(c.get_cipher())
             },
             None => None,
         };
@@ -425,7 +428,7 @@ pub trait TraiterFichier {
 }
 
 #[cfg(test)]
-mod fichiers_tests {
+pub mod fichiers_tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -436,7 +439,7 @@ mod fichiers_tests {
 
     use super::*;
     use async_std::future::Future;
-    use crate::ValidateurX509;
+    use crate::{ValidateurX509, MiddlewareDbPki};
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
     const BYTES_TEST: &[u8] = b"des bytes a ecrire";
@@ -456,12 +459,21 @@ mod fichiers_tests {
         }
     }
 
+    pub struct ChiffreurDummy {
+        pub public_keys: Vec<FingerprintCertPublicKey>,
+    }
+    impl Chiffreur for ChiffreurDummy {
+        fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+            self.public_keys.clone()
+        }
+    }
+
     #[tokio::test]
     async fn ecrire_bytes_writer() {
         setup("ecrire_bytes_writer");
 
         let path_fichier = PathBuf::from("/tmp/fichier_tests.1.xz");
-        let mut writer = FichierWriter::new(path_fichier.as_path(), None).await.expect("writer");
+        let mut writer = FichierWriter::new(path_fichier.as_path(), None::<&MiddlewareDbPki>).await.expect("writer");
         writer.write(BYTES_TEST).await.expect("write");
         let (mh, _) = writer.fermer().await.expect("finish");
 
@@ -495,7 +507,8 @@ mod fichiers_tests {
         ));
 
         let path_fichier = PathBuf::from("/tmp/fichier_tests.2.xz.mgs2");
-        let mut writer = FichierWriter::new(path_fichier.as_path(), Some(fp_certs)).await.expect("writer");
+        let chiffreur = ChiffreurDummy {public_keys: fp_certs};
+        let mut writer = FichierWriter::new(path_fichier.as_path(), Some(&chiffreur)).await.expect("writer");
         writer.write(BYTES_TEST).await.expect("write");
         let (mh, cipher_keys) = writer.fermer().await.expect("finish");
 

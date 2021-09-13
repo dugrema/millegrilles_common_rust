@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -67,7 +67,12 @@ where
         path_fichier_transactions.push(PathBuf::from(builder.get_nomfichier_transactions()));
 
         let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
-        let cipher_keys = serialiser_transactions(middleware, &mut curseur, &mut builder, path_fichier_transactions.as_path(), None).await?;
+        let cipher_keys = serialiser_transactions(
+            middleware,
+            &mut curseur,
+            &mut builder,
+            path_fichier_transactions.as_path()
+        ).await?;
 
         let transaction_maitredescles = match cipher_keys {
             Some(k) => {
@@ -116,8 +121,6 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
 
     let nom_collection = backup_information.nom_collection_transactions.as_str();
 
-
-
     let partition = match backup_information.partition.as_ref() {
         Some(p) => bson!(p),
         None => bson!({"$exists": false})
@@ -163,14 +166,6 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
         let info_id = tmp_id.get("_id").expect("id").as_document().expect("doc id");
 
         let domaine = info_id.get("domaine").expect("domaine").as_str().expect("str");
-        // let sousdomaines_str = sousdomaine.iter().map(|d| d.as_str().expect("str"));
-        // let mut sousdomaine_vec = Vec::new();
-        // for s in sousdomaines_str {
-        //     sousdomaine_vec.push(s)
-        // }
-        // let sousdomaine_str = sousdomaine_vec.as_slice().join(".");
-        // // debug!("Resultat : {:?}", sousdomaine_str);
-
         let doc_heure = info_id.get("heure").expect("heure").as_document().expect("doc heure");
         let annee = doc_heure.get("year").expect("year").as_i32().expect("i32");
         let mois = doc_heure.get("month").expect("month").as_i32().expect("i32") as u32;
@@ -221,19 +216,23 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     Ok(curseur)
 }
 
-async fn serialiser_transactions(
-    middleware: &(impl ValidateurX509),
+async fn serialiser_transactions<M>(
+    middleware: &M,
     curseur: &mut Cursor<Document>,
     builder: &mut CatalogueHoraireBuilder,
     path_transactions: &Path,
-    certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>
-) -> Result<Option<Mgs2CipherKeys>, Box<dyn Error>> {
+) -> Result<Option<Mgs2CipherKeys>, Box<dyn Error>>
+where
+    M: ValidateurX509 + Chiffreur,
+{
 
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
-    let mut transaction_writer = TransactionWriter::new(
-        path_transactions,
-        certificats_chiffrage
-    ).await?;
+    let mut transaction_writer = match builder.chiffrer {
+        true => {
+            TransactionWriter::new(path_transactions, Some(middleware)).await?
+        },
+        false => TransactionWriter::new(path_transactions, None::<&MiddlewareDbPki>).await?,
+    };
 
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
@@ -647,8 +646,11 @@ struct TransactionWriter<'a> {
 
 impl<'a> TransactionWriter<'a> {
 
-    pub async fn new(path_fichier: &'a Path, certificats_chiffrage: Option<Vec<FingerprintCertPublicKey>>) -> Result<TransactionWriter<'a>, Box<dyn Error>> {
-        let fichier_writer = FichierWriter::new(path_fichier, certificats_chiffrage).await?;
+    pub async fn new<C>(path_fichier: &'a Path, middleware: Option<&C>) -> Result<TransactionWriter<'a>, Box<dyn Error>>
+    where
+        C: Chiffreur,
+    {
+        let fichier_writer = FichierWriter::new(path_fichier, middleware).await?;
         Ok(TransactionWriter{fichier_writer})
     }
 
@@ -1005,6 +1007,7 @@ mod backup_tests {
     use crate::test_setup::setup;
 
     use super::*;
+    use crate::fichiers_tests::ChiffreurDummy;
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -1126,7 +1129,7 @@ mod backup_tests {
     async fn roundtrip_json() {
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions.jsonl.xz");
 
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).await.expect("writer");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), None::<&MiddlewareDbPki>).await.expect("writer");
         let doc_json = json!({
             "contenu": "Du contenu a encoder",
             "valeur": 1234,
@@ -1163,7 +1166,7 @@ mod backup_tests {
     #[tokio::test]
     async fn ecrire_transactions_writer_bson() {
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz");
-        let mut writer = TransactionWriter::new(path_fichier.as_path(), None).await.expect("writer");
+        let mut writer = TransactionWriter::new(path_fichier.as_path(), None::<&MiddlewareDbPki>).await.expect("writer");
 
         let (mh_reference, doc_bson) = get_doc_reference();
         writer.write_bson_line(&doc_bson).await.expect("write");
@@ -1185,9 +1188,11 @@ mod backup_tests {
             true
         ));
 
+        let chiffreur_dummy = ChiffreurDummy {public_keys: fp_certs};
+
         let mut writer = TransactionWriter::new(
             path_fichier.as_path(),
-            Some(fp_certs)
+            Some(&chiffreur_dummy)
         ).await.expect("writer");
 
         let (mh_reference, doc_bson) = get_doc_reference();
@@ -1341,8 +1346,7 @@ mod test_integration {
                 middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
-                path_transactions.as_path(),
-                None
+                path_transactions.as_path()
             ).await.expect("serialiser");
 
             // debug!("Resultat extraction transactions : {:?}", resultat);
@@ -1401,8 +1405,7 @@ mod test_integration {
                 middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
-                path_transactions.as_path(),
-                Some(certificats_chiffrage)
+                path_transactions.as_path()
             ).await.expect("serialiser").expect("cles");
 
             builder.set_cles(&cles);
@@ -1415,7 +1418,7 @@ mod test_integration {
 
             let message_serialise = MessageSerialise::from_parsed(catalogue_signe).expect("ser");
 
-            let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None)
+            let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None::<&MiddlewareDbPki>)
                 .await.expect("write catalogue");
             writer_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
             let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer");
@@ -1472,8 +1475,7 @@ mod test_integration {
                 middleware.as_ref(),
                 &mut transactions,
                 &mut builder,
-                path_transactions.as_path(),
-                Some(certificats_chiffrage)
+                path_transactions.as_path()
             ).await.expect("serialiser").expect("cles");
 
             builder.set_cles(&cles);
