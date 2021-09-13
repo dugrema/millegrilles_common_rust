@@ -686,12 +686,20 @@ impl CatalogueHoraireBuilder {
     }
 
     fn get_nomfichier_catalogue(&self) -> PathBuf {
-        let date_str = self.heure.format_ymdh();
+        let mut date_str = self.heure.format_ymdh();
+        match self.snapshot {
+            true => date_str = format!("{}-SNAPSHOT", date_str),
+            false => (),
+        }
         PathBuf::from(format!("{}_{}.json.xz", &self.nom_domaine, date_str))
     }
 
     fn get_nomfichier_transactions(&self) -> PathBuf {
-        let date_str = self.heure.format_ymdh();
+        let mut date_str = self.heure.format_ymdh();
+        match self.snapshot {
+            true => date_str = format!("{}-SNAPSHOT", date_str),
+            false => (),
+        }
         let nom_fichier = match self.chiffrer {
             true => format!("{}_{}.jsonl.xz.mgs2", &self.nom_domaine, date_str),
             false => format!("{}_{}.jsonl.xz", &self.nom_domaine, date_str),
