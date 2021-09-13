@@ -957,7 +957,7 @@ where
     Ok(())
 }
 
-pub async fn sauvegarder_transaction<M>(middleware: &M, m: MessageValideAction, domaine: &str, nom_collection: &str) -> Result<(), String>
+pub async fn sauvegarder_transaction<M>(middleware: &M, m: MessageValideAction, nom_collection: &str) -> Result<(), String>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
@@ -986,6 +986,18 @@ where
     let entete = &msg.entete;
     let uuid_transaction = entete.uuid_transaction.as_str();
     let estampille = &entete.estampille;
+    let domaine = match entete.domaine.as_ref() {
+        Some(d) => d.as_str(),
+        None => Err(format!("Domaine absent de la transaction {}", uuid_transaction))?,
+    };
+    let action = match entete.action.as_ref() {
+        Some(a) => a.as_str(),
+        None => Err(format!("Action absente de la transaction {}", uuid_transaction))?,
+    };
+    let partition = match entete.partition.as_ref() {
+        Some(p) => Some(p.as_str()),
+        None => None,
+    };
 
     let params_evenements = doc! {
         "document_persiste": date_courante,
@@ -1020,6 +1032,8 @@ where
         middleware,
         uuid_transaction,
         domaine,
+        action,
+        partition,
         m.reply_q.clone(),
         m.correlation_id.clone()
     ).await?;

@@ -104,7 +104,7 @@ where
 
         // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
         let reponse_catalogue = middleware.soumettre_transaction(
-            "Backup", "catalogueHoraire", None, &catalogue_signe, None, true).await?;
+            "Backup.catalogueHoraire", "catalogueHoraire", None, &catalogue_signe, None, true).await?;
         debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
     }
 
@@ -1100,7 +1100,7 @@ mod backup_tests {
         // debug!("Json catalogue : {:?}", catalogue_str);
 
         assert_eq!(catalogue_str.find("1627794000"), Some(9));
-        assert_eq!(catalogue_str.find(NOM_DOMAINE_BACKUP), Some(31));
+        assert_eq!(catalogue_str.find(NOM_DOMAINE_BACKUP), Some(48));
         assert_eq!(catalogue_str.find(uuid_backup), Some(60));
     }
 
@@ -1573,7 +1573,7 @@ mod test_integration {
             tokio::time::sleep(tokio::time::Duration::new(3, 0)).await;
             debug!("Fin sleep");
 
-            // backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+            backup(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
 
         }));
 

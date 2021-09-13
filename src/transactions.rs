@@ -4,14 +4,14 @@ use std::sync::Arc;
 use bson::{Bson, Document};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
-use mongodb::{bson::{doc, to_bson}, Client, Database};
+use mongodb::{bson::{doc, to_bson}, Client, Database, Collection};
 use mongodb::error::{BulkWriteError, BulkWriteFailure, ErrorKind};
 use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
-use crate::{MessageMilleGrille, MessageSerialise, MessageTrigger};
+use crate::{MessageMilleGrille, MessageSerialise, MessageTrigger, Entete};
 use crate::certificats::{EnveloppeCertificat, ValidateurX509};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
@@ -22,6 +22,8 @@ pub async fn transmettre_evenement_persistance(
     middleware: &impl GenerateurMessages,
     uuid_transaction: &str,
     domaine: &str,
+    action: &str,
+    partition: Option<&str>,
     reply_to: Option<String>,
     correlation_id: Option<String>
 ) -> Result<(), String> {
@@ -29,6 +31,8 @@ pub async fn transmettre_evenement_persistance(
         "uuid_transaction": uuid_transaction,
         "evenement": EVENEMENT_TRANSACTION_PERSISTEE,
         "domaine": domaine,
+        "action": action,
+        "partition": partition,
     });
 
     let mut evenement_map = evenement.as_object_mut().expect("map");
@@ -279,21 +283,22 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
             "$currentDate": { TRANSACTION_CHAMP_DATE_RESOUMISE: true }
         };
         while let Some(Ok(d)) = curseur.next().await {
-            let uuid_transaction = d
-                .get_document(TRANSACTION_CHAMP_ENTETE).expect(TRANSACTION_CHAMP_ENTETE)
-                .get_str(TRANSACTION_CHAMP_UUID_TRANSACTION).expect(TRANSACTION_CHAMP_UUID_TRANSACTION);
+            let id_doc = d.get("_id").expect("_id");
+            let filtre_transaction_resoumise = doc! {"_id": id_doc};
 
-            debug!("Transaction a resoumettre : {:?}", uuid_transaction);
-            let resultat = transmettre_evenement_persistance(middleware, uuid_transaction, domaine, None, None).await;
+            let resultat = resoumettre(middleware, &collection, &ops, d).await;
+
             match resultat {
                 Ok(_) => {
-                    let filtre_transaction_resoumise = doc! {
-                        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
-                    };
                     let _ = collection.update_one(filtre_transaction_resoumise, ops.clone(), None).await;
                 },
                 Err(e) => {
-                    error!("Erreur emission trigger de resoumission pour {} {} : {:?}", domaine, uuid_transaction, e);
+                    error!("Erreur emission trigger de resoumission pour {} : {:?}", domaine, e);
+                    if ! e.recuperable {
+                        // Erreur qui n'est pas necessairement recuperable (e.g. data, autre...)
+                        // On marque l'essaie.
+                        let _ = collection.update_one(filtre_transaction_resoumise, ops.clone(), None).await;
+                    }
                 }
             }
         }
@@ -301,6 +306,82 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
     }
 
     Ok(())
+}
+
+async fn resoumettre<M>(middleware: &M, collection: &Collection<Document>, ops: &Document, d: Document) -> Result<(), ErreurResoumission>
+where
+    M: GenerateurMessages + MongoDao
+{
+    let entete_value = match d.get("en-tete") {
+        Some(e) => e,
+        None => {
+            error!("Erreur chargement entete pour resoumission de {:?}", d);
+            Err(ErreurResoumission::new(false, None::<String>))?
+        },
+    };
+    let entete: Entete = match serde_json::from_value::<Entete>(serde_json::to_value(entete_value).expect("val")) {
+        Ok(e) => e,
+        Err(e) => {
+            error!("En-tete illisible, transaction ne peut pas etre re-emise {:?}", e);
+            Err(ErreurResoumission::new(false, None::<String>))?
+        }
+    };
+
+    let uuid_transaction = entete.uuid_transaction.as_str();
+    let domaine = match &entete.domaine {
+        Some(d) => d.as_str(),
+        None => {
+            error!("Domaine absent, transaction ne peut etre re-emise : {:?}", entete);
+            Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
+        }
+    };
+    let action = match &entete.action {
+        Some(a) => a.as_str(),
+        None => {
+            error!("Action absente, transaction ne peut etre re-emise : {:?}", entete);
+            Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
+        }
+    };
+    let partition = match &entete.partition {
+        Some(p) => Some(p.as_str()),
+        None => None
+    };
+
+    let filtre_transaction_resoumise = doc! {
+                TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
+            };
+
+    debug!("Transaction a resoumettre : {:?}", uuid_transaction);
+    let resultat = transmettre_evenement_persistance(
+        middleware, uuid_transaction, domaine, action, partition, None, None).await;
+
+    match &resultat {
+        Ok(()) => {
+            Ok(())
+        },
+        Err(e) => {
+            error!("Erreur resoumission transaction avec mongo : {:?}", resultat);
+            Err(ErreurResoumission::new(true, Some(uuid_transaction)))
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ErreurResoumission {
+    recuperable: bool,
+    uuid_transaction: Option<String>,
+}
+impl ErreurResoumission {
+    fn new<S: Into<String>>(recuperable: bool, uuid_transaction: Option<S>) -> Self {
+        let uuid_string = match uuid_transaction {
+            Some(u) => Some(u.into()),
+            None => None,
+        };
+        ErreurResoumission {
+            recuperable,
+            uuid_transaction: uuid_string,
+        }
+    }
 }
 
 pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageMilleGrille>) -> Result<ResultatBatchInsert, String>
