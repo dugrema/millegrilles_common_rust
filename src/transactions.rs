@@ -484,7 +484,7 @@ impl ResultatBatchInsert {
     }
 }
 
-pub async fn regenerer<M, T>(middleware: &M, nom_collection_transactions: &str, noms_collections_docs: Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
+pub async fn regenerer<M, T>(middleware: &M, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
     T: TraiterTransaction,
@@ -531,18 +531,22 @@ where
 {
     while let Some(result) = curseur.next().await {
         let transaction = result?;
-        debug!("Transaction a charger : {:?}", transaction);
+        // debug!("Transaction a charger : {:?}", transaction);
 
         let message = MessageSerialise::from_serializable(transaction)?;
 
         let (uuid_transaction, domaine, action) = match message.get_entete().domaine.as_ref() {
-            Some(inner_d) => {
+            Some(inner_domaine) => {
                 let entete = message.get_entete();
                 let uuid_transaction = entete.uuid_transaction.to_owned();
-                let mut d_split = inner_d.split(".");
-                let domaine: String = d_split.next().expect("Domaine manquant de la RK").into();
-                let action: String = d_split.last().expect("Action manquante de la RK").into();
-                (uuid_transaction, domaine, action)
+                let action = match &entete.action {
+                    Some(a) => a.to_owned(),
+                    None => {
+                        error!("Erreur chargement transaction, entete sans action : {:?}", entete);
+                        continue;  // Skip
+                    },
+                };
+                (uuid_transaction, inner_domaine.to_owned(), action)
             },
             None => {
                 warn!("Transaction sans domaine - invalide: {:?}", message);

@@ -105,16 +105,19 @@ where
     Ok(())
 }
 
-pub async fn restaurer<M, T>(middleware: &M, nom_collection_transactions: &str, noms_collections_docs: Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
+pub async fn restaurer<M, T>(middleware: Arc<M>, nom_domaine: &str, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
 where
-    M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages,
+    M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + 'static,
     T: TraiterTransaction,
 {
-
+    let workdir = tempfile::tempdir()?;
+    debug!("Demarrage restauration, utilisation workdir {:?}", workdir);
+    download_backup(middleware.clone(), nom_domaine, nom_collection_transactions, workdir.path()).await?;
 
     debug!("Restauration des transactions termines, debut regeneration {}", nom_collection_transactions);
-    regenerer(middleware, nom_collection_transactions, noms_collections_docs, processor).await?;
+    regenerer(middleware.as_ref(), nom_collection_transactions, noms_collections_docs, processor).await?;
     debug!("Fin regeneration {}", nom_collection_transactions);
+
     Ok(())
 }
 
@@ -468,7 +471,7 @@ where M: MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechif
         .send()
         .await?;
 
-    debug!("Response get backup {} : {:?}", response.status(), response);
+    debug!("Response get backup {}", response.status());
 
     // Conserver fichier sur le disque (temporaire)
     // todo Trouver comment streamer en memoire
@@ -987,7 +990,7 @@ impl ProcesseurFichierBackup {
         //     };
         // }
 
-        debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
+        //debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
         self.catalogue = Some(catalogue);
 
         Ok(())
@@ -1020,7 +1023,7 @@ impl ProcesseurFichierBackup {
         }
 
         let transactions_str = String::from_utf8(decompresseur.finish()?)?;
-        debug!("Bytes dechiffres de la transaction : {:?}", transactions_str);
+        //debug!("Bytes dechiffres de la transaction : {:?}", transactions_str);
 
         let tr_iter = transactions_str.split("\n");
         for transaction_str in tr_iter {
@@ -1365,7 +1368,7 @@ mod test_integration {
     use async_std::io::BufReader;
     use futures_util::stream::IntoAsyncRead;
 
-    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar, TypeMessage};
+    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar, TypeMessage, MessageValideAction};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
     use crate::test_setup::setup;
@@ -1376,6 +1379,7 @@ mod test_integration {
 
     const NOM_DOMAINE: &str = "Pki";
     const NOM_COLLECTION_TRANSACTIONS: &str = "Pki.rust";
+    const NOM_COLLECTION_CERTIFICATS: &str = "Pki.rust/certificat";
 
     async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str)
     where
@@ -1653,4 +1657,48 @@ mod test_integration {
         futures.next().await.expect("resultat").expect("ok");
     }
 
+    struct TraiterTransactionsDummy {}
+    #[async_trait]
+    impl TraiterTransaction for TraiterTransactionsDummy {
+        async fn traiter_transaction<M>(&self, domaine: &str, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String> where M: ValidateurX509 + GenerateurMessages + MongoDao {
+            debug!("Traiter transaction : {:?}", m);
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn effectuer_restauration() {
+        setup("effectuer_backup");
+
+        let (
+            middleware,
+            mut futures,
+            mut tx_messages,
+            mut tx_triggers
+        ) = build().await;
+
+        futures.push(tokio::spawn(async move {
+
+            debug!("Attente MQ");
+            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+            debug!("Fin sleep");
+
+            let mut collections_certificats = Vec::new();
+            collections_certificats.push(String::from(NOM_COLLECTION_CERTIFICATS));
+
+            let mut processeur = TraiterTransactionsDummy {};
+
+            restaurer(
+                middleware.clone(),
+                NOM_DOMAINE,
+                NOM_COLLECTION_TRANSACTIONS,
+                &collections_certificats,
+                &processeur
+            ).await.expect("backup");
+
+        }));
+
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
 }
