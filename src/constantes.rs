@@ -51,6 +51,7 @@ pub const TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT: &str = "fingerprint_certific
 pub const TRANSACTION_CHAMP_EVENEMENTS: &str = "_evenements";
 pub const TRANSACTION_CHAMP_IDMG: &str = "idmg";
 pub const TRANSACTION_CHAMP_ESTAMPILLE: &str = "estampille";
+pub const TRANSACTION_CHAMP_COMPLETE: &str = "transaction_complete";
 
 pub const TRANSACTION_CHAMP_EVENEMENT_PERSISTE: &str = "_evenements.document_persiste";
 pub const TRANSACTION_CHAMP_EVENEMENT_COMPLETE: &str = "_evenements.transaction_complete";
@@ -64,23 +65,23 @@ pub const TRANSACTION_CHAMP_BACKUP_HORAIRE: &str = "_evenements.backup_horaire";
 pub const TRANSACTION_LIMITE_RESOUMISSION: i32 = 4;
 
 // Certificats, PKI
-pub const PKI_DOMAINE_NOM: &str = "Pki";
-pub const PKI_DOMAINE_CERTIFICAT_NOM: &str = "certificat";
-pub const PKI_COLLECTION_TRANSACTIONS_NOM: &str = "Pki.rust";
-pub const PKI_COLLECTION_CERTIFICAT_NOM: &str = "Pki.rust/certificat";
-
-pub const PKI_EVENEMENT_CERTIFICAT: &str = "certificat.infoCertificat";
-
-pub const PKI_REQUETE_CERTIFICAT: &str = "infoCertificat";
-pub const PKI_REQUETE_CERTIFICAT_PAR_PK: &str = "certificatParPk";
-
-pub const PKI_COMMANDE_SAUVEGARDER_CERTIFICAT: &str = "certificat";
+pub const PKI_DOMAINE_NOM: &str = "CorePki";
+// pub const PKI_DOMAINE_CERTIFICAT_NOM: &str = "certificat";
+pub const PKI_COLLECTION_TRANSACTIONS_NOM: &str = PKI_DOMAINE_NOM;
+pub const PKI_COLLECTION_CERTIFICAT_NOM: &str = "CorePki/certificat";
+//
+// pub const PKI_EVENEMENT_CERTIFICAT: &str = "certificat.infoCertificat";
+//
+// pub const PKI_REQUETE_CERTIFICAT: &str = "infoCertificat";
+// pub const PKI_REQUETE_CERTIFICAT_PAR_PK: &str = "certificatParPk";
+//
+// pub const PKI_COMMANDE_SAUVEGARDER_CERTIFICAT: &str = "certificat";
 pub const PKI_COMMANDE_NOUVEAU_CERTIFICAT: &str = "nouveauCertificat";
-
+//
 pub const PKI_TRANSACTION_NOUVEAU_CERTIFICAT: &str = PKI_COMMANDE_NOUVEAU_CERTIFICAT;
-
+//
 pub const PKI_DOCUMENT_CHAMP_FINGERPRINT: &str = "fingerprint";
-pub const PKI_DOCUMENT_CHAMP_FINGERPRINT_PK: &str = "fingerprint_pk";
+// pub const PKI_DOCUMENT_CHAMP_FINGERPRINT_PK: &str = "fingerprint_pk";
 pub const PKI_DOCUMENT_CHAMP_CERTIFICAT: &str = "certificat";
 
 
@@ -97,3 +98,4 @@ pub const BACKUP_NOM_DOMAINE: &str = "Backup";
 pub const BACKUP_TRANSACTION_CATALOGUE_HORAIRE: &str = "catalogueHoraire";
 
 pub const BACKUP_CHAMP_FUUID_GROSFICHIERS: &str = "fuuid_grosfichiers";
+pub const BACKUP_CHAMP_BACKUP_TRANSACTIONS: &str = "backup_transactions";
