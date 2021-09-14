@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
-use crate::{Entete, MessageMilleGrille, MessageSerialise, MessageTrigger, TypeMessageOut};
+use crate::{Entete, MessageMilleGrille, MessageSerialise, MessageTrigger, TypeMessageOut, VerificateurPermissions, ExtensionsMilleGrille};
 use crate::certificats::{EnveloppeCertificat, ValidateurX509};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
@@ -177,6 +177,15 @@ impl Transaction for TransactionImpl {
 
     fn get_evenements(&self) -> &Document {
         self.contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements")
+    }
+}
+
+impl VerificateurPermissions for TransactionImpl {
+    fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
+        match &self.enveloppe_certificat {
+            Some(e) => e.get_extensions(),
+            None => None,
+        }
     }
 }
 
