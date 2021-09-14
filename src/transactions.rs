@@ -263,12 +263,12 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
             TRANSACTION_CHAMP_EVENEMENT_COMPLETE: false,
         };
         let sort_incomplets = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
-        let projection_incomplets = doc! {
-            TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: 1,
-        };
+        // let projection_incomplets = doc! {
+        //     TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: 1,
+        // };
         let hint_incomplets = Hint::Name("transaction_complete".into());
         let options_incomplets = FindOptions::builder()
-            .projection(projection_incomplets)
+            // .projection(projection_incomplets)
             .sort(sort_incomplets)
             .hint(hint_incomplets)
             .limit(1000)
@@ -324,7 +324,7 @@ where
     let entete: Entete = match serde_json::from_value::<Entete>(serde_json::to_value(entete_value).expect("val")) {
         Ok(e) => e,
         Err(e) => {
-            error!("En-tete illisible, transaction ne peut pas etre re-emise {:?}", e);
+            error!("En-tete illisible, transaction ne peut pas etre re-emise {:?}Transaction: \n{:?}", e, d);
             Err(ErreurResoumission::new(false, None::<String>))?
         }
     };
