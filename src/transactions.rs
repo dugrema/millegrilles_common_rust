@@ -524,6 +524,13 @@ where
     resultat
 }
 
+fn get_entete_from_doc(doc: &Document) -> Result<Entete, Box<dyn Error>> {
+    let entete_bson = doc.get_document("en-tete")?;
+    let entete_value = serde_json::to_value(entete_bson)?;
+
+    Ok(serde_json::from_value(entete_value)?)
+}
+
 async fn regenerer_transactions<M, T>(middleware: &M, curseur: &mut Cursor<Document>, processor: &T) -> Result<(), Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
@@ -531,41 +538,59 @@ where
 {
     while let Some(result) = curseur.next().await {
         let transaction = result?;
-        // debug!("Transaction a charger : {:?}", transaction);
+        // let message = MessageSerialise::from_serializable(transaction)?;
 
-        let message = MessageSerialise::from_serializable(transaction)?;
-
-        let (uuid_transaction, domaine, action) = match message.get_entete().domaine.as_ref() {
-            Some(inner_domaine) => {
-                let entete = message.get_entete();
-                let uuid_transaction = entete.uuid_transaction.to_owned();
-                let action = match &entete.action {
-                    Some(a) => a.to_owned(),
-                    None => {
-                        error!("Erreur chargement transaction, entete sans action : {:?}", entete);
-                        continue;  // Skip
-                    },
-                };
-                (uuid_transaction, inner_domaine.to_owned(), action)
-            },
-            None => {
-                warn!("Transaction sans domaine - invalide: {:?}", message);
+        let entete = match get_entete_from_doc(&transaction) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Erreur transaction chargement en-tete");
                 continue  // Skip
             }
         };
+        let uuid_transaction = entete.uuid_transaction.as_str();
 
-        let transaction_prep = MessageValideAction {
-            message,
-            reply_q: None,
-            correlation_id: Some(uuid_transaction.to_owned()),
-            routing_key: String::from("regeneration"),
-            domaine,
-            action,
-            exchange: None,
-            type_message: TypeMessageOut::Transaction,
-        };
+        // let entete = message.get_entete();
+        debug!("Message serialise charge : {:?}", uuid_transaction);
 
-        processor.traiter_transaction("Pki", middleware, transaction_prep).await?;
+        let certificat = middleware.get_certificat(entete.fingerprint_certificat.as_str()).await;
+
+        //
+        // let (uuid_transaction, domaine, action) = match entete.domaine.as_ref() {
+        //     Some(inner_domaine) => {
+        //         let uuid_transaction = entete.uuid_transaction.to_owned();
+        //         let action = match &entete.action {
+        //             Some(a) => a.to_owned(),
+        //             None => {
+        //                 error!("Erreur chargement transaction, entete sans action : {:?}", entete);
+        //                 continue;  // Skip
+        //             },
+        //         };
+        //         (uuid_transaction, inner_domaine.to_owned(), action)
+        //     },
+        //     None => {
+        //         warn!("Transaction sans domaine - invalide: {:?}", message);
+        //         continue  // Skip
+        //     }
+        // };
+        //
+        // debug!("Preparer MessageValideAction");
+        //
+        // let transaction_prep = MessageValideAction {
+        //     message,
+        //     reply_q: None,
+        //     correlation_id: Some(uuid_transaction.to_owned()),
+        //     routing_key: String::from("regeneration"),
+        //     domaine,
+        //     action,
+        //     exchange: None,
+        //     type_message: TypeMessageOut::Transaction,
+        // };
+
+        let transaction_impl = TransactionImpl::new(transaction, certificat);
+
+        debug!("Traiter transaction");
+
+        processor.traiter_transaction(middleware, transaction_impl).await?;
     }
 
     Ok(())
@@ -573,8 +598,6 @@ where
 
 #[async_trait]
 pub trait TraiterTransaction {
-    // async fn sauvegarder_transaction<M>(&self, middleware: &M, m: MessageValideAction, domaine: &str, nom_collection: &str) -> Result<(), String>
-    //     where M: ValidateurX509 + GenerateurMessages + MongoDao;
-    async fn traiter_transaction<M>(&self, domaine: &str, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
+    async fn traiter_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao;
 }
