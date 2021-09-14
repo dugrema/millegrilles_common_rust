@@ -40,6 +40,7 @@ pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
 
 // Transactions
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
+pub const EVENEMENT_CEDULE: &str = "cedule";
 
 pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";
 pub const TRANSACTION_CHAMP_UUID_TRANSACTION: &str = "uuid_transaction";

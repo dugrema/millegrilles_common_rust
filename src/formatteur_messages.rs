@@ -12,7 +12,7 @@ use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message, IsConfigurationPki};
+use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message, IsConfigurationPki, VerificateurPermissions, ExtensionsMilleGrille};
 use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
@@ -540,6 +540,16 @@ impl MessageSerialise {
         evenements.insert(String::from("transaction_restauree"), serde_json::to_value(bson::DateTime::now()).expect("date") );
 
         message
+    }
+}
+
+impl VerificateurPermissions for MessageSerialise {
+    fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
+        // Valider certificat. Doit etre de niveau 4.secure
+        match &self.certificat {
+            Some(c) => c.get_extensions(),
+            None => None,
+        }
     }
 }
 

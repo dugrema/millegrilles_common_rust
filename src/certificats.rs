@@ -1,5 +1,5 @@
 use std::borrow::Borrow;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{HashMap, BTreeMap, HashSet};
 use std::error;
 use std::fmt::{Debug, Formatter};
 use std::fs::read_to_string;
@@ -689,7 +689,7 @@ fn parse_x509(cert: &[u8]) -> Result<ExtensionsMilleGrille, String> {
 }
 
 #[derive(Clone, Debug)]
-struct ExtensionsMilleGrille {
+pub struct ExtensionsMilleGrille {
     exchanges: Option<Vec<String>>,
     roles: Option<Vec<String>>,
     domaines: Option<Vec<String>>,
@@ -785,6 +785,44 @@ impl CollectionCertificatsPem {
             None
         }
 
+    }
+}
+
+pub trait VerificateurPermissions {
+    fn get_extensions(&self) -> Option<&ExtensionsMilleGrille>;
+
+    fn verifier_exchanges(&self, exchanges_permis: Vec<String>) -> bool {
+        // Valider certificat. Doit etre de niveau 4.secure
+        let extensions = match self.get_extensions() {
+            Some(e) => e,
+            None => return false
+        };
+
+        let mut hs_param= HashSet::new();
+        hs_param.extend(exchanges_permis);
+
+        let hs_cert = match extensions.exchanges.clone() {
+            Some(ex) => {
+                let mut hs_cert = HashSet::new();
+                hs_cert.extend(ex);
+                hs_cert
+            },
+            None => return false,
+        };
+
+        let res: Vec<&String> = hs_param.intersection(&hs_cert).collect();
+        // let res: Vec<&String> = exchanges_permis.iter().filter(|c| ex.contains(c)).collect();
+        if res.len() > 1 {
+            return false
+        }
+
+        true
+    }
+}
+
+impl VerificateurPermissions for EnveloppeCertificat {
+    fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
+        Some(&self.extensions_millegrille)
     }
 }
 
