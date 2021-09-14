@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki, Dechiffreur, regenerer, TraiterTransaction, parse_tar, IsConfigNoeud};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki, Dechiffreur, regenerer, TraiterTransaction, parse_tar, IsConfigNoeud, hacher_serializable};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -64,7 +64,19 @@ where
 
     debug!("Backup collection {} : {:?}", nom_coll_str, builders);
 
+    // todo Tenter de charger entete du dernier backup de ce domaine/partition
+    let mut entete_precedente: Option<Entete> = None;
+
     for mut builder in builders {
+
+        // Calculer hachage entete precedente
+        match entete_precedente {
+            Some(e) => {
+                builder.set_backup_precedent(&e)?
+            },
+            None => (),
+        }
+
         // Creer fichier de transactions
         let mut path_fichier_transactions = workdir.path().to_owned();
         path_fichier_transactions.push(PathBuf::from(builder.get_nomfichier_transactions()));
@@ -99,6 +111,8 @@ where
             info_backup.nom_collection_transactions.as_str(),
             &catalogue_horaire
         ).await?;
+
+        entete_precedente = Some(catalogue_signe.entete.clone());
 
         // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
         let reponse_catalogue = middleware.soumettre_transaction(
@@ -356,11 +370,6 @@ async fn serialiser_catalogue(
         None
     )?;
 
-    // let mut writer_catalogue = FichierWriter::new(path_catalogue, None)
-    //     .await.expect("write catalogue");
-    // writer_catalogue.write(catalogue_signe.message.as_bytes()).await?;
-    // let (mh_catalogue, _) = writer_catalogue.fermer().await?;
-
     Ok((catalogue, catalogue_signe, commande_signee))
 }
 
@@ -570,7 +579,7 @@ pub struct CatalogueHoraire {
     // entete: Entete,
 
     /// Enchainement backup precedent
-    backup_precedent: Option<String>,  // todo mettre bon type
+    backup_precedent: Option<EnteteBackupPrecedent>,
 
     /// Cle chiffree avec la cle de MilleGrille (si backup chiffre)
     cle: Option<String>,
@@ -614,6 +623,7 @@ struct CatalogueHoraireBuilder {
     uuid_transactions: Vec<String>,
     transactions_hachage: String,
     cles: Option<Mgs2CipherKeys>,
+    backup_precedent: Option<EnteteBackupPrecedent>,
 }
 
 impl BackupInformation {
@@ -674,6 +684,7 @@ impl CatalogueHoraireBuilder {
             uuid_transactions: Vec::new(),
             transactions_hachage: "".to_owned(),
             cles: None,
+            backup_precedent: None,
         }
     }
 
@@ -715,6 +726,21 @@ impl CatalogueHoraireBuilder {
         PathBuf::from(nom_fichier)
     }
 
+    /// Set backup_precedent en calculant le hachage de l'en-tete.
+    fn set_backup_precedent(&mut self, entete: &Entete) -> Result<(), Box<dyn Error>> {
+
+        let hachage_entete = hacher_serializable(entete)?;
+
+        let entete_calculee = EnteteBackupPrecedent {
+            hachage_entete,
+            uuid_transaction: entete.uuid_transaction.clone(),
+        };
+
+        self.backup_precedent = Some(entete_calculee);
+
+        Ok(())
+    }
+
     fn build(self) -> CatalogueHoraire {
 
         let date_str = self.heure.format_ymdh();
@@ -744,7 +770,7 @@ impl CatalogueHoraireBuilder {
             transactions_nomfichier,
             uuid_transactions: self.uuid_transactions,
 
-            backup_precedent: None,  // todo mettre bon type
+            backup_precedent: self.backup_precedent,
             cle, iv, tag, format,
         }
     }
@@ -1138,6 +1164,12 @@ impl TraiterFichier for ProcesseurFichierBackup {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct EnteteBackupPrecedent {
+    hachage_entete: String,
+    uuid_transaction: String,
+}
+
 #[cfg(test)]
 mod backup_tests {
     use serde_json::json;
@@ -1409,7 +1441,7 @@ mod test_integration {
     use async_std::io::BufReader;
     use futures_util::stream::IntoAsyncRead;
 
-    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar, TypeMessage, MessageValideAction};
+    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar, TypeMessage, MessageValideAction, TransactionImpl};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
     use crate::test_setup::setup;
@@ -1418,9 +1450,9 @@ mod test_integration {
     use tokio::sync::mpsc::{Receiver, Sender};
     use crate::middleware::serialization_tests::build;
 
-    const NOM_DOMAINE: &str = "Pki";
-    const NOM_COLLECTION_TRANSACTIONS: &str = "Pki.rust";
-    const NOM_COLLECTION_CERTIFICATS: &str = "Pki.rust/certificat";
+    const NOM_DOMAINE: &str = "CorePki";
+    const NOM_COLLECTION_TRANSACTIONS: &str = "CorePki";
+    const NOM_COLLECTION_CERTIFICATS: &str = "CorePki/certificat";
 
     async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str)
     where
@@ -1705,7 +1737,9 @@ mod test_integration {
     struct TraiterTransactionsDummy {}
     #[async_trait]
     impl TraiterTransaction for TraiterTransactionsDummy {
-        async fn traiter_transaction<M>(&self, domaine: &str, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String> where M: ValidateurX509 + GenerateurMessages + MongoDao {
+        async fn traiter_transaction<M>(&self, middleware: &M, m: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
+            where M: ValidateurX509 + GenerateurMessages + MongoDao
+        {
             debug!("Traiter transaction : {:?}", m);
             Ok(None)
         }

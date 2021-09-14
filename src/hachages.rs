@@ -6,9 +6,18 @@ use log::{debug, error, info};
 use multibase::{Base, decode, encode};
 use multicodec::MultiCodec;
 use multihash::{Code, Multihash, MultihashDigest, Sha2_256, Sha2_512, Sha2Digest, Sha3_256, Size, StatefulHasher};
+use serde::Serialize;
 
 pub fn hacher_message(contenu: &str) -> String {
     hacher_bytes(contenu.as_bytes(), Some(Code::Sha2_256), Some(Base::Base64))
+}
+
+pub fn hacher_serializable<S>(s: &S) -> Result<String, Box<dyn Error>>
+where S: Serialize
+{
+    let value = serde_json::to_value(s)?;
+    let ser_bytes = serde_json::to_vec(&value)?;
+    Ok(hacher_bytes(ser_bytes.as_slice(), Some(Code::Sha2_512), Some(Base::Base64)))
 }
 
 pub fn hacher_bytes(contenu: &[u8], code: Option<Code>, base: Option<Base>) -> String {
