@@ -29,6 +29,16 @@ pub trait GenerateurMessages: Send + Sync {
     async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
     async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
     async fn repondre(&self, message: &(impl Serialize+Send+Sync), reply_q: &str, correlation_id: &str) -> Result<(), String>;
+
+    /// Emettre un message en str deja formatte
+    async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>,
+                             type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool
+    ) -> Result<Option<TypeMessage>, String>;
+
+    async fn emettre_message_millegrille(&self, domaine: &str, action: &str, partition: Option<&str>,
+                             exchange: Option<Securite>, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille
+    ) -> Result<Option<TypeMessage>, String>;
+
     fn mq_disponible(&self) -> bool;
 
     /// Active le mode regeneration
@@ -57,6 +67,27 @@ impl GenerateurMessagesImpl {
             enveloppe_privee: config.get_enveloppe_privee(),
             mode_regeneration: Mutex::new(false),
         }
+    }
+
+    async fn emettre_message_serializable<M>(
+        &self,
+        domaine: &str,
+        action: &str,
+        partition: Option<&str>,
+        message: &M,
+        exchange: Option<Securite>,
+        blocking: bool,
+        type_message_out: TypeMessageOut
+    ) -> Result<Option<TypeMessage>, String>
+    where
+        M: Serialize + Send + Sync,
+    {
+        let message_signe = match self.formatter_message(message, Some(domaine), Some(action), partition, None) {
+            Ok(m) => m,
+            Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
+        };
+
+        self.emettre_message_millegrille(domaine, action, partition, exchange, blocking, type_message_out, message_signe).await
     }
 
     async fn emettre(&self, message: MessageOut) -> Result<(), String> {
@@ -143,7 +174,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(TypeMessage::Regeneration)
         }
 
-        match self.emettre_message(domaine, action, partition, message, exchange, true, TypeMessageOut::Requete).await {
+        match self.emettre_message_serializable(domaine, action, partition, message, exchange, true, TypeMessageOut::Requete).await {
             Ok(r) => match r {
                 Some(m) => Ok(m),
                 None => Err(String::from("Aucune reponse")),
@@ -204,7 +235,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(Some(TypeMessage::Regeneration))
         }
 
-        self.emettre_message(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Transaction).await
+        self.emettre_message_serializable(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Transaction).await
     }
 
     async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
@@ -213,7 +244,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(Some(TypeMessage::Regeneration))
         }
 
-        self.emettre_message(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Commande).await
+        self.emettre_message_serializable(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Commande).await
     }
 
     async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
@@ -238,82 +269,33 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         Ok(())
     }
 
-    fn mq_disponible(&self) -> bool {
-        let guard = self.tx_out.lock().expect("mutex");
-        match guard.as_ref() {
-            Some(_) => true,
-            None => false,
-        }
-    }
-
-    fn set_regeneration(&self) {
-        let mode = &self.mode_regeneration;
-        let mut guard = mode.lock().expect("guard");
-        *guard = true;
-    }
-
-    /// Desactive le mode regeneration
-    fn reset_regeneration(&self) {
-        let mode = &self.mode_regeneration;
-        let mut guard = mode.lock().expect("guard");
-        *guard = false;
-    }
-
-    /// Retourne l'etat du mode regeneration (true = actif)
-    fn get_mode_regeneration(&self) -> bool {
-        let mode = &self.mode_regeneration;
-        *mode.lock().expect("lock")
-    }
-
-}
-
-impl FormatteurMessage for GenerateurMessagesImpl {
-}
-
-impl IsConfigurationPki for GenerateurMessagesImpl {
-    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-        self.enveloppe_privee.clone()
-    }
-}
-
-// impl GenerateurMessagesImpl {
-//     fn signer(&self, domaine: Option<&str>, message: &MessageMilleGrille) -> Result<MessageSerialise, String> {
-//         // let message_signe = self.formatteur.formatter_value(message, domaine);
-//         // let message_signe = match message_signe {
-//         //     Ok(m) => Ok(m),
-//         //     Err(e) => Err(String::from("Erreur emission evenement sur signature message")),
-//         // }?;
-//         // Ok(message_signe)
-//
-//         Ok(MessageSerialise::from_parsed(message))
-//
-//     }
-// }
-impl GenerateurMessagesImpl {
-    async fn emettre_message<M>(
-        &self,
-        domaine: &str,
-        action: &str,
-        partition: Option<&str>,
-        message: &M,
-        exchange: Option<Securite>,
-        blocking: bool,
-        type_message_out: TypeMessageOut
+    async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>,
+                             type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool
     ) -> Result<Option<TypeMessage>, String>
-    where
-        M: Serialize + Send + Sync,
     {
-        let message_signe = match self.formatter_message(message, Some(domaine), Some(action), partition, None) {
-            Ok(m) => m,
-            Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
+        let message_millegrille = match MessageSerialise::from_str(message) {
+            Ok(m) => m.parsed,
+            Err(e) => Err(format!("Erreur formattage message : {:?}", e))?,
         };
+        self.emettre_message_millegrille(
+            domaine,
+            action,
+            partition,
+            exchange,
+            blocking,
+            type_message,
+            message_millegrille
+        ).await
+    }
 
+    async fn emettre_message_millegrille(
+        &self, domaine: &str, action: &str, partition: Option<&str>, exchange: Option<Securite>,
+        blocking: bool, type_message_out: TypeMessageOut, message_signe: MessageMilleGrille
+    ) -> Result<Option<TypeMessage>, String> {
         let exchanges = match exchange {
             Some(inner) => Some(vec!(inner)),
             None => Some(vec!(Securite::L3Protege)),
         };
-
-        // let domaine_action = format!("transaction.{}", domaine);
 
         let message_out = MessageOut::new(
             domaine,
@@ -361,5 +343,42 @@ impl GenerateurMessagesImpl {
             // Non-blocking, emission simple et on n'attend pas
             Ok(None)
         }
+    }
+
+    fn mq_disponible(&self) -> bool {
+        let guard = self.tx_out.lock().expect("mutex");
+        match guard.as_ref() {
+            Some(_) => true,
+            None => false,
+        }
+    }
+
+    fn set_regeneration(&self) {
+        let mode = &self.mode_regeneration;
+        let mut guard = mode.lock().expect("guard");
+        *guard = true;
+    }
+
+    /// Desactive le mode regeneration
+    fn reset_regeneration(&self) {
+        let mode = &self.mode_regeneration;
+        let mut guard = mode.lock().expect("guard");
+        *guard = false;
+    }
+
+    /// Retourne l'etat du mode regeneration (true = actif)
+    fn get_mode_regeneration(&self) -> bool {
+        let mode = &self.mode_regeneration;
+        *mode.lock().expect("lock")
+    }
+
+}
+
+impl FormatteurMessage for GenerateurMessagesImpl {
+}
+
+impl IsConfigurationPki for GenerateurMessagesImpl {
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
+        self.enveloppe_privee.clone()
     }
 }

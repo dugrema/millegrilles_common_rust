@@ -13,7 +13,7 @@ use async_std::fs::File;
 use async_std::io::BufReader;
 use async_trait::async_trait;
 use bson::{bson, doc, Document};
-use chrono::{DateTime, Duration, TimeZone, Utc, Timelike};
+use chrono::{DateTime, Duration, Timelike, TimeZone, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use futures::Stream;
 use futures::stream::TryStreamExt;
@@ -26,7 +26,7 @@ use openssl::pkey::{PKey, Private};
 use reqwest::{Body, Response};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
 use tokio::io::AsyncRead as AsyncRead_Tokio;
@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, DateEpochSeconds, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, Hacheur, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MongoDao, ResultatValidation, sauvegarder_batch, TraiterFichier, ValidateurX509, ValidationOptions, GenerateurMessages, CompresseurBytes, IsConfigurationPki, MiddlewareMessage, MiddlewareDbPki, Dechiffreur, regenerer, TraiterTransaction, parse_tar, IsConfigNoeud, hacher_serializable};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareDbPki, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, ValidateurX509, ValidationOptions, TypeMessageOut};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -65,7 +65,7 @@ where
     debug!("Backup collection {} : {:?}", nom_coll_str, builders);
 
     // todo Tenter de charger entete du dernier backup de ce domaine/partition
-    let mut entete_precedente: Option<Entete> = None;
+    let mut entete_precedente: Option<Entete> = requete_entete_dernier(middleware, nom_coll_str).await?;
 
     for mut builder in builders {
 
@@ -113,11 +113,15 @@ where
         ).await?;
 
         entete_precedente = Some(catalogue_signe.entete.clone());
+        if ! catalogue_horaire.snapshot {
+            // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
 
-        // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
-        let reponse_catalogue = middleware.soumettre_transaction(
-            "Backup.catalogueHoraire", "catalogueHoraire", None, &catalogue_signe, None, true).await?;
-        debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
+            let reponse_catalogue = middleware.emettre_message_millegrille(
+                "Backup", "catalogueHoraire", None,
+                None, true, TypeMessageOut::Transaction, catalogue_signe
+            ).await?;
+            debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
+        }
     }
 
     Ok(())
@@ -227,6 +231,32 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     builders.push(builder_snapshot);
 
     Ok(builders)
+}
+
+/// Requete pour obtenir l'entete du dernier backup horaire d'une collection
+async fn requete_entete_dernier<M>(middleware: &M, nom_collection: &str) -> Result<Option<Entete>, Box<dyn Error>>
+where M: GenerateurMessages
+{
+    let requete = json!({ "domaine": nom_collection });
+    let reponse = middleware.transmettre_requete(
+        "Backup",
+        "backupDernierHoraire",
+        None,
+        &requete,
+        None
+    ).await?;
+
+    let message = match reponse {
+        TypeMessage::Valide(m) => m.message.parsed,
+        _ => Err(format!("Type reponse invalide"))?,
+    };
+
+    let entete: Option<Entete> = match message.map_contenu(Some("dernier_backup")) {
+        Ok(e) => Some(e),
+        Err(e) => None,
+    };
+
+    Ok(entete)
 }
 
 async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueHoraireBuilder) -> Result<Cursor<Document>, Box<dyn Error>> {
@@ -362,9 +392,10 @@ async fn serialiser_catalogue(
     let catalogue = builder.build();
     let catalogue_value = serde_json::to_value(&catalogue)?;
     // let message_json = MessageJson::new(catalogue_value);
+    let domaine_action = format!("{}.{}", BACKUP_NOM_DOMAINE, BACKUP_TRANSACTION_CATALOGUE_HORAIRE);
     let catalogue_signe = middleware.formatter_message(
         &catalogue_value,
-        Some(BACKUP_NOM_DOMAINE),
+        Some(domaine_action.as_str()),
         Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
         None,
         None
@@ -1176,10 +1207,10 @@ mod backup_tests {
 
     use crate::{CompresseurBytes, preparer_middleware_pki};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
+    use crate::fichiers_tests::ChiffreurDummy;
     use crate::test_setup::setup;
 
     use super::*;
-    use crate::fichiers_tests::ChiffreurDummy;
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
@@ -1440,15 +1471,15 @@ mod test_integration {
 
     use async_std::io::BufReader;
     use futures_util::stream::IntoAsyncRead;
+    use tokio::sync::mpsc::{Receiver, Sender};
 
-    use crate::{charger_transaction, CompresseurBytes, MiddlewareDbPki, parse_tar, TypeMessage, MessageValideAction, TransactionImpl};
+    use crate::{charger_transaction, CompresseurBytes, MessageValideAction, MiddlewareDbPki, parse_tar, TransactionImpl, TypeMessage};
     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::middleware::preparer_middleware_pki;
+    use crate::middleware::serialization_tests::build;
     use crate::test_setup::setup;
 
     use super::*;
-    use tokio::sync::mpsc::{Receiver, Sender};
-    use crate::middleware::serialization_tests::build;
 
     const NOM_DOMAINE: &str = "CorePki";
     const NOM_COLLECTION_TRANSACTIONS: &str = "CorePki";
@@ -1714,7 +1745,7 @@ mod test_integration {
         ) = build().await;
 
         // Reset backup flags pour le domaine
-        reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
+        //reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
 
         futures.push(tokio::spawn(async move {
 

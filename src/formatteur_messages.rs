@@ -7,7 +7,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use log::{debug, info, warn};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::Visitor;
+use serde::de::{Visitor, DeserializeOwned};
 use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -382,6 +382,25 @@ impl MessageMilleGrille {
     /// Sert a retirer les certificats pour serialisation (e.g. backup, transaction Mongo, etc)
     pub fn retirer_certificats(&mut self) { self.certificat = None }
 
+    /// Mapper le contenu ou un champ (1er niveau) du contenu vers un objet Deserialize
+    pub fn map_contenu<'de, C>(&self, nom_champ: Option<&str>) -> Result<C, Box<dyn Error>>
+    where C: DeserializeOwned
+    {
+        let value = match nom_champ {
+            Some(c) => {
+                match self.contenu.get(c) {
+                    Some(c) => c.to_owned(),
+                    None => Err(format!("Contenu non convertible"))?,
+                }
+            },
+            None => Value::Object(self.contenu.clone()),
+        };
+
+        let deser: C = serde_json::from_value(value)?;
+
+        Ok(deser)
+    }
+
 }
 
 /// Serialiser message de MilleGrille. Met les elements en ordre.
@@ -431,7 +450,7 @@ impl Serialize for MessageMilleGrille {
 pub struct MessageSerialise {
     entete: Entete,
     message: String,
-    parsed: MessageMilleGrille,
+    pub parsed: MessageMilleGrille,
     pub certificat: Option<Arc<EnveloppeCertificat>>,
 }
 

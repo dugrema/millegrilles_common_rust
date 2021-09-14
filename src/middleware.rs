@@ -304,6 +304,14 @@ impl GenerateurMessages for MiddlewareDbPki {
         self.generateur_messages.repondre(message, reply_q, correlation_id).await
     }
 
+    async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>, type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.emettre_message(domaine, action, partition, type_message, message, exchange, blocking).await
+    }
+
+    async fn emettre_message_millegrille(&self, domaine: &str, action: &str, partition: Option<&str>, exchange: Option<Securite>, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.emettre_message_millegrille(domaine, action, partition, exchange, blocking, type_message, message).await
+    }
+
     fn mq_disponible(&self) -> bool {
         self.generateur_messages.mq_disponible()
     }
@@ -671,6 +679,14 @@ impl GenerateurMessages for MiddlewareDb {
 
     async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
         self.generateur_messages.repondre(message, reply_q, correlation_id).await
+    }
+
+    async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>, type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.emettre_message(domaine, action, partition, type_message, message, exchange, blocking).await
+    }
+
+    async fn emettre_message_millegrille(&self, domaine: &str, action: &str, partition: Option<&str>, exchange: Option<Securite>, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.emettre_message_millegrille(domaine, action, partition, exchange, blocking, type_message, message).await
     }
 
     fn mq_disponible(&self) -> bool {
