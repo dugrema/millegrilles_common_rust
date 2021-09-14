@@ -19,7 +19,7 @@ use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::middleware::{formatter_message_certificat, IsConfigurationPki, MiddlewareDbPki, ValidateurX509Database};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
 use crate::verificateur::{verifier_hachage, verifier_message};
-use crate::MessageSerialise;
+use crate::{MessageSerialise, VerificateurPermissions, ExtensionsMilleGrille};
 
 /// Thread de traitement des messages
 pub async fn recevoir_messages(
@@ -394,6 +394,12 @@ pub enum ErreurVerification {
     CertificatInvalide,
     EnteteManquante,
     ErreurGenerique,
+}
+
+impl VerificateurPermissions for MessageValideAction {
+    fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
+        self.message.get_extensions()
+    }
 }
 
 async fn valider_message<M>(
