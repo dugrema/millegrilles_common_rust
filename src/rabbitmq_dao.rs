@@ -365,6 +365,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
     let routing_keys = vec!(
         // Ecouter les evenements internes
         String::from(format!("evenement.{}.transaction_persistee", nom_domaine)),
+        String::from("evenement.global.cedule"),
     );
     let exchanges: Vec<String> = vec!("4.secure".into());
 
