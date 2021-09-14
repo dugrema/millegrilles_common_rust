@@ -14,6 +14,7 @@ pub mod transactions;
 pub mod backup;
 pub mod chiffrage;
 pub mod fichiers;
+pub mod messages_generiques;
 
 pub use certificats::*;
 pub use configuration::*;
@@ -31,6 +32,7 @@ pub use transactions::*;
 pub use backup::*;
 pub use chiffrage::*;
 pub use fichiers::*;
+pub use messages_generiques::*;
 
 #[cfg(test)]
 mod test_setup {
