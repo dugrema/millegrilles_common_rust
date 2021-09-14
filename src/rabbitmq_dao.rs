@@ -456,9 +456,19 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
         let acker = delivery.acker.clone();
 
         let message_interne = match &queue_type {
-            QueueType::ExchangeQueue(_q) => MessageInterne::Delivery(delivery),
-            QueueType::ReplyQueue(_q) => MessageInterne::Delivery(delivery),
-            QueueType::Triggers(_q) => MessageInterne::Trigger(delivery),
+            QueueType::ExchangeQueue(q) => {
+                let nom_queue = q.nom_queue.to_owned();
+                MessageInterne::Delivery(delivery, nom_queue)
+            },
+            QueueType::ReplyQueue(q) => {
+                let mutex = q.reply_q_name.lock().expect("lock");
+                let nom_queue = match mutex.as_ref() {
+                    Some(n) => n.to_owned(),
+                    None => nom_queue.to_owned(),  // Q globale en attendant le nom de la Q reponse
+                };
+                MessageInterne::Delivery(delivery, nom_queue)
+            },
+            QueueType::Triggers(_q) => MessageInterne::Trigger(delivery, nom_queue.to_owned()),
         };
 
         // Ajouter message sur Q interne
@@ -629,8 +639,8 @@ pub struct AttenteReponse {
 
 #[derive(Debug)]
 pub enum MessageInterne {
-    Delivery(Delivery),
-    Trigger(Delivery),
+    Delivery(Delivery, String),
+    Trigger(Delivery, String),
     AttenteReponse(AttenteReponse),
     CancelDemandeReponse(String),
 }

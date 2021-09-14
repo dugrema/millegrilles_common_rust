@@ -35,8 +35,8 @@ pub async fn recevoir_messages(
     while let Some(mi) = rx.recv().await {
         debug!("traiter_messages: Message recu : {:?}", mi);
 
-        let (delivery, tx) = match mi {
-            MessageInterne::Delivery(d) => (d, &tx_verifie),
+        let (delivery, nom_q, tx) = match mi {
+            MessageInterne::Delivery(d, q) => (d, q, &tx_verifie),
             MessageInterne::AttenteReponse(a) => {
                 map_attente.insert(a.correlation.clone(), a);
                 continue
@@ -45,7 +45,7 @@ pub async fn recevoir_messages(
                 map_attente.remove(&fp);
                 continue
             },
-            MessageInterne::Trigger(d) => (d, &tx_verifie),
+            MessageInterne::Trigger(d, q) => (d, q, &tx_verifie),
         };
 
         // Extraire le contenu du message
@@ -162,6 +162,7 @@ pub async fn recevoir_messages(
             Some(inner_action) => {
                 TypeMessage::ValideAction(MessageValideAction {
                     message: contenu,
+                    q: nom_q,
                     reply_q,
                     correlation_id: correlation_id.clone(),
                     routing_key: routing_key.expect("routing key inconnue"),
@@ -174,6 +175,7 @@ pub async fn recevoir_messages(
             None => {
                 TypeMessage::Valide(MessageValide {
                     message: contenu,
+                    q: nom_q,
                     reply_q,
                     correlation_id: correlation_id.clone(),
                     routing_key,
@@ -227,7 +229,7 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
         // let message = MessageJson::new(requete);
         let ok = match middleware.transmettre_requete("certificat", fingerprint.as_str(), None, &requete, None).await {
             Ok(r) => {
-                tx.send(MessageInterne::Delivery(delivery))
+                tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
                     .await.expect("resend delivery avec certificat");
                 true
             },
@@ -337,6 +339,7 @@ fn parse(data: &Vec<u8>) -> Result<MessageSerialise, String> {
 #[derive(Debug)]
 pub struct MessageValide {
     pub message: MessageSerialise,
+    pub q: String,
     pub reply_q: Option<String>,
     pub correlation_id: Option<String>,
     pub routing_key: Option<String>,
@@ -348,6 +351,7 @@ pub struct MessageValide {
 #[derive(Debug)]
 pub struct MessageValideAction {
     pub message: MessageSerialise,
+    pub q: String,
     pub reply_q: Option<String>,
     pub correlation_id: Option<String>,
     pub routing_key: String,
