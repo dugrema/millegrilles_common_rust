@@ -21,7 +21,7 @@ pub trait VerificateurMessage {
     fn verifier_message(
         &self,
         message: &MessageSerialise,
-        options: Option<ValidationOptions>
+        options: Option<&ValidationOptions>
     ) -> Result<ResultatValidation, Box<dyn Error>>;
 }
 

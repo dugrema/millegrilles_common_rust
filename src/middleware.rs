@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
-use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message, Chiffreur, CipherMgs2, FingerprintCertPublicKey, Dechiffreur, Mgs2CipherData, IsConfigNoeud};
+use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message, Chiffreur, CipherMgs2, FingerprintCertPublicKey, Dechiffreur, Mgs2CipherData, IsConfigNoeud, valider_message};
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::constantes::*;
@@ -398,6 +398,12 @@ impl Dechiffreur for MiddlewareDbPki {
     // fn get_enveloppe_privee_dechiffrage(&self) -> Arc<EnveloppePrivee> {
     //     self.configuration.get_configuration_pki().get_enveloppe_privee().clone()
     // }
+}
+
+impl VerificateurMessage for MiddlewareDbPki {
+    fn verifier_message(&self, message: &MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
+        verifier_message(message, self, options)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

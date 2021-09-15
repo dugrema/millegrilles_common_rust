@@ -402,7 +402,7 @@ impl VerificateurPermissions for MessageValideAction {
     }
 }
 
-async fn valider_message<M>(
+pub async fn valider_message<M>(
     middleware: &M,
     message: &mut MessageSerialise
 ) -> Result<(), ErreurVerification>

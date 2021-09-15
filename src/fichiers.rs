@@ -17,7 +17,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use xz2::stream;
 use xz2::stream::Status;
 
-use crate::{Chiffreur, CipherMgs2, Dechiffreur, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader, ValidateurX509};
+use crate::{Chiffreur, CipherMgs2, Dechiffreur, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader, ValidateurX509, VerificateurMessage};
 use crate::backup::CatalogueHoraire;
 use crate::constantes::*;
 
@@ -328,7 +328,7 @@ impl DecompresseurBytes {
 
 // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
 pub async fn parse_tar<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur {
+where M: ValidateurX509 + Dechiffreur + VerificateurMessage {
     let mut reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -354,7 +354,7 @@ where M: ValidateurX509 + Dechiffreur {
 
 // todo : Fix parse_tar recursion async
 pub async fn parse_tar1<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur
+where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 {
     let mut reader = Archive::new(stream);
 
@@ -380,7 +380,7 @@ where M: ValidateurX509 + Dechiffreur
 
 // todo : Fix parse_tar recursion async
 pub async fn parse_tar2<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur
+where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 {
     let mut reader = Archive::new(stream);
 
@@ -406,7 +406,7 @@ where M: ValidateurX509 + Dechiffreur
 
 // todo : Fix parse_tar recursion async
 pub async fn parse_tar3<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur
+where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 {
     let mut reader = Archive::new(stream);
 
@@ -433,7 +433,7 @@ where M: ValidateurX509 + Dechiffreur
 #[async_trait]
 pub trait TraiterFichier {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + Dechiffreur;
+    where M: ValidateurX509 + Dechiffreur + VerificateurMessage;
 }
 
 #[cfg(test)]

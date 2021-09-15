@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareDbPki, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, ValidateurX509, ValidationOptions, TypeMessageOut};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareDbPki, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, ValidateurX509, ValidationOptions, TypeMessageOut, VerificateurMessage};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -129,7 +129,7 @@ where
 
 pub async fn restaurer<M, T>(middleware: Arc<M>, nom_domaine: &str, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
 where
-    M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + 'static,
+    M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
     T: TraiterTransaction,
 {
     let workdir = tempfile::tempdir()?;
@@ -505,7 +505,7 @@ async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_coll
 }
 
 async fn download_backup<M>(middleware: Arc<M>, nom_domaine: &str, nom_collection_transactions: &str, workdir: &Path) -> Result<(), Box<dyn Error>>
-where M: MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + 'static {
+where M: MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static {
     let path_fichier = {
         let mut path_fichier = PathBuf::from(workdir);
         path_fichier.push(PathBuf::from("download_backup.tar"));
@@ -545,7 +545,7 @@ where M: MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechif
         let mut stream = response.bytes_stream();
         let mut file_output = File::create(path_fichier.as_path()).await?;
         while let Some(item) = stream.next().await {
-            let content = item.expect("item");
+            let content = item?;
             file_output.write_all(content.as_ref()).await?;
         }
         file_output.flush().await?;
@@ -606,8 +606,9 @@ pub struct CatalogueHoraire {
     pub transactions_hachage: String,
     pub uuid_transactions: Vec<String>,
 
-    // #[serde(rename = "en-tete")]
-    // entete: Entete,
+    /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
+    #[serde(rename = "en-tete", skip_serializing)]
+    pub entete: Option<Entete>,
 
     /// Enchainement backup precedent
     backup_precedent: Option<EnteteBackupPrecedent>,
@@ -800,6 +801,8 @@ impl CatalogueHoraireBuilder {
             transactions_hachage,
             transactions_nomfichier,
             uuid_transactions: self.uuid_transactions,
+
+            entete: None,  // En-tete chargee lors de la deserialization
 
             backup_precedent: self.backup_precedent,
             cle, iv, tag, format,
@@ -997,6 +1000,7 @@ struct ProcesseurFichierBackup {
     catalogue: Option<CatalogueHoraire>,
     decipher: Option<DecipherMgs2>,
     batch: Vec<MessageMilleGrille>,
+    entete_precedente: Option<Entete>,
 }
 
 impl ProcesseurFichierBackup {
@@ -1008,11 +1012,12 @@ impl ProcesseurFichierBackup {
             catalogue: None,
             decipher: None,
             batch: Vec::new(),
+            entete_precedente: None,
         }
     }
 
     async fn parse_file<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + Dechiffreur
+    where M: ValidateurX509 + Dechiffreur + VerificateurMessage
     {
         debug!("Parse fichier : {:?}", filepath);
 
@@ -1048,15 +1053,87 @@ impl ProcesseurFichierBackup {
     }
 
     async fn parse_catalogue<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: Dechiffreur
+    where M: Dechiffreur + VerificateurMessage + ValidateurX509
     {
         debug!("Parse catalogue : {:?}", filepath);
 
-        let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
-        decompresseur.update_std(stream).await?;
-        let catalogue_bytes = decompresseur.finish()?;
+        let (catalogue, catalogue_bytes) = {
+            let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
+            decompresseur.update_std(stream).await?;
+            let catalogue_bytes = decompresseur.finish()?;
+            let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
 
-        let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
+            // Conserver en-tete du catalogue precedent. Va permettre de verifier le chainage.
+            if let Some(c) = &self.catalogue {
+                if let Some(e) = &c.entete {
+                    debug!("En-tete du catalogue charge : {:?}", e);
+                    self.entete_precedente = Some(e.clone());
+                }
+            }
+
+            //debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
+            self.catalogue = Some(catalogue);
+
+            (self.catalogue.as_ref().expect("catalogue"), catalogue_bytes)  // Retourner reference
+        };
+
+        {
+            // Valider le catalogue
+            let message_ser = {
+                let catalogue_str = String::from_utf8(catalogue_bytes)?;
+                let mut message = MessageSerialise::from_str(catalogue_str.as_str())?;
+
+                // Charger certiticat
+                let fingerprint = message.get_entete().fingerprint_certificat.as_str();
+                let option_cert = match message.get_msg().certificat.as_ref() {
+                    Some(c) => {
+                        Some(middleware.charger_enveloppe(c, Some(fingerprint)).await?)
+                    },
+                    None => middleware.get_certificat(fingerprint).await
+                };
+                message.certificat = option_cert;
+
+                message
+            };
+            let validations_options = ValidationOptions::new(true, true, false);
+            let resultat_verification = middleware.verifier_message(&message_ser, Some(&validations_options))?;
+            if !resultat_verification.signature_valide {
+                Err(format!("Catalogue invalide (signature: {:?}): {:?}", resultat_verification, message_ser))?;
+            }
+        }
+
+        let uuid_catalogue_courant = match &catalogue.entete {
+            Some(u) => u.uuid_transaction.clone(),
+            None => String::from(""),
+        };
+
+        if let Some(ep) = &catalogue.backup_precedent {
+            if let Some(ec) = &self.entete_precedente {
+                debug!("Entete precedente {:?}\nInfo catalogue predecent {:?}", ec, ep);
+
+                // Verifier chaine avec en-tete du catalogue
+                let uuid_precedent = ep.uuid_transaction.as_str();
+                let uuid_courant = ec.uuid_transaction.as_str();
+
+                if uuid_precedent == uuid_courant {
+                    match hacher_serializable(ec) {
+                        Ok(hc) => {
+                            // Calculer hachage en-tete precedente
+                            let hp = ep.hachage_entete.as_str();
+                            if hc.as_str() != hp {
+                                warn!("Chainage au catalogue {:?}: {}/{} est brise (hachage mismatch)", filepath, catalogue.domaine, uuid_catalogue_courant);
+                            }
+                        },
+                        Err(e) => {
+                            error!("Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage)", filepath, catalogue.domaine, uuid_catalogue_courant);
+                        }
+                    };
+                } else {
+                    warn!("Chainage au catalogue {:?}: {}/{} est brise (uuid mismatch catalogue precedent {} avec info courante {})",
+                        filepath, catalogue.domaine, uuid_catalogue_courant, uuid_precedent, uuid_courant);
+                }
+            }
+        }
 
         // Recuperer cle et creer decipher au besoin
         self.decipher = match catalogue.cle {
@@ -1086,9 +1163,6 @@ impl ProcesseurFichierBackup {
         //         }
         //     };
         // }
-
-        //debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
-        self.catalogue = Some(catalogue);
 
         Ok(())
     }
@@ -1189,7 +1263,7 @@ impl ProcesseurFichierBackup {
 #[async_trait]
 impl TraiterFichier for ProcesseurFichierBackup {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + Dechiffreur
+    where M: ValidateurX509 + Dechiffreur + VerificateurMessage
     {
         self.parse_file(middleware, nom_fichier, stream).await
     }
@@ -1745,7 +1819,7 @@ mod test_integration {
         ) = build().await;
 
         // Reset backup flags pour le domaine
-        //reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
+        reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
 
         futures.push(tokio::spawn(async move {
 
@@ -1756,6 +1830,7 @@ mod test_integration {
             debug!("S'assurer d'avoir les certificats de chiffrage");
             middleware.charger_certificats_chiffrage().await;
             debug!("Certificats de chiffrage recus : {:?}", middleware.get_publickeys_chiffrage());
+            assert_eq!(middleware.get_publickeys_chiffrage().len() > 1, true);
 
             backup(middleware.as_ref(), NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
 
