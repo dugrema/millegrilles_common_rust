@@ -62,7 +62,6 @@ pub fn verifier_message<V>(
 where
     V: ValidateurX509,
 {
-
     let (utiliser_idmg_message, utiliser_date_message, toujours_verifier_hachage) = match options {
         Some(o) => (o.utiliser_idmg_message, o.utiliser_date_message, o.toujours_verifier_hachage),
         None => (false, false, false),

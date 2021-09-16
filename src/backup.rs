@@ -52,19 +52,33 @@ where
 
     let nom_coll_str = nom_collection_transactions.into();
 
+    let nom_domaine_str = nom_domaine.into();
+
     let info_backup = BackupInformation::new(
-        nom_domaine.into(),
+        nom_domaine_str,
         nom_coll_str,
         chiffrer,
         Some(workdir.path().to_owned())
     )?;
 
+    backup_horaire(middleware, workdir, nom_coll_str, &info_backup).await?;
+
+    // Emettre trigger pour declencher backup du jour precedent
+    backup_quotidien(middleware,&info_backup).await?;
+
+    Ok(())
+}
+
+/// Effectue un backup horaire
+async fn backup_horaire<M>(middleware: &M, workdir: TempDir, nom_coll_str: &str, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
+where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
+{
     // Generer liste builders domaine/heures
     let builders = grouper_backups(middleware, &info_backup).await?;
 
-    debug!("Backup collection {} : {:?}", nom_coll_str, builders);
+    debug!("Backup horaire collection {} : {:?}", nom_coll_str, builders);
 
-    // todo Tenter de charger entete du dernier backup de ce domaine/partition
+    // Tenter de charger entete du dernier backup de ce domaine/partition
     let mut entete_precedente: Option<Entete> = requete_entete_dernier(middleware, nom_coll_str).await?;
 
     for mut builder in builders {
@@ -101,7 +115,7 @@ where
             commande_cles
         ).await?;
 
-        if ! reponse.status().is_success() {
+        if !reponse.status().is_success() {
             Err(format!("Erreur upload fichier : {:?}", reponse))?;
         }
 
@@ -113,7 +127,7 @@ where
         ).await?;
 
         entete_precedente = Some(catalogue_signe.entete.clone());
-        if ! catalogue_horaire.snapshot {
+        if !catalogue_horaire.snapshot {
             // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
 
             let reponse_catalogue = middleware.emettre_message_millegrille(
@@ -1057,54 +1071,158 @@ impl ProcesseurFichierBackup {
     {
         debug!("Parse catalogue : {:?}", filepath);
 
-        let (catalogue, catalogue_bytes) = {
-            let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
-            decompresseur.update_std(stream).await?;
-            let catalogue_bytes = decompresseur.finish()?;
-            let catalogue: CatalogueHoraire = serde_json::from_slice(catalogue_bytes.as_slice())?;
-
-            // Conserver en-tete du catalogue precedent. Va permettre de verifier le chainage.
-            if let Some(c) = &self.catalogue {
-                if let Some(e) = &c.entete {
-                    debug!("En-tete du catalogue charge : {:?}", e);
-                    self.entete_precedente = Some(e.clone());
-                }
-            }
-
-            //debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
-            self.catalogue = Some(catalogue);
-
-            (self.catalogue.as_ref().expect("catalogue"), catalogue_bytes)  // Retourner reference
-        };
-
-        {
+        let catalogue_message = {
             // Valider le catalogue
-            let message_ser = {
+            let mut message = {
+                let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
+                decompresseur.update_std(stream).await?;
+                let catalogue_bytes = decompresseur.finish()?;
                 let catalogue_str = String::from_utf8(catalogue_bytes)?;
+                debug!("Catalogue extrait\n{}", catalogue_str);
                 let mut message = MessageSerialise::from_str(catalogue_str.as_str())?;
-
-                // Charger certiticat
-                let fingerprint = message.get_entete().fingerprint_certificat.as_str();
-                let option_cert = match message.get_msg().certificat.as_ref() {
-                    Some(c) => {
-                        Some(middleware.charger_enveloppe(c, Some(fingerprint)).await?)
-                    },
-                    None => middleware.get_certificat(fingerprint).await
-                };
-                message.certificat = option_cert;
 
                 message
             };
+
+            // Charger certiticat
+            let fingerprint = message.get_entete().fingerprint_certificat.as_str();
+            let option_cert = match message.get_msg().certificat.as_ref() {
+                Some(c) => {
+                    Some(middleware.charger_enveloppe(c, Some(fingerprint)).await?)
+                },
+                None => middleware.get_certificat(fingerprint).await
+            };
+            message.certificat = option_cert;
+
             let validations_options = ValidationOptions::new(true, true, false);
-            let resultat_verification = middleware.verifier_message(&message_ser, Some(&validations_options))?;
+            let resultat_verification = middleware.verifier_message(&message, Some(&validations_options))?;
             if !resultat_verification.signature_valide {
-                Err(format!("Catalogue invalide (signature: {:?}): {:?}", resultat_verification, message_ser))?;
+                Err(format!("Catalogue invalide (signature: {:?})\n{}", resultat_verification, message.get_str()))?;
+            }
+
+            message
+        };
+
+        // Determiner le type de catalogue
+        let type_catalogue = {
+            // let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
+            // decompresseur.update_std(stream).await?;
+            // let catalogue_bytes = decompresseur.finish()?;
+            //
+            // let catalogue_message: MessageSerialise = serde_json::from_slice(catalogue_bytes.as_slice())?;
+            // let entete = catalogue_message.entete.clone();
+            // let uuid_transaction = entete.uuid_transaction.clone();
+
+            let domaine = match &catalogue_message.get_entete().domaine {
+                Some(d) => d.as_str(),
+                None => "",
+            };
+
+            let type_catalogue = match domaine {
+                "Backup.catalogueQuotidienFinaliser" => {
+                    let catalogue: CatalogueHoraire = serde_json::from_str(catalogue_message.get_str())?;
+                    TypeCatalogueBackup::Horaire(catalogue)
+                },
+                "Backup.catalogueHoraire" => TypeCatalogueBackup::Quotidien(catalogue_message),
+                _ => {
+                    warn!("Type catalogue inconnu, ok skip {:?}", domaine);
+                    return Ok(())
+                },
+            };
+
+            type_catalogue
+        };
+
+        match type_catalogue {
+            TypeCatalogueBackup::Horaire(catalogue) => {
+                // Conserver en-tete du catalogue precedent. Va permettre de verifier le chainage.
+                if let Some(e) = &catalogue.entete {
+                    debug!("En-tete du catalogue charge : {:?}", e);
+                    self.entete_precedente = Some(e.clone());
+                }
+
+                //debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
+                self.catalogue = Some(catalogue);
+                // let catalogue_ref = self.catalogue.as_ref().expect("catalogue");
+
+                // Traiter le catalogue horaire
+                self.traiter_catalogue_horaire(middleware, filepath).await?;
+
+                Ok(())
+            },
+            TypeCatalogueBackup::Quotidien(m) => {
+                // Rien a faire pour catalogue quotidien
+                Ok(())
             }
         }
 
+        // if let Some(ep) = &catalogue.backup_precedent {
+        //     if let Some(ec) = &self.entete_precedente {
+        //         debug!("Entete precedente {:?}\nInfo catalogue predecent {:?}", ec, ep);
+        //
+        //         // Verifier chaine avec en-tete du catalogue
+        //         let uuid_precedent = ep.uuid_transaction.as_str();
+        //         let uuid_courant = ec.uuid_transaction.as_str();
+        //
+        //         if uuid_precedent == uuid_courant {
+        //             match hacher_serializable(ec) {
+        //                 Ok(hc) => {
+        //                     // Calculer hachage en-tete precedente
+        //                     let hp = ep.hachage_entete.as_str();
+        //                     if hc.as_str() != hp {
+        //                         warn!("Chainage au catalogue {:?}: {}/{} est brise (hachage mismatch)", filepath, catalogue.domaine, uuid_catalogue_courant);
+        //                     }
+        //                 },
+        //                 Err(e) => {
+        //                     error!("Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage)", filepath, catalogue.domaine, uuid_catalogue_courant);
+        //                 }
+        //             };
+        //         } else {
+        //             warn!("Chainage au catalogue {:?}: {}/{} est brise (uuid mismatch catalogue precedent {} avec info courante {})",
+        //                 filepath, catalogue.domaine, uuid_catalogue_courant, uuid_precedent, uuid_courant);
+        //         }
+        //     }
+        // }
+        //
+        // // Recuperer cle et creer decipher au besoin
+        // self.decipher = match catalogue.cle {
+        //     Some(_) => {
+        //         let transactions_hachage_bytes = catalogue.transactions_hachage.as_str();
+        //         let dechiffreur = middleware.get_decipher(transactions_hachage_bytes).await?;
+        //         Some(dechiffreur)
+        //     },
+        //     None => None,
+        // };
+
+        // let mut cle = match catalogue.get_cipher_data() {
+        //     Ok(c) => Some(c),
+        //     Err(e) => None,
+        // };
+        //
+        // // Tenter de dechiffrer la cle
+        // if let Some(mut cipher_data) = cle {
+        //     debug!("Creer cipher pour {:?}", cipher_data);
+        //     match cipher_data.dechiffrer_cle(self.enveloppe_privee.cle_privee()) {
+        //         Ok(_) => {
+        //             // Creer Cipher
+        //             self.decipher = Some(DecipherMgs2::new(&cipher_data)?);
+        //         },
+        //         Err(e) => {
+        //             error!("Decipher incorrect, transactions ne seront pas lisibles : {:?}", e);
+        //         }
+        //     };
+        // }
+
+        // Ok(())
+    }
+
+    async fn traiter_catalogue_horaire<M>(&mut self, middleware: &M, filepath: &async_std::path::Path) -> Result<(), Box<dyn Error>>
+    where M: Dechiffreur + VerificateurMessage + ValidateurX509,
+    {
+        let catalogue = self.catalogue.as_ref().expect("catalogue");
         let uuid_catalogue_courant = match &catalogue.entete {
-            Some(u) => u.uuid_transaction.clone(),
-            None => String::from(""),
+            Some(e) => e.uuid_transaction.as_str(),
+            None => "",
         };
 
         if let Some(ep) = &catalogue.backup_precedent {
@@ -1144,25 +1262,6 @@ impl ProcesseurFichierBackup {
             },
             None => None,
         };
-
-        // let mut cle = match catalogue.get_cipher_data() {
-        //     Ok(c) => Some(c),
-        //     Err(e) => None,
-        // };
-        //
-        // // Tenter de dechiffrer la cle
-        // if let Some(mut cipher_data) = cle {
-        //     debug!("Creer cipher pour {:?}", cipher_data);
-        //     match cipher_data.dechiffrer_cle(self.enveloppe_privee.cle_privee()) {
-        //         Ok(_) => {
-        //             // Creer Cipher
-        //             self.decipher = Some(DecipherMgs2::new(&cipher_data)?);
-        //         },
-        //         Err(e) => {
-        //             error!("Decipher incorrect, transactions ne seront pas lisibles : {:?}", e);
-        //         }
-        //     };
-        // }
 
         Ok(())
     }
@@ -1260,6 +1359,11 @@ impl ProcesseurFichierBackup {
     }
 }
 
+enum TypeCatalogueBackup {
+    Horaire(CatalogueHoraire),
+    Quotidien(MessageSerialise),
+}
+
 #[async_trait]
 impl TraiterFichier for ProcesseurFichierBackup {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>>
@@ -1273,6 +1377,35 @@ impl TraiterFichier for ProcesseurFichierBackup {
 struct EnteteBackupPrecedent {
     hachage_entete: String,
     uuid_transaction: String,
+}
+
+async fn backup_quotidien<M>(middleware: &M, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
+where M: GenerateurMessages
+{
+    let now = Utc::now() - Duration::days(1);
+    let hier = now.
+        with_hour(0).expect("hour").
+        with_minute(0).expect("minute").
+        with_second(0).expect("second").
+        with_nanosecond(0).expect("nano");
+
+    let trigger = json!({
+        "jour": hier.timestamp(),
+        "domaine": &info_backup.domaine,
+        "partition": &info_backup.partition,
+        "uuid_rapport": &info_backup.uuid_backup,
+    });
+
+    middleware.transmettre_commande(
+        "Backup",
+        "declencherBackupQuotidien",
+        None,
+        &trigger,
+        Some(Securite::L3Protege),
+        false
+    ).await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1819,7 +1952,7 @@ mod test_integration {
         ) = build().await;
 
         // Reset backup flags pour le domaine
-        reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
+        //reset_backup_flag(middleware.as_ref(), NOM_COLLECTION_TRANSACTIONS).await;
 
         futures.push(tokio::spawn(async move {
 
