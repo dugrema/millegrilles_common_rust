@@ -35,8 +35,11 @@ pub fn securite_str(securite: &Securite) -> &'static str {
 pub const NEW_LINE_BYTE: u8 = 0x0A;
 pub const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 
-// Evenements globaux
+// Evenements/commandes globaux
 pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
+pub const EVENEMENT_GLOBAL_CEDULE: &str = "evenement.global.cedule";
+pub const COMMANDE_GLOBAL_BACKUP_HORAIRE: &str = "commande.global.declencherBackupHoraire";
+pub const COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS: &str = "commande.global.restaurerTransactions";
 
 // Transactions
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
@@ -100,3 +103,6 @@ pub const BACKUP_TRANSACTION_CATALOGUE_HORAIRE: &str = "catalogueHoraire";
 
 pub const BACKUP_CHAMP_FUUID_GROSFICHIERS: &str = "fuuid_grosfichiers";
 pub const BACKUP_CHAMP_BACKUP_TRANSACTIONS: &str = "backup_transactions";
+
+pub const COMMANDE_BACKUP_HORAIRE: &str = "declencherBackupHoraire";
+pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";

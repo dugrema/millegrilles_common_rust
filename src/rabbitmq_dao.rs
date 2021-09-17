@@ -348,6 +348,7 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
     reply_queue
 }
 
+/// Q interne utilisee pour recevoir les triggers et autre evenements sur exchange 4.secure
 async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
     let mut params = FieldTable::default();
     params.insert("ttl".into(), 300000.into());  // 5 minutes max pour traitement events
@@ -361,29 +362,45 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
             params,
         ).await.unwrap();
 
-    // Ajouter routing keys pour ecouter evenements certificats, requete cert local
-    let routing_keys = vec!(
-        // Ecouter les evenements internes
-        String::from(format!("evenement.{}.transaction_persistee", nom_domaine)),
-        String::from("evenement.global.cedule"),
-    );
-    let exchanges: Vec<String> = vec!("4.secure".into());
-
     let nom_queue = trigger_queue.name().as_str();
-    for rk in routing_keys {
-        for exchange in &exchanges {
-            let _ = channel.queue_bind(
-                nom_queue,
-                &exchange,
-                &rk,
-                QueueBindOptions::default(),
-                FieldTable::default()
-            ).await.expect("Binding routing key");
-        }
+
+    // Ajouter routing keys pour ecouter evenements triggers secure
+    let routing_keys_secure = vec!(
+        // Ecouter les evenements internes pour le domaine
+        String::from(format!("evenement.{}.{}", nom_domaine, EVENEMENT_TRANSACTION_PERSISTEE)),
+    );
+    for rk in routing_keys_secure {
+        let _ = channel.queue_bind(
+            nom_queue,
+            SECURITE_4_SECURE,
+            &rk,
+            QueueBindOptions::default(),
+            FieldTable::default()
+        ).await.expect("Binding routing key");
+    }
+
+    // Ajouter routing keys pour ecouter evenements certificats, requete cert local
+    let routing_keys_protege = vec!(
+        // Ecouter les evenements pour le domaine
+        String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_BACKUP_HORAIRE)),
+        String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESTAURER_TRANSACTIONS)),
+
+        // Evenement globaux
+        String::from(EVENEMENT_GLOBAL_CEDULE),
+        String::from(COMMANDE_GLOBAL_BACKUP_HORAIRE),
+        String::from(COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS),
+    );
+    for rk in routing_keys_protege {
+        let _ = channel.queue_bind(
+            nom_queue,
+            SECURITE_3_PROTEGE,
+            &rk,
+            QueueBindOptions::default(),
+            FieldTable::default()
+        ).await.expect("Binding routing key");
     }
 
     debug!("Creation trigger-Q secure {:?}", trigger_queue);
-
     trigger_queue
 }
 
