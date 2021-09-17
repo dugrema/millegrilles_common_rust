@@ -865,7 +865,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         "noeud_id": noeud_id,
         "domaine": nom_domaine,
         "sous_domaines": None::<String>,
-        "echanges_routing": None::<String>,
+        "exchanges_routing": None::<String>,
         // "exchanges_routing": {
         //     "1.public": ["requete.Principale.test"],
         //     "2.prive": ["requete.Principale.test"],
