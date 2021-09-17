@@ -1119,11 +1119,11 @@ impl ProcesseurFichierBackup {
             };
 
             let type_catalogue = match domaine {
-                "Backup.catalogueQuotidienFinaliser" => {
+                "Backup.catalogueQuotidienFinaliser" => TypeCatalogueBackup::Quotidien(catalogue_message),
+                "Backup.catalogueHoraire" => {
                     let catalogue: CatalogueHoraire = serde_json::from_str(catalogue_message.get_str())?;
                     TypeCatalogueBackup::Horaire(catalogue)
                 },
-                "Backup.catalogueHoraire" => TypeCatalogueBackup::Quotidien(catalogue_message),
                 _ => {
                     warn!("Type catalogue inconnu, ok skip {:?}", domaine);
                     return Ok(())
