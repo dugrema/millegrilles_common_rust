@@ -39,6 +39,7 @@ use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarder
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
+use crate::Securite::L3Protege;
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
@@ -61,18 +62,42 @@ where
         Some(workdir.path().to_owned())
     )?;
 
-    backup_horaire(middleware, workdir, nom_coll_str, &info_backup).await?;
+    let (reponse, flag_erreur) = match backup_horaire(middleware, workdir, nom_coll_str, &info_backup).await {
+        Ok(()) => {
+            // Emettre trigger pour declencher backup du jour precedent
+            let reponse = middleware.formatter_reponse(json!({"ok": true}), None)?;
+            (reponse, true)
+        },
+        Err(e) => {
+            error!("Erreur traitement backup : {:?}", e);
+            let reponse = middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?;
 
-    // Emettre trigger pour declencher backup du jour precedent
-    backup_quotidien(middleware,&info_backup).await?;
+            (reponse, false)
+        },
+    };
 
-    Ok(None)
+    // Utiliser flag pour emettre evenement erreur (note : faire hors du match a cause Err not Send)
+    if flag_erreur {
+        let timestamp_backup = Utc::now();
+        if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
+            error!("Erreur emission evenement erreur de backup : {:?}", e);
+        }
+    } else {
+        backup_quotidien(middleware, &info_backup).await?;
+    }
+
+    Ok(Some(reponse))
 }
 
 /// Effectue un backup horaire
 async fn backup_horaire<M>(middleware: &M, workdir: TempDir, nom_coll_str: &str, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
 where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
 {
+    let timestamp_backup = Utc::now();
+    if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireDebut", &timestamp_backup).await {
+        error!("Erreur emission evenement debut backup : {:?}", e);
+    }
+
     // Generer liste builders domaine/heures
     let builders = grouper_backups(middleware, &info_backup).await?;
 
@@ -138,6 +163,10 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
         }
     }
 
+    if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireTermine", &timestamp_backup).await {
+        error!("Erreur emission evenement fin backup : {:?}", e);
+    }
+
     Ok(())
 }
 
@@ -146,13 +175,52 @@ where
     M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
     T: TraiterTransaction,
 {
+    if let Err(e) = emettre_evenement_restauration(middleware.as_ref(), nom_domaine, "debutRestauration").await {
+        error!("Erreur emission message restauration : {:?}", e);
+    }
+
     let workdir = tempfile::tempdir()?;
-    debug!("Demarrage restauration, utilisation workdir {:?}", workdir);
-    download_backup(middleware.clone(), nom_domaine, nom_collection_transactions, workdir.path()).await?;
+    info!("Demarrage restauration, utilisation workdir {:?}", workdir);
+    let download_result = match download_backup(middleware.clone(), nom_domaine, nom_collection_transactions, workdir.path()).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            Err(format!("Erreur download backup : {:?}", e))
+        }
+    };
+
+    match download_result {
+        Ok(()) => (),
+        Err(e) => {
+            if let Err(e) = emettre_evenement_restauration(middleware.as_ref(), nom_domaine, "erreurDownload").await {
+                error!("Erreur emission message restauration : {:?}", e);
+            }
+            Err(e)?
+        }
+    }
 
     debug!("Restauration des transactions termines, debut regeneration {}", nom_collection_transactions);
-    regenerer(middleware.as_ref(), nom_collection_transactions, noms_collections_docs, processor).await?;
-    debug!("Fin regeneration {}", nom_collection_transactions);
+    let regenerer_result = match regenerer(middleware.as_ref(), nom_collection_transactions, noms_collections_docs, processor).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            Err(format!("Erreur regenerer : {:?}", e))
+        }
+    };
+
+    match regenerer_result {
+        Ok(()) => (),
+        Err(e) => {
+            if let Err(e) = emettre_evenement_restauration(middleware.as_ref(), nom_domaine, "erreurRegeneration").await {
+                error!("Erreur emission message restauration : {:?}", e);
+            }
+            Err(e)?
+        }
+    }
+
+    info!("Fin regeneration {}", nom_collection_transactions);
+
+    if let Err(e) = emettre_evenement_restauration(middleware.as_ref(), nom_domaine, "restaurationTerminee").await {
+        error!("Erreur emission message restauration : {:?}", e);
+    }
 
     Ok(())
 }
@@ -585,7 +653,7 @@ trait BackupHandler {
 
 /// Struct de backup
 #[derive(Debug)]
-struct BackupInformation {
+pub struct BackupInformation {
     /// Nom complet de la collection de transactions mongodb
     nom_collection_transactions: String,
     /// Nom du domaine
@@ -1436,6 +1504,64 @@ pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &
 
     Ok(Some(reponse))
 }
+
+pub async fn emettre_evenement_backup<M>(
+    middleware: &M, info_backup: &BackupInformation, evenement: &str, timestamp: &DateTime<Utc>) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages
+{
+    let value = json!({
+        "uuid_rapport": info_backup.uuid_backup.as_str(),
+        "evenement": evenement,
+        "domaine": info_backup.domaine.as_str(),
+        "timestamp": timestamp.timestamp(),
+    });
+
+    Ok(middleware.emettre_evenement(
+        "Backup",
+        "backupMaj",
+        None,
+        &value,
+        Some(vec![L3Protege])).await?
+    )
+}
+
+pub async fn emettre_evenement_restauration<M>(
+    middleware: &M, domaine: &str, evenement: &str) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages
+{
+    let value = json!({
+        "evenement": evenement,
+        "domaine": domaine,
+    });
+
+    Ok(middleware.emettre_evenement(
+        "Backup",
+        "restaurationMaj",
+        None,
+        &value,
+        Some(vec![L3Protege])).await?
+    )
+}
+
+// def transmettre_evenement_backup(self, uuid_rapport: str, evenement: str, heure: datetime.datetime, info: dict = None, sousdomaine: str = None):
+//     if sousdomaine is None:
+//         sousdomaine = self._nom_domaine
+//
+//     evenement_contenu = {
+//         ConstantesBackup.CHAMP_UUID_RAPPORT: uuid_rapport,
+//         Constantes.EVENEMENT_MESSAGE_EVENEMENT: evenement,
+//         ConstantesBackup.LIBELLE_DOMAINE: sousdomaine,
+//         Constantes.EVENEMENT_MESSAGE_EVENEMENT_TIMESTAMP: int(heure.timestamp()),
+//         ConstantesBackup.LIBELLE_SECURITE: self.__niveau_securite,
+//     }
+//     if info:
+//         evenement_contenu['info'] = info
+//
+//     domaine = 'evenement.Backup.' + ConstantesBackup.EVENEMENT_BACKUP_MAJ
+//
+//     self._contexte.generateur_transactions.emettre_message(
+//         evenement_contenu, domaine, exchanges=[Constantes.SECURITE_PROTEGE]
+//     )
 
 
 #[cfg(test)]
