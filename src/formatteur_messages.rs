@@ -12,11 +12,19 @@ use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message, IsConfigurationPki, VerificateurPermissions, ExtensionsMilleGrille};
+use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message, IsConfigurationPki, VerificateurPermissions, ExtensionsMilleGrille, verifier_multihash};
 use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
-use crate::signatures::signer_message;
+use crate::signatures::{SALT_LENGTH, VERSION_1, signer_message};
+use std::borrow::Cow;
+use env_logger::fmt::TimestampPrecision::Millis;
+use std::collections::btree_map::IntoIter;
+use openssl::pkey::{Public, PKey};
+use multibase::{Base, decode};
+use openssl::hash::MessageDigest;
+use openssl::sign::{Verifier, RsaPssSaltlen};
+use openssl::rsa::Padding;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
@@ -173,6 +181,9 @@ pub struct MessageMilleGrille {
     /// Contenu du message autre que les elements structurels.
     #[serde(flatten)]
     pub contenu: Map<String, Value>,
+
+    #[serde(skip)]
+    contenu_traite: bool,
 }
 
 impl MessageMilleGrille {
@@ -185,6 +196,7 @@ impl MessageMilleGrille {
             certificat: None,
             signature: None,
             contenu: Map::new(),
+            contenu_traite: false,
         }
     }
 
@@ -200,10 +212,10 @@ impl MessageMilleGrille {
         S: Serialize,
     {
         // Serialiser le contenu
-        let value: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
+        let value_ordered: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
 
         let entete = MessageMilleGrille::creer_entete(
-            enveloppe_privee, domaine, action, partition, version, &value)?;
+            enveloppe_privee, domaine, action, partition, version, &value_ordered)?;
 
         let pems: Vec<String> = {
             let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
@@ -214,16 +226,23 @@ impl MessageMilleGrille {
             pem_str
         };
 
-        let signature = MessageMilleGrille::signer_message(enveloppe_privee, &entete, &value)?;
+        // let message_ordered = MessageMilleGrille::preparer_message_ordered(entete, value)?;
 
-        Ok(MessageMilleGrille {
+        let mut message = MessageMilleGrille {
             entete,
             certificat: Some(pems),
-            signature: Some(signature),
-            contenu: value,
-        })
+            signature: None,
+            contenu: value_ordered,
+            contenu_traite: true,
+        };
+
+        MessageMilleGrille::signer_message(&mut message, enveloppe_privee)?;
+
+        Ok(message)
     }
 
+    /// Va creer une nouvelle entete, calculer le hachag
+    /// Note : value doit etre deja trie (BTreeMap recursif)
     fn creer_entete(
         enveloppe_privee: &EnveloppePrivee,
         domaine: Option<&str>,
@@ -232,8 +251,10 @@ impl MessageMilleGrille {
         version: Option<i32>,
         value: &Map<String, Value>
     ) -> Result<Entete, Box<dyn Error>> {
+
         // Calculer le hachage du contenu
-        let hachage = MessageMilleGrille::calculer_hachage_contenu(&value)?;
+        let message_string = serde_json::to_string(&value)?;
+        let hachage = hacher_message(message_string.as_str());
 
         // Generer l'entete
         let mut entete_builder = Entete::builder(
@@ -303,55 +324,160 @@ impl MessageMilleGrille {
     where
         S: Serialize,
     {
-        Ok(serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned())
+        let mut map = serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned();
+        let contenu = MessageMilleGrille::preparer_btree_recursif(map)?;
+        Ok(contenu)
     }
 
-    fn calculer_hachage_contenu(contenu: &Map<String, Value>) -> Result<String, Box<dyn std::error::Error>> {
-        let message_string = MessageMilleGrille::preparer_pour_hachage(contenu)?;
+    fn calculer_hachage_contenu(&mut self) -> Result<String, Box<dyn std::error::Error>> {
+        if ! self.contenu_traite {
+            self.traiter_contenu();
+        }
+        let message_string = serde_json::to_string(&self.contenu)?;
         Ok(hacher_message(message_string.as_str()))
     }
 
-    fn signer_message(enveloppe_privee: &EnveloppePrivee, entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn std::error::Error>> {
-        let message_string = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
+    fn signer_message(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
+        let message_string = self.preparer_pour_signature()?;
 
-        // debug!("Message serialise avec entete : {}", contenu_str);
+        debug!("Message serialise avec entete : {}", message_string);
         let signature = signer_message(enveloppe_privee.cle_privee(), message_string.as_bytes())?;
 
-        Ok(signature)
+        self.signature = Some(signature);
+
+        Ok(())
     }
 
-    /// Genere une String avec le contenu serialise correctement pour hachage / validation.
-    pub fn preparer_pour_hachage(contenu: &Map<String, Value>) -> Result<String, Box<dyn Error>> {
-        let mut ordered = BTreeMap::new();
-
-        // Copier dans une BTreeMap. Retirer champs _ et en-tete
-        for (k, v) in contenu {
-            if ! k.starts_with("_") && k != "en-tete" {
-                ordered.insert(k, v);
-            }
+    fn preparer_pour_signature(&mut self) -> Result<String, Box<dyn Error>> {
+        if !self.contenu_traite {
+            self.traiter_contenu();
         }
 
-        Ok(serde_json::to_string(&ordered)?)
-    }
+        // Creer une map avec l'entete (refs uniquements)
+        let mut map_ordered: BTreeMap<&str, &Value> = BTreeMap::new();
 
-    /// Generer une String avec le contenu et l'entete serialises correctement pour signature / validation.
-    pub fn preparer_pour_signature(entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn Error>> {
-        let mut ordered = BTreeMap::new();
-
-        // Copier dans une BTreeMap. Retirer champs _ et en-tete
-        for (k, v) in contenu {
+        // Copier references du reste du contenu (exclure champs _)
+        for (k, v) in &self.contenu {
             if !k.starts_with("_") {
-                ordered.insert(k.as_str(), v);
+                map_ordered.insert(k.as_str(), v);
             }
         }
 
         // Ajouter entete
-        let entete_value = serde_json::to_value(entete)?;
-        ordered.insert("en-tete", &entete_value);
+        let entete_value = serde_json::to_value(&self.entete)?;
+        map_ordered.insert("en-tete", &entete_value);
 
-        // Serialiser en json pour signer
-        Ok(serde_json::to_string(&ordered)?)
+        let message_string = serde_json::to_string(&map_ordered)?;
+        Ok(message_string)
     }
+
+    /// Genere une String avec le contenu serialise correctement pour hachage / validation.
+    // pub fn preparer_pour_hachage(&mut self) -> Result<String, Box<dyn Error>> {
+    //     // let mut ordered = BTreeMap::new();
+    //     //
+    //     // // Copier dans une BTreeMap. Retirer champs _ et en-tete
+    //     // for (k, v) in contenu {
+    //     //     if ! k.starts_with("_") && k != "en-tete" {
+    //     //         ordered.insert(k, v);
+    //     //     }
+    //     // }
+    //
+    //     if ! self.contenu_traite {
+    //         self.traiter_contenu();
+    //     }
+    //
+    //     Ok(serde_json::to_string(&self.contenu)?)
+    // }
+
+    // /// Preparer recursivement le contenu en triant les cles.
+    // fn preparer_btree_recursif_into_iter(mut iter: IntoIter<String, Value>) -> Result<BTreeMap<String, Value>, Box<dyn Error>> {
+    //     let mut map = Map::new();
+    //     // let mut iter = contenu.into_iter();
+    //     while let Some((k, v)) = iter.next() {
+    //         map.insert(k, v);
+    //     }
+    //
+    //     let ordered = MessageMilleGrille::preparer_btree_recursif(map)?;
+    //
+    //     Ok(ordered)
+    // }
+
+    fn preparer_btree_recursif(mut contenu: Map<String, Value>) -> Result<Map<String, Value>, Box<dyn Error>> {
+        let mut iter: serde_json::map::IntoIter = contenu.into_iter();
+        MessageMilleGrille::preparer_btree_recursif_into_iter(iter)
+    }
+
+    /// Preparer recursivement le contenu en triant les cles.
+    fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Result<Map<String, Value>, Box<dyn Error>> {
+        let mut ordered: BTreeMap<String, Value> = BTreeMap::new();
+
+        // Copier dans une BTreeMap (via trier les keys)
+        // let mut iter: serde_json::map::IntoIter = contenu.into_iter();
+        while let Some((k, mut v)) = iter.next() {
+
+            let value = if let Value::Object(map) = v {
+                let map = MessageMilleGrille::preparer_btree_recursif(map)?;
+                Value::Object(map)
+            } else {
+                v
+            };
+
+            ordered.insert(k, value);
+        }
+
+        // Reconvertir en Map<String, Value> (flag preserve_order est actif)
+        let mut map_ordered = Map::new();
+        let mut iter_ordered = ordered.into_iter();
+        while let Some((k, v)) = iter_ordered.next() {
+            map_ordered.insert(k, v);
+        }
+
+        Ok(map_ordered)
+    }
+
+    // /// Reorganise un message en ordre pour hachage, signature ou verification.
+    // pub fn preparer_message_ordered(entete: Entete, contenu: &mut Map<String, Value>) -> Result<Map<&str, &Value>, Box<dyn Error>> {
+    //     let mut map_ordered = MessageMilleGrille::preparer_btree_recursif(contenu)?;
+    //     let mut iter_ordered = map_ordered.into_iter();
+    //
+    //     // Creer un b-tree (top level) pour ajouter l'en-tete
+    //     let mut btmap: BTreeMap<&str, &Value> = BTreeMap::new();
+    //     while let Some((k, v)) = iter_ordered.next() {
+    //         btmap.insert(k.as_str(), &v);
+    //     }
+    //
+    //     // Ajouter entete
+    //     let entete_value = serde_json::to_value(entete)?;
+    //     btmap.insert("en-tete", entete_value.to_owned());
+    //
+    //     let mut map_ordered = Map::new();  // Recreer map (indexed)
+    //     let mut iter_btmap = btmap.into_iter();
+    //     while let Some((k, v)) = iter_btmap.next() {
+    //         map_ordered.insert(k, v);
+    //     }
+    //
+    //     Ok(map_ordered)
+    // }
+
+    // /// Generer une String avec le contenu et l'entete serialises correctement pour signature / validation.
+    // pub fn preparer_pour_signature(entete: &Entete, contenu: &Map<String, Value>) -> Result<String, Box<dyn Error>> {
+    //     let mut ordered = BTreeMap::new();
+    //
+    //     // Copier dans une BTreeMap. Retirer champs _ et en-tete
+    //     // for (k, v) in contenu {
+    //     //     if !k.starts_with("_") {
+    //     //         ordered.insert(k.as_str(), v);
+    //     //     }
+    //     // }
+    //     let mut ordered = MessageMilleGrille::preparer_btree_recursif(contenu)?;
+    //
+    //     // Ajouter entete
+    //     let entete_value = serde_json::to_value(entete)?;
+    //     ordered.insert(String::from("en-tete"), entete_value.to_owned());
+    //
+    //     // Serialiser en json pour signer
+    //     Ok(serde_json::to_string(&ordered)?)
+    // }
 
     fn signer(
         &mut self,
@@ -373,9 +499,37 @@ impl MessageMilleGrille {
         self.entete = entete;
         self.certificat = Some(enveloppe_privee.chaine_pem().to_owned());
 
-        let signature = MessageMilleGrille::signer_message(enveloppe_privee, &self.entete, &self.contenu)?;
-        self.signature = Some(signature);
+        self.signer_message(enveloppe_privee)?;
 
+        Ok(())
+    }
+
+    fn traiter_contenu(&mut self) -> Result<(), Box<dyn Error>>{
+        if ! self.contenu_traite {
+            let mut contenu = Map::new();
+            let mut contenu_ref = &mut self.contenu;
+
+            let keys: Vec<String> = contenu_ref.keys().map(|k| k.to_owned()).collect();
+            for k in keys {
+                if let Some(v) = contenu_ref.remove(k.as_str()) {
+                    contenu.insert(k, v);
+                }
+            }
+
+            // let mut contenu_prev: serde_json::map::IntoIter = self.contenu.into_iter();
+            // for ((k, v)) in self.contenu {
+            //     contenu.insert(k, v);
+            // }
+            // while let Some((k, v)) = contenu_prev.next() {
+            //     contenu.insert(k, v);
+            // }
+
+            // let mut contenu = &self.contenu;
+            // let contenu_prev: serde_json::map::IntoIter = contenu.into_iter();
+            // self.contenu = MessageMilleGrille::preparer_btree_recursif_into_iter(contenu_prev)?;
+            self.contenu = MessageMilleGrille::preparer_btree_recursif(contenu)?;
+            self.contenu_traite = true;
+        }
         Ok(())
     }
 
@@ -393,7 +547,7 @@ impl MessageMilleGrille {
                     None => Err(format!("Contenu non convertible"))?,
                 }
             },
-            None => Value::Object(self.contenu.clone()),
+            None => serde_json::to_value(self.contenu.clone())?,
         };
 
         let deser: C = serde_json::from_value(value)?;
@@ -401,6 +555,48 @@ impl MessageMilleGrille {
         Ok(deser)
     }
 
+    pub fn verifier_hachage(&mut self) -> Result<bool, Box<dyn Error>> {
+        if ! self.contenu_traite {
+            self.traiter_contenu();
+        }
+
+        let entete = &self.entete;
+        let hachage_str = entete.hachage_contenu.as_str();
+
+        let contenu_string = serde_json::to_string(&self.contenu)?;
+
+        verifier_multihash(hachage_str, contenu_string.as_bytes())
+    }
+
+    pub fn verifier_signature(&mut self, public_key: &PKey<Public>) -> Result<bool, Box<dyn Error>> {
+        // let contenu_str = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
+        debug!("verifier_signature_str (signature: {:?}, public key: {:?})", self.signature, public_key);
+
+        let signature_bytes: (Base, Vec<u8>) = match &self.signature {
+            Some(s) => decode(s)?,
+            None => Err(format!("Signature absente"))?,
+        };
+        let version_signature = signature_bytes.1[0];
+        if version_signature != VERSION_1 {
+            Err(format!("La version de la signature n'est pas 1"))?;
+        }
+
+        let mut verifier = match Verifier::new(MessageDigest::sha512(), &public_key) {
+            Ok(v) => v,
+            Err(e) => Err(format!("Erreur verification signature : {:?}", e))?
+        };
+
+        let message = self.preparer_pour_signature()?;
+        debug!("Message prepare pour signature\n{}", message);
+
+        verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
+        verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
+        verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
+        verifier.update(message.as_bytes())?;
+
+        // Retourner la reponse
+        Ok(verifier.verify(&signature_bytes.1[1..])?)
+    }
 }
 
 /// Serialiser message de MilleGrille. Met les elements en ordre.
@@ -519,7 +715,7 @@ impl MessageSerialise {
         match &self.certificat {
             Some(_) => {
                 // Ok, on a un certificat. Valider la signature.
-                verifier_message(&self, validateur, options)
+                verifier_message(self, validateur, options)
             },
             None => {
                 // Tenter de charger le certificat
@@ -527,7 +723,7 @@ impl MessageSerialise {
                 match self.charger_certificat(validateur).await? {
                     Some(e) => {
                         self.certificat = Some(e);
-                        verifier_message(&self, validateur, options)
+                        verifier_message(self, validateur, options)
                     },
                     None => Err("Certificat manquant")?
                 }
@@ -745,7 +941,7 @@ mod serialization_tests {
     use super::*;
 
     /// Sample
-    const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUOhOPjxIYcu/2KtUKOfVf9gjtRWswDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgxMDExMzkzOFoXDTIxMDkwOTExNDEzOFowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBANQpo8awOOHgdRO56fwZ3/eQbAsqJSS8LNR/\nJHf/1ExHY0AbqH88w+X9Rhh2uU92ECQA1usueJHSMDsKeOSTAuw/7yZNxs5Pv/uu\nfgH4Yq1JnM0r1SqT2zeiLxpKyYuB06XgD1jA5+rz0nD593ARTpGP6bx1HQO7F5sj\nc1+N1Ujf/XHDA9SDptREbpsmwzgmgBgVlbTVm4VQrl99B1LZhQPjDX6nLomQ2jmc\n42CXJRzgihIh7Ym6wggKDgVqlOIevlIRuK4oxITaFRMgtzeBbhj7bw1nMZ8BjxYw\nUpvangdvT3W5s9zTg0C4LgRdihCtFMHIXZOR86J27x1DqhLvH7sCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQhkD483zW0QLedR2BlAZcR0glN6zAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEAPLe/7wTifOq24aGzbuB/BXcAbKm53CcnUQH7CbrnFh7VaHEM8WssZmKX5nYw\nKAts+ORk10xoLMddO9mEFtuKQD4QTjMFQe5EXnOuEuxzF51c3Gv2cY+b0Q/GcAcX\nu/UDN5Cw1SoRYd1SfYkvK8+8Deo7ds1Zib1gYehWmTYPA9ZD+bBIISd1pvgif6cz\nHl12aMusZ2F2m6Qhnot31vB90NPNa/hZ9cOAz+WnjwvcYXUXhCKV/wwuHtNWVNOS\nAphmpcYYJxAjqj1ok/EJF9L5/Z83NvTyz6omZbdptxa0ak4Qchql87rM1B6tGEVD\nkA1HOXEzYkfgtP4gGZZsKQhcxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAXnWu4SZaiBNJMJgc4cVH9XcMsqBphRHvupwQ12oOODFplqz2c4UOdJ1V69DBGcoUZDVYElATHEM7Esm35gADXJdc/hc9yeb6WRK7fMjup1+cYDajPr8yCNezQlPyO6No8wSO9v6BUTXTgLS8sYFY8QXumMQyXd5XfAuo0KL61gG3a++aViaJ8GWdm52i7Hy+FJnuU+gNf4YXRtWfMTOcrFz563y0zMHRYyXnXO72mcYnmkL4Z79TEMLJcBR8A11LSmAteYvBcSJVJnJHXIJEoRPLNPAUR2id+CPpJE3ZDKUECq0gW8ONrvtIt9a5ApLyteXBARaOuVDX5Sh0STtcTE","alpaca":true,"en-tete":{"domaine":null,"estampille":1630600162,"fingerprint_certificat":"zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds","hachage_contenu":"mEiCerWQ+xmJBauIR2JdRX1pBa+1wYlUNg/Q0dbhCGUOSww","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"f5488642-01f3-42a0-9423-5f895bfed17a","version":1},"texte":"oui!","valeur":1}"#;
+    const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUFGTSBu4f2hbzgnca0GuSsmLgr7UwDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgzMDExNTcxNVoXDTIxMDkyOTExNTkxNVowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBAMcAz3SshFSHxyd+KfTZVHWG3OQg9t7kdHtV\nkrXySXdPYc+svArawMKhy/XRrFJ+NfLNoUyz+KPma5mEWxXZDRZVyvmdodDh/eNu\nqJ4aB078AkxyKWNgT/aF1/EuZ+pZseVlaDrD1yoEiC4stXwm6ay7mnWTyczDt8FI\ntCZ6/9nDNwPsnwC6cbqXRH4gqkwDqBGolX9Jz6TU4pqisIroacwOW+NEmNassM2b\nQqP/W4saEQQqD2BV78I9hQxouE8JLR6SIL5XD7j6Pq6pG86TSkFGAqQsSPd1w+5l\nxMRQgitYJ7ITo/Eq0qmAxv1INnxLyLmXQ2FysUNVTtgGgN3O7OUCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQSOxwSTijPrcKRmCWzoFpf8cJQbDAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEARX75Y2kVlxiJSmbDi1hZRj3mfe7ihT69EL51R6YiB0c/fpQUYxWfpddbg4DY\nlzAssE2XtSv1gYBZkZJXGWS4jB6dW6r+7Mhbtb6ZSXXG5ba9LydSxI8++//GZwG/\np8nce6fNmR8b06s/TQjpqwOa+hXqiqkWzqoVal/ucQWhdLtTkx/DVFUjHMcDMhZT\nVKIX7/SGEi9uGM9LNIVhCc7TsndcmiNXkV7ybiJ02rqxXPrD0QJ6h28rHIEGbWWs\napOlHiqtHYWQCuM0h5kygqknYKmHZIFBfba/xCf1rJi9HQUFZZfuw0VS9BcFmBg/\n5Hx8faWZNWWE9Iu+366P1t9GxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAWm3oYujnuCUtXlqyUnLWRNDJFtDUiG3wmy1sdU8YLTf0yNDENYLB8t1jUtXYyHRx5Dawd6sy0RhKXCUwnWl9q+Q/9u+wAwSxvR+dKiweYsdDZJAXrTwkYQmEu/X8/vbQcVMVX8VWwinDgalFSR0q//6V14Bp8jgAKFZifd2N9gPSEy0RBze1TUHuNlW7phUP5dAPcviiDLbpcQNJ3suD8Oq9m3ob61N04QFMvr8glWGs8yf0VbEJ8UXi22WOL/L02UWcMuqf5v9SKaKd/7we/jVW10GnYfH/coWdl62FrTNLBMGonkO9KzR8dXxNzDMvpt4A1kpcEZ7488EjTAhgzs","alpaca":true,"en-tete":{"estampille":1631884993,"fingerprint_certificat":"zQmSTKik15nFmLe4tQtndoEWA6aDdGUcVjpNHt4RtKQvnC3","hachage_contenu":"mEiCerWQ+xmJBauIR2JdRX1pBa+1wYlUNg/Q0dbhCGUOSww","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"6ba61473-18fc-4ff2-9de7-95470eadb2d8","version":1},"texte":"oui!","valeur":1}"#;
 
     #[test]
     fn serializer_date() {
@@ -843,11 +1039,12 @@ mod serialization_tests {
         setup("valider_message_millegrille");
         let (validateur_arc, _) = charger_enveloppe_privee_env();
         let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
+        debug!("Message serialise a valider\n{:?}", message);
 
         let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(true, resultat.signature_valide);
-        assert_eq!(false, resultat.certificat_valide);  // Expire
+        // assert_eq!(false, resultat.certificat_valide);  // Expire
         assert_eq!(None, resultat.hachage_valide);
     }
 

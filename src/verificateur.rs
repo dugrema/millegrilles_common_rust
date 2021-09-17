@@ -20,7 +20,7 @@ use crate::{MessageMilleGrille, MqMessageSendInformation, MessageSerialise, Vali
 pub trait VerificateurMessage {
     fn verifier_message(
         &self,
-        message: &MessageSerialise,
+        message: &mut MessageSerialise,
         options: Option<&ValidationOptions>
     ) -> Result<ResultatValidation, Box<dyn Error>>;
 }
@@ -55,7 +55,7 @@ impl ValidationOptions {
 }
 
 pub fn verifier_message<V>(
-    message: &MessageSerialise,
+    message: &mut MessageSerialise,
     validateur: &V,
     options: Option<&ValidationOptions>
 ) -> Result<ResultatValidation, Box<dyn Error>>
@@ -67,9 +67,10 @@ where
         None => (false, false, false),
     };
 
-    let entete = message.get_entete();
+    let entete = message.get_entete().clone();
     let idmg = entete.idmg.as_str();
     let estampille = entete.estampille.get_datetime();
+    let uuid_transaction = &entete.uuid_transaction;
     let certificat = match &message.certificat {
         Some(c) => c.as_ref(),
         None => Err("Certificat manquant")?,
@@ -105,12 +106,14 @@ where
 
     // debug!("Contenu message complte pour verification signature :\n{:?}", message);
 
-    let contenu_string = MessageMilleGrille::preparer_pour_signature(entete, &message.get_msg().contenu)?;
+    // let contenu_string = MessageMilleGrille::preparer_pour_signature(entete, &message.get_msg().contenu)?;
+    //
+    // let resultat_verifier_signature = match verifier_signature_str(&public_key, signature, contenu_string.as_str()) {
+    //     Ok(r) => Ok(r),
+    //     Err(e) => Err(format!("Erreur verification signature message : {:?}", e)),
+    // }?;
 
-    let resultat_verifier_signature = match verifier_signature_str(&public_key, signature, contenu_string.as_str()) {
-        Ok(r) => Ok(r),
-        Err(e) => Err(format!("Erreur verification signature message : {:?}", e)),
-    }?;
+    let resultat_verifier_signature = message.parsed.verifier_signature(&public_key)?;
 
     if resultat_verifier_signature == true && toujours_verifier_hachage == false {
         // La signature est valide, on court-circuite le hachage.
@@ -120,11 +123,11 @@ where
             certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
         })
     } else if resultat_verifier_signature == false {
-        debug!("Signature invalide pour message {}", entete.uuid_transaction);
+        debug!("Signature invalide pour message {}", uuid_transaction);
     }
 
     // La signature n'est pas valide, on verifie le hachage (troubleshooting)
-    let hachage_valide = match verifier_hachage(message.get_msg()) {
+    let hachage_valide = match message.parsed.verifier_hachage() {
         Ok(h) => Ok(h),
         Err(e) => Err(format!("Erreur verification du message : {:?}", e)),
     }?;
@@ -136,13 +139,13 @@ where
     })
 }
 
-pub fn verifier_hachage(message: &MessageMilleGrille) -> Result<bool, Box<dyn Error>> {
-    let entete = &message.entete;
-    let hachage_str = &entete.hachage_contenu;
-    let contenu_string = MessageMilleGrille::preparer_pour_hachage(&message.contenu)?;
-
-    verifier_multihash(hachage_str, contenu_string.as_bytes())
-}
+// pub fn verifier_hachage(message: &MessageMilleGrille) -> Result<bool, Box<dyn Error>> {
+//     let entete = &message.entete;
+//     let hachage_str = &entete.hachage_contenu;
+//     let contenu_string = MessageMilleGrille::preparer_pour_hachage(&message.contenu)?;
+//
+//     verifier_multihash(hachage_str, contenu_string.as_bytes())
+// }
 
 // pub fn verifier_signature(public_key: &PKey<Public>, message: &MessageSerialise) -> Result<bool, ErrorStack> {
 //     // let (mut message_modifie, _): (BTreeMap<String, Value>, _) = nettoyer_message(message);

@@ -1095,7 +1095,7 @@ impl ProcesseurFichierBackup {
             message.certificat = option_cert;
 
             let validations_options = ValidationOptions::new(true, true, false);
-            let resultat_verification = middleware.verifier_message(&message, Some(&validations_options))?;
+            let resultat_verification = middleware.verifier_message(&mut message, Some(&validations_options))?;
             if !resultat_verification.signature_valide {
                 Err(format!("Catalogue invalide (signature: {:?})\n{}", resultat_verification, message.get_str()))?;
             }

@@ -187,7 +187,14 @@ impl MiddlewareDbPki {
         };
 
         let m = message.message.get_msg();
-        let rep_cert: ReponseCertificatMaitredescles = match serde_json::from_value(Value::Object(m.contenu.clone())) {
+        let value = match serde_json::to_value(m.contenu.clone()) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Erreur conversion message reponse certificats maitre des cles : {:?}", e);
+                return  // Abort
+            }
+        };
+        let rep_cert: ReponseCertificatMaitredescles = match serde_json::from_value(value) {
             Ok(c) => c,
             Err(e) => {
                 error!("Erreur lecture message reponse certificats maitre des cles : {:?}", e);
@@ -390,7 +397,9 @@ impl Dechiffreur for MiddlewareDbPki {
             _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
         };
 
-        let contenu_dechiffrage: ReponseDechiffrageCle = serde_json::from_value(Value::Object(m.get_msg().contenu.clone()))?;
+        let contenu_dechiffrage: ReponseDechiffrageCle = serde_json::from_value(
+            serde_json::to_value(m.get_msg().contenu.clone())?
+        )?;
 
         contenu_dechiffrage.to_cipher_data()
     }
@@ -401,7 +410,7 @@ impl Dechiffreur for MiddlewareDbPki {
 }
 
 impl VerificateurMessage for MiddlewareDbPki {
-    fn verifier_message(&self, message: &MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
+    fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
         verifier_message(message, self, options)
     }
 }
