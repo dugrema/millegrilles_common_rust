@@ -41,7 +41,7 @@ use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<(), Box<dyn Error>>
+pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<Option<Value>, Box<dyn Error>>
 where
     M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
     S: Into<&'a str>,
@@ -66,7 +66,7 @@ where
     // Emettre trigger pour declencher backup du jour precedent
     backup_quotidien(middleware,&info_backup).await?;
 
-    Ok(())
+    Ok(None)
 }
 
 /// Effectue un backup horaire
