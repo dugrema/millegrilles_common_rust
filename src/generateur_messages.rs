@@ -20,7 +20,7 @@ use crate::{FormatteurMessage, EnveloppePrivee, ConfigurationPki, IsConfiguratio
 use serde::Serialize;
 
 #[async_trait]
-pub trait GenerateurMessages: Send + Sync {
+pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
     async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String>;
 
     async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
@@ -28,7 +28,7 @@ pub trait GenerateurMessages: Send + Sync {
 
     async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
     async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
-    async fn repondre(&self, message: &(impl Serialize+Send+Sync), reply_q: &str, correlation_id: &str) -> Result<(), String>;
+    async fn repondre(&self, message: MessageMilleGrille, reply_q: &str, correlation_id: &str) -> Result<(), String>;
 
     /// Emettre un message en str deja formatte
     async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>,
@@ -247,19 +247,19 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         self.emettre_message_serializable(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Commande).await
     }
 
-    async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
+    async fn repondre(&self, message: MessageMilleGrille, reply_q: &str, correlation_id: &str) -> Result<(), String> {
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(())
         }
 
-        let message_signe = match self.formatter_message(message, None, None, None, None) {
-            Ok(m) => m,
-            Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
-        };
+        // let message_signe = match self.formatter_message(message, None, None, None, None) {
+        //     Ok(m) => m,
+        //     Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
+        // };
 
         let message_out = MessageOut::new_reply(
-            message_signe,
+            message,
             correlation_id,
             reply_q
         );

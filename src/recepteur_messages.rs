@@ -20,6 +20,7 @@ use crate::middleware::{formatter_message_certificat, IsConfigurationPki, Middle
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
 //use crate::verificateur::{verifier_hachage, verifier_message};
 use crate::{MessageSerialise, VerificateurPermissions, ExtensionsMilleGrille, verifier_message};
+use std::error::Error;
 
 /// Thread de traitement des messages
 pub async fn recevoir_messages(
@@ -263,11 +264,18 @@ pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfi
                 let enveloppe_privee = middleware.get_enveloppe_privee();
                 let fingerprint = enveloppe_privee.fingerprint();
                 if fingerprint.as_str() == inner.action.as_str() {
-                    let message = formatter_message_certificat((enveloppe_privee.enveloppe.as_ref()));
                     if let Some(reply_q) = &inner.reply_q {
                         if let Some(correlation_id) = &inner.correlation_id {
                             debug!("Emettre certificat a demandeur sous correlation_id {}", correlation_id);
-                            middleware.repondre(&message, reply_q, correlation_id).await.expect("repondre requete certificat");
+                            match preparer_message_reponse(
+                                middleware,
+                                message, enveloppe_privee.as_ref(),
+                                reply_q.as_str(),
+                                correlation_id.as_str()
+                            ).await {
+                                Ok(()) => (),
+                                Err(e) => error!("intercepter_message: Erreur emission reponse : {:?}", e)
+                            }
                             true  // Intercepte
                         } else {
                             false
@@ -289,6 +297,21 @@ pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfi
         },
         TypeMessage::Regeneration => true,  // Rien a faire
     }
+}
+
+async fn preparer_message_reponse<M>(
+    middleware: &M,
+    message: &TypeMessage,
+    enveloppe_privee: &EnveloppePrivee,
+    reply_q: &str,
+    correlation_id: &str
+) -> Result<(), Box<dyn Error>>
+    where M:  GenerateurMessages + IsConfigurationPki
+{
+    let message_value = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
+    let message = middleware.formatter_reponse(message_value, None)?;
+
+    Ok(middleware.repondre(message, reply_q, correlation_id).await?)
 }
 
 async fn traiter_certificat_attache(validateur: &impl ValidateurX509, certificat: &Value, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {

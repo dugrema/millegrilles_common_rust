@@ -40,6 +40,7 @@ pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
 pub const EVENEMENT_GLOBAL_CEDULE: &str = "evenement.global.cedule";
 pub const COMMANDE_GLOBAL_BACKUP_HORAIRE: &str = "commande.global.declencherBackupHoraire";
 pub const COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS: &str = "commande.global.restaurerTransactions";
+pub const COMMANDE_GLOBAL_RESET_BACKUP: &str = "commande.global.resetBackup";
 
 // Transactions
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
@@ -66,6 +67,7 @@ pub const TRANSACTION_CHAMP_ERREUR_RESOUMISSION: &str = "_evenements.erreur_reso
 pub const TRANSACTION_CHAMP_BACKUP_FLAG: &str = "_evenements.backup_flag";
 pub const TRANSACTION_CHAMP_TRANSACTION_TRAITEE: &str = "_evenements.transaction_traitee";
 pub const TRANSACTION_CHAMP_BACKUP_HORAIRE: &str = "_evenements.backup_horaire";
+pub const TRANSACTION_CHAMP_TRANSACTION_RESTAUREE: &str = "_evenements.transaction_restauree";
 pub const TRANSACTION_LIMITE_RESOUMISSION: i32 = 4;
 
 // Certificats, PKI
@@ -106,3 +108,4 @@ pub const BACKUP_CHAMP_BACKUP_TRANSACTIONS: &str = "backup_transactions";
 
 pub const COMMANDE_BACKUP_HORAIRE: &str = "declencherBackupHoraire";
 pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";
+pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";

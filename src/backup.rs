@@ -41,7 +41,7 @@ use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<Option<Value>, Box<dyn Error>>
+pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
 where
     M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
     S: Into<&'a str>,
@@ -338,6 +338,7 @@ where
 
                 if ! ( resultat.signature_valide && resultat.certificat_valide && resultat.hachage_valide.expect("hachage") ) {
                     warn!("Resultat validation invalide pour {}: {:?}", uuid_transaction, resultat);
+                    debug!("Resultat validation invalide pour transaction :\n{}", transaction.get_str());
                     continue;
                 }
 
@@ -1135,18 +1136,22 @@ impl ProcesseurFichierBackup {
 
         match type_catalogue {
             TypeCatalogueBackup::Horaire(catalogue) => {
-                // Conserver en-tete du catalogue precedent. Va permettre de verifier le chainage.
-                if let Some(e) = &catalogue.entete {
-                    debug!("En-tete du catalogue charge : {:?}", e);
-                    self.entete_precedente = Some(e.clone());
-                }
-
                 //debug!("Catalogue json decipher present? {:?}, Value : {:?}", self.decipher, catalogue);
+                let entete_courante = match &catalogue.entete {
+                    Some(e) => Some(e.clone()),
+                    None => None,
+                };
                 self.catalogue = Some(catalogue);
                 // let catalogue_ref = self.catalogue.as_ref().expect("catalogue");
 
                 // Traiter le catalogue horaire
                 self.traiter_catalogue_horaire(middleware, filepath).await?;
+
+                // Conserver en-tete du catalogue courant. Va permettre de verifier le chainage avec prochain fichier.
+                if let Some(e) = entete_courante {
+                    debug!("En-tete du catalogue charge : {:?}", e);
+                    self.entete_precedente = Some(e);
+                }
 
                 Ok(())
             },
@@ -1407,6 +1412,31 @@ where M: GenerateurMessages
 
     Ok(())
 }
+
+pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: MongoDao + GenerateurMessages,
+{
+    let collection = middleware.get_collection(nom_collection_transactions).expect("coll");
+    let filtre = doc! { TRANSACTION_CHAMP_BACKUP_FLAG: true };
+    let ops = doc! {
+        "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: false},
+        "$unset": {
+            TRANSACTION_CHAMP_BACKUP_HORAIRE: true,
+            TRANSACTION_CHAMP_TRANSACTION_RESTAUREE: true,
+        },
+    };
+    let reponse = match collection.update_many(filtre, ops, None).await {
+        Ok(r) => {
+            middleware.formatter_reponse(json!({"ok": true, "count": r.modified_count}), None)?
+        },
+        Err(e) => {
+            middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?
+        }
+    };
+
+    Ok(Some(reponse))
+}
+
 
 #[cfg(test)]
 mod backup_tests {
@@ -1691,19 +1721,6 @@ mod test_integration {
     const NOM_DOMAINE: &str = "CorePki";
     const NOM_COLLECTION_TRANSACTIONS: &str = "CorePki";
     const NOM_COLLECTION_CERTIFICATS: &str = "CorePki/certificat";
-
-    async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str)
-    where
-        M: MongoDao,
-    {
-        let collection = middleware.get_collection(nom_collection_transactions).expect("coll");
-        let filtre = doc! { TRANSACTION_CHAMP_BACKUP_FLAG: true };
-        let ops = doc! {
-            "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: false},
-            "$unset": {TRANSACTION_CHAMP_BACKUP_HORAIRE: true},
-        };
-        collection.update_many(filtre, ops, None).await.expect("reset");
-    }
 
     #[tokio::test]
     async fn grouper_transactions() {

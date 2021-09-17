@@ -384,11 +384,13 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
         // Ecouter les evenements pour le domaine
         String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_BACKUP_HORAIRE)),
         String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESTAURER_TRANSACTIONS)),
+        String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESET_BACKUP)),
 
         // Evenement globaux
         String::from(EVENEMENT_GLOBAL_CEDULE),
         String::from(COMMANDE_GLOBAL_BACKUP_HORAIRE),
         String::from(COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS),
+        String::from(COMMANDE_GLOBAL_RESET_BACKUP),
     );
     for rk in routing_keys_protege {
         let _ = channel.queue_bind(

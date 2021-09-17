@@ -50,6 +50,18 @@ pub trait FormatteurMessage: IsConfigurationPki {
         MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, action, partition, version)
     }
 
+    fn formatter_reponse<S>(
+        &self,
+        contenu: S,
+        version: Option<i32>
+    ) -> Result<MessageMilleGrille, Box<dyn Error>>
+    where
+        S: Serialize,
+    {
+        let enveloppe = self.get_enveloppe_privee();
+        MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None, None, None, version)
+    }
+
     fn signer_message(
         &self,
         message: &mut MessageMilleGrille,
@@ -333,8 +345,19 @@ impl MessageMilleGrille {
         if ! self.contenu_traite {
             self.traiter_contenu();
         }
-        let message_string = serde_json::to_string(&self.contenu)?;
-        Ok(hacher_message(message_string.as_str()))
+
+        // Filtrer champs avec _
+        let contenu_string = {
+            let mut map: BTreeMap<&str, &Value> = BTreeMap::new();
+            for (k, v) in &self.contenu {
+                if !k.starts_with("_") {
+                    map.insert(k.as_str(), v);
+                }
+            }
+            serde_json::to_string(&map)?
+        };
+
+        Ok(hacher_message(contenu_string.as_str()))
     }
 
     fn signer_message(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
@@ -563,7 +586,16 @@ impl MessageMilleGrille {
         let entete = &self.entete;
         let hachage_str = entete.hachage_contenu.as_str();
 
-        let contenu_string = serde_json::to_string(&self.contenu)?;
+        // Filtrer champs avec _
+        let contenu_string = {
+            let mut map: BTreeMap<&str, &Value> = BTreeMap::new();
+            for (k, v) in &self.contenu {
+                if !k.starts_with("_") {
+                    map.insert(k.as_str(), v);
+                }
+            }
+            serde_json::to_string(&map)?
+        };
 
         verifier_multihash(hachage_str, contenu_string.as_bytes())
     }

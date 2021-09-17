@@ -307,7 +307,7 @@ impl GenerateurMessages for MiddlewareDbPki {
         self.generateur_messages.transmettre_commande(domaine, action, partition, message, exchange, blocking).await
     }
 
-    async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
+    async fn repondre(&self, message: MessageMilleGrille, reply_q: &str, correlation_id: &str) -> Result<(), String> {
         self.generateur_messages.repondre(message, reply_q, correlation_id).await
     }
 
@@ -692,7 +692,7 @@ impl GenerateurMessages for MiddlewareDb {
         self.generateur_messages.transmettre_commande(domaine, action, partition, message, exchange, blocking).await
     }
 
-    async fn repondre(&self, message: &(impl Serialize + Send + Sync), reply_q: &str, correlation_id: &str) -> Result<(), String> {
+    async fn repondre(&self, message: MessageMilleGrille, reply_q: &str, correlation_id: &str) -> Result<(), String> {
         self.generateur_messages.repondre(message, reply_q, correlation_id).await
     }
 
