@@ -21,7 +21,7 @@ pub use configuration::*;
 pub use constantes::*;
 pub use formatteur_messages::*;
 pub use generateur_messages::*;
-pub use hachages::*;
+// pub use hachages::*;
 pub use middleware::*;
 pub use mongo_dao::*;
 pub use rabbitmq_dao::*;

@@ -17,10 +17,11 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use xz2::stream;
 use xz2::stream::Status;
 
-use crate::{Chiffreur, CipherMgs2, Dechiffreur, Hacheur, Mgs2CipherKeys, TransactionReader, VerificateurMessage};
+use crate::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherKeys, TransactionReader, VerificateurMessage};
 use crate::backup::CatalogueHoraire;
 use crate::certificats::{FingerprintCertPublicKey, ValidateurX509};
 use crate::constantes::*;
+use crate::hachages::Hacheur;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
