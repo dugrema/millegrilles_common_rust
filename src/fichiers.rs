@@ -1,27 +1,22 @@
 use std::error::Error;
 use std::path::Path;
 
-use async_recursion::async_recursion;
 use async_std::io::ReadExt;
-use async_tar::{Archive, Entry};
+use async_tar::Archive;
 use async_trait::async_trait;
-use bytes::BufMut;
-use futures::Stream;
-use log::{debug, error, info, warn};
+use log::{debug, warn};
 use multibase::Base;
 use multihash::Code;
-use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufWriter};
-use tokio_stream::{Iter, StreamExt};
-use tokio_util::codec::{BytesCodec, FramedRead};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio_stream::StreamExt;
 use xz2::stream;
-use xz2::stream::Status;
 
-use crate::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherKeys, TransactionReader, VerificateurMessage};
-use crate::backup::CatalogueHoraire;
-use crate::certificats::{FingerprintCertPublicKey, ValidateurX509};
+use crate::backup::TransactionReader;
+use crate::certificats::ValidateurX509;
+use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherKeys};
 use crate::constantes::*;
 use crate::hachages::Hacheur;
+use crate::verificateur::VerificateurMessage;
 
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
