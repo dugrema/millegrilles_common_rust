@@ -47,7 +47,7 @@ mongodb = { version = "2.0.0", default-features = false, features = ["tokio-runt
 bson = "2.0.0"
 
 # RabbitMQ
-lapin = { "version" = "1.7.1" }
+lapin = { "version" = "1.8.0" }
 futures = "0.3.1"
 futures-util = "0.3.16"
 tokio-amqp = { version = "1.0.0" }

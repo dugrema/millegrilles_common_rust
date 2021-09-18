@@ -25,6 +25,9 @@ use crate::formatteur_messages::{FormatteurMessage, MessageSerialise};
 
 use crate::recepteur_messages::TypeMessage;
 use crate::MessageMilleGrille;
+use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
+use std::error::Error;
+use url::Url;
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 
@@ -64,16 +67,18 @@ pub enum QueueType {
     Triggers(String),
 }
 
-pub async fn initialiser(configuration: &impl ConfigMessages) -> Result<RabbitMq, String> {
+pub async fn initialiser(configuration: &impl ConfigMessages) -> Result<RabbitMq, lapin::Error> {
 
-    let connexion = connecter(configuration).await;
+    let connexion = connecter(configuration).await?;
 
     Ok(RabbitMq{
         connexion,
     })
 }
 
-async fn connecter(configuration: &impl ConfigMessages) -> Connection {
+async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
+    where C: ConfigMessages
+{
     let pki = configuration.get_configuration_pki();
     let mq = configuration.get_configuration_mq();
 
@@ -81,12 +86,116 @@ async fn connecter(configuration: &impl ConfigMessages) -> Connection {
     let idmg = pki.get_validateur().idmg().to_owned();
     let addr = format!("amqps://{}:{}/{}?auth_mechanism=external", mq.host, mq.port, idmg);
 
-    let connexion = Connection::connect_with_config(
+    {
+        let resultat = Connection::connect_with_config(
+            &addr,
+            ConnectionProperties::default().with_tokio(),
+            tls_config.as_ref(),
+        ).await;
+
+        if let Ok(c) = resultat {
+            return Ok(c)
+        } else {
+            let erreur_acces = match &resultat {
+                Ok(_) => panic!("resultat"),  // Ne doit pas arriver
+                Err(e) => {
+                    info!("Erreur de connexion MQ : {:?}", e);
+                    // Tenter de determiner le type d'erreur, voir si on doit creer le compte usager
+                    match e {
+                        lapin::Error::ProtocolError(e) => {
+                            match e.kind() {
+                                AMQPErrorKind::Soft(s) => {
+                                    match s {
+                                        AMQPSoftError::ACCESSREFUSED => {
+                                            info!("MQ Erreur access refused, emettre certificat vers monitor");
+                                        },
+                                        _ => { resultat?; }  // Erreur non geree
+                                    }
+                                },
+                                _ => { resultat?; }  // Erreur non geree
+                            }
+                        },
+                        _ => { resultat?; }  // Erreur non geree
+                    }
+                }
+            };
+        }
+    }
+
+    let attente = match emettre_certificat_compte(configuration).await {
+        Ok(()) => true,
+        Err(e) => {
+            error!("Erreur creation compte MQ: {:?}", e);
+            false
+        }
+    };
+
+    if attente {
+        // Attendre 5 secondes et reessayer la connexion
+        tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+    }
+
+    // Reessayer la connexion (meme si erreur - regenerer l'erreur d'auth)
+    Connection::connect_with_config(
         &addr,
         ConnectionProperties::default().with_tokio(),
         tls_config.as_ref(),
-    ).await.expect("Connecte a RabbitMQ");
-    connexion
+    ).await
+}
+
+async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn Error>>
+    where C: ConfigMessages
+{
+    const PORT: u16 = 443;
+    const COMMANDE: &str = "administration/ajouterCompte";
+
+    let config_mq = configuration.get_configuration_mq();
+    let hosts = vec!["nginx", config_mq.host.as_str()];
+    debug!("Tenter creer compte MQ avec hosts {:?}", hosts);
+
+    let config_pki = configuration.get_configuration_pki();
+    let certfile = config_pki.certfile.as_path();
+
+    // Preparer certificat pour auth SSL
+    let enveloppe = config_pki.get_enveloppe_privee().clone();
+    let ca_cert_pem = enveloppe.chaine_pem().last().expect("last").as_str();
+    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+
+    // Essayer d'emettre le certificat vers les hosts, en ordre
+    for host in hosts {
+        debug!("Creation compte MQ avec host : {}", host);
+
+        let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes())?;
+
+        let client = reqwest::Client::builder()
+            .add_root_certificate(root_ca.clone())
+            .identity(identity)
+            .https_only(true)
+            .use_rustls_tls()
+            .timeout(core::time::Duration::new(5, 0))
+
+            // Accepter serveur sans certs/mauvais hosts - on s'inscript avec cle publique, c'est safe
+            .danger_accept_invalid_certs(true)
+            //.danger_accept_invalid_hostnames(true)
+
+            .build()?;
+
+        let url = format!("https://{}:{}/{}", host, PORT, COMMANDE);
+        debug!("Utiliser URL de creation de compte MQ : {:?}", url);
+        match client.post(url).send().await {
+            Ok(r) => {
+                if r.status().is_success() {
+                    return Ok(())
+                }
+                debug!("Response creation compte MQ status error : {:?}", r);
+            },
+            Err(e) => {
+                debug!("Response creation compte MQ error : {:?}", e);
+            }
+        };
+    }
+
+    Err("Echec creation de compte avec certificat sur MQ")?
 }
 
 fn get_tls_config(pki: &ConfigurationPki, mq: &ConfigurationMq) -> OwnedTLSConfig {
@@ -775,3 +884,26 @@ impl<'a, T> Callback<'a, T> {
     }
 }
 
+#[cfg(test)]
+mod rabbitmq_integration_test {
+    use crate::test_setup::setup;
+    use super::*;
+    use crate::charger_configuration;
+
+
+    #[tokio::test]
+    async fn connecter_mq() {
+        setup("connecter");
+        debug!("Connecter");
+
+        let config = charger_configuration().expect("config");
+        let connexion = connecter(&config).await.expect("connexion");
+
+        // debug!("Sleep 5 secondes");
+        // tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+
+        let status = connexion.status();
+        debug!("Connexion status : {:?}", status);
+        assert_eq!(status.connected(), true);
+    }
+}
