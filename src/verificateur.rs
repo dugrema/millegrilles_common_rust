@@ -15,7 +15,8 @@ use crate::certificats::EnveloppeCertificat;
 use crate::hachages::verifier_multihash;
 use crate::signatures::{SALT_LENGTH, VERSION_1};
 use std::error::Error;
-use crate::{MessageMilleGrille, MqMessageSendInformation, MessageSerialise, ValidateurX509};
+use crate::{MessageMilleGrille, MqMessageSendInformation, MessageSerialise};
+use crate::certificats::ValidateurX509;
 
 pub trait VerificateurMessage {
     fn verifier_message(

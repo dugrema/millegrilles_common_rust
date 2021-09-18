@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -8,19 +9,19 @@ use log::{debug, error, info, warn};
 use serde_json::{json, Map, Value};
 use tokio::{join, sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as DurationTokio, sleep, timeout}, try_join};
 use tokio_stream::StreamExt;
-
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::configuration::charger_configuration_avec_db;
-use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
-use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use TypeMessageOut as TypeMessageIn;
 
+use crate::{MessageSerialise, verifier_message};
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
+//use crate::verificateur::{verifier_hachage, verifier_message};
+use crate::certificats::ExtensionsMilleGrille;
+use crate::certificats::VerificateurPermissions;
+use crate::configuration::charger_configuration_avec_db;
+use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
+use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
-//use crate::verificateur::{verifier_hachage, verifier_message};
-use crate::{MessageSerialise, VerificateurPermissions, ExtensionsMilleGrille, verifier_message};
-use std::error::Error;
 
 /// Thread de traitement des messages
 pub async fn recevoir_messages(

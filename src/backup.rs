@@ -35,8 +35,8 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, ConfigMessages, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, TypeMessageOut, ValidateurX509, ValidationOptions, VerificateurMessage, MiddlewareDb};
-use crate::certificats::EnveloppePrivee;
+use crate::{Chiffreur, CipherMgs2, CommandeSauvegarderCle, CompresseurBytes, ConfigMessages, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, FichierWriter, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareDb, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, TypeMessageOut, ValidationOptions, VerificateurMessage};
+use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509};
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
 use crate::Securite::L3Protege;

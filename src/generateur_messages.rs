@@ -1,23 +1,23 @@
-use std::sync::{Arc, Mutex};
+use std::error::Error;
 use std::marker::Send;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use lapin::message::Delivery;
 use log::{debug, error, info};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, oneshot};
 use tokio::time::{Duration, timeout};
 use tokio::time::error::Elapsed;
 
-use lapin::message::Delivery;
-
+use crate::{ConfigurationPki, FormatteurMessage, IsConfigurationPki};
+use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
+use crate::formatteur_messages::MessageMilleGrille;
 use crate::formatteur_messages::MessageSerialise;
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
-use crate::formatteur_messages::MessageMilleGrille;
-use std::error::Error;
-use crate::{FormatteurMessage, EnveloppePrivee, ConfigurationPki, IsConfigurationPki};
-use serde::Serialize;
 
 #[async_trait]
 pub trait GenerateurMessages: FormatteurMessage + Send + Sync {

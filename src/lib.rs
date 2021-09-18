@@ -16,7 +16,7 @@ pub mod chiffrage;
 pub mod fichiers;
 pub mod messages_generiques;
 
-pub use certificats::*;
+//pub use certificats;
 pub use configuration::*;
 pub use constantes::*;
 pub use formatteur_messages::*;

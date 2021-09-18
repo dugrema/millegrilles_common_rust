@@ -17,8 +17,9 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use xz2::stream;
 use xz2::stream::Status;
 
-use crate::{Chiffreur, CipherMgs2, Dechiffreur, FingerprintCertPublicKey, Hacheur, Mgs2CipherKeys, TransactionReader, ValidateurX509, VerificateurMessage};
+use crate::{Chiffreur, CipherMgs2, Dechiffreur, Hacheur, Mgs2CipherKeys, TransactionReader, VerificateurMessage};
 use crate::backup::CatalogueHoraire;
+use crate::certificats::{FingerprintCertPublicKey, ValidateurX509};
 use crate::constantes::*;
 
 pub struct FichierWriter<'a> {

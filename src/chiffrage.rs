@@ -4,10 +4,12 @@ use std::error::Error;
 use std::fmt::{Debug, Formatter};
 use std::io::Write;
 use std::iter::Map;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::{debug};
+use log::debug;
 use multibase::{Base, decode, encode};
+use multihash::Code;
 use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private, Public};
@@ -16,10 +18,8 @@ use openssl::symm::{Cipher, Crypter, encrypt, Mode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, Hacheur, IsConfigurationPki};
-use crate::certificats::ordered_map;
-use multihash::Code;
-use std::sync::Arc;
+use crate::{Hacheur, IsConfigurationPki};
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ordered_map};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {

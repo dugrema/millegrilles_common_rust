@@ -21,7 +21,8 @@ use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, ExtensionsMilleGrille, IsConfigurationPki, ResultatValidation, ValidationOptions, VerificateurPermissions, verifier_message, verifier_multihash};
+use crate::{IsConfigurationPki, ResultatValidation, ValidationOptions, verifier_message, verifier_multihash};
+use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, VerificateurPermissions};
 use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
