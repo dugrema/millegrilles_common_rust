@@ -36,10 +36,16 @@ pub use messages_generiques::*;
 
 // Re-exports
 pub use async_trait;
-pub use bson;
+pub use chrono;
+pub use futures;
+pub use futures_util;
+pub use mongodb::bson as bson;
 pub use mongodb;
 pub use tokio;
 pub use tokio_stream;
+pub use uuid;
+pub use serde;
+pub use serde_json;
 
 #[cfg(test)]
 mod test_setup {
