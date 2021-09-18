@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareDbPki, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, ValidateurX509, ValidationOptions, TypeMessageOut, VerificateurMessage};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareDbPki, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, ValidateurX509, ValidationOptions, TypeMessageOut, VerificateurMessage, ConfigMessages};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -44,7 +44,7 @@ use crate::Securite::L3Protege;
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
 where
-    M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
+    M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
     S: Into<&'a str>,
 {
     // Creer repertoire temporaire de travail pour le backup
@@ -66,13 +66,13 @@ where
         Ok(()) => {
             // Emettre trigger pour declencher backup du jour precedent
             let reponse = middleware.formatter_reponse(json!({"ok": true}), None)?;
-            (reponse, true)
+            (reponse, false)
         },
         Err(e) => {
             error!("Erreur traitement backup : {:?}", e);
             let reponse = middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?;
 
-            (reponse, false)
+            (reponse, true)
         },
     };
 
@@ -82,6 +82,7 @@ where
         if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
             error!("Erreur emission evenement erreur de backup : {:?}", e);
         }
+        Err("Erreur backup horaire, voir logs")?
     } else {
         backup_quotidien(middleware, &info_backup).await?;
     }
@@ -91,7 +92,7 @@ where
 
 /// Effectue un backup horaire
 async fn backup_horaire<M>(middleware: &M, workdir: TempDir, nom_coll_str: &str, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
-where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages,
+where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
 {
     let timestamp_backup = Utc::now();
     if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireDebut", &timestamp_backup).await {
@@ -495,7 +496,7 @@ async fn uploader_backup<M>(
     commande_cles: Option<MessageMilleGrille>
 ) -> Result<Response, Box<dyn Error>>
 where
-    M: IsConfigurationPki,
+    M: ConfigMessages + IsConfigurationPki,
 {
     let message_serialise = MessageSerialise::from_parsed(catalogue_signe.clone()).expect("ser");
 
@@ -525,11 +526,11 @@ where
     }
 
     let enveloppe = middleware.get_enveloppe_privee().clone();
-    let ca_cert_pem = enveloppe.chaine_pem().last().expect("last").as_str();
-    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes()).expect("ca x509");
-    let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes()).expect("identity");
+    let ca_cert_pem = enveloppe.chaine_pem().last().expect("last cert").as_str();
+    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+    let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes())?;
 
-    let fichier_transactions_read = File_tokio::open(path_transactions).await.expect("open");
+    let fichier_transactions_read = File_tokio::open(path_transactions).await?;
 
     // Uploader fichiers et contenu backup
     let form = {
@@ -554,8 +555,20 @@ where
         .timeout(core::time::Duration::new(20, 0))
         .build()?;
 
-    let url_put = format!("https://{}/backup/domaine/{}", "mg-dev4:3021", catalogue.catalogue_nomfichier);
-    let mut request = client.put(url_put).multipart(form);
+    let mut url = match middleware.get_configuration_noeud().fichiers_url.as_ref() {
+        Some(url) => url.to_owned(),
+        None => {
+            Err("URL fichiers n'est pas configure pour les backups")?
+        }
+    };
+
+    let path_commande = format!("backup/domaine/{}", catalogue.catalogue_nomfichier);;
+    url.set_path(path_commande.as_str());
+
+    debug!("Url backup : {:?}", url);
+
+    // let url_put = format!("https://{}/backup/domaine/{}", "mg-dev4:3021", catalogue.catalogue_nomfichier);
+    let mut request = client.put(url).multipart(form);
 
     let response = request.send().await?;
     debug!("Resultat {} : {:?}", response.status(), response);

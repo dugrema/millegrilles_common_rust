@@ -10,7 +10,7 @@ use futures::Future;
 use futures::stream::FuturesUnordered;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, publisher_confirm::Confirmation, Queue, Result as ResultLapin, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
-use log::{debug, error, info};
+use log::{debug, warn, error, info};
 use serde_json::Value;
 use tokio::{task, try_join};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, oneshot::Sender as SenderOneshot};
@@ -181,16 +181,16 @@ async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn E
             .build()?;
 
         let url = format!("https://{}:{}/{}", host, PORT, COMMANDE);
-        debug!("Utiliser URL de creation de compte MQ : {:?}", url);
+        info!("Utiliser URL de creation de compte MQ : {:?}", url);
         match client.post(url).send().await {
             Ok(r) => {
                 if r.status().is_success() {
                     return Ok(())
                 }
-                debug!("Response creation compte MQ status error : {:?}", r);
+                warn!("Response creation compte MQ status error : {:?}", r);
             },
             Err(e) => {
-                debug!("Response creation compte MQ error : {:?}", e);
+                warn!("Response creation compte MQ error : {:?}", e);
             }
         };
     }
