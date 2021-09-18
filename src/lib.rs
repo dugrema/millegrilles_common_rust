@@ -34,6 +34,13 @@ pub use chiffrage::*;
 pub use fichiers::*;
 pub use messages_generiques::*;
 
+// Re-exports
+pub use async_trait;
+pub use bson;
+pub use mongodb;
+pub use tokio;
+pub use tokio_stream;
+
 #[cfg(test)]
 mod test_setup {
     use log::{debug};
