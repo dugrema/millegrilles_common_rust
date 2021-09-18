@@ -71,6 +71,7 @@ pub const TRANSACTION_CHAMP_TRANSACTION_RESTAUREE: &str = "_evenements.transacti
 pub const TRANSACTION_LIMITE_RESOUMISSION: i32 = 4;
 
 // Certificats, PKI
+pub const PKI_DOMAINE_LEGACY_NOM: &str = "Pki";
 pub const PKI_DOMAINE_NOM: &str = "CorePki";
 // pub const PKI_DOMAINE_CERTIFICAT_NOM: &str = "certificat";
 pub const PKI_COLLECTION_TRANSACTIONS_NOM: &str = PKI_DOMAINE_NOM;
