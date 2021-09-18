@@ -2,17 +2,18 @@ use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bson::{Bson, Document};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::{bson::{doc, to_bson}, Client, Collection, Cursor, Database};
+use mongodb::bson as bson;
+use mongodb::bson::{Bson, Document};
 use mongodb::error::{BulkWriteError, BulkWriteFailure, ErrorKind};
 use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
-use crate::{Entete, MessageMilleGrille, MessageSerialise, MessageTrigger, TypeMessageOut, VerificateurPermissions, ExtensionsMilleGrille};
+use crate::{Entete, ExtensionsMilleGrille, MessageMilleGrille, MessageSerialise, MessageTrigger, TypeMessageOut, VerificateurPermissions};
 use crate::certificats::{EnveloppeCertificat, ValidateurX509};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;

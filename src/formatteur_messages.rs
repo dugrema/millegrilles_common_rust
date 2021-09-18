@@ -1,30 +1,31 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
+use std::collections::btree_map::IntoIter;
 use std::error::Error;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use env_logger::fmt::TimestampPrecision::Millis;
 use log::{debug, info, warn};
+use mongodb::bson as bson;
+use multibase::{Base, decode};
 use num_traits::ToPrimitive;
+use openssl::hash::MessageDigest;
+use openssl::pkey::{PKey, Public};
+use openssl::rsa::Padding;
+use openssl::sign::{RsaPssSaltlen, Verifier};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::{Visitor, DeserializeOwned};
+use serde::de::{DeserializeOwned, Visitor};
 use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::{EnveloppeCertificat, ResultatValidation, ValidationOptions, verifier_message, IsConfigurationPki, VerificateurPermissions, ExtensionsMilleGrille, verifier_multihash};
+use crate::{EnveloppeCertificat, ExtensionsMilleGrille, IsConfigurationPki, ResultatValidation, ValidationOptions, VerificateurPermissions, verifier_message, verifier_multihash};
 use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::constantes::*;
 use crate::hachages::hacher_message;
-use crate::signatures::{SALT_LENGTH, VERSION_1, signer_message};
-use std::borrow::Cow;
-use env_logger::fmt::TimestampPrecision::Millis;
-use std::collections::btree_map::IntoIter;
-use openssl::pkey::{Public, PKey};
-use multibase::{Base, decode};
-use openssl::hash::MessageDigest;
-use openssl::sign::{Verifier, RsaPssSaltlen};
-use openssl::rsa::Padding;
+use crate::signatures::{SALT_LENGTH, signer_message, VERSION_1};
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";

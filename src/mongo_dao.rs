@@ -1,19 +1,18 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bson::Bson;
-use bson::document::Document;
 use log::{debug, error, info};
 use mongodb::{bson::doc, Client, Collection, Database};
+use mongodb::bson::Bson;
+use mongodb::bson::document::Document;
 use mongodb::error::Result as ResultMongo;
 use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
 use serde_json::{json, Map, Value};
 
-use crate::constantes::*;
-
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
-use std::path::PathBuf;
+use crate::constantes::*;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {

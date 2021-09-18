@@ -4,21 +4,22 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use bson::{Bson, Document};
 use futures::stream::FuturesUnordered;
 use lapin::message::Delivery;
 use log::{debug, error, info, warn};
 use mongodb::{bson::{doc, to_bson}, Client, Collection, Cursor, Database};
+use mongodb::bson::{Bson, Document};
+use mongodb::bson as bson;
 use mongodb::options::{AuthMechanism, ClientOptions, Credential, FindOptions, Hint, TlsOptions, UpdateOptions};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
-use crate::{MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, VerificateurMessage, verifier_message, Chiffreur, CipherMgs2, FingerprintCertPublicKey, Dechiffreur, Mgs2CipherData, IsConfigNoeud, valider_message};
+use crate::{Chiffreur, CipherMgs2, Dechiffreur, FingerprintCertPublicKey, IsConfigNoeud, MessageMilleGrille, MessageSerialise, Mgs2CipherData, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, valider_message, VerificateurMessage, verifier_message};
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::constantes::*;
@@ -1093,6 +1094,7 @@ where
 pub mod serialization_tests {
     use crate::certificats_tests::charger_enveloppe_privee_env;
     use crate::test_setup::setup;
+
     use super::*;
 
     pub async fn build() -> (Arc<MiddlewareDbPki>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>) {
