@@ -61,7 +61,7 @@ pub struct TriggerTransaction {
     uuid_transaction: String,
 }
 
-pub async fn charger_transaction<M>(middleware: &M, trigger: &TriggerTransaction) -> Result<TransactionImpl, String>
+pub async fn charger_transaction<M>(middleware: &M, nom_collection: &str, trigger: &TriggerTransaction) -> Result<TransactionImpl, String>
 where
     M: ValidateurX509 + MongoDao,
 {
@@ -72,7 +72,7 @@ where
     let uuid_transaction = trigger.uuid_transaction.as_str();
 
     // Charger transaction a partir de la base de donnees
-    let collection = middleware.get_collection(PKI_COLLECTION_TRANSACTIONS_NOM)?;
+    let collection = middleware.get_collection(nom_collection)?;
 
     let filtre = doc! {TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction};
 
@@ -194,7 +194,7 @@ pub enum EtatTransaction {
     Complete,
 }
 
-pub async fn marquer_transaction(middleware: &impl MongoDao, uuid_transaction: &str, etat: EtatTransaction) -> Result<(), String> {
+pub async fn marquer_transaction(middleware: &impl MongoDao, nom_collection: &str, uuid_transaction: &str, etat: EtatTransaction) -> Result<(), String> {
 
     let mut set = doc! {};
     let mut current_date = doc! {};
@@ -214,7 +214,7 @@ pub async fn marquer_transaction(middleware: &impl MongoDao, uuid_transaction: &
         TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
     };
 
-    let collection = middleware.get_collection(PKI_COLLECTION_TRANSACTIONS_NOM)?;
+    let collection = middleware.get_collection(nom_collection)?;
     match collection.update_one(filtre, ops, None).await {
         Ok(update_result) => {
             if update_result.matched_count == 1 {

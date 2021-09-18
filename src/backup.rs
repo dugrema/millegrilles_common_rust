@@ -35,7 +35,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, ConfigMessages, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareDbPki, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, TypeMessageOut, ValidateurX509, ValidationOptions, VerificateurMessage};
+use crate::{Chiffreur, CipherMgs2, CollectionCertificatsPem, CommandeSauvegarderCle, CompresseurBytes, ConfigMessages, DateEpochSeconds, Dechiffreur, DecipherMgs2, Entete, EnveloppeCertificat, FichierWriter, FingerprintCertPublicKey, FingerprintCleChiffree, FormatChiffrage, FormatteurMessage, GenerateurMessages, hacher_serializable, Hacheur, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, Mgs2CipherData, Mgs2CipherKeys, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, TypeMessageOut, ValidateurX509, ValidationOptions, VerificateurMessage, MiddlewareDb};
 use crate::certificats::EnveloppePrivee;
 use crate::constantes::*;
 use crate::fichiers::DecompresseurBytes;
@@ -384,7 +384,7 @@ where
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
     let mut transaction_writer = match builder.chiffrer {
         true => TransactionWriter::new(path_transactions, Some(middleware)).await?,
-        false => TransactionWriter::new(path_transactions, None::<&MiddlewareDbPki>).await?,
+        false => TransactionWriter::new(path_transactions, None::<&MiddlewareDb>).await?,
     };
 
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
