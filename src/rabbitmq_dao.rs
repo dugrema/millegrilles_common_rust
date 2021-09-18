@@ -885,7 +885,7 @@ impl<'a, T> Callback<'a, T> {
 
 #[cfg(test)]
 mod rabbitmq_integration_test {
-    use crate::charger_configuration;
+    use crate::configuration::charger_configuration;
     use crate::test_setup::setup;
 
     use super::*;

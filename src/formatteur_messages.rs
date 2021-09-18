@@ -968,7 +968,7 @@ where
 
 #[cfg(test)]
 mod serialization_tests {
-    use crate::certificats_tests::charger_enveloppe_privee_env;
+    use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
     use crate::test_setup::setup;
 
     // Note this useful idiom: importing names from outer (for mod tests) scope.

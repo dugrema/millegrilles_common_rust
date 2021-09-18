@@ -441,11 +441,14 @@ pub mod fichiers_tests {
     use async_std::future::Future;
     use tokio_util::codec::{BytesCodec, FramedRead};
 
-    use crate::{MiddlewareDbPki, ValidateurX509};
+    //use crate::{MiddlewareDbPki, ValidateurX509};
+    use crate::certificats::{ValidateurX509, FingerprintCertPublicKey};
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
     use crate::test_setup::setup;
 
     use super::*;
+    use tokio::fs::File;
+    use crate::middleware::MiddlewareDb;
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
     const BYTES_TEST: &[u8] = b"des bytes a ecrire";
@@ -481,7 +484,7 @@ pub mod fichiers_tests {
         setup("ecrire_bytes_writer");
 
         let path_fichier = PathBuf::from("/tmp/fichier_tests.1.xz");
-        let mut writer = FichierWriter::new(path_fichier.as_path(), None::<&MiddlewareDbPki>).await.expect("writer");
+        let mut writer = FichierWriter::new(path_fichier.as_path(), None::<&MiddlewareDb>).await.expect("writer");
         writer.write(BYTES_TEST).await.expect("write");
         let (mh, _) = writer.fermer().await.expect("finish");
 
