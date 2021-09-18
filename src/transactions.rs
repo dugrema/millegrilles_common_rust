@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
-use crate::{Entete, MessageMilleGrille, MessageSerialise, MessageTrigger, TypeMessageOut};
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
+use crate::formatteur_messages::{Entete, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::GenerateurMessages;
 use crate::mongo_dao::MongoDao;
-use crate::recepteur_messages::MessageValideAction;
+use crate::rabbitmq_dao::TypeMessageOut;
+use crate::recepteur_messages::{MessageTrigger, MessageValideAction};
 
 pub async fn transmettre_evenement_persistance(
     middleware: &impl GenerateurMessages,

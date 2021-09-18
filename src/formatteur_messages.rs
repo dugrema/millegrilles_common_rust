@@ -21,12 +21,12 @@ use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::{IsConfigurationPki, ResultatValidation, ValidationOptions, verifier_message};
-use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, VerificateurPermissions};
-use crate::certificats::{EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
 use crate::constantes::*;
 use crate::hachages::{hacher_message, verifier_multihash};
+use crate::middleware::IsConfigurationPki;
 use crate::signatures::{SALT_LENGTH, signer_message, VERSION_1};
+use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";

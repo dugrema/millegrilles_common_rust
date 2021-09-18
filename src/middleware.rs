@@ -19,16 +19,17 @@ use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
-use crate::{IsConfigNoeud, MessageMilleGrille, MessageSerialise, ResultatValidation, transmettre_evenement_persistance, TypeMessageOut, ValidationOptions, valider_message, VerificateurMessage, verifier_message};
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
 use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherData};
-use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
+use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
-use crate::formatteur_messages::FormatteurMessage;
+use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
-use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor};
-use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
+use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor, TypeMessageOut};
+use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage, valider_message};
+use crate::transactions::transmettre_evenement_persistance;
+use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
 // /// Version speciale du middleware avec un acces direct au sous-domaine Pki dans MongoDB
 // pub fn preparer_middleware_pki(

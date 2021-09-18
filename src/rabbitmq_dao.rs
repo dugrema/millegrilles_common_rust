@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::error::Error;
 use std::sync::{Arc, Mutex, Weak};
 use std::sync::mpsc::SendError;
 use std::thread::sleep;
@@ -10,24 +11,22 @@ use futures::Future;
 use futures::stream::FuturesUnordered;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, publisher_confirm::Confirmation, Queue, Result as ResultLapin, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
-use log::{debug, warn, error, info};
+use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
+use log::{debug, error, info, warn};
 use serde_json::Value;
 use tokio::{task, try_join};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
 use tokio_amqp::*;
 use tokio_stream::StreamExt;
+use url::Url;
 
 use crate::certificats::{EnveloppePrivee, ValidateurX509};
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageSerialise};
-
+use crate::formatteur_messages::MessageMilleGrille;
 use crate::recepteur_messages::TypeMessage;
-use crate::MessageMilleGrille;
-use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
-use std::error::Error;
-use url::Url;
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 
@@ -886,10 +885,10 @@ impl<'a, T> Callback<'a, T> {
 
 #[cfg(test)]
 mod rabbitmq_integration_test {
-    use crate::test_setup::setup;
-    use super::*;
     use crate::charger_configuration;
+    use crate::test_setup::setup;
 
+    use super::*;
 
     #[tokio::test]
     async fn connecter_mq() {

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::collections::hash_map::RandomState;
+use std::error::Error;
 
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
@@ -12,11 +13,11 @@ use openssl::sign::{RsaPssSaltlen, Verifier};
 use serde_json::{Map, Value};
 
 use crate::certificats::EnveloppeCertificat;
-use crate::hachages::verifier_multihash;
-use crate::signatures::{SALT_LENGTH, VERSION_1};
-use std::error::Error;
-use crate::{MessageMilleGrille, MqMessageSendInformation, MessageSerialise};
 use crate::certificats::ValidateurX509;
+use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};
+use crate::hachages::verifier_multihash;
+use crate::rabbitmq_dao::MqMessageSendInformation;
+use crate::signatures::{SALT_LENGTH, VERSION_1};
 
 pub trait VerificateurMessage {
     fn verifier_message(

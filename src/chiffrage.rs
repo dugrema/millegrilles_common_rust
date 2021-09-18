@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ordered_map};
 use crate::hachages::Hacheur;
-use crate::IsConfigurationPki;
+use crate::middleware::IsConfigurationPki;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {

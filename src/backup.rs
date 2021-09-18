@@ -35,13 +35,21 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::{CompresseurBytes, ConfigMessages, DateEpochSeconds, Entete, FichierWriter, FormatteurMessage, GenerateurMessages, IsConfigNoeud, IsConfigurationPki, MessageMilleGrille, MessageSerialise, MiddlewareDb, MiddlewareMessage, MongoDao, parse_tar, regenerer, ResultatValidation, sauvegarder_batch, TraiterFichier, TraiterTransaction, TypeMessage, TypeMessageOut, ValidationOptions, VerificateurMessage};
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509};
 use crate::chiffrage::{Chiffreur, CipherMgs2, CommandeSauvegarderCle, Dechiffreur, DecipherMgs2, FingerprintCleChiffree, FormatChiffrage, Mgs2CipherData, Mgs2CipherKeys};
+use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
-use crate::fichiers::DecompresseurBytes;
+use crate::constantes::Securite::L3Protege;
+use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse_tar, TraiterFichier};
+use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
+use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::{hacher_serializable, Hacheur};
-use crate::Securite::L3Protege;
+use crate::middleware::{IsConfigurationPki, MiddlewareDb, MiddlewareMessage};
+use crate::mongo_dao::MongoDao;
+use crate::rabbitmq_dao::TypeMessageOut;
+use crate::recepteur_messages::TypeMessage;
+use crate::transactions::{regenerer, sauvegarder_batch, TraiterTransaction};
+use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>

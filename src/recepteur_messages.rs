@@ -11,17 +11,14 @@ use tokio::{join, sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as Dur
 use tokio_stream::StreamExt;
 use TypeMessageOut as TypeMessageIn;
 
-use crate::{MessageSerialise, verifier_message};
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-//use crate::verificateur::{verifier_hachage, verifier_message};
-use crate::certificats::ExtensionsMilleGrille;
-use crate::certificats::VerificateurPermissions;
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::configuration::charger_configuration_avec_db;
-use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
+use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
 use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
+use crate::verificateur::verifier_message;
 
 /// Thread de traitement des messages
 pub async fn recevoir_messages(
