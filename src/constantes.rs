@@ -1,3 +1,5 @@
+use crate::constantes::Securite::{L1Public, L2Prive, L3Protege, L4Secure};
+
 // Differents formats pour le niveau de securite
 #[derive(Clone, Debug)]
 pub enum Securite {
@@ -11,6 +13,16 @@ pub const SECURITE_1_PUBLIC: &str = "1.public";
 pub const SECURITE_2_PRIVE: &str = "2.prive";
 pub const SECURITE_3_PROTEGE: &str = "3.protege";
 pub const SECURITE_4_SECURE: &str = "4.secure";
+
+pub fn securite_enum(securite: &str) -> Result<Securite, String> {
+    match securite {
+        SECURITE_1_PUBLIC => Ok(L1Public),
+        SECURITE_2_PRIVE => Ok(L2Prive),
+        SECURITE_3_PROTEGE => Ok(L3Protege),
+        SECURITE_4_SECURE => Ok(L4Secure),
+        _ => Err(format!("Type non supporte {}", securite))
+    }
+}
 
 pub fn securite_rank(securite: Securite) -> i32 {
     match securite {
