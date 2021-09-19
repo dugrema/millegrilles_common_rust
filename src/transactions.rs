@@ -229,7 +229,7 @@ pub async fn marquer_transaction(middleware: &impl MongoDao, nom_collection: &st
 }
 
 /// Resoumet une batch de transaction non completee pour chaque collection.
-pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDao), domaine: &str, collections_transactions: &Vec<&str>) -> Result<(), String> {
+pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDao), collections_transactions: &Vec<&str>) -> Result<(), String> {
 
     debug!("Resoumettre transactions incompletes pour {:?}", collections_transactions);
     if middleware.mq_disponible() == false {
@@ -306,7 +306,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
                     let _ = collection.update_one(filtre_transaction_resoumise, ops.clone(), None).await;
                 },
                 Err(e) => {
-                    error!("Erreur emission trigger de resoumission pour {} : {:?}", domaine, e);
+                    error!("Erreur emission trigger de resoumission : {:?}", e);
                     if ! e.recuperable {
                         // Erreur qui n'est pas necessairement recuperable (e.g. data, autre...)
                         // On marque l'essaie.
