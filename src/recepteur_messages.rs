@@ -217,33 +217,36 @@ pub struct RequeteCertificatInterne {
 }
 
 /// Task de requete et attente de reception de certificat
-pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>) {
+pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>, skip_requete: bool) {
     while let Some(req_cert) = rx.recv().await {
         let delivery = req_cert.delivery;
         let fingerprint = req_cert.fingerprint;
 
-        debug!("Faire une requete pour charger le certificat {}", fingerprint);
-        let requete = json!({"fingerprint": fingerprint});
-        let domaine_action = format!("certificat.{}", fingerprint);
-        // let message = MessageJson::new(requete);
-        let ok = match middleware.transmettre_requete("certificat", fingerprint.as_str(), None, &requete, None).await {
-            Ok(r) => {
-                tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
-                    .await.expect("resend delivery avec certificat");
-                true
-            },
-            Err(e) => {
-                error!("Erreur / timeout sur demande certificat {} : {}", fingerprint, e);
-                false
-            }
-        };
-        debug!("Reponse de ma requete!!!");
+        // todo Verifier dans redis si le certificat est deja en cache
 
-        if ! ok {
-            tx.send(MessageInterne::CancelDemandeReponse(fingerprint))
-                .await.expect("cancel demande certificat sur timeout");
+
+        if !skip_requete {
+            debug!("Faire une requete pour charger le certificat {}", fingerprint);
+            let requete = json!({"fingerprint": fingerprint});
+            let domaine_action = format!("certificat.{}", fingerprint);
+            // let message = MessageJson::new(requete);
+            match middleware.transmettre_requete("certificat", fingerprint.as_str(), None, &requete, None).await {
+                Ok(r) => {
+                    tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
+                        .await.expect("resend delivery avec certificat");
+                    continue  // Ok
+                },
+                Err(e) => {
+                    error!("Erreur / timeout sur demande certificat {} : {}", fingerprint, e);
+                }
+            }
         }
+
+        // Certificat inconnu
+        tx.send(MessageInterne::CancelDemandeReponse(fingerprint))
+            .await.expect("cancel demande certificat sur timeout");
     }
+
 }
 
 pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfigurationPki), message: &TypeMessage) -> bool {
