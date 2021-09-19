@@ -384,6 +384,24 @@ pub struct MessageValideAction {
     pub exchange: Option<String>,
     pub type_message: TypeMessageIn,
 }
+impl MessageValideAction {
+    pub fn new<S>(message: MessageSerialise, q: S, routing_key: S, domaine: S, action: S, type_message: TypeMessageIn)
+        -> Self
+        where S: Into<String>
+    {
+        MessageValideAction {
+            message,
+            q: q.into(),
+            reply_q: None,
+            correlation_id: None,
+            routing_key: routing_key.into(),
+            domaine: domaine.into(),
+            action: action.into(),
+            exchange: None,
+            type_message,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct MessageTrigger {

@@ -792,7 +792,7 @@ pub trait VerificateurPermissions {
     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille>;
 
     fn verifier_exchanges(&self, exchanges_permis: Vec<String>) -> bool {
-        // Valider certificat. Doit etre de niveau 4.secure
+        // Valider certificat.
         let extensions = match self.get_extensions() {
             Some(e) => e,
             None => return false
@@ -812,7 +812,7 @@ pub trait VerificateurPermissions {
 
         let res: Vec<&String> = hs_param.intersection(&hs_cert).collect();
         // let res: Vec<&String> = exchanges_permis.iter().filter(|c| ex.contains(c)).collect();
-        if res.len() > 1 {
+        if res.len() == 0 {
             return false
         }
 
