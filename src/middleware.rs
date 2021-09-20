@@ -898,6 +898,20 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
     ).await?)
 }
 
+pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine: &str)
+    where M: ConfigMessages + GenerateurMessages + ValidateurX509 + 'static
+{
+    // Attente initiale
+    tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
+    loop {
+        match emettre_presence_domaine(middleware.as_ref(), nom_domaine).await {
+            Ok(()) => (),
+            Err(e) => warn!("Erreur emission presence du domaine : {}", e),
+        };
+        tokio::time::sleep(tokio::time::Duration::new(120, 0)).await;
+    }
+}
+
 #[async_trait]
 pub trait EmetteurCertificat: Send + Sync {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String>;
