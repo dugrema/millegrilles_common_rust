@@ -69,6 +69,8 @@ pub const TRANSACTION_CHAMP_EVENEMENTS: &str = "_evenements";
 pub const TRANSACTION_CHAMP_IDMG: &str = "idmg";
 pub const TRANSACTION_CHAMP_ESTAMPILLE: &str = "estampille";
 pub const TRANSACTION_CHAMP_COMPLETE: &str = "transaction_complete";
+pub const TRANSACTION_CHAMP_SIGNATURE: &str = "_signature";
+pub const TRANSACTION_CHAMP_CERTIFICAT: &str = "_certificat";
 
 pub const TRANSACTION_CHAMP_EVENEMENT_PERSISTE: &str = "_evenements.document_persiste";
 pub const TRANSACTION_CHAMP_EVENEMENT_COMPLETE: &str = "_evenements.transaction_complete";

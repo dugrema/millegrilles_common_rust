@@ -125,3 +125,14 @@ pub struct ChampIndex {
     pub nom_champ: String,
     pub direction: i32,
 }
+
+pub fn filtrer_doc_id(mut doc: &mut Document) {
+    doc.remove("_id");
+    doc.remove(TRANSACTION_CHAMP_ENTETE);
+    doc.remove(TRANSACTION_CHAMP_SIGNATURE);
+    doc.remove(TRANSACTION_CHAMP_CERTIFICAT);
+}
+
+pub fn convertir_bson_value(doc: Document) -> Result<Value, serde_json::Error> {
+    Ok(serde_json::from_value(serde_json::to_value(doc)?)?)
+}
