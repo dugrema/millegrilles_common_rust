@@ -127,10 +127,14 @@ pub struct ChampIndex {
 }
 
 pub fn filtrer_doc_id(mut doc: &mut Document) {
-    doc.remove("_id");
     doc.remove(TRANSACTION_CHAMP_ENTETE);
-    doc.remove(TRANSACTION_CHAMP_SIGNATURE);
-    doc.remove(TRANSACTION_CHAMP_CERTIFICAT);
+
+    let ks: Vec<String> = doc.keys().cloned().collect();
+    for k in ks {
+        if k.starts_with("_") {
+            doc.remove(k);
+        }
+    }
 }
 
 pub fn convertir_bson_value(doc: Document) -> Result<Value, serde_json::Error> {

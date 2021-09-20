@@ -228,6 +228,8 @@ impl MessageMilleGrille {
         // Serialiser le contenu
         let value_ordered: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
 
+        debug!("message a serialiser avec B-Tree {}", serde_json::to_string(&value_ordered)?);
+
         let entete = MessageMilleGrille::creer_entete(
             enveloppe_privee, domaine, action, partition, version, &value_ordered)?;
 
@@ -439,14 +441,7 @@ impl MessageMilleGrille {
         // Copier dans une BTreeMap (via trier les keys)
         // let mut iter: serde_json::map::IntoIter = contenu.into_iter();
         while let Some((k, mut v)) = iter.next() {
-
-            let value = if let Value::Object(map) = v {
-                let map = MessageMilleGrille::preparer_btree_recursif(map)?;
-                Value::Object(map)
-            } else {
-                v
-            };
-
+            let value = MessageMilleGrille::map_valeur_recursif(v)?;
             ordered.insert(k, value);
         }
 
@@ -458,6 +453,33 @@ impl MessageMilleGrille {
         }
 
         Ok(map_ordered)
+    }
+
+    fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
+        let res = match v {
+            Value::Object(o) => {
+                let map = MessageMilleGrille::preparer_btree_recursif(o)?;
+                Value::Object(map)
+            },
+            Value::Array(o) => {
+                // Parcourir array recursivement
+                let mut arr = o.into_iter();
+                let mut vec_values = Vec::new();
+
+                while let Some(v) = arr.next() {
+                    vec_values.push(MessageMilleGrille::map_valeur_recursif(v)?)
+                }
+
+                // Retourner le nouvel array
+                Value::Array(vec_values)
+            },
+            Value::Bool(o) => Value::Bool(o),
+            Value::Number(o) => Value::Number(o),
+            Value::String(o) => Value::String(o),
+            Value::Null => Value::Null,
+        };
+
+        Ok(res)
     }
 
     // /// Reorganise un message en ordre pour hachage, signature ou verification.
