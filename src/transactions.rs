@@ -99,6 +99,7 @@ async fn extraire_transaction(validateur: &(impl ValidateurX509), doc_transactio
 
 pub trait Transaction {
     fn get_contenu(&self) -> &Document;
+    fn contenu(self) -> Document;
     fn get_entete(&self) -> &Document;
     fn get_domaine(&self) -> &str;
     fn get_action(&self) -> &str;
@@ -148,6 +149,10 @@ impl TransactionImpl {
 impl Transaction for TransactionImpl {
     fn get_contenu(&self) -> &Document {
         &self.contenu
+    }
+
+    fn contenu(mut self) -> Document {
+        self.contenu
     }
 
     fn get_entete(&self) -> &Document {
