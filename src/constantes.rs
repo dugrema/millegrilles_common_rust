@@ -82,6 +82,10 @@ pub const TRANSACTION_CHAMP_BACKUP_HORAIRE: &str = "_evenements.backup_horaire";
 pub const TRANSACTION_CHAMP_TRANSACTION_RESTAUREE: &str = "_evenements.transaction_restauree";
 pub const TRANSACTION_LIMITE_RESOUMISSION: i32 = 4;
 
+// Documents
+pub const CHAMP_CREATION: &str = "_mg-creation";
+pub const CHAMP_MODIFICATION: &str = "_mg-derniere-modification";
+
 // Certificats, PKI
 // pub const PKI_DOMAINE_LEGACY_NOM: &str = "Pki";
 // pub const PKI_DOMAINE_NOM: &str = "CorePki";
