@@ -1034,21 +1034,11 @@ where
     let msg = m.message.get_msg();
 
     // Serialiser le message en serde::Value - permet de convertir en Document bson
-    let val = match serde_json::to_value(msg) {
-        Ok(v) => match v.as_object() {
-            Some(o) => o.to_owned(),
-            None => Err(format!("Erreur sauvegarde transaction, mauvais type objet JSON"))?,
-        },
-        Err(e) => Err(format!("Erreur sauvegarde transaction, conversion : {:?}", e))?,
+    let mut contenu_doc = match map_msg_to_bson(msg) {
+        Ok(d) => d,
+        Err(e) => Err(format!("Erreur conversion doc vers bson : {:?}", e))?
     };
 
-    let mut contenu_doc = match Document::try_from(val) {
-        Ok(c) => Ok(c),
-        Err(e) => {
-            error!("Erreur conversion json -> bson\n{:?}", e.to_string());
-            Err(format!("Erreur sauvegarde transaction, conversion json -> bson : {:?}", e))
-        },
-    }?;
     debug!("Transaction en format bson : {:?}", contenu_doc);
 
     let date_courante = chrono::Utc::now();
@@ -1108,6 +1098,26 @@ where
     ).await?;
 
     Ok(())
+}
+
+pub fn map_msg_to_bson(msg: &MessageMilleGrille) -> Result<Document, Box<dyn Error>> {
+    let val = match serde_json::to_value(msg) {
+        Ok(v) => match v.as_object() {
+            Some(o) => o.to_owned(),
+            None => Err(format!("Erreur sauvegarde transaction, mauvais type objet JSON"))?,
+        },
+        Err(e) => Err(format!("Erreur sauvegarde transaction, conversion : {:?}", e))?,
+    };
+
+    let mut contenu_doc = match Document::try_from(val) {
+        Ok(c) => Ok(c),
+        Err(e) => {
+            error!("Erreur conversion json -> bson\n{:?}", e.to_string());
+            Err(format!("Erreur sauvegarde transaction, conversion json -> bson : {:?}", e))
+        },
+    }?;
+
+    Ok(contenu_doc)
 }
 
 // #[async_trait]

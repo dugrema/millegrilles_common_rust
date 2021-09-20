@@ -24,9 +24,10 @@ use uuid::Uuid;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
 use crate::constantes::*;
 use crate::hachages::{hacher_message, verifier_multihash};
-use crate::middleware::IsConfigurationPki;
+use crate::middleware::{IsConfigurationPki, map_msg_to_bson};
 use crate::signatures::{SALT_LENGTH, signer_message, VERSION_1};
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
+use crate::bson::Document;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
@@ -600,6 +601,10 @@ impl MessageMilleGrille {
         let deser: C = serde_json::from_value(value)?;
 
         Ok(deser)
+    }
+
+    pub fn map_to_bson(&self) -> Result<Document, Box<dyn Error>> {
+        map_msg_to_bson(self)
     }
 
     pub fn verifier_hachage(&mut self) -> Result<bool, Box<dyn Error>> {
