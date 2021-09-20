@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use lapin::message::Delivery;
-use log::{debug, error, info, warn};
+use log::{trace, debug, error, info, warn};
 use serde_json::{json, Map, Value};
 use tokio::{join, sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as DurationTokio, sleep, timeout}, try_join};
 use tokio_stream::StreamExt;
@@ -32,7 +32,7 @@ pub async fn recevoir_messages(
     let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
 
     while let Some(mi) = rx.recv().await {
-        debug!("traiter_messages: Message recu : {:?}", mi);
+        trace!("traiter_messages: Message recu : {:?}", mi);
 
         let (delivery, nom_q, tx) = match mi {
             MessageInterne::Delivery(d, q) => (d, q, &tx_verifie),
