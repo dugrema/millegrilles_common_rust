@@ -33,6 +33,7 @@ use x509_parser::parse_x509_certificate;
 use crate::constantes::*;
 use crate::hachages::hacher_bytes;
 use std::error::Error;
+use crate::constantes::Securite::L1Public;
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -696,6 +697,28 @@ pub struct ExtensionsMilleGrille {
     user_id: Option<String>,
     delegation_globale: Option<String>,
     delegation_domaines: Option<Vec<String>>,
+}
+impl ExtensionsMilleGrille {
+    /// Retourne le plus haut niveau de securite (echange) supporte par ce certificat
+    pub fn exchange_top(&self) -> Option<Securite> {
+        match self.exchanges.as_ref() {
+            Some(e) => {
+                let mut sec = L1Public;
+                for s in e {
+                    if let Ok(inner_sec) = securite_enum(s.as_str()) {
+                        let rk_courant = securite_rank(sec.clone());
+                        let rk_inner = securite_rank(inner_sec.clone());
+                        if rk_courant < rk_inner {
+                            sec = inner_sec;
+                        }
+                    }
+                }
+
+                Some(sec)
+            },
+            None => None,
+        }
+    }
 }
 
 fn extraire_vec_strings(data: &[u8]) -> Result<Vec<String>, String> {
