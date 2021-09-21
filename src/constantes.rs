@@ -1,7 +1,9 @@
 use crate::constantes::Securite::{L1Public, L2Prive, L3Protege, L4Secure};
+use std::collections::HashSet;
+use std::cmp::Eq;
 
 // Differents formats pour le niveau de securite
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Securite {
     L1Public,
     L2Prive,
@@ -40,6 +42,18 @@ pub fn securite_str(securite: &Securite) -> &'static str {
         Securite::L3Protege => SECURITE_3_PROTEGE,
         Securite::L4Secure => SECURITE_4_SECURE,
     }
+}
+
+/// Retourne une liste des niveaux de securite de 1.public jusqu'au niveau specifie
+pub fn securite_cascade_public(securite: &Securite) -> HashSet<Securite> {
+    let mut set: HashSet<Securite> = HashSet::new();
+    match securite {
+        Securite::L1Public => {set.insert(Securite::L1Public);},
+        Securite::L2Prive => {set.insert(Securite::L1Public); set.insert(Securite::L2Prive);},
+        Securite::L3Protege => {set.insert(Securite::L1Public); set.insert(Securite::L2Prive); set.insert(Securite::L3Protege);},
+        Securite::L4Secure => {set.insert(Securite::L1Public); set.insert(Securite::L2Prive); set.insert(Securite::L3Protege); set.insert(Securite::L4Secure);},
+    }
+    set
 }
 
 // Global
