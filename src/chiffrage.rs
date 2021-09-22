@@ -409,6 +409,33 @@ pub trait Dechiffreur: IsConfigurationPki + Send + Sync {
     }
 }
 
+/// Genere un Vec de nb_bytes aleatoires.
+pub fn random_vec(nb_bytes: usize) -> Vec<u8> {
+    let mut v = Vec::new();
+    v.reserve(nb_bytes);
+
+    let mut rnd = rand::thread_rng();
+
+    // Extraire bytes par groupe de taille max (32)
+    let nb_loops = nb_bytes / 32;
+    let restant = nb_bytes - (nb_loops * 32);
+    let mut rnd_bytes = [0u8; 32];
+    for i in 0..nb_loops {
+        rnd_bytes = rnd.gen();
+        v.extend_from_slice(&rnd_bytes[0..32]);
+    }
+
+    // Ajouter bytes manquants
+    if restant > 0 {
+        for i in 0..restant {
+            let byte: u8 = rnd.gen();
+            v.push(byte);
+        }
+    }
+
+    v
+}
+
 #[cfg(test)]
 mod backup_tests {
     use std::error::Error;
