@@ -24,6 +24,7 @@ pub use futures_util;
 pub use mongodb::bson as bson;
 pub use mongodb;
 pub use multibase;
+pub use multihash;
 pub use openssl;
 pub use rand;
 pub use tokio;

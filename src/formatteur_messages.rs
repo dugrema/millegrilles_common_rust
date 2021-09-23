@@ -342,7 +342,7 @@ impl MessageMilleGrille {
         S: Serialize,
     {
         let mut map = serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned();
-        let contenu = MessageMilleGrille::preparer_btree_recursif(map)?;
+        let contenu = preparer_btree_recursif(map)?;
         Ok(contenu)
     }
 
@@ -429,59 +429,6 @@ impl MessageMilleGrille {
     //
     //     Ok(ordered)
     // }
-
-    fn preparer_btree_recursif(mut contenu: Map<String, Value>) -> Result<Map<String, Value>, Box<dyn Error>> {
-        let mut iter: serde_json::map::IntoIter = contenu.into_iter();
-        MessageMilleGrille::preparer_btree_recursif_into_iter(iter)
-    }
-
-    /// Preparer recursivement le contenu en triant les cles.
-    fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Result<Map<String, Value>, Box<dyn Error>> {
-        let mut ordered: BTreeMap<String, Value> = BTreeMap::new();
-
-        // Copier dans une BTreeMap (via trier les keys)
-        // let mut iter: serde_json::map::IntoIter = contenu.into_iter();
-        while let Some((k, mut v)) = iter.next() {
-            let value = MessageMilleGrille::map_valeur_recursif(v)?;
-            ordered.insert(k, value);
-        }
-
-        // Reconvertir en Map<String, Value> (flag preserve_order est actif)
-        let mut map_ordered = Map::new();
-        let mut iter_ordered = ordered.into_iter();
-        while let Some((k, v)) = iter_ordered.next() {
-            map_ordered.insert(k, v);
-        }
-
-        Ok(map_ordered)
-    }
-
-    fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
-        let res = match v {
-            Value::Object(o) => {
-                let map = MessageMilleGrille::preparer_btree_recursif(o)?;
-                Value::Object(map)
-            },
-            Value::Array(o) => {
-                // Parcourir array recursivement
-                let mut arr = o.into_iter();
-                let mut vec_values = Vec::new();
-
-                while let Some(v) = arr.next() {
-                    vec_values.push(MessageMilleGrille::map_valeur_recursif(v)?)
-                }
-
-                // Retourner le nouvel array
-                Value::Array(vec_values)
-            },
-            Value::Bool(o) => Value::Bool(o),
-            Value::Number(o) => Value::Number(o),
-            Value::String(o) => Value::String(o),
-            Value::Null => Value::Null,
-        };
-
-        Ok(res)
-    }
 
     // /// Reorganise un message en ordre pour hachage, signature ou verification.
     // pub fn preparer_message_ordered(entete: Entete, contenu: &mut Map<String, Value>) -> Result<Map<&str, &Value>, Box<dyn Error>> {
@@ -575,7 +522,7 @@ impl MessageMilleGrille {
             // let mut contenu = &self.contenu;
             // let contenu_prev: serde_json::map::IntoIter = contenu.into_iter();
             // self.contenu = MessageMilleGrille::preparer_btree_recursif_into_iter(contenu_prev)?;
-            self.contenu = MessageMilleGrille::preparer_btree_recursif(contenu)?;
+            self.contenu = preparer_btree_recursif(contenu)?;
             self.contenu_traite = true;
         }
         Ok(())
@@ -702,6 +649,60 @@ impl Serialize for MessageMilleGrille {
 
     }
 }
+
+pub fn preparer_btree_recursif(mut contenu: Map<String, Value>) -> Result<Map<String, Value>, Box<dyn Error>> {
+    let mut iter: serde_json::map::IntoIter = contenu.into_iter();
+    preparer_btree_recursif_into_iter(iter)
+}
+
+/// Preparer recursivement le contenu en triant les cles.
+fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Result<Map<String, Value>, Box<dyn Error>> {
+    let mut ordered: BTreeMap<String, Value> = BTreeMap::new();
+
+    // Copier dans une BTreeMap (via trier les keys)
+    // let mut iter: serde_json::map::IntoIter = contenu.into_iter();
+    while let Some((k, mut v)) = iter.next() {
+        let value = map_valeur_recursif(v)?;
+        ordered.insert(k, value);
+    }
+
+    // Reconvertir en Map<String, Value> (flag preserve_order est actif)
+    let mut map_ordered = Map::new();
+    let mut iter_ordered = ordered.into_iter();
+    while let Some((k, v)) = iter_ordered.next() {
+        map_ordered.insert(k, v);
+    }
+
+    Ok(map_ordered)
+}
+
+fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
+    let res = match v {
+        Value::Object(o) => {
+            let map = preparer_btree_recursif(o)?;
+            Value::Object(map)
+        },
+        Value::Array(o) => {
+            // Parcourir array recursivement
+            let mut arr = o.into_iter();
+            let mut vec_values = Vec::new();
+
+            while let Some(v) = arr.next() {
+                vec_values.push(map_valeur_recursif(v)?)
+            }
+
+            // Retourner le nouvel array
+            Value::Array(vec_values)
+        },
+        Value::Bool(o) => Value::Bool(o),
+        Value::Number(o) => Value::Number(o),
+        Value::String(o) => Value::String(o),
+        Value::Null => Value::Null,
+    };
+
+    Ok(res)
+}
+
 
 #[derive(Clone, Debug)]
 pub struct MessageSerialise {

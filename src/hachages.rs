@@ -41,21 +41,40 @@ pub fn hacher_bytes(contenu: &[u8], code: Option<Code>, base: Option<Base>) -> S
     valeur_hachee
 }
 
+pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Result<bool, Box<dyn Error>>
+    where S: Serialize
+{
+    let value = serde_json::to_value(s)?;
+
+    let ser_bytes = serde_json::to_vec(&value)?;
+    debug!("Verification hachage message {}", String::from_utf8(ser_bytes.clone()).expect("string"));
+
+    let mh_digest = code.digest(ser_bytes.as_slice());
+    let mut mh_bytes: Vec<u8> = mh_digest.to_bytes();
+
+    // Enlever 2 premiers bytes (multibase et multihash)
+    let hachage_calcule = &mh_bytes.as_slice()[2..];
+
+    debug!("Hachage comparaison recu/calcule\n{:?}\n{:?}", hachage_calcule, hachage);
+
+    Ok(hachage_calcule == hachage)
+}
+
 pub fn verifier_multihash(hachage: &str, contenu: &[u8]) -> Result<bool, Box<dyn Error>> {
     // let mb = "mEiDhIyaO8TdBnmXKWeih9o+ASND5t8VgZfqDjLan8lT7xg";
     debug!("Verifier multihash {}", hachage);
 
     // Extraire multihash bytes de l'input string en multibase
-    let mb_bytes = decode(hachage).unwrap();
+    let mb_bytes = decode(hachage)?;
 
     // Extraire le code et digest du multihash
-    let mh = Multihash::from_bytes(&mb_bytes.1).unwrap();
+    let mh = Multihash::from_bytes(&mb_bytes.1)?;
     let digest = mh.digest();
     let code = mh.code();
     debug!("Chargement multihash, code {:x}, \ndigest: {:02x?}", code, digest);
 
     // Recalculer le digest avec le contenu
-    let digester = Code::try_from(code).unwrap();
+    let digester = Code::try_from(code)?;
 
     debug!("Type de digest {:?}", digester);
 
