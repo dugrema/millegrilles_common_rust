@@ -19,6 +19,11 @@ use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
 use crate::verificateur::verifier_message;
+use crate::transactions::{Transaction, TransactionImpl};
+use crate::bson::Document;
+use chrono::{DateTime, Utc};
+use crate::serde::de::DeserializeOwned;
+use std::convert::{TryInto, TryFrom};
 
 /// Thread de traitement des messages
 pub async fn recevoir_messages(
@@ -372,7 +377,7 @@ pub struct MessageValide {
     pub type_message: Option<TypeMessageIn>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MessageValideAction {
     pub message: MessageSerialise,
     pub q: String,
@@ -400,6 +405,13 @@ impl MessageValideAction {
             exchange: None,
             type_message,
         }
+    }
+}
+impl TryInto<TransactionImpl> for MessageValideAction {
+    type Error = Box<dyn Error>;
+
+    fn try_into(self) -> Result<TransactionImpl, Self::Error> {
+        TransactionImpl::try_from(self.message)
     }
 }
 

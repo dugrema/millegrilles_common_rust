@@ -10,6 +10,7 @@ use mongodb::bson::{Bson, Document};
 use mongodb::error::{BulkWriteError, BulkWriteFailure, ErrorKind};
 use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
 use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
@@ -20,39 +21,45 @@ use crate::generateur_messages::GenerateurMessages;
 use crate::mongo_dao::MongoDao;
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::{MessageTrigger, MessageValideAction};
+use std::convert::{TryInto, TryFrom};
+use std::fmt::Debug;
 
-pub async fn transmettre_evenement_persistance(
+pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
-    uuid_transaction: &str,
-    domaine: &str,
-    action: &str,
-    partition: Option<&str>,
-    reply_to: Option<String>,
-    correlation_id: Option<String>
-) -> Result<(), String> {
+    uuid_transaction: S,
+    domaine: S,
+    action: S,
+    partition: Option<&String>,
+    reply_to: Option<&String>,
+    correlation_id: Option<&String>
+) -> Result<(), String>
+    where S: AsRef<str>
+{
     let mut evenement = json!({
-        "uuid_transaction": uuid_transaction,
+        "uuid_transaction": uuid_transaction.as_ref(),
         "evenement": EVENEMENT_TRANSACTION_PERSISTEE,
-        "domaine": domaine,
-        "action": action,
+        "domaine": domaine.as_ref(),
+        "action": action.as_ref(),
         "partition": partition,
     });
 
     let mut evenement_map = evenement.as_object_mut().expect("map");
 
     if let Some(reply_to) = reply_to {
-        evenement_map.insert("reply_to".into(), Value::from(reply_to));
+        evenement_map.insert("reply_to".into(), Value::from(reply_to.to_owned()));
     }
 
     if let Some(correlation_id) = correlation_id {
-        evenement_map.insert("correlation_id".into(), Value::from(correlation_id));
+        evenement_map.insert("correlation_id".into(), Value::from(correlation_id.to_owned()));
     }
 
     // let rk = format!("{}.transaction_persistee", domaine);
 
     // let message = MessageJson::new(evenement);
 
-    Ok(middleware.emettre_evenement(domaine, EVENEMENT_TRANSACTION_PERSISTEE, None, &evenement, Some(vec!(Securite::L4Secure))).await?)
+    Ok(middleware.emettre_evenement(
+        domaine.as_ref(), EVENEMENT_TRANSACTION_PERSISTEE, None, &evenement, Some(vec!(Securite::L4Secure))
+    ).await?)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -97,7 +104,7 @@ async fn extraire_transaction(validateur: &(impl ValidateurX509), doc_transactio
     Ok(TransactionImpl::new(doc_transaction, enveloppe))
 }
 
-pub trait Transaction {
+pub trait Transaction: Clone + Debug {
     fn get_contenu(&self) -> &Document;
     fn contenu(self) -> Document;
     fn get_entete(&self) -> &Document;
@@ -107,9 +114,12 @@ pub trait Transaction {
     fn get_estampille(&self) -> &DateTime<Utc>;
     fn get_enveloppe_certificat(&self) -> Option<&EnveloppeCertificat>;
     fn get_evenements(&self) -> &Document;
+
+    fn convertir<S>(self) -> Result<S, Box<dyn Error>>
+        where S: DeserializeOwned;
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TransactionImpl {
     contenu: Document,
     domaine: String,
@@ -143,6 +153,33 @@ impl TransactionImpl {
             estampille,
             enveloppe_certificat,
         }
+    }
+}
+
+impl TryFrom<MessageSerialise> for TransactionImpl {
+    type Error = Box<dyn Error>;
+
+    fn try_from(value: MessageSerialise) -> Result<Self, Self::Error> {
+        let entete = value.get_entete();
+        let domaine = match &entete.domaine {
+            Some(d) => d.to_owned(),
+            None => Err(format!("Domaine absent"))?
+        };
+        let action = match &entete.action {
+            Some(a) => a.to_owned(),
+            None => Err(format!("Action absente"))?
+        };
+
+        let contenu: Document = value.get_msg().map_contenu(None)?;
+
+        Ok(TransactionImpl {
+            contenu,
+            domaine,
+            action,
+            uuid_transaction: entete.uuid_transaction.clone(),
+            estampille: entete.estampille.get_datetime().to_owned(),
+            enveloppe_certificat: value.certificat,
+        })
     }
 }
 
@@ -184,6 +221,13 @@ impl Transaction for TransactionImpl {
 
     fn get_evenements(&self) -> &Document {
         self.contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements")
+    }
+
+    fn convertir<S>(self) -> Result<S, Box<dyn Error>>
+        where S: DeserializeOwned
+    {
+        let content = serde_json::from_value(serde_json::to_value(self.contenu)?)?;
+        Ok(content)
     }
 }
 
@@ -361,7 +405,7 @@ where
         }
     };
     let partition = match &entete.partition {
-        Some(p) => Some(p.as_str()),
+        Some(p) => Some(p),
         None => None
     };
 

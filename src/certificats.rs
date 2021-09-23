@@ -34,6 +34,7 @@ use crate::constantes::*;
 use crate::hachages::hacher_bytes;
 use std::error::Error;
 use crate::constantes::Securite::L1Public;
+use std::convert::TryInto;
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -814,7 +815,13 @@ impl CollectionCertificatsPem {
 pub trait VerificateurPermissions {
     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille>;
 
-    fn verifier_exchanges(&self, exchanges_permis: Vec<String>) -> bool {
+    fn verifier_exchanges(&self, exchanges_permis: Vec<Securite>) -> bool {
+        // Valider certificat.
+        let exchanges_string: Vec<String> = exchanges_permis.into_iter().map(|s| s.try_into().expect("securite")).collect();
+        self.verifier_exchanges_string(exchanges_string)
+    }
+
+    fn verifier_exchanges_string(&self, exchanges_permis: Vec<String>) -> bool {
         // Valider certificat.
         let extensions = match self.get_extensions() {
             Some(e) => e,

@@ -1,6 +1,8 @@
 use crate::constantes::Securite::{L1Public, L2Prive, L3Protege, L4Secure};
 use std::collections::HashSet;
 use std::cmp::Eq;
+use std::convert::TryFrom;
+use std::error::Error;
 
 // Differents formats pour le niveau de securite
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -9,6 +11,28 @@ pub enum Securite {
     L2Prive,
     L3Protege,
     L4Secure,
+}
+impl Into<&str> for Securite {
+    fn into(self) -> &'static str {
+        securite_str(&self)
+    }
+}
+impl Into<String> for Securite {
+    fn into(self) -> String {
+        String::from(securite_str(&self))
+    }
+}
+impl TryFrom<&str> for Securite {
+    type Error = String;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        securite_enum(value)
+    }
+}
+impl TryFrom<String> for Securite {
+    type Error = String;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        securite_enum(value.as_str())
+    }
 }
 
 pub const SECURITE_1_PUBLIC: &str = "1.public";
