@@ -18,6 +18,112 @@ use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageS
 use crate::middleware::IsConfigurationPki;
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
+use std::convert::TryFrom;
+
+/// Conserve l'information de routage in/out d'un message
+struct RoutageMessageAction {
+    domaine: String,
+    action: String,
+    partition: Option<String>,
+    exchanges: Option<Vec<Securite>>,
+    reply_to: Option<String>,
+    correlation_id: Option<String>,
+}
+impl RoutageMessageAction {
+
+    pub fn new<S>(domaine: S, action: S) -> Self
+        where S: Into<String>
+    {
+        RoutageMessageAction {
+            domaine: domaine.into(),
+            action: action.into(),
+            partition: None, exchanges: None, reply_to: None, correlation_id: None
+        }
+    }
+
+    pub fn builder<S>(domaine: S, action: S) -> RoutageMessageActionBuilder
+        where S: Into<String>
+    {
+        RoutageMessageActionBuilder::new(domaine, action)
+    }
+
+}
+
+struct RoutageMessageActionBuilder {
+    domaine: String,
+    action: String,
+    partition: Option<String>,
+    exchanges: Option<Vec<Securite>>,
+    reply_to: Option<String>,
+    correlation_id: Option<String>,
+}
+impl RoutageMessageActionBuilder {
+    pub fn new<S>(domaine: S, action: S) -> Self
+        where S: Into<String>
+    {
+        RoutageMessageActionBuilder {
+            domaine: domaine.into(),
+            action: action.into(),
+            partition: None, exchanges: None, reply_to: None, correlation_id: None
+        }
+    }
+
+    pub fn partition<S>(mut self, partition: S) -> Self
+        where S: Into<String>
+    {
+        self.partition = Some(partition.into());
+        self
+    }
+
+    pub fn exchanges<S, V>(mut self, exchanges: V) -> Result<Self, Box<dyn Error>>
+        where
+            S: AsRef<str>,
+            V: AsRef<Vec<S>>
+    {
+        self.exchanges = Some(securite_vec_to_sec(exchanges)?);
+        Ok(self)
+    }
+
+    pub fn reply_to<S>(mut self, reply_to: S) -> Self
+        where S: Into<String>
+    {
+        self.reply_to = Some(reply_to.into());
+        self
+    }
+
+    pub fn correlation_id<S>(mut self, correlation_id: S) -> Self
+        where S: Into<String>
+    {
+        self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    pub fn build(self) -> RoutageMessageAction {
+        RoutageMessageAction {
+            domaine: self.domaine,
+            action: self.action,
+            partition: self.partition,
+            exchanges: self.exchanges,
+            reply_to: self.reply_to,
+            correlation_id: self.correlation_id,
+        }
+    }
+}
+
+struct RoutageMessageReponse {
+    reply_to: String,
+    correlation_id: String,
+}
+impl RoutageMessageReponse {
+    pub fn new<S>(reply_to: S, correlation_id: S) -> Self
+        where S: Into<String>
+    {
+        RoutageMessageReponse {
+            reply_to: reply_to.into(),
+            correlation_id: correlation_id.into(),
+        }
+    }
+}
 
 #[async_trait]
 pub trait GenerateurMessages: FormatteurMessage + Send + Sync {

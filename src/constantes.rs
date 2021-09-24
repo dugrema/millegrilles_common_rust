@@ -34,6 +34,20 @@ impl TryFrom<String> for Securite {
         securite_enum(value.as_str())
     }
 }
+pub fn securite_vec_to_sec<S, V>(vec_sec: V) -> Result<Vec<Securite>, Box<dyn Error>>
+    where S: AsRef<str>,
+          V: AsRef<Vec<S>>
+{
+    let vec_sec_ref = vec_sec.as_ref();
+    let mut vec_securite = Vec::new();
+    for e in vec_sec_ref {
+        let e_string = e.as_ref();
+        let e_sec: Securite = Securite::try_from(e_string)?;
+        vec_securite.push(e_sec);
+    }
+
+    Ok(vec_securite)
+}
 
 pub const SECURITE_1_PUBLIC: &str = "1.public";
 pub const SECURITE_2_PRIVE: &str = "2.prive";
