@@ -815,6 +815,20 @@ impl CollectionCertificatsPem {
 pub trait VerificateurPermissions {
     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille>;
 
+    fn verifier(&self, exchanges: Option<Vec<Securite>>, roles: Option<Vec<RolesCertificats>>) -> bool {
+        let mut valide = true;
+
+        if let Some(e) = exchanges {
+            valide = valide && self.verifier_exchanges(e);
+        }
+
+        if let Some(r) = roles {
+            valide = valide && self.verifier_roles(r);
+        }
+
+        valide
+    }
+
     fn verifier_exchanges(&self, exchanges_permis: Vec<Securite>) -> bool {
         // Valider certificat.
         let exchanges_string: Vec<String> = exchanges_permis.into_iter().map(|s| s.try_into().expect("securite")).collect();
@@ -842,6 +856,39 @@ pub trait VerificateurPermissions {
 
         let res: Vec<&String> = hs_param.intersection(&hs_cert).collect();
         // let res: Vec<&String> = exchanges_permis.iter().filter(|c| ex.contains(c)).collect();
+        if res.len() == 0 {
+            return false
+        }
+
+        true
+    }
+
+    /// Verifie les roles des certificats
+    fn verifier_roles(&self, roles_permis: Vec<RolesCertificats>) -> bool {
+        let roles_string: Vec<String> = roles_permis.into_iter().map(|s| s.try_into().expect("securite")).collect();
+        self.verifier_roles_string(roles_string)
+    }
+
+    fn verifier_roles_string(&self, roles_permis: Vec<String>) -> bool {
+        // Valider certificat.
+        let extensions = match self.get_extensions() {
+            Some(e) => e,
+            None => return false
+        };
+
+        let mut hs_param= HashSet::new();
+        hs_param.extend(roles_permis);
+
+        let hs_cert = match extensions.roles.clone() {
+            Some(ex) => {
+                let mut hs_cert = HashSet::new();
+                hs_cert.extend(ex);
+                hs_cert
+            },
+            None => return false,
+        };
+
+        let res: Vec<&String> = hs_param.intersection(&hs_cert).collect();
         if res.len() == 0 {
             return false
         }

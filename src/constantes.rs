@@ -80,10 +80,42 @@ pub fn securite_cascade_public(securite: &Securite) -> HashSet<Securite> {
     set
 }
 
+// Roles (types de certificats serveur)
+pub const ROLE_NOEUD_PROTEGE: &str = "protege";
+pub const ROLE_NOEUD_PRIVE: &str = "prive";
+pub const ROLE_WEB_PROTEGE: &str = "web_protege";
+pub const ROLE_WEB_PRIVE: &str = "web_prive";
+
+pub enum RolesCertificats {
+    NoeudProtege,
+    NoeudPrive,
+    WebProtege,
+    WebPrive,
+}
+impl Into<&str> for RolesCertificats {
+    fn into(self) -> &'static str {
+        match self {
+            RolesCertificats::NoeudProtege => ROLE_NOEUD_PROTEGE,
+            RolesCertificats::NoeudPrive => ROLE_NOEUD_PRIVE,
+            RolesCertificats::WebProtege => ROLE_WEB_PROTEGE,
+            RolesCertificats::WebPrive => ROLE_WEB_PRIVE,
+        }
+    }
+}
+impl Into<String> for RolesCertificats {
+    fn into(self) -> String {
+        let str_static: &str = self.into();
+        String::from(str_static)
+    }
+}
+
 // Global
 
 pub const NEW_LINE_BYTE: u8 = 0x0A;
 pub const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
+
+// Domaines tiers
+pub const DOMAINE_SERVICE_MONITOR: &str = "servicemonitor";
 
 // Evenements/commandes globaux
 pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
