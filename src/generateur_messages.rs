@@ -76,13 +76,11 @@ impl RoutageMessageActionBuilder {
         self
     }
 
-    pub fn exchanges<S, V>(mut self, exchanges: V) -> Result<Self, Box<dyn Error>>
-        where
-            S: AsRef<str>,
-            V: AsRef<Vec<S>>
+    pub fn exchanges<V>(mut self, exchanges: V) -> Self
+        where V: AsRef<Vec<Securite>>
     {
-        self.exchanges = Some(securite_vec_to_sec(exchanges)?);
-        Ok(self)
+        self.exchanges = Some(exchanges.as_ref().to_owned());
+        self
     }
 
     pub fn reply_to<S>(mut self, reply_to: S) -> Self
@@ -129,23 +127,30 @@ impl RoutageMessageReponse {
 
 #[async_trait]
 pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
-    async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String>;
-
-    async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
+    async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M)
+        -> Result<(), String>
         where M: Serialize + Send + Sync;
 
-    async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
-    async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
+    async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
+        -> Result<TypeMessage, String>
+        where M: Serialize + Send + Sync;
+
+    async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
+        where M: Serialize + Send + Sync;
+
+    async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
+        where M: Serialize + Send + Sync;
+
     async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String>;
 
     /// Emettre un message en str deja formatte
-    async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>,
-                             type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool
-    ) -> Result<Option<TypeMessage>, String>;
+    async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
+        -> Result<Option<TypeMessage>, String>;
 
-    async fn emettre_message_millegrille(&self, domaine: &str, action: &str, partition: Option<&str>,
-                             exchange: Option<Securite>, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille
-    ) -> Result<Option<TypeMessage>, String>;
+    async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
+        -> Result<Option<TypeMessage>, String>;
 
     fn mq_disponible(&self) -> bool;
 
@@ -179,23 +184,25 @@ impl GenerateurMessagesImpl {
 
     async fn emettre_message_serializable<M>(
         &self,
-        domaine: &str,
-        action: &str,
-        partition: Option<&str>,
+        routage: RoutageMessageAction,
         message: &M,
-        exchange: Option<Securite>,
         blocking: bool,
         type_message_out: TypeMessageOut
     ) -> Result<Option<TypeMessage>, String>
     where
         M: Serialize + Send + Sync,
     {
-        let message_signe = match self.formatter_message(message, Some(domaine), Some(action), partition, None) {
+        let partition = match &routage.partition {
+            Some(p) => Some(p.as_str()),
+            None => None
+        };
+        let message_signe = match self.formatter_message(
+            message, Some(routage.domaine.as_str()), Some(routage.action.as_str()), partition, None) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
         };
 
-        self.emettre_message_millegrille(domaine, action, partition, exchange, blocking, type_message_out, message_signe).await
+        self.emettre_message_millegrille(routage, blocking, type_message_out, message_signe).await
     }
 
     async fn emettre(&self, message: MessageOut) -> Result<(), String> {
@@ -235,7 +242,10 @@ impl GenerateurMessagesImpl {
 #[async_trait]
 impl GenerateurMessages for GenerateurMessagesImpl {
 
-    async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
+    async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M)
+        -> Result<(), String>
+        where M: Serialize + Send + Sync
+    {
 
         if self.get_mode_regeneration() {
             // Rien a faire
@@ -244,24 +254,24 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
         let message_signe = match self.formatter_message(
             message,
-            Some(domaine),
-            Some(action),
-            partition,
+            Some(&routage.domaine),
+            Some(&routage.action),
+            routage.partition.as_ref(),
             None
         ) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur formattage message {:?}", e))?
         };
 
-        let exchanges_effectifs = match exchanges {
+        let exchanges_effectifs = match routage.exchanges {
             Some(e) => Some(e),
             None => Some(vec!(Securite::L3Protege))
         };
 
         let message_out = MessageOut::new(
-            domaine,
-            action,
-            partition,
+            routage.domaine,
+            routage.action,
+            routage.partition,
             message_signe,
             TypeMessageOut::Evenement,
             exchanges_effectifs
@@ -272,9 +282,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         Ok(())
     }
 
-    async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
-    where
-        M: Serialize + Send + Sync,
+    async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
+        -> Result<TypeMessage, String>
+        where M: Serialize + Send + Sync
     {
 
         if self.get_mode_regeneration() {
@@ -282,7 +292,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             return Ok(TypeMessage::Regeneration)
         }
 
-        match self.emettre_message_serializable(domaine, action, partition, message, exchange, true, TypeMessageOut::Requete).await {
+        match self.emettre_message_serializable(routage, message,true, TypeMessageOut::Requete).await {
             Ok(r) => match r {
                 Some(m) => Ok(m),
                 None => Err(String::from("Aucune reponse")),
@@ -336,23 +346,29 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         // }
     }
 
-    async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+    async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
+        where M: Serialize + Send + Sync
+    {
 
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(Some(TypeMessage::Regeneration))
         }
 
-        self.emettre_message_serializable(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Transaction).await
+        self.emettre_message_serializable(routage, message, blocking, TypeMessageOut::Transaction).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
+    async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
+        where M: Serialize + Send + Sync
+    {
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(Some(TypeMessage::Regeneration))
         }
 
-        self.emettre_message_serializable(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Commande).await
+        self.emettre_message_serializable(routage, message, blocking, TypeMessageOut::Commande).await
     }
 
     async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
@@ -372,19 +388,15 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         Ok(())
     }
 
-    async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>,
-                             type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool
-    ) -> Result<Option<TypeMessage>, String>
+    async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
     {
         let message_millegrille = match MessageSerialise::from_str(message) {
             Ok(m) => m.parsed,
             Err(e) => Err(format!("Erreur formattage message : {:?}", e))?,
         };
         self.emettre_message_millegrille(
-            domaine,
-            action,
-            partition,
-            exchange,
+            routage,
             blocking,
             type_message,
             message_millegrille
@@ -392,21 +404,25 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     }
 
     async fn emettre_message_millegrille(
-        &self, domaine: &str, action: &str, partition: Option<&str>, exchange: Option<Securite>,
-        blocking: bool, type_message_out: TypeMessageOut, message_signe: MessageMilleGrille
-    ) -> Result<Option<TypeMessage>, String> {
-        let exchanges = match exchange {
-            Some(inner) => Some(vec!(inner)),
-            None => Some(vec!(Securite::L3Protege)),
-        };
+        &self, routage: RoutageMessageAction, blocking: bool, type_message_out: TypeMessageOut, message_signe: MessageMilleGrille)
+        -> Result<Option<TypeMessage>, String>
+    {
+        // let exchanges = match &routage.exchanges {
+        //     Some(inner) => Some(vec!(inner)),
+        //     None => Some(vec!(Securite::L3Protege)),
+        // };
+        // let partition = match routage.partition {
+        //     Some(p) => Some(p.as_str()),
+        //     None => None
+        // };
 
         let message_out = MessageOut::new(
-            domaine,
-            action,
-            partition,
+            routage.domaine,
+            routage.action,
+            routage.partition,
             message_signe,
             type_message_out,
-            exchanges
+            routage.exchanges
         );
 
         let (tx_delivery, mut rx_delivery) = oneshot::channel();

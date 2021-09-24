@@ -786,7 +786,10 @@ pub struct MessageOut {
 }
 
 impl MessageOut {
-    pub fn new(domaine: &str, action: &str, partition: Option<&str>, message: MessageMilleGrille, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>) -> MessageOut {
+    pub fn new<S>(domaine: S, action: S, partition: Option<S>, message: MessageMilleGrille, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>)
+        -> MessageOut
+        where S: Into<String>
+    {
         if type_message == TypeMessageOut::Reponse {
             panic!("Reponse non supportee, utiliser MessageOut::new_reply()");
         }
@@ -802,15 +805,15 @@ impl MessageOut {
         };
 
         let partition_owned = match partition {
-            Some(p) => Some(p.to_owned()),
+            Some(p) => Some(p.into()),
             None => None,
         };
 
         MessageOut {
             message,
             type_message,
-            domaine: Some(domaine.to_owned()),
-            action: Some(action.to_owned()),
+            domaine: Some(domaine.into()),
+            action: Some(action.into()),
             partition: partition_owned,
             exchanges: Some(exchange_effectif),
             correlation_id: Some(uuid_transaction),

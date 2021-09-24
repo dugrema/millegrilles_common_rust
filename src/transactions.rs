@@ -17,7 +17,7 @@ use tokio_stream::StreamExt;
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
 use crate::formatteur_messages::{Entete, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::GenerateurMessages;
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::mongo_dao::MongoDao;
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::{MessageTrigger, MessageValideAction};
@@ -53,13 +53,11 @@ pub async fn transmettre_evenement_persistance<S>(
         evenement_map.insert("correlation_id".into(), Value::from(correlation_id.to_owned()));
     }
 
-    // let rk = format!("{}.transaction_persistee", domaine);
+    let routage = RoutageMessageAction::builder(domaine.as_ref(), EVENEMENT_TRANSACTION_PERSISTEE)
+        .exchanges(vec!(Securite::L4Secure))
+        .build();
 
-    // let message = MessageJson::new(evenement);
-
-    Ok(middleware.emettre_evenement(
-        domaine.as_ref(), EVENEMENT_TRANSACTION_PERSISTEE, None, &evenement, Some(vec!(Securite::L4Secure))
-    ).await?)
+    Ok(middleware.emettre_evenement(routage, &evenement).await?)
 }
 
 #[derive(Clone, Debug, Deserialize)]

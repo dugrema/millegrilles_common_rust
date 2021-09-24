@@ -42,7 +42,7 @@ use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
 use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse_tar, TraiterFichier};
 use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::GenerateurMessages;
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_serializable, Hacheur};
 use crate::middleware::{IsConfigurationPki, MiddlewareDb, MiddlewareMessage};
 use crate::mongo_dao::MongoDao;
@@ -166,9 +166,9 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
         if !catalogue_horaire.snapshot {
             // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
 
+            let routage = RoutageMessageAction::new("Backup", "catalogueHoraire");
             let reponse_catalogue = middleware.emettre_message_millegrille(
-                "Backup", "catalogueHoraire", None,
-                None, true, TypeMessageOut::Transaction, catalogue_signe
+                routage,true, TypeMessageOut::Transaction, catalogue_signe
             ).await?;
             debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
         }
@@ -331,13 +331,8 @@ async fn requete_entete_dernier<M>(middleware: &M, nom_collection: &str) -> Resu
 where M: GenerateurMessages
 {
     let requete = json!({ "domaine": nom_collection });
-    let reponse = middleware.transmettre_requete(
-        "Backup",
-        "backupDernierHoraire",
-        None,
-        &requete,
-        None
-    ).await?;
+    let routage = RoutageMessageAction::new("Backup", "backupDernierHoraire");
+    let reponse = middleware.transmettre_requete(routage, &requete).await?;
 
     let message = match reponse {
         TypeMessage::Valide(m) => m.message.parsed,
@@ -1492,14 +1487,10 @@ where M: GenerateurMessages
         "uuid_rapport": &info_backup.uuid_backup,
     });
 
-    middleware.transmettre_commande(
-        "Backup",
-        "declencherBackupQuotidien",
-        None,
-        &trigger,
-        Some(Securite::L3Protege),
-        false
-    ).await?;
+    let routage = RoutageMessageAction::builder("Backup", "declencherBackupQuotidien")
+        .exchanges(vec!(Securite::L3Protege))
+        .build();
+    middleware.transmettre_commande(routage, &trigger, false).await?;
 
     Ok(())
 }
@@ -1539,13 +1530,11 @@ pub async fn emettre_evenement_backup<M>(
         "timestamp": timestamp.timestamp(),
     });
 
-    Ok(middleware.emettre_evenement(
-        "Backup",
-        "backupMaj",
-        None,
-        &value,
-        Some(vec![L3Protege])).await?
-    )
+    let routage = RoutageMessageAction::builder("Backup", "backupMaj")
+        .exchanges(vec![L3Protege])
+        .build();
+
+    Ok(middleware.emettre_evenement(routage, &value).await?)
 }
 
 pub async fn emettre_evenement_restauration<M>(
@@ -1557,13 +1546,11 @@ pub async fn emettre_evenement_restauration<M>(
         "domaine": domaine,
     });
 
-    Ok(middleware.emettre_evenement(
-        "Backup",
-        "restaurationMaj",
-        None,
-        &value,
-        Some(vec![L3Protege])).await?
-    )
+    let routage = RoutageMessageAction::builder("Backup", "restaurationMaj")
+        .exchanges(vec![L3Protege])
+        .build();
+
+    Ok(middleware.emettre_evenement(routage, &value).await?)
 }
 
 // def transmettre_evenement_backup(self, uuid_rapport: str, evenement: str, heure: datetime.datetime, info: dict = None, sousdomaine: str = None):

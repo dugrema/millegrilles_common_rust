@@ -38,16 +38,17 @@ pub trait FormatteurMessage: IsConfigurationPki {
     // fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 
     /// Implementation de formattage et signature d'un message de MilleGrille
-    fn formatter_message<S>(
+    fn formatter_message<S, T>(
         &self,
         contenu: &S,
-        domaine: Option<&str>,
-        action: Option<&str>,
-        partition: Option<&str>,
+        domaine: Option<T>,
+        action: Option<T>,
+        partition: Option<T>,
         version: Option<i32>
     ) -> Result<MessageMilleGrille, Box<dyn Error>>
     where
         S: Serialize,
+        T: AsRef<str>
     {
         let enveloppe = self.get_enveloppe_privee();
         MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, action, partition, version)
@@ -62,7 +63,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
         S: Serialize,
     {
         let enveloppe = self.get_enveloppe_privee();
-        MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None, None, None, version)
+        MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None::<&str>, None, None, version)
     }
 
     fn signer_message(
@@ -81,7 +82,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
 
     fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {
         let reponse = json!({"ok": ok, "message": message});
-        self.formatter_message(&reponse, None, None, None, None)
+        self.formatter_message(&reponse, None::<&str>, None, None, None)
     }
 }
 
@@ -215,16 +216,17 @@ impl MessageMilleGrille {
         }
     }
 
-    pub fn new_signer<S>(
+    pub fn new_signer<S, T>(
         enveloppe_privee: &EnveloppePrivee,
         contenu: &S,
-        domaine: Option<&str>,
-        action: Option<&str>,
-        partition: Option<&str>,
+        domaine: Option<T>,
+        action: Option<T>,
+        partition: Option<T>,
         version: Option<i32>
     ) -> Result<Self, Box<dyn std::error::Error>>
     where
         S: Serialize,
+        T: AsRef<str>
     {
         // Serialiser le contenu
         let value_ordered: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
@@ -260,14 +262,17 @@ impl MessageMilleGrille {
 
     /// Va creer une nouvelle entete, calculer le hachag
     /// Note : value doit etre deja trie (BTreeMap recursif)
-    fn creer_entete(
+    fn creer_entete<S>(
         enveloppe_privee: &EnveloppePrivee,
-        domaine: Option<&str>,
-        action: Option<&str>,
-        partition: Option<&str>,
+        domaine: Option<S>,
+        action: Option<S>,
+        partition: Option<S>,
         version: Option<i32>,
         value: &Map<String, Value>
-    ) -> Result<Entete, Box<dyn Error>> {
+    )
+        -> Result<Entete, Box<dyn Error>>
+        where S: AsRef<str>
+    {
 
         // Calculer le hachage du contenu
         let message_string = serde_json::to_string(&value)?;
@@ -283,17 +288,17 @@ impl MessageMilleGrille {
             .version(1);
 
         match domaine {
-            Some(d) => entete_builder = entete_builder.domaine(d.to_owned()),
+            Some(d) => entete_builder = entete_builder.domaine(d.as_ref().to_owned()),
             None => (),
         }
 
         match action {
-            Some(a) => entete_builder = entete_builder.action(a.to_owned()),
+            Some(a) => entete_builder = entete_builder.action(a.as_ref().to_owned()),
             None => (),
         }
 
         match partition {
-            Some(p) => entete_builder = entete_builder.partition(p.to_owned()),
+            Some(p) => entete_builder = entete_builder.partition(p.as_ref().to_owned()),
             None => (),
         }
 

@@ -14,7 +14,7 @@ use TypeMessageOut as TypeMessageIn;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::configuration::charger_configuration_avec_db;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse, RoutageMessageAction};
 use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
@@ -235,7 +235,8 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
             let requete = json!({"fingerprint": fingerprint});
             let domaine_action = format!("certificat.{}", fingerprint);
             // let message = MessageJson::new(requete);
-            match middleware.transmettre_requete("certificat", fingerprint.as_str(), None, &requete, None).await {
+            let routage = RoutageMessageAction::new("certificat", fingerprint.as_str());
+            match middleware.transmettre_requete(routage, &requete).await {
                 Ok(r) => {
                     tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
                         .await.expect("resend delivery avec certificat");

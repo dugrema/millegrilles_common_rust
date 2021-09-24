@@ -24,7 +24,7 @@ use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherData};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse, RoutageMessageAction};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, TypeMessage, valider_message};
@@ -177,35 +177,47 @@ impl ValidateurX509 for MiddlewareDb {
 #[async_trait]
 impl GenerateurMessages for MiddlewareDb {
 
-    async fn emettre_evenement(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchanges: Option<Vec<Securite>>) -> Result<(), String> {
-        self.generateur_messages.emettre_evenement(domaine, action, partition, message, exchanges).await
-    }
-
-    async fn transmettre_requete<M>(&self, domaine: &str, action: &str, partition: Option<&str>, message: &M, exchange: Option<Securite>) -> Result<TypeMessage, String>
-    where
-        M: Serialize + Send + Sync,
+    async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M)
+        -> Result<(), String>
+        where M: Serialize + Send + Sync
     {
-        self.generateur_messages.transmettre_requete(domaine, action, partition, message, exchange).await
+        self.generateur_messages.emettre_evenement(routage, message).await
     }
 
-    async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.soumettre_transaction(domaine, action, partition, message, exchange, blocking).await
+    async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
+        -> Result<TypeMessage, String>
+        where M: Serialize + Send + Sync
+    {
+        self.generateur_messages.transmettre_requete(routage, message).await
     }
 
-    async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize + Send + Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.transmettre_commande(domaine, action, partition, message, exchange, blocking).await
+    async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
+        where M: Serialize + Send + Sync
+    {
+        self.generateur_messages.soumettre_transaction(routage, message, blocking).await
+    }
+
+    async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
+        where M: Serialize + Send + Sync
+    {
+        self.generateur_messages.transmettre_commande(routage, message, blocking).await
     }
 
     async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
         self.generateur_messages.repondre(routage, message).await
     }
 
-    async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>, type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.emettre_message(domaine, action, partition, type_message, message, exchange, blocking).await
+    async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
+        -> Result<Option<TypeMessage>, String>
+    {
+        self.generateur_messages.emettre_message(routage, type_message, message, blocking).await
     }
 
-    async fn emettre_message_millegrille(&self, domaine: &str, action: &str, partition: Option<&str>, exchange: Option<Securite>, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
-        self.generateur_messages.emettre_message_millegrille(domaine, action, partition, exchange, blocking, type_message, message).await
+    async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
+        -> Result<Option<TypeMessage>, String> {
+        self.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
     }
 
     fn mq_disponible(&self) -> bool {
@@ -365,13 +377,11 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         "primaire": true,
     });
 
-    Ok(middleware.emettre_evenement(
-        "presence",
-          "domaine",
-        None,
-        &message,
-        Some(vec!(Securite::L3Protege))
-    ).await?)
+    let routage = RoutageMessageAction::builder("presence", "domaine")
+        .exchanges(vec!(Securite::L3Protege))
+        .build();
+
+    Ok(middleware.emettre_evenement(routage, &message).await?)
 }
 
 pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine: &str)
