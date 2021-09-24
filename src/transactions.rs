@@ -23,6 +23,7 @@ use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::{MessageTrigger, MessageValideAction};
 use std::convert::{TryInto, TryFrom};
 use std::fmt::Debug;
+use std::borrow::Borrow;
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
@@ -242,10 +243,16 @@ pub enum EtatTransaction {
     Complete,
 }
 
-pub async fn marquer_transaction(middleware: &impl MongoDao, nom_collection: &str, uuid_transaction: &str, etat: EtatTransaction) -> Result<(), String> {
+pub async fn marquer_transaction<'a, M, S>(middleware: &M, nom_collection: S, uuid_transaction: S, etat: EtatTransaction)
+    -> Result<(), String>
+    where
+        M: MongoDao,
+        S: AsRef<str>
+{
 
     let mut set = doc! {};
     let mut current_date = doc! {};
+    let uuid_transaction_str = uuid_transaction.as_ref();
 
     match etat {
         EtatTransaction::Complete => {
@@ -259,19 +266,19 @@ pub async fn marquer_transaction(middleware: &impl MongoDao, nom_collection: &st
         "$currentDate": current_date,
     };
     let filtre = doc! {
-        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
+        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction_str,
     };
 
-    let collection = middleware.get_collection(nom_collection)?;
+    let collection = middleware.get_collection(nom_collection.as_ref())?;
     match collection.update_one(filtre, ops, None).await {
         Ok(update_result) => {
             if update_result.matched_count == 1 {
                 Ok(())
             } else {
-                Err(format!("Erreur update transaction {}, aucun match", uuid_transaction))
+                Err(format!("Erreur update transaction {}, aucun match", uuid_transaction_str))
             }
         },
-        Err(e) => Err(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction, e)),
+        Err(e) => Err(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction_str, e)),
     }
 }
 

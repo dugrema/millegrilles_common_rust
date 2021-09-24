@@ -829,6 +829,20 @@ pub trait VerificateurPermissions {
         valide
     }
 
+    fn verifier_usager<S>(&self, user_id: S) -> bool
+        where S: AsRef<str>
+    {
+        let extensions = match self.get_extensions() {
+            Some(e) => e,
+            None => return false
+        };
+
+        match &extensions.user_id {
+            Some(u) => u.as_str() == user_id.as_ref(),
+            None => false
+        }
+    }
+
     fn verifier_exchanges(&self, exchanges_permis: Vec<Securite>) -> bool {
         // Valider certificat.
         let exchanges_string: Vec<String> = exchanges_permis.into_iter().map(|s| s.try_into().expect("securite")).collect();
