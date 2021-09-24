@@ -538,13 +538,13 @@ impl MessageMilleGrille {
 
     /// Mapper le contenu ou un champ (1er niveau) du contenu vers un objet Deserialize
     pub fn map_contenu<'de, C>(&self, nom_champ: Option<&str>) -> Result<C, Box<dyn Error>>
-    where C: DeserializeOwned
+        where C: DeserializeOwned
     {
         let value = match nom_champ {
             Some(c) => {
                 match self.contenu.get(c) {
                     Some(c) => c.to_owned(),
-                    None => Err(format!("Contenu non convertible"))?,
+                    None => Err(format!("formatteur_messages.map_contenu Champ {} introuvable", c))?,
                 }
             },
             None => serde_json::to_value(self.contenu.clone())?,
