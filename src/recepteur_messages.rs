@@ -14,7 +14,7 @@ use TypeMessageOut as TypeMessageIn;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::configuration::charger_configuration_avec_db;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse};
 use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
@@ -316,8 +316,8 @@ async fn preparer_message_reponse<M>(
 {
     let message_value = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
     let message = middleware.formatter_reponse(message_value, None)?;
-
-    Ok(middleware.repondre(message, reply_q, correlation_id).await?)
+    let routage = RoutageMessageReponse::new(reply_q, correlation_id);
+    Ok(middleware.repondre(routage, message).await?)
 }
 
 async fn traiter_certificat_attache(validateur: &impl ValidateurX509, certificat: &Value, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {

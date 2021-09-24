@@ -21,7 +21,8 @@ use crate::recepteur_messages::TypeMessage;
 use std::convert::TryFrom;
 
 /// Conserve l'information de routage in/out d'un message
-struct RoutageMessageAction {
+#[derive(Clone, Debug)]
+pub struct RoutageMessageAction {
     domaine: String,
     action: String,
     partition: Option<String>,
@@ -49,7 +50,7 @@ impl RoutageMessageAction {
 
 }
 
-struct RoutageMessageActionBuilder {
+pub struct RoutageMessageActionBuilder {
     domaine: String,
     action: String,
     partition: Option<String>,
@@ -110,9 +111,10 @@ impl RoutageMessageActionBuilder {
     }
 }
 
-struct RoutageMessageReponse {
-    reply_to: String,
-    correlation_id: String,
+#[derive(Clone, Debug)]
+pub struct RoutageMessageReponse {
+    pub reply_to: String,
+    pub correlation_id: String,
 }
 impl RoutageMessageReponse {
     pub fn new<S>(reply_to: S, correlation_id: S) -> Self
@@ -134,7 +136,7 @@ pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
 
     async fn soumettre_transaction(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
     async fn transmettre_commande(&self, domaine: &str, action: &str, partition: Option<&str>, message: &(impl Serialize+Send+Sync), exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String>;
-    async fn repondre(&self, message: MessageMilleGrille, reply_q: &str, correlation_id: &str) -> Result<(), String>;
+    async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String>;
 
     /// Emettre un message en str deja formatte
     async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>,
@@ -353,21 +355,16 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         self.emettre_message_serializable(domaine, action, partition, message, exchange, blocking, TypeMessageOut::Commande).await
     }
 
-    async fn repondre(&self, message: MessageMilleGrille, reply_q: &str, correlation_id: &str) -> Result<(), String> {
+    async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(())
         }
 
-        // let message_signe = match self.formatter_message(message, None, None, None, None) {
-        //     Ok(m) => m,
-        //     Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
-        // };
-
         let message_out = MessageOut::new_reply(
             message,
-            correlation_id,
-            reply_q
+            routage.correlation_id.as_str(),
+            routage.reply_to.as_str()
         );
 
         let _ = self.emettre(message_out).await?;

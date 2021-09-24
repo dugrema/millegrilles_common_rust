@@ -24,7 +24,7 @@ use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherData};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, TypeMessage, valider_message};
@@ -196,8 +196,8 @@ impl GenerateurMessages for MiddlewareDb {
         self.generateur_messages.transmettre_commande(domaine, action, partition, message, exchange, blocking).await
     }
 
-    async fn repondre(&self, message: MessageMilleGrille, reply_q: &str, correlation_id: &str) -> Result<(), String> {
-        self.generateur_messages.repondre(message, reply_q, correlation_id).await
+    async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
+        self.generateur_messages.repondre(routage, message).await
     }
 
     async fn emettre_message(&self, domaine: &str, action: &str, partition: Option<&str>, type_message: TypeMessageOut, message: &str, exchange: Option<Securite>, blocking: bool) -> Result<Option<TypeMessage>, String> {
