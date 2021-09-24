@@ -407,6 +407,19 @@ impl MessageValideAction {
             type_message,
         }
     }
+
+    pub fn get_reply_info(&self) -> Result<(String, String), String> {
+        let reply_q = match &self.reply_q {
+            Some(r) => r.to_owned(),
+            None => Err(format!("Reply Q manquante"))?
+        };
+        let correlation_id = match &self.correlation_id {
+            Some(r) => r.to_owned(),
+            None => Err(format!("Correlation id manquant"))?
+        };
+
+        Ok((reply_q, correlation_id))
+    }
 }
 impl TryInto<TransactionImpl> for MessageValideAction {
     type Error = Box<dyn Error>;

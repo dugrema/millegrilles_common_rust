@@ -701,14 +701,23 @@ where
         let properties = {
             let mut properties = BasicProperties::default()
                 .with_correlation_id(correlation_id.clone().into());
-            let lock_reply_q = reply_q.lock().expect("lock");
-            debug!("Emission message, reply_q : {:?}", lock_reply_q);
-            match lock_reply_q.as_ref() {
-                Some(qs) => {
-                    properties = properties.with_reply_to(qs.as_str().into());
+
+            match &message.replying_to {
+                Some(r) => {
+                    debug!("Emission message, reply_q en parametre : {:?}", r);
+                    properties = properties.with_reply_to(r.as_str().into());
                 },
-                None => ()
-            };
+                None => {
+                    let lock_reply_q = reply_q.lock().expect("lock");
+                    debug!("Emission message, reply_q locale : {:?}", lock_reply_q);
+                    match lock_reply_q.as_ref() {
+                        Some(qs) => {
+                            properties = properties.with_reply_to(qs.as_str().into());
+                        },
+                        None => ()
+                    };
+                }
+            }
 
             properties
         };
@@ -781,12 +790,21 @@ pub struct MessageOut {
     action: Option<String>,
     partition: Option<String>,
     exchanges: Option<Vec<Securite>>,     // Utilise pour emission de message avec domaine_action
-    correlation_id: Option<String>,
-    replying_to: Option<String>,    // Utilise pour une reponse
+    pub correlation_id: Option<String>,
+    pub replying_to: Option<String>,    // Utilise pour une reponse
 }
 
 impl MessageOut {
-    pub fn new<S>(domaine: S, action: S, partition: Option<S>, message: MessageMilleGrille, type_message: TypeMessageOut, exchanges: Option<Vec<Securite>>)
+    pub fn new<S>(
+        domaine: S,
+        action: S,
+        partition: Option<S>,
+        message: MessageMilleGrille,
+        type_message: TypeMessageOut,
+        exchanges: Option<Vec<Securite>>,
+        replying_to: Option<S>,
+        correlation_id: Option<S>
+    )
         -> MessageOut
         where S: Into<String>
     {
@@ -794,9 +812,17 @@ impl MessageOut {
             panic!("Reponse non supportee, utiliser MessageOut::new_reply()");
         }
 
-        let uuid_transaction = {
-            let entete = &message.entete;
-            entete.uuid_transaction.clone()
+        let corr_id = match correlation_id {
+            Some(c) => c.into(),
+            None => {
+                let entete = &message.entete;
+                entete.uuid_transaction.clone()
+            }
+        };
+
+        let rep_to = match replying_to {
+            Some(r) => Some(r.into()),
+            None => None,
         };
 
         let exchange_effectif = match exchanges {
@@ -816,8 +842,8 @@ impl MessageOut {
             action: Some(action.into()),
             partition: partition_owned,
             exchanges: Some(exchange_effectif),
-            correlation_id: Some(uuid_transaction),
-            replying_to: None,
+            correlation_id: Some(corr_id),
+            replying_to: rep_to,
         }
     }
 

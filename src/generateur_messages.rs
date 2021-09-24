@@ -274,7 +274,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             routage.partition,
             message_signe,
             TypeMessageOut::Evenement,
-            exchanges_effectifs
+            exchanges_effectifs,
+            routage.reply_to,
+            routage.correlation_id
         );
 
         let _ = self.emettre(message_out).await?;
@@ -407,31 +409,20 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         &self, routage: RoutageMessageAction, blocking: bool, type_message_out: TypeMessageOut, message_signe: MessageMilleGrille)
         -> Result<Option<TypeMessage>, String>
     {
-        // let exchanges = match &routage.exchanges {
-        //     Some(inner) => Some(vec!(inner)),
-        //     None => Some(vec!(Securite::L3Protege)),
-        // };
-        // let partition = match routage.partition {
-        //     Some(p) => Some(p.as_str()),
-        //     None => None
-        // };
-
         let message_out = MessageOut::new(
             routage.domaine,
             routage.action,
             routage.partition,
             message_signe,
             type_message_out,
-            routage.exchanges
+            routage.exchanges,
+            routage.reply_to,
+            routage.correlation_id
         );
 
         let (tx_delivery, mut rx_delivery) = oneshot::channel();
 
-        let correlation_id = {
-            let entete = &message_out.message.entete;
-            entete.uuid_transaction.clone()
-        };
-
+        let correlation_id = message_out.correlation_id.as_ref().expect("correlation_id").to_owned();
         if blocking {
             let demande = MessageInterne::AttenteReponse(AttenteReponse {
                 correlation: correlation_id.clone(),
