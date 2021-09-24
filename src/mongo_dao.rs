@@ -8,11 +8,13 @@ use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::Result as ResultMongo;
 use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
 use crate::constantes::*;
+use serde::de::DeserializeOwned;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
@@ -138,5 +140,11 @@ pub fn filtrer_doc_id(mut doc: &mut Document) {
 }
 
 pub fn convertir_bson_value(doc: Document) -> Result<Value, serde_json::Error> {
+    Ok(serde_json::from_value(serde_json::to_value(doc)?)?)
+}
+
+pub fn convertir_bson_deserializable<D>(doc: Document) -> Result<D, serde_json::Error>
+    where D: DeserializeOwned
+{
     Ok(serde_json::from_value(serde_json::to_value(doc)?)?)
 }
