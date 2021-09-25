@@ -27,7 +27,8 @@ use crate::hachages::{hacher_message, verifier_multihash};
 use crate::middleware::{IsConfigurationPki, map_msg_to_bson};
 use crate::signatures::{SALT_LENGTH, signer_message, VERSION_1};
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
-use crate::bson::Document;
+use crate::bson::{Document, Bson};
+use std::convert::TryFrom;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
@@ -84,6 +85,15 @@ pub trait FormatteurMessage: IsConfigurationPki {
         let reponse = json!({"ok": ok, "message": message});
         self.formatter_message(&reponse, None::<&str>, None, None, None)
     }
+
+    fn reponse_ok(&self) -> Result<Option<MessageMilleGrille>, String> {
+        let reponse = json!({"ok": true});
+        match self.formatter_reponse(&reponse,None) {
+            Ok(m) => Ok(Some(m)),
+            Err(e) => Err(format!("Erreur preparation reponse_ok : {:?}", e))?
+        }
+    }
+
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -917,6 +927,28 @@ impl Default for DateEpochSeconds {
 impl From<DateTime<Utc>> for DateEpochSeconds {
     fn from(dt: DateTime<Utc>) -> Self {
         DateEpochSeconds {date: dt}
+    }
+}
+
+impl Into<Bson> for DateEpochSeconds {
+    fn into(self) -> Bson {
+        // Bson::DateTime(bson::DateTime::from(self.date))
+        Bson::Int32(self.date.timestamp() as i32)
+    }
+}
+
+impl TryFrom<Bson> for DateEpochSeconds {
+    type Error = String;
+
+    fn try_from(value: Bson) -> Result<Self, Self::Error> {
+        match value.as_datetime() {
+            Some(inner_d) => {
+                Ok(DateEpochSeconds {
+                    date: inner_d.to_chrono()
+                })
+            },
+            None => Err(format!("Mauvais format bson (pas datetime)"))
+        }
     }
 }
 
