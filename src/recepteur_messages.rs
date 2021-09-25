@@ -11,7 +11,7 @@ use tokio::{join, sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as Dur
 use tokio_stream::StreamExt;
 use TypeMessageOut as TypeMessageIn;
 
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions, MessageInfoCertificat};
 use crate::configuration::charger_configuration_avec_db;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse, RoutageMessageAction};
@@ -61,7 +61,7 @@ pub async fn recevoir_messages(
             }
         };
 
-        let entete = contenu.get_entete();
+        let entete = contenu.get_entete().clone();
         let fingerprint_certificat = entete.fingerprint_certificat.as_str();
 
         // Extraire routing key pour gerer messages qui ne requierent pas de validation
@@ -87,20 +87,6 @@ pub async fn recevoir_messages(
                 (Some(String::from(rk)), type_message, domaine, action)
             }
         };
-
-        // // Verifier s'il y a un certificat attache. S'assurer qu'il est dans le cache local.
-        // let enveloppe_certificat = match contenu.certificat {
-        //     Some(c) => {
-        //         match traiter_certificat_attache(middleware.as_ref(), c, Some(fingerprint_certificat)).await {
-        //             Ok(c) => Some(c),
-        //             Err(e) => {
-        //                 debug!("Erreur chargement certificat attache\n{:?}", e);
-        //                 None
-        //             },
-        //         }
-        //     },
-        //     None => None,
-        // };
 
         // Valider le message. Si on a deja le certificat, on fait juste l'extraire du Option.
         match valider_message(middleware.as_ref(), &mut contenu).await {
@@ -209,7 +195,7 @@ pub async fn recevoir_messages(
             debug!("Message valide, soumettre a tx_verifie");
             tx.send(message).await.expect("tx_verifie");
         } else {
-            debug!("Message valide et intercepte, pas soumis a tx_verifie");
+            debug!("Message valide et intercepte, pas soumis a tx_verifie : {:?}", &entete);
         }
 
     }
@@ -255,7 +241,9 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
 
 }
 
-pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfigurationPki), message: &TypeMessage) -> bool {
+pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki
+{
     // Intercepter reponses et requetes de certificat
     match &message {
         TypeMessage::Valide(inner) => {
@@ -265,34 +253,12 @@ pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfi
             if inner.type_message == TypeMessageIn::Evenement && inner.action == "infoCertificat" {
                 // Message deja intercepte par ValidateurX509, plus rien a faire.
                 debug!("Evenement certificat {}, message intercepte", inner.routing_key);
+                traiter_certificatintercepter_message(middleware, inner).await;
                 true  // Intercepte
             } else if inner.type_message == TypeMessageIn::Requete && inner.domaine == "certificat" {
                 // Requete pour notre certificat, on l'emet
-                let enveloppe_privee = middleware.get_enveloppe_privee();
-                let fingerprint = enveloppe_privee.fingerprint();
-                if fingerprint.as_str() == inner.action.as_str() {
-                    if let Some(reply_q) = &inner.reply_q {
-                        if let Some(correlation_id) = &inner.correlation_id {
-                            debug!("Emettre certificat a demandeur sous correlation_id {}", correlation_id);
-                            match preparer_message_reponse(
-                                middleware,
-                                message, enveloppe_privee.as_ref(),
-                                reply_q.as_str(),
-                                correlation_id.as_str()
-                            ).await {
-                                Ok(()) => (),
-                                Err(e) => error!("intercepter_message: Erreur emission reponse : {:?}", e)
-                            }
-                            true  // Intercepte
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+                emettre_certificat(middleware, message, inner).await;
+                true
             } else {
                 false  // Pas intercepte
             }
@@ -306,14 +272,70 @@ pub async fn intercepter_message(middleware: &(impl GenerateurMessages + IsConfi
     }
 }
 
-async fn preparer_message_reponse<M>(
+async fn emettre_certificat<M>(middleware: &M, message: &TypeMessage, inner: &MessageValideAction)
+    where M: GenerateurMessages
+{
+    let enveloppe_privee = middleware.get_enveloppe_privee();
+    let fingerprint = enveloppe_privee.fingerprint();
+
+    // Determiner si le message correspond a notre certificat (return immediatement sinon)
+    if fingerprint.as_str() != inner.action.as_str() { return }
+    let reply_q = match &inner.reply_q { Some(inner) => inner.as_str(), None => return};
+    let correlation_id = match &inner.correlation_id { Some(inner) => inner.as_str(), None => return};
+    debug!("Emettre certificat a demandeur sous correlation_id {}", correlation_id);
+
+    match preparer_reponse_certificats(
+        middleware,
+        message,
+        enveloppe_privee.as_ref(),
+        reply_q,
+        correlation_id
+    ).await {
+        Ok(()) => (),
+        Err(e) => error!("intercepter_message: Erreur emission reponse : {:?}", e)
+    }
+
+}
+
+async fn traiter_certificatintercepter_message<M>(middleware: &M, inner: &MessageValideAction)
+    where M: ValidateurX509
+{
+    // Message deja intercepte par ValidateurX509, plus rien a faire.
+    debug!("Evenement certificat {}, message intercepte", inner.routing_key);
+
+    // Charger / mettre certificat en cache au besoin.
+    let m: MessageInfoCertificat = match inner.message.get_msg().map_contenu::<MessageInfoCertificat>(None) {
+        Ok(m) => m,
+        Err(e) => {
+            info!("Erreur lecture message infoCertificat : {:?}", e);
+            return
+        }
+    };
+
+    match m.chaine_pem {
+        Some(chaine_pem) => {
+            let fingerprint = match m.fingerprint.as_ref() {
+                Some(f) => Some(f.as_str()),
+                None => None,
+            };
+            match middleware.charger_enveloppe(&chaine_pem, fingerprint).await {
+                Ok(_) => (),
+                Err(e) => info!("Erreur chargement message certificat.infoCertificat : {:?}", e)
+            }
+        },
+        None => (),
+    }
+
+}
+
+async fn preparer_reponse_certificats<M>(
     middleware: &M,
     message: &TypeMessage,
     enveloppe_privee: &EnveloppePrivee,
     reply_q: &str,
     correlation_id: &str
 ) -> Result<(), Box<dyn Error>>
-    where M:  GenerateurMessages + IsConfigurationPki
+    where M:  GenerateurMessages
 {
     let message_value = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
     let message = middleware.formatter_reponse(message_value, None)?;
@@ -366,7 +388,7 @@ fn parse(data: &Vec<u8>) -> Result<MessageSerialise, String> {
     Ok(message_serialise)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MessageValide {
     pub message: MessageSerialise,
     pub q: String,
@@ -441,12 +463,12 @@ pub struct MessageTrigger {
     pub type_message: Option<TypeMessageIn>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MessageCertificat {
     enveloppe_certificat: EnveloppeCertificat,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum TypeMessage {
     Valide(MessageValide),
     ValideAction(MessageValideAction),

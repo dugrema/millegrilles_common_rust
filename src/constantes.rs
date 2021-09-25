@@ -99,12 +99,14 @@ pub const ROLE_NOEUD_PROTEGE: &str = "protege";
 pub const ROLE_NOEUD_PRIVE: &str = "prive";
 pub const ROLE_WEB_PROTEGE: &str = "web_protege";
 pub const ROLE_WEB_PRIVE: &str = "web_prive";
+pub const ROLE_MONITOR: &str = "monitor";
 
 pub enum RolesCertificats {
     NoeudProtege,
     NoeudPrive,
     WebProtege,
     WebPrive,
+    Monitor,
 }
 impl Into<&str> for RolesCertificats {
     fn into(self) -> &'static str {
@@ -113,6 +115,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::NoeudPrive => ROLE_NOEUD_PRIVE,
             RolesCertificats::WebProtege => ROLE_WEB_PROTEGE,
             RolesCertificats::WebPrive => ROLE_WEB_PRIVE,
+            RolesCertificats::Monitor => ROLE_MONITOR,
         }
     }
 }

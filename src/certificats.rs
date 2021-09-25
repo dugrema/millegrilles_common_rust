@@ -449,6 +449,7 @@ impl FingerprintCertPublicKey {
 }
 
 /// Enveloppe avec cle pour cle et certificat combine
+#[derive(Clone)]
 pub struct EnveloppePrivee {
     pub enveloppe: Arc<EnveloppeCertificat>,
     cle_privee: PKey<Private>,
@@ -498,6 +499,17 @@ impl Debug for EnveloppePrivee {
         f.write_str(format!("Enveloppe privee {}", self.fingerprint()).as_str())
     }
 }
+
+// impl Clone for EnveloppePrivee {
+//     fn clone(&self) -> Self {
+//         EnveloppePrivee {
+//             enveloppe: self.enveloppe.clone(),
+//             cle_privee: self.cle_privee.clone(),
+//             chaine_pem: self.chaine_pem.clone(),
+//             clecert_pem: self.clecert_pem.clone(),
+//         }
+//     }
+// }
 
 #[async_trait]
 pub trait ValidateurX509: Send + Sync {
@@ -915,6 +927,13 @@ impl VerificateurPermissions for EnveloppeCertificat {
     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
         Some(&self.extensions_millegrille)
     }
+}
+
+/// Message global (domaine certificat) utilise pour echanger certificats directement entre modules
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MessageInfoCertificat {
+    pub chaine_pem: Option<Vec<String>>,
+    pub fingerprint: Option<String>,
 }
 
 #[cfg(test)]

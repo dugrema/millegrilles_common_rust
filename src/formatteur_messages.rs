@@ -537,7 +537,7 @@ impl MessageMilleGrille {
     pub fn retirer_certificats(&mut self) { self.certificat = None }
 
     /// Mapper le contenu ou un champ (1er niveau) du contenu vers un objet Deserialize
-    pub fn map_contenu<'de, C>(&self, nom_champ: Option<&str>) -> Result<C, Box<dyn Error>>
+    pub fn map_contenu<C>(&self, nom_champ: Option<&str>) -> Result<C, Box<dyn Error>>
         where C: DeserializeOwned
     {
         let value = match nom_champ {
