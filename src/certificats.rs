@@ -859,6 +859,20 @@ pub trait VerificateurPermissions {
         }
     }
 
+    fn verifier_delegation_globale<S>(&self, delegation: S) -> bool
+        where S: AsRef<str>
+    {
+        let extensions = match self.get_extensions() {
+            Some(e) => e,
+            None => return false
+        };
+
+        match &extensions.delegation_globale {
+            Some(inner) => inner.as_str() == delegation.as_ref(),
+            None => false
+        }
+    }
+
     fn verifier_exchanges(&self, exchanges_permis: Vec<Securite>) -> bool {
         // Valider certificat.
         let exchanges_string: Vec<String> = exchanges_permis.into_iter().map(|s| s.try_into().expect("securite")).collect();

@@ -126,6 +126,10 @@ impl Into<String> for RolesCertificats {
     }
 }
 
+// Delegations
+pub const DELEGATION_GLOBALE_PROPRIETAIRE: &str = "proprietaire";
+
+
 // Global
 
 pub const NEW_LINE_BYTE: u8 = 0x0A;
