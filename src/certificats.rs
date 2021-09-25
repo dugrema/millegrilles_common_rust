@@ -293,6 +293,10 @@ impl EnveloppeCertificat {
     /// Retourne le certificat de l'enveloppe.
     pub fn certificat(&self) -> &X509 { &self.certificat }
 
+    pub fn certificat_millegrille(&self) -> &X509 {
+        &self.chaine.iter().last().expect("cert")
+    }
+
     pub fn presentement_valide(&self) -> bool { self.presentement_valide }
 
     pub fn fingerprint(&self) -> &String { &self.fingerprint }

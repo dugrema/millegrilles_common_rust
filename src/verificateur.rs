@@ -10,11 +10,12 @@ use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Public};
 use openssl::rsa::Padding;
 use openssl::sign::{RsaPssSaltlen, Verifier};
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::certificats::EnveloppeCertificat;
 use crate::certificats::ValidateurX509;
-use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};
+use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise, preparer_btree_recursif, map_valeur_recursif};
 use crate::hachages::verifier_multihash;
 use crate::rabbitmq_dao::MqMessageSendInformation;
 use crate::signatures::{SALT_LENGTH, VERSION_1};
@@ -191,4 +192,22 @@ pub fn verifier_signature_str(public_key: &PKey<Public>, signature: &str, messag
 
     // Retourner la reponse
     Ok(verifier.verify(&signature_bytes.1[1..])?)
+}
+
+pub fn verifier_signature_serialize<S>(public_key: &PKey<Public>, signature: &str, message: &S)
+    -> Result<bool, Box<dyn Error>>
+    where S: Serialize
+{
+    let content = {
+        let val = serde_json::to_value(message)?;
+        let map_val = match val.as_object() {
+            Some(v) => Value::Object(preparer_btree_recursif(v.clone())?),
+            None => map_valeur_recursif(val)?
+        };
+
+        serde_json::to_string(&map_val)?
+    };
+
+    debug!("verifier_signature_serialize Contenu a verifier : \n{}", content.as_str());
+    verifier_signature_str(public_key, signature, content.as_str())
 }

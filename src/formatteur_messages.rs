@@ -691,7 +691,7 @@ fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Res
     Ok(map_ordered)
 }
 
-fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
+pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
     let res = match v {
         Value::Object(o) => {
             let map = preparer_btree_recursif(o)?;
