@@ -17,11 +17,12 @@ use crate::configuration::{IsConfigNoeud, ConfigMessages};
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::middleware::{IsConfigurationPki, thread_emettre_presence_domaine, Middleware};
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{MongoDao, ChampIndex, convertir_bson_value, filtrer_doc_id, IndexOptions};
 use crate::rabbitmq_dao::{TypeMessageOut, QueueType};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction};
 use std::fmt::{Debug, Formatter};
+use crate::constantes::*;
 
 #[async_trait]
 pub trait GestionnaireDomaine: Clone + Send {
@@ -40,7 +41,7 @@ pub trait GestionnaireDomaine: Clone + Send {
     fn preparer_queues(&self) -> Vec<QueueType>;
 
     /// Genere les index du domaine dans MongoDB
-    async fn preparer_index_mongodb<M>(&self, middleware: &M) -> Result<(), String>
+    async fn preparer_index_mongodb_custom<M>(&self, middleware: &M) -> Result<(), String>
         where M: MongoDao;
 
     async fn consommer_requete<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
@@ -187,4 +188,54 @@ pub trait GestionnaireDomaine: Clone + Send {
         reponse
     }
 
+    async fn preparer_index_mongodb<M>(&self, middleware: &M) -> Result<(), String>
+        where M: MongoDao
+    {
+        // Index transactions par uuid-transaction
+        let options_unique_transactions = IndexOptions {
+            nom_index: Some(String::from(TRANSACTION_CHAMP_UUID_TRANSACTION)),
+            unique: true
+        };
+        let champs_index_transactions = vec!(
+            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION), direction: 1}
+        );
+        middleware.create_index(
+            self.get_collection_transactions(),
+            champs_index_transactions,
+            Some(options_unique_transactions)
+        ).await?;
+
+        // Index transactions completes
+        let options_unique_transactions = IndexOptions {
+            nom_index: Some(String::from(TRANSACTION_CHAMP_COMPLETE)),
+            unique: false
+        };
+        let champs_index_transactions = vec!(
+            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1}
+        );
+        middleware.create_index(
+            self.get_collection_transactions(),
+            champs_index_transactions,
+            Some(options_unique_transactions)
+        ).await?;
+
+        // Index backup transactions
+        let options_unique_transactions = IndexOptions {
+            nom_index: Some(String::from(BACKUP_CHAMP_BACKUP_TRANSACTIONS)),
+            unique: false
+        };
+        let champs_index_transactions = vec!(
+            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1},
+            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1},
+            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1},
+        );
+        middleware.create_index(
+            self.get_collection_transactions(),
+            champs_index_transactions,
+            Some(options_unique_transactions)
+        ).await?;
+
+        // Hook pour index custom du domaine
+        self.preparer_index_mongodb_custom(middleware).await
+    }
 }
