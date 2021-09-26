@@ -28,7 +28,8 @@ use crate::middleware::{IsConfigurationPki, map_msg_to_bson};
 use crate::signatures::{SALT_LENGTH, signer_message, VERSION_1};
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 use crate::bson::{Document, Bson};
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
+use crate::mongo_dao::convertir_to_bson;
 
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
@@ -117,6 +118,17 @@ pub struct Entete {
 impl Entete {
     pub fn builder(fingerprint_certificat: &str, hachage_contenu: &str, idmg: &str) -> EnteteBuilder {
         EnteteBuilder::new(fingerprint_certificat.to_owned(), hachage_contenu.to_owned(), idmg.to_owned())
+    }
+}
+
+impl TryInto<Document> for Entete {
+    type Error = String;
+
+    fn try_into(self) -> Result<Document, Self::Error> {
+        match convertir_to_bson(self) {
+            Ok(e) => Ok(e),
+            Err(e) => Err(format!("transaction_catalogue_horaire Erreur conversion entete vers bson : {:?}", e))?
+        }
     }
 }
 
@@ -915,6 +927,15 @@ impl DateEpochSeconds {
 
     pub fn format_ymdh(&self) -> String {
         self.date.format("%Y%m%d%H").to_string()
+    }
+
+    /// Retirer l'heure (mettre a 0/minuit UTC)
+    pub fn get_jour(&self) -> Self {
+        let date_naive = self.date.naive_utc().date();
+        let heure_naive = NaiveTime::from_hms(0, 0, 0);
+        let datetime_naive = NaiveDateTime::new(date_naive, heure_naive);
+        let date = DateTime::from_utc(datetime_naive, Utc);
+        DateEpochSeconds { date }
     }
 }
 

@@ -691,13 +691,13 @@ pub struct BackupInformation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CatalogueHoraire {
     /// Heure du backup (minutes = 0, secs = 0)
-    heure: DateEpochSeconds,
+    pub heure: DateEpochSeconds,
     /// True si c'est un snapshot
-    snapshot: bool,
+    pub snapshot: bool,
     /// Nom du domaine ou sous-domaine
-    domaine: String,
+    pub domaine: String,
     /// Identificateur unique du groupe de backup (collateur)
-    uuid_backup: String,
+    pub uuid_backup: String,
 
     /// Collection des certificats presents dans les transactions du backup
     certificats: CollectionCertificatsPem,
@@ -728,6 +728,11 @@ pub struct CatalogueHoraire {
 }
 
 impl CatalogueHoraire {
+
+    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool, snapshot: bool) -> CatalogueHoraireBuilder {
+        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup, chiffrer, snapshot)
+    }
+
     pub fn get_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
         match &self.cle {
             Some(c) => {
@@ -745,7 +750,7 @@ impl CatalogueHoraire {
 }
 
 #[derive(Clone, Debug)]
-struct CatalogueHoraireBuilder {
+pub struct CatalogueHoraireBuilder {
     heure: DateEpochSeconds,
     nom_domaine: String,
     uuid_backup: String,
@@ -799,12 +804,6 @@ impl BackupHandler for BackupInformation {
     fn run() -> Result<(), String> {
         info!("Demarrage backup");
         Ok(())
-    }
-}
-
-impl CatalogueHoraire {
-    fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool, snapshot: bool) -> CatalogueHoraireBuilder {
-        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup, chiffrer, snapshot)
     }
 }
 
@@ -874,7 +873,7 @@ impl CatalogueHoraireBuilder {
         Ok(())
     }
 
-    fn build(self) -> CatalogueHoraire {
+    pub fn build(self) -> CatalogueHoraire {
 
         let date_str = self.heure.format_ymdh();
 

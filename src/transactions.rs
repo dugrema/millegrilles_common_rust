@@ -103,7 +103,7 @@ async fn extraire_transaction(validateur: &(impl ValidateurX509), doc_transactio
     Ok(TransactionImpl::new(doc_transaction, enveloppe))
 }
 
-pub trait Transaction: Clone + Debug + Send {
+pub trait Transaction: Clone + Debug + Send + Sync {
     fn get_contenu(&self) -> &Document;
     fn contenu(self) -> Document;
     fn get_entete(&self) -> &Document;
