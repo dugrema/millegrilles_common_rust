@@ -283,7 +283,7 @@ pub async fn marquer_transaction<'a, M, S>(middleware: &M, nom_collection: S, uu
 }
 
 /// Resoumet une batch de transaction non completee pour chaque collection.
-pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDao), collections_transactions: &Vec<&str>) -> Result<(), String> {
+pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDao), collections_transactions: &Vec<String>) -> Result<(), String> {
 
     debug!("Resoumettre transactions incompletes pour {:?}", collections_transactions);
     if middleware.mq_disponible() == false {
@@ -294,7 +294,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
     let exp_transactions = chrono::Utc::now() - chrono::Duration::days(15);
 
     for nom_collection in collections_transactions {
-        let collection = middleware.get_collection(nom_collection)?;
+        let collection = middleware.get_collection(nom_collection.as_str())?;
 
         // Marquer les tranactions avec un compteur de resoumission >= limite comme abandonnees (erreur).
         let filtre_expiree = doc! {

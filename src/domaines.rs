@@ -50,19 +50,19 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
         where M: MongoDao;
 
     async fn consommer_requete<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-        where M: Middleware;
+        where M: Middleware + 'static;
 
     async fn consommer_commande<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-        where M: Middleware;
+        where M: Middleware + 'static;
 
     async fn consommer_transaction<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-        where M: Middleware;
+        where M: Middleware + 'static;
 
     async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-        where M: Middleware;
+        where M: Middleware + 'static;
 
     async fn entretien<M>(&self, _middleware: Arc<M>)
-       where M: Middleware;
+       where M: Middleware + 'static;
 
     async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T)
         -> Result<Option<MessageMilleGrille>, String>
