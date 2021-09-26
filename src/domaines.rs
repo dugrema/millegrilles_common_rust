@@ -21,9 +21,10 @@ use crate::mongo_dao::MongoDao;
 use crate::rabbitmq_dao::{TypeMessageOut, QueueType};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction};
+use std::fmt::{Debug, Formatter};
 
 #[async_trait]
-trait GestionnaireDomaine {
+pub trait GestionnaireDomaine: Clone + Send {
 
     /// Retourne le nom du domaine
     fn get_nom_domaine(&self) -> &str;
@@ -51,7 +52,7 @@ trait GestionnaireDomaine {
     async fn consommer_transaction<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware;
 
-    async fn consommer_evenement<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware;
 
     async fn entretien<M>(&self, _middleware: Arc<M>)
@@ -64,7 +65,7 @@ trait GestionnaireDomaine {
             T: Transaction;
 
     /// Initialise le domaine.
-    async fn preparer_threads<M>(&'static self, middleware: Arc<M>)
+    async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
         -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
         where M: Middleware + 'static
     {
@@ -100,7 +101,7 @@ trait GestionnaireDomaine {
         Ok((routing, futures))
     }
 
-    async fn consommer_messages<M>(&self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
+    async fn consommer_messages<M>(self: &'static Self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
         where M: Middleware
     {
         while let Some(message) = rx.recv().await {
@@ -119,7 +120,7 @@ trait GestionnaireDomaine {
         }
     }
 
-    async fn traiter_message_valide_action<M>(&self, middleware: &M, message: MessageValideAction) -> Result<(), Box<dyn Error>>
+    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<(), Box<dyn Error>>
         where M: Middleware
     {
 
@@ -164,7 +165,7 @@ trait GestionnaireDomaine {
     }
 
     /// Traite une transaction en la chargeant, dirigeant vers l'aiguillage puis la marque comme traitee
-    async fn traiter_transaction<M>(&self, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
+    async fn traiter_transaction<M>(self: &'static Self, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao
     {
         let trigger = match serde_json::from_value::<TriggerTransaction>(Value::Object(m.message.get_msg().contenu.clone())) {
@@ -185,5 +186,5 @@ trait GestionnaireDomaine {
 
         reponse
     }
-}
 
+}

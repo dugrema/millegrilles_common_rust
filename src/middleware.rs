@@ -34,7 +34,7 @@ use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMes
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait Middleware:
     ValidateurX509 + GenerateurMessages + MongoDao + ConfigMessages + IsConfigurationPki +
-    IsConfigNoeud + FormatteurMessage + Chiffreur + Dechiffreur
+    IsConfigNoeud + FormatteurMessage + Chiffreur + Dechiffreur + EmetteurCertificat
 {
 }
 
