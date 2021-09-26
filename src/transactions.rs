@@ -655,7 +655,7 @@ where
 
         debug!("Traiter transaction");
 
-        processor.traiter_transaction(middleware, transaction_impl).await?;
+        processor.appliquer_transaction(middleware, transaction_impl).await?;
     }
 
     Ok(())
@@ -663,6 +663,6 @@ where
 
 #[async_trait]
 pub trait TraiterTransaction {
-    async fn traiter_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
+    async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao;
 }

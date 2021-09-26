@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,27 +12,31 @@ use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
 
+use crate::backup::{backup, reset_backup_flag, restaurer};
 use crate::certificats::ValidateurX509;
+use crate::certificats::VerificateurPermissions;
 use crate::chiffrage::{Chiffreur, Dechiffreur};
-use crate::configuration::{IsConfigNoeud, ConfigMessages};
+use crate::configuration::{ConfigMessages, IsConfigNoeud};
+use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
-use crate::middleware::{IsConfigurationPki, thread_emettre_presence_domaine, Middleware};
-use crate::mongo_dao::{MongoDao, ChampIndex, convertir_bson_value, filtrer_doc_id, IndexOptions};
-use crate::rabbitmq_dao::{TypeMessageOut, QueueType};
+use crate::middleware::{IsConfigurationPki, Middleware, thread_emettre_presence_domaine};
+use crate::mongo_dao::{ChampIndex, convertir_bson_value, filtrer_doc_id, IndexOptions, MongoDao};
+use crate::rabbitmq_dao::{QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction};
-use std::fmt::{Debug, Formatter};
-use crate::constantes::*;
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction};
 
 #[async_trait]
-pub trait GestionnaireDomaine: Clone + Send {
+pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
 
     /// Retourne le nom du domaine
     fn get_nom_domaine(&self) -> &str;
 
     /// Retourne le nom de la collection de transactions
     fn get_collection_transactions(&self) -> &str;
+
+    // Retourne la liste de collections de documents
+    fn get_collections_documents(&self) -> Vec<String>;
 
     fn get_q_transactions(&self) -> &str;
     fn get_q_volatils(&self) -> &str;
@@ -103,13 +108,13 @@ pub trait GestionnaireDomaine: Clone + Send {
     }
 
     async fn consommer_messages<M>(self: &'static Self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
-        where M: Middleware
+        where M: Middleware + 'static
     {
         while let Some(message) = rx.recv().await {
             trace!("Message {} recu : {:?}", self.get_nom_domaine(), message);
 
             let resultat = match message {
-                TypeMessage::ValideAction(inner) => self.traiter_message_valide_action(middleware.as_ref(), inner).await,
+                TypeMessage::ValideAction(inner) => self.traiter_message_valide_action(middleware.clone(), inner).await,
                 TypeMessage::Valide(inner) => {warn!("Recu MessageValide sur thread consommation, skip : {:?}", inner); Ok(())},
                 TypeMessage::Certificat(inner) => {warn!("Recu MessageCertificat sur thread consommation, skip : {:?}", inner); Ok(())},
                 TypeMessage::Regeneration => continue, // Rien a faire, on boucle
@@ -121,8 +126,8 @@ pub trait GestionnaireDomaine: Clone + Send {
         }
     }
 
-    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<(), Box<dyn Error>>
-        where M: Middleware
+    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction) -> Result<(), Box<dyn Error>>
+        where M: Middleware + 'static
     {
         debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
         let correlation_id = match &message.correlation_id {
@@ -135,11 +140,11 @@ pub trait GestionnaireDomaine: Clone + Send {
         };
 
         let resultat = match message.type_message {
-            TypeMessageOut::Requete => self.consommer_requete(middleware, message).await,
-            TypeMessageOut::Commande => self.consommer_commande(middleware, message).await,
-            TypeMessageOut::Transaction => self.consommer_transaction(middleware, message).await,
+            TypeMessageOut::Requete => self.consommer_requete(middleware.as_ref(), message).await,
+            TypeMessageOut::Commande => self.consommer_commande_trait(middleware.clone(), message).await,
+            TypeMessageOut::Transaction => self.consommer_transaction(middleware.as_ref(), message).await,
             TypeMessageOut::Reponse => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
-            TypeMessageOut::Evenement => self.consommer_evenement(middleware, message).await,
+            TypeMessageOut::Evenement => self.consommer_evenement(middleware.as_ref(), message).await,
         }?;
 
         match resultat {
@@ -237,5 +242,50 @@ pub trait GestionnaireDomaine: Clone + Send {
 
         // Hook pour index custom du domaine
         self.preparer_index_mongodb_custom(middleware).await
+    }
+
+    /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
+    async fn consommer_commande_trait<M>(&self, middleware: Arc<M>, m: MessageValideAction)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        debug!("Consommer commande : {:?}", &m.message);
+
+        // Autorisation : les commandes globales sont de niveau 3 ou 4
+        // Fallback sur les commandes specifiques au domaine
+        match m.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure)) {
+            true => {
+                match m.action.as_str() {
+                    // Commandes standard
+                    COMMANDE_BACKUP_HORAIRE => backup(
+                        middleware.as_ref(), self.get_nom_domaine(),
+                        self.get_collection_transactions(), true).await,
+                    COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
+                    COMMANDE_RESET_BACKUP => reset_backup_flag(
+                        middleware.as_ref(), self.get_collection_transactions()).await,
+
+                    // Commandes specifiques au domaine
+                    _ => self.consommer_commande(middleware.as_ref(), m).await
+                }
+            },
+            false => self.consommer_commande(middleware.as_ref(), m).await
+        }
+    }
+
+    async fn restaurer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        let noms_collections_docs = self.get_collections_documents();
+        //let processor = self.get_processeur_transactions();
+
+        restaurer(
+            middleware.clone(),
+            self.get_nom_domaine(),
+            self.get_collection_transactions(),
+            &noms_collections_docs,
+            self
+        ).await?;
+
+        Ok(None)
     }
 }
