@@ -15,6 +15,7 @@ pub mod backup;
 pub mod chiffrage;
 pub mod fichiers;
 pub mod messages_generiques;
+pub mod domaines;
 
 // Re-exports
 pub use async_trait;

@@ -31,6 +31,13 @@ use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageVa
 use crate::transactions::{transmettre_evenement_persistance, TransactionImpl};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
+/// Super-trait pour tous les traits implementes par Middleware
+pub trait Middleware:
+    ValidateurX509 + GenerateurMessages + MongoDao + ConfigMessages + IsConfigurationPki +
+    IsConfigNoeud + FormatteurMessage + Chiffreur + Dechiffreur
+{
+}
+
 pub fn configurer(
     queues: Vec<QueueType>,
     listeners: Option<Mutex<Callback<'static, EventMq>>>
