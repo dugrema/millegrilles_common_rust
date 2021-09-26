@@ -56,13 +56,14 @@ pub async fn recevoir_messages(
         let mut contenu = match parse(&delivery.data) {
             Ok(c) => c,
             Err(e) => {
-                debug!("Erreur parsing message : {:?}", e);
+                error!("Erreur parsing message : {:?}", e);
                 continue
             }
         };
 
         let entete = contenu.get_entete().clone();
         let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+        debug!("Traiter message {:?}", entete);
 
         // Extraire routing key pour gerer messages qui ne requierent pas de validation
         let (mut routing_key, type_message, domaine, action) = {
@@ -147,7 +148,7 @@ pub async fn recevoir_messages(
             None => None,
         };
 
-        debug!("Message valide, passer a la prochaine etape (correlation: {:?})", correlation_id);
+        debug!("Message valide {:?}, passer a la prochaine etape (correlation: {:?})", &entete, correlation_id);
         let message = match action {
             Some(inner_action) => {
                 TypeMessage::ValideAction(MessageValideAction {
@@ -192,7 +193,7 @@ pub async fn recevoir_messages(
 
         // Passer le message pour traitement habituel
         if intercepte == false {
-            debug!("Message valide, soumettre a tx_verifie");
+            debug!("Message valide, soumettre a tx_verifie : {:?}", &entete);
             tx.send(message).await.expect("tx_verifie");
         } else {
             debug!("Message valide et intercepte, pas soumis a tx_verifie : {:?}", &entete);

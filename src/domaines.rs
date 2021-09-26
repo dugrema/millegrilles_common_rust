@@ -124,7 +124,7 @@ pub trait GestionnaireDomaine: Clone + Send {
     async fn traiter_message_valide_action<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<(), Box<dyn Error>>
         where M: Middleware
     {
-
+        debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
         let correlation_id = match &message.correlation_id {
             Some(inner) => Some(inner.clone()),
             None => None,

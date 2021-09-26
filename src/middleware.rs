@@ -388,7 +388,10 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         .exchanges(vec!(Securite::L3Protege))
         .build();
 
-    Ok(middleware.emettre_evenement(routage, &message).await?)
+    // todo Reactiver emettre presence quand modules transactions va etre desactive
+    // Ok(middleware.emettre_evenement(routage, &message).await?)
+
+    Ok(())
 }
 
 pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine: &str)

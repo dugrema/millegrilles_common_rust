@@ -106,13 +106,13 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
 {
     let timestamp_backup = Utc::now();
     if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireDebut", &timestamp_backup).await {
-        error!("Erreur emission evenement debut backup : {:?}", e);
+        error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
     }
 
     // Generer liste builders domaine/heures
     let builders = grouper_backups(middleware, &info_backup).await?;
 
-    debug!("Backup horaire collection {} : {:?}", nom_coll_str, builders);
+    debug!("backup_horaire: Backup horaire collection {} : {:?}", nom_coll_str, builders);
 
     // Tenter de charger entete du dernier backup de ce domaine/partition
     let mut entete_precedente: Option<Entete> = requete_entete_dernier(middleware, nom_coll_str).await?;
@@ -142,7 +142,7 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
         // Signer et serialiser catalogue
         let (catalogue_horaire, catalogue_signe, commande_cles) = serialiser_catalogue(
             middleware, builder).await?;
-        debug!("Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
+        debug!("backup_horaire: Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
         let reponse = uploader_backup(
             middleware,
             path_fichier_transactions.as_path(),
@@ -166,9 +166,10 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
         if !catalogue_horaire.snapshot {
             // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
 
-            let routage = RoutageMessageAction::new("Backup", "catalogueHoraire");
+            let routage = RoutageMessageAction::new(BACKUP_NOM_DOMAINE, BACKUP_TRANSACTION_CATALOGUE_HORAIRE);
+            // Avertissement : blocking FALSE, sinon sur le meme module que CoreBackup va capturer la transaction comme la reponse sans la traiter
             let reponse_catalogue = middleware.emettre_message_millegrille(
-                routage,true, TypeMessageOut::Transaction, catalogue_signe
+                routage,false, TypeMessageOut::Transaction, catalogue_signe
             ).await?;
             debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
         }
@@ -331,12 +332,18 @@ async fn requete_entete_dernier<M>(middleware: &M, nom_collection: &str) -> Resu
 where M: GenerateurMessages
 {
     let requete = json!({ "domaine": nom_collection });
-    let routage = RoutageMessageAction::new("Backup", "backupDernierHoraire");
-    let reponse = middleware.transmettre_requete(routage, &requete).await?;
+    let routage = RoutageMessageAction::new(BACKUP_NOM_DOMAINE, BACKUP_REQUETE_DERNIER_HORAIRE);
+    let reponse = match middleware.transmettre_requete(routage, &requete).await {
+        Ok(r) => r,
+        Err(e) => Err(format!("requete_entete_dernier Erreur requete {} : {:?}", nom_collection, e))?
+    };
+
+    debug!("Reponse requete entete dernier : {:?}", reponse);
 
     let message = match reponse {
         TypeMessage::Valide(m) => m.message.parsed,
-        _ => Err(format!("Type reponse invalide"))?,
+        TypeMessage::ValideAction(m) => m.message.parsed,
+        _ => Err(format!("requete_entete_dernier: Type reponse invalide"))?,
     };
 
     let entete: Option<Entete> = match message.map_contenu(Some("dernier_backup")) {
@@ -480,11 +487,9 @@ async fn serialiser_catalogue(
     // Signer et serialiser catalogue
     let catalogue = builder.build();
     let catalogue_value = serde_json::to_value(&catalogue)?;
-    // let message_json = MessageJson::new(catalogue_value);
-    let domaine_action = format!("{}.{}", BACKUP_NOM_DOMAINE, BACKUP_TRANSACTION_CATALOGUE_HORAIRE);
     let catalogue_signe = middleware.formatter_message(
         &catalogue_value,
-        Some(domaine_action.as_str()),
+        Some(BACKUP_NOM_DOMAINE),
         Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
         None,
         None
@@ -1199,19 +1204,19 @@ impl ProcesseurFichierBackup {
             // let entete = catalogue_message.entete.clone();
             // let uuid_transaction = entete.uuid_transaction.clone();
 
-            let domaine = match &catalogue_message.get_entete().domaine {
+            let action = match &catalogue_message.get_entete().action {
                 Some(d) => d.as_str(),
                 None => "",
             };
 
-            let type_catalogue = match domaine {
-                "Backup.catalogueQuotidienFinaliser" => TypeCatalogueBackup::Quotidien(catalogue_message),
-                "Backup.catalogueHoraire" => {
+            let type_catalogue = match action {
+                BACKUP_TRANSACTION_CATALOGUE_QUOTIDIEN => TypeCatalogueBackup::Quotidien(catalogue_message),
+                BACKUP_TRANSACTION_CATALOGUE_HORAIRE => {
                     let catalogue: CatalogueHoraire = serde_json::from_str(catalogue_message.get_str())?;
                     TypeCatalogueBackup::Horaire(catalogue)
                 },
                 _ => {
-                    warn!("Type catalogue inconnu, ok skip {:?}", domaine);
+                    warn!("Type catalogue inconnu, ok skip {:?}", action);
                     return Ok(())
                 },
             };
@@ -1486,7 +1491,7 @@ where M: GenerateurMessages
         "uuid_rapport": &info_backup.uuid_backup,
     });
 
-    let routage = RoutageMessageAction::builder("Backup", "declencherBackupQuotidien")
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, COMMANDE_BACKUP_QUOTIDIEN)
         .exchanges(vec!(Securite::L3Protege))
         .build();
     middleware.transmettre_commande(routage, &trigger, false).await?;
@@ -1529,7 +1534,7 @@ pub async fn emettre_evenement_backup<M>(
         "timestamp": timestamp.timestamp(),
     });
 
-    let routage = RoutageMessageAction::builder("Backup", "backupMaj")
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, BACKUP_EVENEMENT_MAJ)
         .exchanges(vec![L3Protege])
         .build();
 
@@ -1545,7 +1550,7 @@ pub async fn emettre_evenement_restauration<M>(
         "domaine": domaine,
     });
 
-    let routage = RoutageMessageAction::builder("Backup", "restaurationMaj")
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, "restaurationMaj")
         .exchanges(vec![L3Protege])
         .build();
 

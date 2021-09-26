@@ -209,13 +209,19 @@ pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
 
 
 // Backup
-pub const BACKUP_NOM_DOMAINE: &str = "Backup";
+pub const BACKUP_NOM_DOMAINE: &str = "CoreBackup";
 
+pub const BACKUP_TRANSACTION_CATALOGUE_QUOTIDIEN: &str = "catalogueQuotidien";
 pub const BACKUP_TRANSACTION_CATALOGUE_HORAIRE: &str = "catalogueHoraire";
+
+pub const BACKUP_REQUETE_DERNIER_HORAIRE: &str = "backupDernierHoraire";
 
 pub const BACKUP_CHAMP_FUUID_GROSFICHIERS: &str = "fuuid_grosfichiers";
 pub const BACKUP_CHAMP_BACKUP_TRANSACTIONS: &str = "backup_transactions";
 
 pub const COMMANDE_BACKUP_HORAIRE: &str = "declencherBackupHoraire";
+pub const COMMANDE_BACKUP_QUOTIDIEN: &str = "declencherBackupQuotidien";
 pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";
 pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";
+
+pub const BACKUP_EVENEMENT_MAJ: &str = "backupMaj";
