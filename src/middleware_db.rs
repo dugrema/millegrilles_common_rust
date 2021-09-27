@@ -4,10 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
+use log::{debug, error, info, warn};
 use mongodb::Database;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
+use serde_json::json;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio_stream::StreamExt;
@@ -15,13 +17,14 @@ use tokio_stream::StreamExt;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
 use crate::chiffrage::{Chiffreur, Dechiffreur, Mgs2CipherData};
 use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
+use crate::constantes::Securite;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{configurer, EmetteurCertificat, Middleware, IsConfigurationPki};
+use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, ReponseDechiffrageCle, ReponseCertificatMaitredescles};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, task_requetes_certificats, TypeMessage};
-use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
+use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
 // Middleware avec MongoDB
 pub struct MiddlewareDb {
@@ -32,12 +35,70 @@ pub struct MiddlewareDb {
     pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
 }
 
+impl MiddlewareDb {
+    pub async fn charger_certificats_chiffrage(&self) {
+        debug!("Charger les certificats de maitre des cles pour chiffrage");
+        let requete = json!({});
+        let routage = RoutageMessageAction::new("MaitreDesCles", "certMaitreDesCles");
+        let message_reponse = match self.generateur_messages.transmettre_requete(routage, &requete).await {
+            Ok(r) => r,
+            Err(e) => {
+                error!("Erreur demande certificats : {}", e);
+                return
+            }
+        };
+
+        debug!("Message reponse : {:?}", message_reponse);
+        let message = match message_reponse {
+            TypeMessage::Valide(m) => m,
+            _ => {
+                error!("Reponse de type non gere : {:?}", message_reponse);
+                return  // Abort
+            }
+        };
+
+        let m = message.message.get_msg();
+        let value = match serde_json::to_value(m.contenu.clone()) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Erreur conversion message reponse certificats maitre des cles : {:?}", e);
+                return  // Abort
+            }
+        };
+        let rep_cert: ReponseCertificatMaitredescles = match serde_json::from_value(value) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Erreur lecture message reponse certificats maitre des cles : {:?}", e);
+                return  // Abort
+            }
+        };
+
+        let cert_chiffrage = match rep_cert.get_enveloppe_maitredescles(self).await {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Erreur chargement enveloppe certificat chiffrage maitredescles : {:?}", e);
+                return  // Abort
+            }
+        };
+
+        debug!("Certificat de maitre des cles charges dans {:?}", cert_chiffrage.as_ref());
+
+        // Stocker cles chiffrage du maitre des cles
+        {
+            let fps = cert_chiffrage.fingerprint_cert_publickeys().expect("public keys");
+            let mut guard = self.cles_chiffrage.lock().expect("lock");
+            for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
+                guard.insert(fp.fingerprint.clone(), fp.clone());
+            }
+        }
+    }
+}
+
 impl Middleware for MiddlewareDb {
 }
 
 #[async_trait]
 impl ValidateurX509 for MiddlewareDb {
-
     async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
         self.validateur.charger_enveloppe(chaine_pem, fingerprint).await
     }
@@ -70,11 +131,10 @@ impl ValidateurX509 for MiddlewareDb {
         self.validateur.store_notime()
     }
 
-    /// Pas invoque
     async fn entretien(&self) {
         self.validateur.entretien().await;
+        self.charger_certificats_chiffrage().await;
     }
-
 }
 
 #[async_trait]
@@ -84,7 +144,7 @@ impl GenerateurMessages for MiddlewareDb {
         -> Result<(), String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.emettre_evenement(routage, message).await
+        self.generateur_messages.emettre_evenement( routage, message).await
     }
 
     async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
@@ -115,11 +175,12 @@ impl GenerateurMessages for MiddlewareDb {
     async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
         -> Result<Option<TypeMessage>, String>
     {
-        self.generateur_messages.emettre_message(routage, type_message, message, blocking).await
+        self.generateur_messages.emettre_message(routage, type_message, message,  blocking).await
     }
 
     async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
-        -> Result<Option<TypeMessage>, String> {
+        -> Result<Option<TypeMessage>, String>
+    {
         self.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
     }
 
@@ -136,10 +197,27 @@ impl GenerateurMessages for MiddlewareDb {
     }
 
     fn get_mode_regeneration(&self) -> bool {
-        self.generateur_messages.get_mode_regeneration()
+        self.generateur_messages.as_ref().get_mode_regeneration()
+    }
+}
+
+impl IsConfigurationPki for MiddlewareDb {
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
+        self.configuration.get_configuration_pki().get_enveloppe_privee()
+    }
+}
+
+impl ConfigMessages for MiddlewareDb {
+    fn get_configuration_mq(&self) -> &ConfigurationMq {
+        self.configuration.get_configuration_mq()
     }
 
+    fn get_configuration_pki(&self) -> &ConfigurationPki {
+        self.configuration.get_configuration_pki()
+    }
 }
+
+impl FormatteurMessage for MiddlewareDb {}
 
 #[async_trait]
 impl MongoDao for MiddlewareDb {
@@ -148,62 +226,74 @@ impl MongoDao for MiddlewareDb {
     }
 }
 
-impl FormatteurMessage for MiddlewareDb {}
+impl IsConfigNoeud for MiddlewareDb {
+    fn get_configuration_noeud(&self) -> &ConfigurationNoeud {
+        self.configuration.get_configuration_noeud()
+    }
+}
 
-impl IsConfigurationPki for MiddlewareDb {
-    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-        let pki = self.configuration.get_configuration_pki();
-        pki.get_enveloppe_privee()
+impl Chiffreur for MiddlewareDb {
+    fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+        let guard = self.cles_chiffrage.lock().expect("lock");
+
+        // Copier les cles (extraire du mutex), retourner dans un vecteur
+        let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
+
+        vals
+    }
+}
+
+#[async_trait]
+impl Dechiffreur for MiddlewareDb {
+
+    async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>> {
+        let requete = {
+            let mut liste_hachage_bytes = Vec::new();
+            liste_hachage_bytes.push(hachage_bytes);
+            json!({
+                "liste_hachage_bytes": liste_hachage_bytes,
+            })
+        };
+        let routage = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
+        let reponse_cle_rechiffree = self.transmettre_requete(routage, &requete).await?;
+
+        let m = match reponse_cle_rechiffree {
+            TypeMessage::Valide(m) => m.message,
+            _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
+        };
+
+        let contenu_dechiffrage: ReponseDechiffrageCle = serde_json::from_value(
+            serde_json::to_value(m.get_msg().contenu.clone())?
+        )?;
+
+        contenu_dechiffrage.to_cipher_data()
+    }
+}
+
+impl VerificateurMessage for MiddlewareDb {
+    fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
+        verifier_message(message, self, options)
     }
 }
 
 #[async_trait]
 impl EmetteurCertificat for MiddlewareDb {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
-        todo!()
+        let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+        let message = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
+        let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
+
+        let routage = RoutageMessageAction::builder("certificat", "infoCertificat")
+            .exchanges(exchanges)
+            .build();
+
+        match generateur_message.emettre_evenement(routage, &message).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Erreur emettre_certificat: {:?}", e)),
+        }
     }
 }
 
-impl IsConfigNoeud for MiddlewareDb {
-    fn get_configuration_noeud(&self) -> &ConfigurationNoeud {
-        todo!()
-    }
-}
-
-impl VerificateurMessage for MiddlewareDb {
-    fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
-        todo!()
-    }
-}
-
-impl Chiffreur for MiddlewareDb {
-    fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-        todo!("Pas implemente")
-        // let guard = self.cles_chiffrage.lock().expect("lock");
-        //
-        // // Copier les cles (extraire du mutex), retourner dans un vecteur
-        // let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
-        //
-        // vals
-    }
-}
-
-#[async_trait]
-impl Dechiffreur for MiddlewareDb {
-    async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>> {
-        todo!()
-    }
-}
-
-impl ConfigMessages for MiddlewareDb {
-    fn get_configuration_mq(&self) -> &ConfigurationMq {
-        todo!()
-    }
-
-    fn get_configuration_pki(&self) -> &ConfigurationPki {
-        todo!()
-    }
-}
 
 /// Version speciale du middleware avec un acces a MongoDB
 pub fn preparer_middleware_db(
