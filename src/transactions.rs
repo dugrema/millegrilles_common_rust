@@ -17,7 +17,7 @@ use tokio_stream::StreamExt;
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
 use crate::formatteur_messages::{Entete, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::MongoDao;
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::{MessageTrigger, MessageValideAction};
@@ -63,9 +63,23 @@ pub async fn transmettre_evenement_persistance<S>(
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct TriggerTransaction {
-    domaine: String,
-    evenement: String,
-    uuid_transaction: String,
+    pub domaine: String,
+    pub evenement: String,
+    pub uuid_transaction: String,
+    pub reply_to: Option<String>,
+    pub correlation_id: Option<String>,
+}
+
+impl TriggerTransaction {
+    pub fn reply_info(&self) -> Option<RoutageMessageReponse> {
+        if let Some(corr) = self.correlation_id.as_ref() {
+            if let Some(r) = self.reply_to.as_ref() {
+                let routage = RoutageMessageReponse::new(r, corr);
+                return Some(routage)
+            }
+        }
+        None
+    }
 }
 
 pub async fn charger_transaction<M>(middleware: &M, nom_collection: &str, trigger: &TriggerTransaction) -> Result<TransactionImpl, String>
@@ -319,7 +333,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
                     warn!("Marquer {} transactions de {} comme erreur non-recuperable (resoumises trop de fois ou expiree)", r.modified_count, nom_collection)
                 }
             },
-            Err(e) => error!("Erreur resoumission transactions domaine {} : {:?}", nom_collection, e)
+            Err(e) => error!("resoumettre_transactions: Erreur resoumission transactions domaine {} : {:?}", nom_collection, e)
         }
 
         // Charger une batch de transactions non-completee par ordre de document_persiste
@@ -341,7 +355,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
         let mut curseur = match collection.find(filtre_incomplets, options_incomplets).await {
             Ok(c) => c,
             Err(e) => {
-                error!("Erreur curseur transactions a resoumettre domaine {} : {:?}", nom_collection, e);
+                error!("resoumettre_transactions: Erreur curseur transactions a resoumettre domaine {} : {:?}", nom_collection, e);
                 continue
             }
         };
@@ -360,7 +374,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
                     let _ = collection.update_one(filtre_transaction_resoumise, ops.clone(), None).await;
                 },
                 Err(e) => {
-                    error!("Erreur emission trigger de resoumission : {:?}", e);
+                    error!("resoumettre_transactions: Erreur emission trigger de resoumission : {:?}", e);
                     if ! e.recuperable {
                         // Erreur qui n'est pas necessairement recuperable (e.g. data, autre...)
                         // On marque l'essaie.

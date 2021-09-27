@@ -529,6 +529,11 @@ pub async fn sauvegarder_transaction_recue<M>(middleware: &M, m: MessageValideAc
 
     if let Some(domaine) = entete.domaine.as_ref() {
         if let Some(action) = entete.action.as_ref() {
+
+            if let Some(c) = m.correlation_id.as_ref() {
+                debug!("Transaction recue, trigger qui va repondre vers : {:?}/{:?}", m.reply_q.as_ref(), c);
+            }
+
             transmettre_evenement_persistance(
                 middleware,
                 entete.uuid_transaction.as_str(),

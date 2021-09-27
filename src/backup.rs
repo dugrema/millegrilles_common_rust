@@ -94,7 +94,8 @@ where
         }
         Err("Erreur backup horaire, voir logs")?
     } else {
-        backup_quotidien(middleware, &info_backup).await?;
+        debug!("backup Emettre trigger pour backup quotidien : {:?}", &info_backup);
+        trigger_backup_quotidien(middleware, &info_backup).await?;
     }
 
     Ok(Some(reponse))
@@ -1474,7 +1475,8 @@ struct EnteteBackupPrecedent {
     uuid_transaction: String,
 }
 
-async fn backup_quotidien<M>(middleware: &M, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
+/// Emet un trigger pour declencher le backup quotidien d'une partition de domaine
+async fn trigger_backup_quotidien<M>(middleware: &M, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
 where M: GenerateurMessages
 {
     let now = Utc::now() - Duration::days(1);
@@ -1484,21 +1486,39 @@ where M: GenerateurMessages
         with_second(0).expect("second").
         with_nanosecond(0).expect("nano");
 
-    let trigger = json!({
-        "jour": hier.timestamp(),
-        "domaine": &info_backup.domaine,
-        "partition": &info_backup.partition,
-        "uuid_rapport": &info_backup.uuid_backup,
-    });
+    // let trigger = json!({
+    //     "jour": hier.timestamp(),
+    //     "domaine": &info_backup.domaine,
+    //     "partition": &info_backup.partition,
+    //     "uuid_rapport": &info_backup.uuid_backup,
+    // });
+
+    let trigger = CommandeDeclencherBackupQuotidien {
+        jour: DateEpochSeconds::from(hier),
+        domaine: info_backup.domaine.to_owned(),
+        partition: info_backup.partition.to_owned(),
+        uuid_rapport: info_backup.uuid_backup.to_owned(),
+    };
+
+    debug!("trigger_backup_quotidien : {:?}", &trigger);
 
     let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, COMMANDE_BACKUP_QUOTIDIEN)
-        .exchanges(vec!(Securite::L3Protege))
+        .exchanges(vec!(Securite::L4Secure))
         .build();
     middleware.transmettre_commande(routage, &trigger, false).await?;
 
     Ok(())
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeDeclencherBackupQuotidien {
+    pub jour: DateEpochSeconds,
+    pub domaine: String,
+    pub partition: Option<String>,
+    pub uuid_rapport: String,
+}
+
+/// Reset l'etat de backup des transactions d'une collection
 pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where M: MongoDao + GenerateurMessages,
 {

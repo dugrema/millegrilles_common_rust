@@ -183,14 +183,26 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
         debug!("Traitement transaction, chargee : {:?}", transaction);
 
         let uuid_transaction = transaction.get_uuid_transaction().to_owned();
-        let reponse = self.aiguillage_transaction(middleware, transaction).await;
-        if reponse.is_ok() {
-            // Marquer transaction completee
-            debug!("Transaction traitee {}, marquer comme completee", uuid_transaction);
-            marquer_transaction(middleware, self.get_collection_transactions(), &uuid_transaction, EtatTransaction::Complete).await?;
-        }
+        match self.aiguillage_transaction(middleware, transaction).await {
+            Ok(r) => {
+                // Marquer transaction completee
+                debug!("Transaction traitee {}, marquer comme completee", uuid_transaction);
+                marquer_transaction(middleware, self.get_collection_transactions(), &uuid_transaction, EtatTransaction::Complete).await?;
 
-        reponse
+                // Repondre en fonction du contenu du trigger
+                if let Some(reponse) = r {
+                    if let Some(routage_reponse) = trigger.reply_info() {
+                        debug!("Emettre reponse vers {:?} = {:?}", routage_reponse, reponse);
+                        if let Err(e) = middleware.repondre(routage_reponse, reponse).await {
+                            error!("traiter_transaction: Erreur emission reponse pour une transaction : {:?}", e);
+                        }
+                    }
+                }
+
+                Ok(None)
+            },
+            Err(e) => Err(e)
+        }
     }
 
     async fn preparer_index_mongodb<M>(&self, middleware: &M) -> Result<(), String>
