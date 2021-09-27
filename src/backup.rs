@@ -44,7 +44,8 @@ use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse
 use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_serializable, Hacheur};
-use crate::middleware::{IsConfigurationPki, MiddlewareDb, MiddlewareMessage};
+use crate::middleware::{IsConfigurationPki, MiddlewareMessage};
+use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::MongoDao;
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
@@ -1614,9 +1615,9 @@ pub async fn emettre_evenement_restauration<M>(
 mod backup_tests {
     use serde_json::json;
 
+    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     // use crate::middleware::{CompresseurBytes, preparer_middleware_pki};
     use crate::fichiers::CompresseurBytes;
-    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::fichiers::fichiers_tests::ChiffreurDummy;
     use crate::test_setup::setup;
 
