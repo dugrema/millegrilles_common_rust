@@ -1125,7 +1125,7 @@ impl ProcesseurFichierBackup {
     async fn parse_file<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
     where M: ValidateurX509 + Dechiffreur + VerificateurMessage
     {
-        debug!("Parse fichier : {:?}", filepath);
+        debug!("ProcesseurFichierBackup.parse_file : {:?}", filepath);
 
         match filepath.extension() {
             Some(e) => {
@@ -1140,19 +1140,19 @@ impl ProcesseurFichierBackup {
                             // Transactions non chiffrees
                             self.parse_transactions(middleware, filepath, stream).await
                         } else {
-                            warn ! ("Type fichier inconnu, on skip : {:?}", filepath);
+                            warn ! ("ProcesseurFichierBackup.parse_file Type fichier inconnu, on skip : {:?}", filepath);
                             Ok(())
                         }
                     },
                     "mgs2" => self.parse_transactions(middleware, filepath, stream).await,
                     _ => {
-                        warn ! ("Type fichier inconnu, on skip : {:?}", e);
+                        warn ! ("ProcesseurFichierBackup.parse_file Type fichier inconnu, on skip : {:?}", e);
                         Ok(())
                     }
                 }
             },
             None => {
-                warn!("Type fichier inconnu, on skip : {:?}", filepath);
+                warn!("ProcesseurFichierBackup.parse_file Type fichier inconnu, on skip : {:?}", filepath);
                 Ok(())
             }
         }
@@ -1161,7 +1161,7 @@ impl ProcesseurFichierBackup {
     async fn parse_catalogue<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
     where M: Dechiffreur + VerificateurMessage + ValidateurX509
     {
-        debug!("Parse catalogue : {:?}", filepath);
+        debug!("ProcesseurFichierBackup.parse_catalogue : {:?}", filepath);
 
         let catalogue_message = {
             // Valider le catalogue
@@ -1182,7 +1182,10 @@ impl ProcesseurFichierBackup {
                 Some(c) => {
                     Some(middleware.charger_enveloppe(c, Some(fingerprint)).await?)
                 },
-                None => middleware.get_certificat(fingerprint).await
+                None => {
+                    info!("ProcesseurFichierBackup.parse_catalogue Catalogue sans _cerficat inclus {:?}", &filepath);
+                    middleware.get_certificat(fingerprint).await
+                }
             };
             message.certificat = option_cert;
 
@@ -1191,6 +1194,8 @@ impl ProcesseurFichierBackup {
             if !resultat_verification.signature_valide {
                 Err(format!("Catalogue invalide (signature: {:?})\n{}", resultat_verification, message.get_str()))?;
             }
+
+            debug!("Catalogue valide : {:?}", &filepath);
 
             message
         };
@@ -1321,9 +1326,11 @@ impl ProcesseurFichierBackup {
             None => "",
         };
 
+        debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Traiter catalogue horaire {:?}/{}", filepath, &uuid_catalogue_courant);
+
         if let Some(ep) = &catalogue.backup_precedent {
             if let Some(ec) = &self.entete_precedente {
-                debug!("Entete precedente {:?}\nInfo catalogue predecent {:?}", ec, ep);
+                debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Entete precedente {:?}\nInfo catalogue predecent {:?}", ec, ep);
 
                 // Verifier chaine avec en-tete du catalogue
                 let uuid_precedent = ep.uuid_transaction.as_str();
@@ -1335,15 +1342,15 @@ impl ProcesseurFichierBackup {
                             // Calculer hachage en-tete precedente
                             let hp = ep.hachage_entete.as_str();
                             if hc.as_str() != hp {
-                                warn!("Chainage au catalogue {:?}: {}/{} est brise (hachage mismatch)", filepath, catalogue.domaine, uuid_catalogue_courant);
+                                warn!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (hachage mismatch)", filepath, catalogue.domaine, uuid_catalogue_courant);
                             }
                         },
                         Err(e) => {
-                            error!("Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage)", filepath, catalogue.domaine, uuid_catalogue_courant);
+                            error!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage)", filepath, catalogue.domaine, uuid_catalogue_courant);
                         }
                     };
                 } else {
-                    warn!("Chainage au catalogue {:?}: {}/{} est brise (uuid mismatch catalogue precedent {} avec info courante {})",
+                    warn!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (uuid mismatch catalogue precedent {} avec info courante {})",
                         filepath, catalogue.domaine, uuid_catalogue_courant, uuid_precedent, uuid_courant);
                 }
             }
@@ -1352,8 +1359,13 @@ impl ProcesseurFichierBackup {
         // Recuperer cle et creer decipher au besoin
         self.decipher = match catalogue.cle {
             Some(_) => {
+                debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Le catalogue {:?} est chiffre, on recupere la cle", filepath);
                 let transactions_hachage_bytes = catalogue.transactions_hachage.as_str();
-                let dechiffreur = middleware.get_decipher(transactions_hachage_bytes).await?;
+                let dechiffreur = match middleware.get_decipher(transactions_hachage_bytes).await {
+                    Ok(d) => d,
+                    Err(e) => Err(format!("ProcesseurFichierBackup.traiter_catalogue_horaire Erreur recuperation cle {} pour backup horaire {:?} : {:?}", transactions_hachage_bytes, filepath, e))?
+                };
+                debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Cles pour le dechiffreur recues pour {:?}", filepath);
                 Some(dechiffreur)
             },
             None => None,
