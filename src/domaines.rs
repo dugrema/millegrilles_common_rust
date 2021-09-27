@@ -61,8 +61,14 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
     async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static;
 
-    async fn entretien<M>(&self, _middleware: Arc<M>)
+    /// Thread d'entretien specifique a chaque gestionnaire
+    async fn entretien<M>(&self, middleware: Arc<M>)
        where M: Middleware + 'static;
+
+    /// Invoque a toutes les minutes sur reception du message global du ceduleur
+    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: MessageValideAction)
+        -> Result<(), Box<dyn Error>>
+        where M: Middleware + 'static;
 
     async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T)
         -> Result<Option<MessageMilleGrille>, String>
@@ -144,7 +150,7 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
             TypeMessageOut::Commande => self.consommer_commande_trait(middleware.clone(), message).await,
             TypeMessageOut::Transaction => self.consommer_transaction(middleware.as_ref(), message).await,
             TypeMessageOut::Reponse => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
-            TypeMessageOut::Evenement => self.consommer_evenement(middleware.as_ref(), message).await,
+            TypeMessageOut::Evenement => self.consommer_evenement_trait(middleware.clone(), message).await,
         }?;
 
         match resultat {
@@ -256,12 +262,37 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
         self.preparer_index_mongodb_custom(middleware).await
     }
 
+    async fn consommer_evenement_trait<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        debug!("Consommer evenement trait : {:?}", &message.message);
+        // Autorisation : les evenements (triggers) globaux sont de niveau 4
+        // Fallback sur les evenements specifiques au domaine
+        match message.verifier_exchanges(vec!(Securite::L4Secure)) {
+            true => {
+                match message.action.as_str() {
+                    EVENEMENT_TRANSACTION_PERSISTEE => {
+                        let reponse = self.traiter_transaction(middleware.as_ref(), message).await?;
+                        Ok(reponse)
+                    },
+                    EVENEMENT_CEDULE => {
+                        self.traiter_cedule(middleware.as_ref(), message).await?;
+                        Ok(None)
+                    },
+                    _ => self.consommer_evenement(middleware.as_ref(), message).await
+                }
+            },
+            false => self.consommer_evenement(middleware.as_ref(), message).await
+        }
+    }
+
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
     async fn consommer_commande_trait<M>(&self, middleware: Arc<M>, m: MessageValideAction)
         -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
     {
-        debug!("Consommer commande : {:?}", &m.message);
+        debug!("Consommer commande trait : {:?}", &m.message);
 
         // Autorisation : les commandes globales sont de niveau 3 ou 4
         // Fallback sur les commandes specifiques au domaine
