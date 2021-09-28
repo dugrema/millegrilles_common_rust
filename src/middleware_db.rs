@@ -358,7 +358,7 @@ pub fn preparer_middleware_db(
         middleware.clone(),
         rx_certificats_manquants,
         mq_executor.tx_interne.clone(),
-        true   // On ne fait par de requete.certificat.FP (cause avalanche avec CorePki)
+        false
     )));
 
     (middleware, rx_messages_verifies, rx_triggers, futures)

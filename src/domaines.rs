@@ -116,6 +116,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     async fn consommer_messages<M>(self: &'static Self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
         where M: Middleware + 'static
     {
+        info!("domaines.consommer_messages : Debut thread {}", self.get_q_transactions());
         while let Some(message) = rx.recv().await {
             trace!("Message {} recu : {:?}", self.get_nom_domaine(), message);
 
@@ -130,6 +131,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 error!("Erreur traitement message : {:?}\n", e);
             }
         }
+
+        info!("domaines.consommer_messages : Fin thread {}", self.get_q_transactions());
     }
 
     async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction) -> Result<(), Box<dyn Error>>

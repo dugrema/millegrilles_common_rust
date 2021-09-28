@@ -255,6 +255,8 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
 pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine: String)
     where M: ConfigMessages + GenerateurMessages + ValidateurX509 + 'static
 {
+    info!("middleware.thread_emettre_presence_domaine : Debut thread");
+
     // Attente initiale
     tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
     loop {
@@ -264,6 +266,8 @@ pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine:
         };
         tokio::time::sleep(tokio::time::Duration::new(120, 0)).await;
     }
+
+    info!("middleware.thread_emettre_presence_domaine : Fin thread");
 }
 
 #[async_trait]

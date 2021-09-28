@@ -32,7 +32,7 @@ pub async fn recevoir_messages(
     mut tx_verifie: Sender<TypeMessage>,
     mut tx_certificats_manquants: Sender<RequeteCertificatInterne>
 ) {
-    debug!("MAIN : Debut thread traiter_messages");
+    debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
 
     let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
 
@@ -200,7 +200,7 @@ pub async fn recevoir_messages(
         }
 
     }
-    debug!("MAIN : Fin thread traiter_messages");
+    info!("recepteur_messages.recevoir_messages : Fin thread traiter_messages");
 }
 
 pub struct RequeteCertificatInterne {
@@ -210,6 +210,7 @@ pub struct RequeteCertificatInterne {
 
 /// Task de requete et attente de reception de certificat
 pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>, skip_requete: bool) {
+    info!("recepteur_messages.task_requetes_certificats : Demarrage thread");
     while let Some(req_cert) = rx.recv().await {
         let delivery = req_cert.delivery;
         let fingerprint = req_cert.fingerprint;
@@ -240,6 +241,7 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
             .await.expect("cancel demande certificat sur timeout");
     }
 
+    info!("recepteur_messages.task_requetes_certificats : Fin thread");
 }
 
 pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
