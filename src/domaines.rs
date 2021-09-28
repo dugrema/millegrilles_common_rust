@@ -27,20 +27,20 @@ use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction};
 
 #[async_trait]
-pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
+pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction {
 
     /// Retourne le nom du domaine
-    fn get_nom_domaine(&self) -> &str;
+    fn get_nom_domaine(&self) -> String;
 
     /// Retourne le nom de la collection de transactions
-    fn get_collection_transactions(&self) -> &str;
+    fn get_collection_transactions(&self) -> String;
 
     // Retourne la liste de collections de documents
     fn get_collections_documents(&self) -> Vec<String>;
 
-    fn get_q_transactions(&self) -> &str;
-    fn get_q_volatils(&self) -> &str;
-    fn get_q_triggers(&self) -> &str;
+    fn get_q_transactions(&self) -> String;
+    fn get_q_volatils(&self) -> String;
+    fn get_q_triggers(&self) -> String;
 
     /// Retourne la liste des Q a configurer pour ce domaine
     fn preparer_queues(&self) -> Vec<QueueType>;
@@ -185,7 +185,7 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
             Err(e) => Err(format!("Erreur conversion message vers Trigger {:?} : {:?}", m, e))?,
         };
 
-        let transaction = charger_transaction(middleware, self.get_collection_transactions(), &trigger).await?;
+        let transaction = charger_transaction(middleware, self.get_collection_transactions().as_str(), &trigger).await?;
         debug!("Traitement transaction, chargee : {:?}", transaction);
 
         let uuid_transaction = transaction.get_uuid_transaction().to_owned();
@@ -193,7 +193,7 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
             Ok(r) => {
                 // Marquer transaction completee
                 debug!("Transaction traitee {}, marquer comme completee", uuid_transaction);
-                marquer_transaction(middleware, self.get_collection_transactions(), &uuid_transaction, EtatTransaction::Complete).await?;
+                marquer_transaction(middleware, self.get_collection_transactions(), uuid_transaction, EtatTransaction::Complete).await?;
 
                 // Repondre en fonction du contenu du trigger
                 if let Some(reponse) = r {
@@ -223,7 +223,7 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
             ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION), direction: 1}
         );
         middleware.create_index(
-            self.get_collection_transactions(),
+            self.get_collection_transactions().as_str(),
             champs_index_transactions,
             Some(options_unique_transactions)
         ).await?;
@@ -237,7 +237,7 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
             ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1}
         );
         middleware.create_index(
-            self.get_collection_transactions(),
+            self.get_collection_transactions().as_str(),
             champs_index_transactions,
             Some(options_unique_transactions)
         ).await?;
@@ -253,7 +253,7 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
             ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1},
         );
         middleware.create_index(
-            self.get_collection_transactions(),
+            self.get_collection_transactions().as_str(),
             champs_index_transactions,
             Some(options_unique_transactions)
         ).await?;
@@ -301,11 +301,11 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
                 match m.action.as_str() {
                     // Commandes standard
                     COMMANDE_BACKUP_HORAIRE => backup(
-                        middleware.as_ref(), self.get_nom_domaine(),
-                        self.get_collection_transactions(), true).await,
+                        middleware.as_ref(), self.get_nom_domaine().as_str(),
+                        self.get_collection_transactions().as_str(), true).await,
                     COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
                     COMMANDE_RESET_BACKUP => reset_backup_flag(
-                        middleware.as_ref(), self.get_collection_transactions()).await,
+                        middleware.as_ref(), self.get_collection_transactions().as_str()).await,
 
                     // Commandes specifiques au domaine
                     _ => self.consommer_commande(middleware.as_ref(), m).await
@@ -323,8 +323,8 @@ pub trait GestionnaireDomaine: Clone + Send + TraiterTransaction {
 
         restaurer(
             middleware.clone(),
-            self.get_nom_domaine(),
-            self.get_collection_transactions(),
+            self.get_nom_domaine().as_str(),
+            self.get_collection_transactions().as_str(),
             &noms_collections_docs,
             self
         ).await?;
