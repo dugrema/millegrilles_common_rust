@@ -79,7 +79,7 @@ pub struct MiddlewareMessage {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReponseCertificatMaitredescles {
     certificat: Vec<String>,
-    certificat_millegrille: String,
+    // certificat_millegrille: String,
 }
 impl ReponseCertificatMaitredescles {
     pub async fn get_enveloppe_maitredescles<V>(&self, validateur: &V) -> Result<Arc<EnveloppeCertificat>, Box<dyn Error>>

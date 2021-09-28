@@ -37,7 +37,7 @@ pub async fn recevoir_messages(
     let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
 
     while let Some(mi) = rx.recv().await {
-        trace!("traiter_messages: Message recu : {:?}", mi);
+        debug!("traiter_messages: Message recu : {:?}", mi);
 
         let (delivery, nom_q, tx) = match mi {
             MessageInterne::Delivery(d, q) => (d, q, &tx_verifie),
@@ -160,7 +160,7 @@ pub async fn recevoir_messages(
                     domaine: domaine.expect("domaine inconnu"),
                     action: inner_action,
                     exchange,
-                    type_message: type_message.expect("type message inconnu"),
+                    type_message: type_message.clone().expect("type message inconnu"),
                 })
             },
             None => {
@@ -172,18 +172,22 @@ pub async fn recevoir_messages(
                     routing_key,
                     domaine,
                     exchange,
-                    type_message,
+                    type_message: type_message.clone(),
                 })
             }
         };
 
         // Verifier si le message est une reponse a une requete connue
-        if let Some(cid) = &correlation_id {
-            debug!("Recu type message valide ... c'est une reponse? {}", cid);
-            if let Some(ma) = map_attente.remove(cid) {
-                debug!("Recu reponse pour message en attente sur {}", cid);
-                ma.sender.send(message).unwrap_or_else(|e| error!("Erreur traitement reponse"));
-                continue
+        if let Some(tm) = type_message {
+            if tm == TypeMessageOut::Reponse {
+                if let Some(cid) = &correlation_id {
+                    debug!("Recu type message valide ... c'est une reponse? {}", cid);
+                    if let Some(ma) = map_attente.remove(cid) {
+                        debug!("Recu reponse pour message en attente sur {}", cid);
+                        ma.sender.send(message).unwrap_or_else(|e| error!("Erreur traitement reponse"));
+                        continue
+                    }
+                }
             }
         }
 
