@@ -17,6 +17,7 @@ use openssl::rsa::{Padding, Rsa};
 use openssl::symm::{Cipher, Crypter, encrypt, Mode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use crate::bson::Document;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ordered_map};
 use crate::hachages::Hacheur;
@@ -332,15 +333,23 @@ impl Mgs2CipherKeys {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandeSauvegarderCle {
     #[serde(serialize_with = "ordered_map")]
-    cles: HashMap<String, String>,
-    domaine: String,
-    partition: Option<String>,
-    format: FormatChiffrage,
+    pub cles: HashMap<String, String>,
+    pub domaine: String,
+    pub partition: Option<String>,
+    pub format: FormatChiffrage,
     pub hachage_bytes: String,
     #[serde(serialize_with = "ordered_map")]
-    identificateurs_document: HashMap<String, String>,
-    iv: String,
-    tag: String,
+    pub identificateurs_document: HashMap<String, String>,
+    pub iv: String,
+    pub tag: String,
+}
+
+/// Converti en Document Bson pour sauvegarder dans MongoDB
+impl Into<Document> for CommandeSauvegarderCle {
+    fn into(self) -> Document {
+        let val = serde_json::to_value(self).expect("value");
+        serde_json::from_value(val).expect("bson")
+    }
 }
 
 #[derive(Clone)]

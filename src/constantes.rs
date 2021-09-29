@@ -134,6 +134,7 @@ pub const DELEGATION_GLOBALE_PROPRIETAIRE: &str = "proprietaire";
 
 pub const NEW_LINE_BYTE: u8 = 0x0A;
 pub const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
+pub const DEFAULT_Q_TTL: u32 = 300000;
 
 // Domaines tiers
 pub const DOMAINE_SERVICE_MONITOR: &str = "servicemonitor";
