@@ -17,7 +17,7 @@ use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::middleware::IsConfigurationPki;
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
-use crate::recepteur_messages::TypeMessage;
+use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use std::convert::TryFrom;
 
 /// Conserve l'information de routage in/out d'un message
