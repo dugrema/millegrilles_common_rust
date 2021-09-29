@@ -298,6 +298,7 @@ impl Mgs2CipherKeys {
     pub fn get_commande_sauvegarder_cles(
         &self,
         domaine: &str,
+        partition: Option<String>,
         identificateurs_document: HashMap<String, String>
     ) -> CommandeSauvegarderCle {
         CommandeSauvegarderCle {
@@ -307,6 +308,7 @@ impl Mgs2CipherKeys {
             tag: self.tag.clone(),
             format: FormatChiffrage::mgs2,
             domaine: domaine.to_owned(),
+            partition,
             identificateurs_document,
         }
     }
@@ -327,11 +329,12 @@ impl Mgs2CipherKeys {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandeSauvegarderCle {
     #[serde(serialize_with = "ordered_map")]
     cles: HashMap<String, String>,
     domaine: String,
+    partition: Option<String>,
     format: FormatChiffrage,
     pub hachage_bytes: String,
     #[serde(serialize_with = "ordered_map")]

@@ -468,6 +468,7 @@ async fn serialiser_catalogue(
 
             let commande_maitredescles = cles.get_commande_sauvegarder_cles(
                 BACKUP_NOM_DOMAINE,
+                None,
                 identificateurs_document,
             );
 
