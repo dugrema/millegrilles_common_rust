@@ -42,7 +42,7 @@ impl<'a> FichierWriter<'a> {
         let chiffreur = match chiffreur {
             Some(c) => {
                 debug!("Activer chiffrage pour fichier  : {:?}", path_fichier);
-                Some(c.get_cipher())
+                Some(c.get_cipher()?)
             },
             None => None,
         };
@@ -449,6 +449,7 @@ pub mod fichiers_tests {
     use super::*;
     use tokio::fs::File;
     use crate::middleware::MiddlewareDb;
+    use crate::middleware_db::MiddlewareDb;
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
     const BYTES_TEST: &[u8] = b"des bytes a ecrire";
@@ -530,7 +531,7 @@ pub mod fichiers_tests {
         id_docs.insert(String::from("dummy_id"), String::from("dummy_valeur"));
         let commande_cles = cipher_keys
             .expect("cles")
-            .get_commande_sauvegarder_cles("dummy", id_docs);
+            .get_commande_sauvegarder_cles("dummy", None, id_docs);
 
         debug!("Commande cles : {:?}", commande_cles);
     }

@@ -28,7 +28,7 @@ pub enum FormatChiffrage {
     mgs2,
 }
 
-fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Vec<u8> {
+fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     const SIZE_MAX: usize = 4096/8;
     if public_key.size() > SIZE_MAX {
         panic!("Taille de la cle ({}) est trop grande pour le buffer ({})", public_key.size(), SIZE_MAX);
@@ -36,32 +36,44 @@ fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Ve
 
     let mut cle_chiffree = [0u8; SIZE_MAX];
 
-    let mut encrypter = Encrypter::new(public_key).expect("encrypter");
-    encrypter.set_rsa_padding(Padding::PKCS1_OAEP).expect("padding");
-    encrypter.set_rsa_mgf1_md(MessageDigest::sha256()).expect("mgf1");
-    encrypter.set_rsa_oaep_md(MessageDigest::sha256()).expect("oaep");
-    let size = encrypter.encrypt(cle_symmetrique, &mut cle_chiffree).expect("encrypt PK");
+    let mut encrypter = Encrypter::new(public_key)?;
+    encrypter.set_rsa_padding(Padding::PKCS1_OAEP)?;
+    encrypter.set_rsa_mgf1_md(MessageDigest::sha256())?;
+    encrypter.set_rsa_oaep_md(MessageDigest::sha256())?;
+    let size = encrypter.encrypt(cle_symmetrique, &mut cle_chiffree)?;
 
     let mut buffer_ajuste = Vec::new();
     buffer_ajuste.extend_from_slice(&cle_chiffree[..size]);
 
-    buffer_ajuste
+    Ok(buffer_ajuste)
 }
 
-fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Vec<u8> {
+fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut cle_dechiffree = [0u8; 512];  // Cle max 4096 bits (512 bytes)
 
-    let mut decrypter = Decrypter::new(private_key).expect("decrypter");
+    let mut decrypter = Decrypter::new(private_key)?;
 
-    decrypter.set_rsa_padding(Padding::PKCS1_OAEP).expect("padding");
-    decrypter.set_rsa_mgf1_md(MessageDigest::sha256()).expect("mgf1");
-    decrypter.set_rsa_oaep_md(MessageDigest::sha256()).expect("oaep");
-    decrypter.decrypt(cle_chiffree_bytes, &mut cle_dechiffree).expect("encrypt PK");
+    decrypter.set_rsa_padding(Padding::PKCS1_OAEP)?;
+    decrypter.set_rsa_mgf1_md(MessageDigest::sha256())?;
+    decrypter.set_rsa_oaep_md(MessageDigest::sha256())?;
+    decrypter.decrypt(cle_chiffree_bytes, &mut cle_dechiffree)?;
 
     let cle_dechiffree = &cle_dechiffree[..32];
-    cle_dechiffree.to_vec().to_owned()
+    Ok(cle_dechiffree.to_vec().to_owned())
 }
 
+/// Rechiffre une cle asymetrique pour une nouvelle cle publique
+pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key: &PKey<Public>, cle: &str)
+    -> Result<String, Box<dyn Error>>
+{
+    let cle_rechiffree = {
+        let (_, cle_bytes): (_, Vec<u8>) = multibase::decode(cle)?;
+        let cle_secrete = dechiffrer_asymetrique(private_key, cle_bytes.as_slice())?;
+        chiffrer_asymetrique(public_key, cle_secrete.as_slice())
+    }?;
+
+    Ok(multibase::encode(Base::Base64, cle_rechiffree.as_slice()))
+}
 
 trait CipherMillegrille {
 
@@ -85,7 +97,7 @@ pub struct FingerprintCleChiffree {
 }
 
 impl CipherMgs2 {
-    pub fn new(public_keys: &Vec<FingerprintCertPublicKey>) -> Self {
+    pub fn new(public_keys: &Vec<FingerprintCertPublicKey>) -> Result<Self, Box<dyn Error>> {
         let mut buffer_random = [0u8; 44];
         openssl::rand::rand_bytes(&mut buffer_random).expect("rand");
 
@@ -96,7 +108,7 @@ impl CipherMgs2 {
         let mut fp_cles = Vec::new();
         let mut fp_cle_millegrille: Option<String> = None;
         for fp_pk in public_keys {
-            let cle_chiffree = chiffrer_asymetrique(&fp_pk.public_key, &cle);
+            let cle_chiffree = chiffrer_asymetrique(&fp_pk.public_key, &cle)?;
             let cle_chiffree_str = encode(Base::Base64, cle_chiffree);
             fp_cles.push(FingerprintCleChiffree {
                 fingerprint: fp_pk.fingerprint.clone(),
@@ -119,7 +131,7 @@ impl CipherMgs2 {
             .base(Base::Base58Btc)
             .build();
 
-        CipherMgs2 {
+        Ok(CipherMgs2 {
             encrypter,
             iv: encode(Base::Base64, iv),
             cles_chiffrees: fp_cles,
@@ -127,7 +139,7 @@ impl CipherMgs2 {
             hacheur,
             hachage_bytes: None,
             tag: None,
-        }
+        })
     }
 
     pub fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String> {
@@ -376,7 +388,7 @@ impl Mgs2CipherData {
     }
 
     pub fn dechiffrer_cle(&mut self, cle_privee: &PKey<Private>) -> Result<(), Box<dyn Error>> {
-        let cle_dechiffree = dechiffrer_asymetrique(cle_privee, self.cle_chiffree.as_slice());
+        let cle_dechiffree = dechiffrer_asymetrique(cle_privee, self.cle_chiffree.as_slice())?;
         self.cle_dechiffree = Some(cle_dechiffree);
 
         Ok(())
@@ -396,9 +408,9 @@ pub trait Chiffreur {
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey>;
 
     /// Recupere un cipher initialise avec les cles publiques
-    fn get_cipher(&self) -> CipherMgs2 {
+    fn get_cipher(&self) -> Result<CipherMgs2, Box<dyn Error>> {
         let fp_public_keys = self.get_publickeys_chiffrage();
-        CipherMgs2::new(&fp_public_keys)
+        Ok(CipherMgs2::new(&fp_public_keys)?)
     }
 }
 
