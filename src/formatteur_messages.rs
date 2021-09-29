@@ -176,7 +176,7 @@ impl EnteteBuilder {
     }
 
     pub fn partition(mut self, partition: String) -> EnteteBuilder {
-        self.action = Some(partition);
+        self.partition = Some(partition);
         self
     }
 

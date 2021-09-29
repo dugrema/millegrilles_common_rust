@@ -54,9 +54,12 @@ pub async fn transmettre_evenement_persistance<S>(
         evenement_map.insert("correlation_id".into(), Value::from(correlation_id.to_owned()));
     }
 
-    let routage = RoutageMessageAction::builder(domaine.as_ref(), EVENEMENT_TRANSACTION_PERSISTEE)
-        .exchanges(vec!(Securite::L4Secure))
-        .build();
+    let mut routage_builder = RoutageMessageAction::builder(domaine.as_ref(), EVENEMENT_TRANSACTION_PERSISTEE)
+        .exchanges(vec!(Securite::L4Secure));
+    if let Some(p) = partition {
+        routage_builder = routage_builder.partition(p.as_str());
+    }
+    let routage = routage_builder.build();
 
     Ok(middleware.emettre_evenement(routage, &evenement).await?)
 }

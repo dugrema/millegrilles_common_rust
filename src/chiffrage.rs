@@ -335,6 +335,7 @@ pub struct CommandeSauvegarderCle {
     #[serde(serialize_with = "ordered_map")]
     pub cles: HashMap<String, String>,
     pub domaine: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub partition: Option<String>,
     pub format: FormatChiffrage,
     pub hachage_bytes: String,
