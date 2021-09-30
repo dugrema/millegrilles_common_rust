@@ -885,6 +885,7 @@ pub trait VerificateurPermissions {
             Some(e) => e,
             None => return false
         };
+        debug!("verifier_exchanges_string Extensions cert : {:?}", extensions);
 
         let mut hs_param= HashSet::new();
         hs_param.extend(exchanges_permis);
