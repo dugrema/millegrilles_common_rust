@@ -314,6 +314,9 @@ impl Mgs2CipherKeys {
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>
     ) -> CommandeSauvegarderCle {
+
+        let fingerprint_partitions = self.get_fingerprint_partitions();
+
         CommandeSauvegarderCle {
             hachage_bytes: self.hachage_bytes.clone(),
             cles: self.cles_to_map(),
@@ -323,6 +326,7 @@ impl Mgs2CipherKeys {
             domaine: domaine.to_owned(),
             partition,
             identificateurs_document,
+            fingerprint_partitions,
         }
     }
 
@@ -340,6 +344,23 @@ impl Mgs2CipherKeys {
             None => None,
         }
     }
+
+    /// Retourne une des partitions presentes dans la liste de cles
+    pub fn get_fingerprint_partitions(&self) -> Vec<String> {
+        match &self.fingerprint_cert_millegrille {
+            Some(fp) => {
+                self.cles_chiffrees.iter()
+                    .filter(|c| c.fingerprint.as_str() != fp.as_str())
+                    .map(|c| c.fingerprint.to_owned())
+                    .collect()
+            },
+            None => {
+                self.cles_chiffrees.iter()
+                    .map(|c| c.fingerprint.to_owned())
+                    .collect()
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -355,6 +376,8 @@ pub struct CommandeSauvegarderCle {
     pub identificateurs_document: HashMap<String, String>,
     pub iv: String,
     pub tag: String,
+    /// Partitions de maitre des cles (fingerprint certs). Utilise pour routage de la commande.
+    pub fingerprint_partitions: Vec<String>
 }
 
 /// Converti en Document Bson pour sauvegarder dans MongoDB
