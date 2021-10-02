@@ -194,7 +194,7 @@ impl Chiffreur for MiddlewareDb {
 
         // Verifier si on a au moins un certificat
         let nb_certs = self.cles_chiffrage.lock().expect("lock").len();
-        if nb_certs == 0 {
+        if nb_certs <= 1 {  // 1 => le cert millegrille est deja charge
             Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
         } else {
             debug!("On a {} certificats de maitre des cles valides", nb_certs);
