@@ -33,6 +33,9 @@ use crate::hachages::hacher_bytes;
 use std::error::Error;
 use crate::constantes::Securite::L1Public;
 use std::convert::TryInto;
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::middleware::ReponseCertificatMaitredescles;
+use crate::recepteur_messages::TypeMessage;
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -951,6 +954,17 @@ impl VerificateurPermissions for EnveloppeCertificat {
 pub struct MessageInfoCertificat {
     pub chaine_pem: Option<Vec<String>>,
     pub fingerprint: Option<String>,
+}
+
+pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
+    -> Result<(), Box<dyn Error>>
+    where G: GenerateurMessages
+{
+    debug!("Charger les certificats de maitre des cles pour chiffrage");
+    let requete = json!({});
+    let routage = RoutageMessageAction::new(DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES);
+    middleware.transmettre_commande(routage, &requete, false).await?;
+    Ok(())
 }
 
 #[cfg(test)]
