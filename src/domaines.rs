@@ -92,9 +92,23 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let mut routing: HashMap<String, Sender<TypeMessage>> = HashMap::new();
 
         // Mapping par Q nommee
-        routing.insert(String::from(self.get_q_transactions()), tx_messages.clone());
-        routing.insert(String::from(self.get_q_volatils()), tx_messages.clone());
-        routing.insert(String::from(self.get_q_triggers()), tx_triggers.clone());
+        let qs = self.preparer_queues();
+        for q in qs {
+            match q {
+                QueueType::ExchangeQueue(c) => {
+                    debug!("Ajout mapping tx_messages {:?}", c);
+                    routing.insert(c.nom_queue.clone(), tx_messages.clone());
+                },
+                QueueType::Triggers(t) => {
+                    debug!("Ajout mapping tx_triggers {:?}", t);
+                    routing.insert(String::from(format!("{}/triggers", &t)), tx_triggers.clone());
+                }
+                QueueType::ReplyQueue(t) => (),
+            }
+        }
+        // routing.insert(String::from(self.get_q_transactions()), tx_messages.clone());
+        // routing.insert(String::from(self.get_q_volatils()), tx_messages.clone());
+        // routing.insert(String::from(self.get_q_triggers()), tx_triggers.clone());
 
         // Mapping par domaine (routing key)
         routing.insert(String::from(self.get_nom_domaine()), tx_messages.clone());

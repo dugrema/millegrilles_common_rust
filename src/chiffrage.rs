@@ -28,7 +28,7 @@ pub enum FormatChiffrage {
     mgs2,
 }
 
-fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     const SIZE_MAX: usize = 4096/8;
     if public_key.size() > SIZE_MAX {
         panic!("Taille de la cle ({}) est trop grande pour le buffer ({})", public_key.size(), SIZE_MAX);
@@ -48,7 +48,7 @@ fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Re
     Ok(buffer_ajuste)
 }
 
-fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut cle_dechiffree = [0u8; 512];  // Cle max 4096 bits (512 bytes)
 
     let mut decrypter = Decrypter::new(private_key)?;
