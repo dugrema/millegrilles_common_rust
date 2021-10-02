@@ -1,37 +1,41 @@
 use std::collections::HashMap;
+use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use futures::stream::FuturesUnordered;
 use lapin::message::Delivery;
-use log::{trace, debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use serde_json::{json, Map, Value};
 use tokio::{join, sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as DurationTokio, sleep, timeout}, try_join};
 use tokio_stream::StreamExt;
 use TypeMessageOut as TypeMessageIn;
 
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions, MessageInfoCertificat};
+use crate::bson::Document;
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509, VerificateurPermissions};
+use crate::chiffrage::Chiffreur;
 use crate::configuration::charger_configuration_avec_db;
+use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse, RoutageMessageAction};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
-use crate::verificateur::verifier_message;
-use crate::transactions::{Transaction, TransactionImpl};
-use crate::bson::Document;
-use chrono::{DateTime, Utc};
 use crate::serde::de::DeserializeOwned;
-use std::convert::{TryInto, TryFrom};
+use crate::transactions::{Transaction, TransactionImpl};
+use crate::verificateur::verifier_message;
 
 /// Thread de traitement des messages
-pub async fn recevoir_messages(
-    middleware: Arc<impl ValidateurX509 + GenerateurMessages + IsConfigurationPki>,
+pub async fn recevoir_messages<M>(
+    middleware: Arc<M>,
     mut rx: Receiver<MessageInterne>,
     mut tx_verifie: Sender<TypeMessage>,
     mut tx_certificats_manquants: Sender<RequeteCertificatInterne>
-) {
+)
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur
+{
     debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
 
     let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
@@ -249,26 +253,77 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
 }
 
 pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur
 {
     // Intercepter reponses et requetes de certificat
     match &message {
         TypeMessage::Valide(inner) => {
-            false
+            match &inner.correlation_id {
+                Some(correlation_id) => {
+                    match correlation_id.as_str() {
+                        COMMANDE_CERT_MAITREDESCLES => {
+                            debug!("intercepter_message Reponse certificat maitre des cles recus : {:?}", inner);
+                            match middleware.recevoir_certificat_chiffrage(&inner.message).await {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    error!("intercepter_message Erreur interception certificat maitre des cles : {:?}", e);
+                                    false
+                                }
+                            }
+                        },
+                        _ => false
+                    }
+                },
+                None => false
+            }
         },
         TypeMessage::ValideAction(inner) => {
-            if inner.type_message == TypeMessageIn::Evenement && inner.action == "infoCertificat" {
-                // Message deja intercepte par ValidateurX509, plus rien a faire.
-                debug!("Evenement certificat {}, message intercepte", inner.routing_key);
-                traiter_certificatintercepter_message(middleware, inner).await;
-                true  // Intercepte
-            } else if inner.type_message == TypeMessageIn::Requete && inner.domaine == "certificat" {
-                // Requete pour notre certificat, on l'emet
-                emettre_certificat(middleware, message, inner).await;
-                true
-            } else {
-                false  // Pas intercepte
+            match inner.type_message {
+                TypeMessageIn::Evenement => {
+                    match inner.action.as_str() {
+                        "infoCertificat" => {
+                            debug!("intercepter_messageEvenement certificat {}, message intercepte", inner.routing_key);
+                            traiter_certificatintercepter_message(middleware, inner).await;
+                            true  // Intercepte
+                        },
+                        COMMANDE_CERT_MAITREDESCLES => {
+                            debug!("intercepter_messageEvenement certificat maitre des cles recus : {:?}", inner);
+                            match middleware.recevoir_certificat_chiffrage(&inner.message).await {
+                                Ok(_) => true,
+                                Err(e) => {
+                                    error!("Erreur interception certificat maitre des cles : {:?}", e);
+                                    false
+                                }
+                            }
+                        },
+                        _ => false,
+                    }
+                },
+                TypeMessageIn::Requete => {
+                    match inner.domaine.as_str() {
+                        "certificat" => {
+                            emettre_certificat(middleware, message, inner).await;
+                            true
+                        },
+                        _ => false,
+                    }
+                },
+                _ => {
+                    false // pas intercepte
+                }
             }
+            // if inner.type_message == TypeMessageIn::Evenement && inner.action == "infoCertificat" {
+            //     // Message deja intercepte par ValidateurX509, plus rien a faire.
+            //     debug!("Evenement certificat {}, message intercepte", inner.routing_key);
+            //     traiter_certificatintercepter_message(middleware, inner).await;
+            //     true  // Intercepte
+            // } else if inner.type_message == TypeMessageIn::Requete && inner.domaine == "certificat" {
+            //     // Requete pour notre certificat, on l'emet
+            //     emettre_certificat(middleware, message, inner).await;
+            //     true
+            // } else {
+            //     false  // Pas intercepte
+            // }
         },
         TypeMessage::Certificat(inner) => {
             // Rien a faire, le certificat a deja ete intercepte par ValidateurX509

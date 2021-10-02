@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::bson::Document;
 
 use crate::certificats::{FingerprintCertPublicKey, ordered_map};
+use crate::formatteur_messages::MessageSerialise;
 use crate::hachages::Hacheur;
 use crate::middleware::IsConfigurationPki;
 
@@ -437,6 +438,61 @@ pub trait Chiffreur {
     }
 
     async fn charger_certificats_chiffrage(&self) -> Result<(), Box<dyn Error>>;
+
+    async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>>;
+    //{
+        // let message_reponse = match self.generateur_messages.transmettre_requete(routage, &requete).await {
+        //     Ok(r) => r,
+        //     Err(e) => {
+        //         error!("Erreur demande certificats : {}", e);
+        //         return Ok(())
+        //     }
+        // };
+        //
+        // debug!("Message reponse : {:?}", message_reponse);
+        // let message = match message_reponse {
+        //     TypeMessage::Valide(m) => m,
+        //     _ => {
+        //         error!("Reponse de type non gere : {:?}", message_reponse);
+        //         return Ok(())  // Abort
+        //     }
+        // };
+        //
+        // let m = message.message.get_msg();
+        // let value = match serde_json::to_value(m.contenu.clone()) {
+        //     Ok(v) => v,
+        //     Err(e) => {
+        //         error!("Erreur conversion message reponse certificats maitre des cles : {:?}", e);
+        //         return Ok(())  // Abort
+        //     }
+        // };
+        // let rep_cert: ReponseCertificatMaitredescles = match serde_json::from_value(value) {
+        //     Ok(c) => c,
+        //     Err(e) => {
+        //         error!("Erreur lecture message reponse certificats maitre des cles : {:?}", e);
+        //         return Ok(())  // Abort
+        //     }
+        // };
+        //
+        // let cert_chiffrage = match rep_cert.get_enveloppe_maitredescles(self).await {
+        //     Ok(c) => c,
+        //     Err(e) => {
+        //         error!("Erreur chargement enveloppe certificat chiffrage maitredescles : {:?}", e);
+        //         return Ok(())  // Abort
+        //     }
+        // };
+        //
+        // debug!("Certificat de maitre des cles charges dans {:?}", cert_chiffrage.as_ref());
+        //
+        // // Stocker cles chiffrage du maitre des cles
+        // {
+        //     let fps = cert_chiffrage.fingerprint_cert_publickeys().expect("public keys");
+        //     let mut guard = self.cles_chiffrage.lock().expect("lock");
+        //     for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
+        //         guard.insert(fp.fingerprint.clone(), fp.clone());
+        //     }
+        // }
+    //}
 }
 
 /// Permet de recuperer un Decipher deja initialise pour une cle

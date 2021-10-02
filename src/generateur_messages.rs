@@ -29,6 +29,7 @@ pub struct RoutageMessageAction {
     exchanges: Option<Vec<Securite>>,
     reply_to: Option<String>,
     correlation_id: Option<String>,
+    ajouter_reply_q: bool,
 }
 impl RoutageMessageAction {
 
@@ -38,7 +39,7 @@ impl RoutageMessageAction {
         RoutageMessageAction {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None
+            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false
         }
     }
 
@@ -57,6 +58,7 @@ pub struct RoutageMessageActionBuilder {
     exchanges: Option<Vec<Securite>>,
     reply_to: Option<String>,
     correlation_id: Option<String>,
+    ajouter_reply_q: bool,
 }
 impl RoutageMessageActionBuilder {
     pub fn new<S>(domaine: S, action: S) -> Self
@@ -65,7 +67,7 @@ impl RoutageMessageActionBuilder {
         RoutageMessageActionBuilder {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None
+            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false
         }
     }
 
@@ -97,6 +99,12 @@ impl RoutageMessageActionBuilder {
         self
     }
 
+    pub fn ajouter_reply_q<S>(mut self, flag: bool) -> Self
+    {
+        self.ajouter_reply_q = flag;
+        self
+    }
+
     pub fn build(self) -> RoutageMessageAction {
         RoutageMessageAction {
             domaine: self.domaine,
@@ -105,6 +113,7 @@ impl RoutageMessageActionBuilder {
             exchanges: self.exchanges,
             reply_to: self.reply_to,
             correlation_id: self.correlation_id,
+            ajouter_reply_q: self.ajouter_reply_q,
         }
     }
 }
@@ -115,8 +124,8 @@ pub struct RoutageMessageReponse {
     pub correlation_id: String,
 }
 impl RoutageMessageReponse {
-    pub fn new<S>(reply_to: S, correlation_id: S) -> Self
-        where S: Into<String>
+    pub fn new<S, T>(reply_to: S, correlation_id: T) -> Self
+        where S: Into<String>, T: Into<String>
     {
         RoutageMessageReponse {
             reply_to: reply_to.into(),

@@ -26,6 +26,7 @@ use openssl::x509::{X509, X509Ref, X509StoreContext};
 use openssl::x509::store::{X509Store, X509StoreBuilder};
 use openssl::x509::verify::X509VerifyFlags;
 use serde::{Deserialize, Serialize, Serializer};
+use serde_json::json;
 use x509_parser::parse_x509_certificate;
 
 use crate::constantes::*;
