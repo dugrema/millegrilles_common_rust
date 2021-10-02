@@ -1,17 +1,16 @@
-use std::borrow::Borrow;
 use std::collections::{HashMap, BTreeMap, HashSet};
 use std::error;
 use std::fmt::{Debug, Formatter};
 use std::fs::read_to_string;
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{DateTime, ParseResult};
 use chrono::prelude::*;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use multibase::{Base, encode};
 use multicodec::Codec::Sha2_256 as MCSha2_256;
 use multihash::{Code, Multihash};
@@ -23,11 +22,10 @@ use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private, Public};
 use openssl::rsa::Rsa;
 use openssl::stack::{Stack, StackRef};
-use openssl::x509::{X509, X509Name, X509Ref, X509StoreContext, X509v3Context};
+use openssl::x509::{X509, X509Ref, X509StoreContext};
 use openssl::x509::store::{X509Store, X509StoreBuilder};
 use openssl::x509::verify::X509VerifyFlags;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{json, Map, Value};
+use serde::{Deserialize, Serialize, Serializer};
 use x509_parser::parse_x509_certificate;
 
 use crate::constantes::*;
@@ -117,8 +115,8 @@ pub fn verifier_certificat(cert: &X509, chaine_pem: &StackRef<X509>, store: &X50
 
             if let Some(organization) = organization {
                 // Verifier le idmg
-                let chaine = match c.chain() {
-                    Some(mut s) => {
+                match c.chain() {
+                    Some(s) => {
                         match s.iter().last() {
                             Some(ca) => {
                                 match calculer_idmg_ref(ca) {
@@ -164,14 +162,14 @@ fn calculer_fingerprint(cert: &X509) -> Result<String, ErrorStack> {
     Ok(encode(Base::Base58Btc, mh_bytes))
 }
 
-fn calculer_fingerprint_ref(cert: &X509Ref) -> Result<String, ErrorStack> {
-    let fingerprint = cert.digest(MessageDigest::sha256())?;
-
-    let mh = Multihash::wrap(MCSha2_256.code().into(), fingerprint.as_ref()).unwrap();
-    let mh_bytes: Vec<u8> = mh.to_bytes();
-
-    Ok(encode(Base::Base58Btc, mh_bytes))
-}
+// fn calculer_fingerprint_ref(cert: &X509Ref) -> Result<String, ErrorStack> {
+//     let fingerprint = cert.digest(MessageDigest::sha256())?;
+//
+//     let mh = Multihash::wrap(MCSha2_256.code().into(), fingerprint.as_ref()).unwrap();
+//     let mh_bytes: Vec<u8> = mh.to_bytes();
+//
+//     Ok(encode(Base::Base58Btc, mh_bytes))
+// }
 
 fn calculer_fingerprint_pk(pk: &PKey<Public>) -> Result<String, String> {
     let pk_der = pk.public_key_to_der().expect("Erreur conversion PK vers format DER");
@@ -817,7 +815,7 @@ impl CollectionCertificatsPem {
             match validateur.charger_enveloppe(&pems, Some(fingerprint_certificat)).await {
                 Ok(e) => Some(e),
                 Err(e) => {
-                    error!("Erreur chargement enveloppe {}", fingerprint_certificat);
+                    error!("Erreur chargement enveloppe {} : {:?}", fingerprint_certificat, e);
                     None
                 },
             }

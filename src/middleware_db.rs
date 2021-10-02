@@ -4,15 +4,14 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
-use log::{debug, error, info, warn};
+use log::{debug, error};
 use mongodb::Database;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
+use tokio::sync::{mpsc, mpsc::Receiver};
 use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
 use crate::chiffrage::{Chiffreur, Dechiffreur, Mgs2CipherData};

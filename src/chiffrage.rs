@@ -1,10 +1,6 @@
-use std::cmp::min;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
-use std::io::Write;
-use std::iter::Map;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::debug;
@@ -13,13 +9,13 @@ use multihash::Code;
 use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private, Public};
-use openssl::rsa::{Padding, Rsa};
-use openssl::symm::{Cipher, Crypter, encrypt, Mode};
+use openssl::rsa::Padding;
+use openssl::symm::{Cipher, Crypter, Mode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use crate::bson::Document;
 
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ordered_map};
+use crate::certificats::{FingerprintCertPublicKey, ordered_map};
 use crate::hachages::Hacheur;
 use crate::middleware::IsConfigurationPki;
 
@@ -119,7 +115,7 @@ impl CipherMgs2 {
             }
         }
 
-        let mut encrypter = Crypter::new(
+        let encrypter = Crypter::new(
             Cipher::aes_256_gcm(),
             Mode::Encrypt,
             cle,
@@ -236,7 +232,10 @@ impl DecipherMgs2 {
             Some(&decipher_data.iv)
         ).unwrap();
 
-        decrypter.set_tag(decipher_data.tag.as_slice());
+        match decrypter.set_tag(decipher_data.tag.as_slice()) {
+            Ok(()) => (),
+            Err(e) => Err(format!("Erreur set tag : {:?}", e))?
+        }
 
         Ok(DecipherMgs2 {
             decrypter
@@ -470,15 +469,14 @@ pub fn random_vec(nb_bytes: usize) -> Vec<u8> {
     // Extraire bytes par groupe de taille max (32)
     let nb_loops = nb_bytes / 32;
     let restant = nb_bytes - (nb_loops * 32);
-    let mut rnd_bytes = [0u8; 32];
-    for i in 0..nb_loops {
-        rnd_bytes = rnd.gen();
+    for _ in 0..nb_loops {
+        let rnd_bytes: [u8; 32] = rnd.gen();
         v.extend_from_slice(&rnd_bytes[0..32]);
     }
 
     // Ajouter bytes manquants
     if restant > 0 {
-        for i in 0..restant {
+        for _ in 0..restant {
             let byte: u8 = rnd.gen();
             v.push(byte);
         }
@@ -550,7 +548,7 @@ mod backup_tests {
         let len_output = cipher.update(input, &mut output).expect("output");
         assert_eq!(len_output, input.len());
 
-        let len_output = cipher.finalize(&mut output).expect("finalize");
+        let _ = cipher.finalize(&mut output).expect("finalize");
         let tag = cipher.tag.as_ref().expect("tag").to_owned();
         assert_eq!(tag.len(), 23);
 
@@ -568,11 +566,11 @@ mod backup_tests {
         let mut dechiffreur = DecipherMgs2::new(&cipher_data).expect("dechiffreur");
 
         let mut dechiffrer_out= [0u8; 13];
-        let len_decipher = dechiffreur.update(&output, &mut dechiffrer_out).expect("dechiffrer");
+        let _ = dechiffreur.update(&output, &mut dechiffrer_out).expect("dechiffrer");
         assert_eq!(&dechiffrer_out, input);
 
         let vec_out = dechiffrer_out.to_vec();
-        let dechiffre_str = String::from_utf8(vec_out).expect("str out");
+        let _ = String::from_utf8(vec_out).expect("str out");
         // println!("Contenu dechiffre : {:?} (len {})", dechiffre_str, len_decipher);
 
     }

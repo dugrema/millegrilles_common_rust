@@ -4,32 +4,25 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use futures::stream::FuturesUnordered;
-use lapin::message::Delivery;
 use log::{debug, error, info, warn};
-use mongodb::{bson::{doc, to_bson}, Client, Collection, Cursor, Database};
+use mongodb::{bson::{doc, to_bson}, Collection};
 use mongodb::bson::{Bson, Document};
 use mongodb::bson as bson;
-use mongodb::options::{AuthMechanism, ClientOptions, Credential, FindOptions, Hint, TlsOptions, UpdateOptions};
-use openssl::x509::store::X509Store;
-use openssl::x509::X509;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
-use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
+use mongodb::options::UpdateOptions;
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
-use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherData};
-use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
+use crate::chiffrage::{Chiffreur, Dechiffreur, Mgs2CipherData};
+use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, IsConfigNoeud};
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageReponse, RoutageMessageAction};
+use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
-use crate::rabbitmq_dao::{Callback, ConfigQueue, ConfigRoutingExchange, EventMq, executer_mq, MessageOut, QueueType, RabbitMqExecutor, TypeMessageOut};
-use crate::recepteur_messages::{ErreurVerification, MessageCertificat, MessageValide, MessageValideAction, recevoir_messages, TypeMessage, valider_message, task_requetes_certificats};
-use crate::transactions::{transmettre_evenement_persistance, TransactionImpl};
-use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
+use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutor};
+use crate::recepteur_messages::MessageValideAction;
+use crate::transactions::transmettre_evenement_persistance;
+use crate::verificateur::VerificateurMessage;
 
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait Middleware:
@@ -228,7 +221,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         None => None,
     };
 
-    let message = json!({
+    let _ = json!({
         "idmg": middleware.idmg(),
         "noeud_id": noeud_id,
         "domaine": nom_domaine,
@@ -242,7 +235,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         "primaire": true,
     });
 
-    let routage = RoutageMessageAction::builder("presence", "domaine")
+    let _ = RoutageMessageAction::builder("presence", "domaine")
         .exchanges(vec!(Securite::L3Protege))
         .build();
 
@@ -267,7 +260,7 @@ pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine:
         tokio::time::sleep(tokio::time::Duration::new(120, 0)).await;
     }
 
-    info!("middleware.thread_emettre_presence_domaine : Fin thread");
+    // info!("middleware.thread_emettre_presence_domaine : Fin thread");
 }
 
 #[async_trait]
@@ -277,7 +270,7 @@ pub trait EmetteurCertificat: Send + Sync {
 
 #[async_trait]
 impl EmetteurCertificat for ValidateurX509Impl {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
+    async fn emettre_certificat(&self, _: &impl GenerateurMessages) -> Result<(), String> {
         todo!()
     }
 }
@@ -429,15 +422,15 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction,
     let entete = &msg.entete;
     let uuid_transaction = entete.uuid_transaction.as_str();
     let estampille = &entete.estampille;
-    let domaine = match entete.domaine.as_ref() {
+    let _ = match entete.domaine.as_ref() {
         Some(d) => d.as_str(),
         None => Err(format!("Domaine absent de la transaction {}", uuid_transaction))?,
     };
-    let action = match entete.action.as_ref() {
+    let _ = match entete.action.as_ref() {
         Some(a) => a.as_str(),
         None => Err(format!("Action absente de la transaction {}", uuid_transaction))?,
     };
-    let partition = match entete.partition.as_ref() {
+    let _ = match entete.partition.as_ref() {
         Some(p) => Some(p.as_str()),
         None => None,
     };
@@ -483,7 +476,7 @@ pub fn map_msg_to_bson(msg: &MessageMilleGrille) -> Result<Document, Box<dyn Err
         Err(e) => Err(format!("Erreur sauvegarde transaction, conversion : {:?}", e))?,
     };
 
-    let mut contenu_doc = match Document::try_from(val) {
+    let contenu_doc = match Document::try_from(val) {
         Ok(c) => Ok(c),
         Err(e) => {
             error!("Erreur conversion json -> bson\n{:?}", e.to_string());
