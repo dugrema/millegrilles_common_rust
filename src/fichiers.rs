@@ -449,6 +449,7 @@ pub mod fichiers_tests {
 
     use super::*;
     use tokio::fs::File;
+    use crate::formatteur_messages::MessageSerialise;
     use crate::middleware::MiddlewareDb;
     use crate::middleware_db::MiddlewareDb;
 
@@ -481,6 +482,10 @@ pub mod fichiers_tests {
         }
 
         async fn charger_certificats_chiffrage(&self) -> Result<(), Box<dyn Error>> {
+            todo!()
+        }
+
+        async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>> {
             todo!()
         }
     }
