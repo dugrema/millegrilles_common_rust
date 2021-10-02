@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -10,18 +9,15 @@ use serde_json::Value;
 use tokio::spawn;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
-use tokio_stream::StreamExt;
 
 use crate::backup::{backup, reset_backup_flag, restaurer};
 use crate::certificats::ValidateurX509;
 use crate::certificats::VerificateurPermissions;
-use crate::chiffrage::{Chiffreur, Dechiffreur};
-use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
+use crate::formatteur_messages::{MessageMilleGrille};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
-use crate::middleware::{IsConfigurationPki, Middleware, thread_emettre_presence_domaine};
-use crate::mongo_dao::{ChampIndex, convertir_bson_value, filtrer_doc_id, IndexOptions, MongoDao};
+use crate::middleware::{Middleware, thread_emettre_presence_domaine};
+use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction};
@@ -103,7 +99,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     debug!("Ajout mapping tx_triggers {:?}", t);
                     routing.insert(String::from(format!("{}/triggers", &t)), tx_triggers.clone());
                 }
-                QueueType::ReplyQueue(t) => (),
+                QueueType::ReplyQueue(_) => (),
             }
         }
         // routing.insert(String::from(self.get_q_transactions()), tx_messages.clone());

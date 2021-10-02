@@ -1,50 +1,37 @@
-use std::{io, io::Write};
-use std::cmp::min;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
-use std::io::Bytes;
-use std::iter::Map;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use async_std::fs::File;
-use async_std::io::BufReader;
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Timelike, TimeZone, Utc};
+use chrono::{DateTime, Duration, Timelike, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use futures::Stream;
-use futures::stream::TryStreamExt;
 use log::{debug, error, info, warn};
 use mongodb::bson::{bson, doc, Document};
 use mongodb::Cursor;
 use mongodb::options::{AggregateOptions, FindOptions, Hint};
-use multibase::Base;
-use multihash::Code;
-use openssl::pkey::{PKey, Private};
 use reqwest::{Body, Response};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
-use tokio::io::AsyncRead as AsyncRead_Tokio;
-use tokio_stream::{Iter as Iter_tokio, StreamExt};
+use tokio_stream::StreamExt;
 use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
 
-use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509};
-use crate::chiffrage::{Chiffreur, CipherMgs2, CommandeSauvegarderCle, Dechiffreur, DecipherMgs2, FingerprintCleChiffree, FormatChiffrage, Mgs2CipherData, Mgs2CipherKeys};
+use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
+use crate::chiffrage::{Chiffreur, Dechiffreur, DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
 use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse_tar, TraiterFichier};
 use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::hachages::{hacher_serializable, Hacheur};
-use crate::middleware::{IsConfigurationPki, MiddlewareMessage};
+use crate::hachages::hacher_serializable;
+use crate::middleware::IsConfigurationPki;
 use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::MongoDao;
 use crate::rabbitmq_dao::TypeMessageOut;
@@ -134,7 +121,7 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
         path_fichier_transactions.push(PathBuf::from(builder.get_nomfichier_transactions()));
 
         let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
-        let cipher_keys = serialiser_transactions(
+        serialiser_transactions(
             middleware,
             &mut curseur,
             &mut builder,
@@ -250,7 +237,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     };
 
     let limite_snapshot = {
-        let mut limite_snapshot = Utc::now() - Duration::hours(1);
+        let limite_snapshot = Utc::now() - Duration::hours(1);
         limite_snapshot.with_minute(0);
         limite_snapshot.with_second(0);
         limite_snapshot.with_nanosecond(0);
@@ -283,7 +270,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
         doc! {"$sort": {"_id.heure": 1}},
     ];
 
-    let mut options = AggregateOptions::builder()
+    let options = AggregateOptions::builder()
         .hint(Hint::Name(String::from("backup_transactions")))
         .build();
 
@@ -350,7 +337,7 @@ where M: GenerateurMessages
 
     let entete: Option<Entete> = match message.map_contenu(Some("dernier_backup")) {
         Ok(e) => Some(e),
-        Err(e) => None,
+        Err(_) => None,
     };
 
     Ok(entete)
@@ -451,7 +438,7 @@ where
 }
 
 async fn serialiser_catalogue(
-    middleware: &(impl FormatteurMessage),
+    middleware: &impl FormatteurMessage,
     builder: CatalogueHoraireBuilder
 ) -> Result<(CatalogueHoraire, MessageMilleGrille, Option<MessageMilleGrille>), Box<dyn Error>> {
 
@@ -575,13 +562,13 @@ where
         }
     };
 
-    let path_commande = format!("backup/domaine/{}", catalogue.catalogue_nomfichier);;
+    let path_commande = format!("backup/domaine/{}", catalogue.catalogue_nomfichier);
     url.set_path(path_commande.as_str());
 
     debug!("Url backup : {:?}", url);
 
     // let url_put = format!("https://{}/backup/domaine/{}", "mg-dev4:3021", catalogue.catalogue_nomfichier);
-    let mut request = client.put(url).multipart(form);
+    let request = client.put(url).multipart(form);
 
     let response = request.send().await?;
     debug!("Resultat {} : {:?}", response.status(), response);
@@ -836,22 +823,22 @@ impl CatalogueHoraireBuilder {
         self.uuid_transactions.push(String::from(uuid_transaction));
     }
 
-    fn transactions_hachage(&mut self, hachage: String) {
-        self.transactions_hachage = hachage;
-    }
+    // fn transactions_hachage(&mut self, hachage: String) {
+    //     self.transactions_hachage = hachage;
+    // }
 
     fn set_cles(&mut self, cles: &Mgs2CipherKeys) {
         self.cles = Some(cles.clone());
     }
 
-    fn get_nomfichier_catalogue(&self) -> PathBuf {
-        let mut date_str = self.heure.format_ymdh();
-        match self.snapshot {
-            true => date_str = format!("{}-SNAPSHOT", date_str),
-            false => (),
-        }
-        PathBuf::from(format!("{}_{}.json.xz", &self.nom_domaine, date_str))
-    }
+    // fn get_nomfichier_catalogue(&self) -> PathBuf {
+    //     let mut date_str = self.heure.format_ymdh();
+    //     match self.snapshot {
+    //         true => date_str = format!("{}-SNAPSHOT", date_str),
+    //         false => (),
+    //     }
+    //     PathBuf::from(format!("{}_{}.json.xz", &self.nom_domaine, date_str))
+    // }
 
     fn get_nomfichier_transactions(&self) -> PathBuf {
         let mut date_str = self.heure.format_ymdh();
@@ -890,7 +877,7 @@ impl CatalogueHoraireBuilder {
         let transactions_nomfichier = self.get_nomfichier_transactions().to_str().expect("str").to_owned();
         let catalogue_nomfichier = format!("{}_{}.json.xz", &self.nom_domaine, date_str);
 
-        let (format, cle, iv, tag) = match(self.cles) {
+        let (format, cle, iv, tag) = match self.cles {
             Some(cles) => {
                 (Some(cles.get_format()), cles.get_cle_millegrille(), Some(cles.iv), Some(cles.tag))
             },
@@ -951,18 +938,18 @@ impl<'a> TransactionWriter<'a> {
         // S'assurer qu'on a un document (map)
         // Retirer le champ _id si present
         match value.as_object_mut() {
-            Some(mut doc) => {
+            Some(doc) => {
                 doc.remove("_id");
                 self.write_json_line(&value).await
             },
             None => {
                 warn!("Valeur bson fournie en backup n'est pas un _Document_, on l'ignore : {:?}", contenu);
-                Ok((0))
+                Ok(0)
             }
         }
     }
 
-    pub async fn fermer(mut self) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
+    pub async fn fermer(self) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
         self.fichier_writer.fermer().await
     }
 
@@ -981,11 +968,11 @@ impl<'a> TransactionReader<'a> {
 
     pub fn new(data: Box<impl AsyncRead + Unpin + 'a>, decipher_data: Option<&Mgs2CipherData>) -> Result<Self, Box<dyn Error>> {
 
-        let mut xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
+        let xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
 
         let dechiffreur = match decipher_data {
             Some(cd) => {
-                let mut dechiffreur = DecipherMgs2::new(cd)?;
+                let dechiffreur = DecipherMgs2::new(cd)?;
                 Some(dechiffreur)
             },
             None => None,
@@ -1010,7 +997,7 @@ impl<'a> TransactionReader<'a> {
         let mut output_complet = Vec::new();
 
         loop {
-            let mut reader = &mut self.data;
+            let reader = &mut self.data;
             let len = reader.read(&mut buffer).await.expect("lecture");
             if len == 0 {break}
 
@@ -1025,7 +1012,7 @@ impl<'a> TransactionReader<'a> {
             };
 
             // debug!("Lu {}\n{:?}", len, traiter_bytes);
-            let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
+            let _ = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
             // debug!("Status xz : {:?}\n{:?}", status, xz_output);
 
             output_complet.append(&mut xz_output);
@@ -1173,7 +1160,7 @@ impl ProcesseurFichierBackup {
                 let catalogue_bytes = decompresseur.finish()?;
                 let catalogue_str = String::from_utf8(catalogue_bytes)?;
                 debug!("Catalogue extrait\n{}", catalogue_str);
-                let mut message = MessageSerialise::from_str(catalogue_str.as_str())?;
+                let message = MessageSerialise::from_str(catalogue_str.as_str())?;
 
                 message
             };
@@ -1253,7 +1240,7 @@ impl ProcesseurFichierBackup {
 
                 Ok(())
             },
-            TypeCatalogueBackup::Quotidien(m) => {
+            TypeCatalogueBackup::Quotidien(_) => {
                 // Rien a faire pour catalogue quotidien
                 Ok(())
             }
@@ -1348,7 +1335,7 @@ impl ProcesseurFichierBackup {
                             }
                         },
                         Err(e) => {
-                            error!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage)", filepath, catalogue.domaine, uuid_catalogue_courant);
+                            error!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage) : Err {:?}", filepath, catalogue.domaine, uuid_catalogue_courant, e);
                         }
                     };
                 } else {
@@ -1376,7 +1363,12 @@ impl ProcesseurFichierBackup {
         Ok(())
     }
 
-    async fn parse_transactions(&mut self, middleware: &impl ValidateurX509, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>> {
+    async fn parse_transactions<M, T>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut T)
+        -> Result<(), Box<dyn Error>>
+        where
+            M: ValidateurX509,
+            T: futures::io::AsyncRead + Send + Sync + Unpin
+    {
         debug!("Parse transactions : {:?}", filepath);
 
         let mut output = [0u8; 4096];
@@ -1390,8 +1382,8 @@ impl ProcesseurFichierBackup {
             if len == 0 {break}
 
             let buf = match self.decipher.as_mut() {
-                Some(mut d) => {
-                    d.update(&output[..len], &mut output_decipher);
+                Some(d) => {
+                    d.update(&output[..len], &mut output_decipher)?;
                     &output_decipher[..len]
                 },
                 None => {
@@ -1457,7 +1449,7 @@ impl ProcesseurFichierBackup {
         // Deplacer messages vers nouveau vecteur
         let mut transactions = Vec::new();
         transactions.reserve(self.batch.len());
-        while let Some(mut t) = self.batch.pop() {
+        while let Some(t) = self.batch.pop() {
             transactions.push(t);
         }
 
@@ -1699,7 +1691,7 @@ mod backup_tests {
 
         let catalogue = catalogue_builder.build();
 
-        let value = serde_json::to_value(catalogue).expect("value");
+        let _ = serde_json::to_value(catalogue).expect("value");
 
         // debug!("Valeur catalogue : {:?}", value);
     }
@@ -1755,7 +1747,7 @@ mod backup_tests {
         writer.write_json_line(&doc_json).await.expect("write");
         writer.write_json_line(&doc_json).await.expect("write");
 
-        let file = writer.fermer().await.expect("fermer");
+        let _ = writer.fermer().await.expect("fermer");
         // debug!("File du writer : {:?}", file);
 
         let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
@@ -1787,7 +1779,7 @@ mod backup_tests {
         let (mh_reference, doc_bson) = get_doc_reference();
         writer.write_bson_line(&doc_bson).await.expect("write");
 
-        let (mh, decipher_data) = writer.fermer().await.expect("fermer");
+        let (mh, _) = writer.fermer().await.expect("fermer");
         // debug!("File du writer : {:?}, multihash: {}", file, mh);
 
         assert_eq!(mh.as_str(), &mh_reference);

@@ -11,7 +11,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
 use xz2::stream;
 
-use crate::backup::TransactionReader;
 use crate::certificats::ValidateurX509;
 use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherKeys};
 use crate::constantes::*;
@@ -100,7 +99,8 @@ impl<'a> FichierWriter<'a> {
         buffer.reserve(FichierWriter::BUFFER_SIZE);
 
         // Flush xz
-        while let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)? {
+        loop {
+            let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)?;
 
             let buffer_output = match &mut self.chiffreur {
                 Some(c) => {
@@ -204,7 +204,8 @@ impl CompresseurBytes {
         buffer.reserve(CompresseurBytes::BUFFER_SIZE);
 
         // Flush xz
-        while let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)? {
+        loop {
+            let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)?;
 
             self.hacheur.update(&buffer);
             self.contenu.append(&mut buffer);
@@ -235,7 +236,7 @@ impl DecompresseurBytes {
     const BUFFER_SIZE: usize = 65535;
 
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        let mut xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK)?;
+        let xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK)?;
         Ok(DecompresseurBytes {
             xz_decoder,
             output: Vec::new(),
@@ -324,9 +325,9 @@ impl DecompresseurBytes {
 }
 
 // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
-pub async fn parse_tar<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
+pub async fn parse_tar<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
 where M: ValidateurX509 + Dechiffreur + VerificateurMessage {
-    let mut reader = Archive::new(stream);
+    let reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
     while let Some(entry) = entries.next().await {
@@ -350,10 +351,10 @@ where M: ValidateurX509 + Dechiffreur + VerificateurMessage {
 }
 
 // todo : Fix parse_tar recursion async
-pub async fn parse_tar1<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
+pub async fn parse_tar1<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
 where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 {
-    let mut reader = Archive::new(stream);
+    let reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
     while let Some(entry) = entries.next().await {
@@ -376,10 +377,10 @@ where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 }
 
 // todo : Fix parse_tar recursion async
-pub async fn parse_tar2<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
+pub async fn parse_tar2<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
 where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 {
-    let mut reader = Archive::new(stream);
+    let reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
     while let Some(entry) = entries.next().await {
@@ -402,10 +403,10 @@ where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 }
 
 // todo : Fix parse_tar recursion async
-pub async fn parse_tar3<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut(impl TraiterFichier)) -> Result<(), Box<dyn Error>>
+pub async fn parse_tar3<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
 where M: ValidateurX509 + Dechiffreur + VerificateurMessage
 {
-    let mut reader = Archive::new(stream);
+    let reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
     while let Some(entry) = entries.next().await {
@@ -477,6 +478,10 @@ pub mod fichiers_tests {
     impl Chiffreur for ChiffreurDummy {
         fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
             self.public_keys.clone()
+        }
+
+        async fn charger_certificats_chiffrage(&self) -> Result<(), Box<dyn Error>> {
+            todo!()
         }
     }
 
