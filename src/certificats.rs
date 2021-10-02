@@ -538,7 +538,7 @@ pub trait ValidateurX509: Send + Sync {
     fn store_notime(&self) -> &X509Store;
 
     /// Invoquer regulierement pour faire l'entretien du cache.
-    async fn entretien(&self);
+    async fn entretien_validateur(&self);
 
     fn valider_pour_date(&self, enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
         {
@@ -667,7 +667,7 @@ impl ValidateurX509 for ValidateurX509Impl {
 
     fn store_notime(&self) -> &X509Store { &self.store_notime }
 
-    async fn entretien(&self) { debug!("Entretien cache certificats"); }
+    async fn entretien_validateur(&self) { debug!("Entretien cache certificats"); }
 
 }
 

@@ -425,6 +425,7 @@ impl Debug for Mgs2CipherData {
 }
 
 /// Permet de recuperer un Cipher deja initalise avec les certificats de MaitreDesCles.
+#[async_trait]
 pub trait Chiffreur {
     /// Retourne les certificats qui peuvent etre utilises pour chiffrer une cle secrete.
     /// Devrait inclure le certificat de MilleGrille avec flag est_cle_millegrille==true.
@@ -435,6 +436,8 @@ pub trait Chiffreur {
         let fp_public_keys = self.get_publickeys_chiffrage();
         Ok(CipherMgs2::new(&fp_public_keys)?)
     }
+
+    async fn charger_certificats_chiffrage(&self) -> Result<(), Box<dyn Error>>;
 }
 
 /// Permet de recuperer un Decipher deja initialise pour une cle
