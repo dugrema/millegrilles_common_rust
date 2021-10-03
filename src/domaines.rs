@@ -41,6 +41,10 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     /// Retourne la liste des Q a configurer pour ce domaine
     fn preparer_queues(&self) -> Vec<QueueType>;
 
+    // Retourne vrai si ce domaine doit chiffrer ses backup
+    // Par defaut true.
+    fn chiffrer_backup(&self) -> bool { true }
+
     /// Genere les index du domaine dans MongoDB
     async fn preparer_index_mongodb_custom<M>(&self, middleware: &M) -> Result<(), String>
         where M: MongoDao;
@@ -315,7 +319,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     // Commandes standard
                     COMMANDE_BACKUP_HORAIRE => backup(
                         middleware.as_ref(), self.get_nom_domaine().as_str(),
-                        self.get_collection_transactions().as_str(), true).await,
+                        self.get_collection_transactions().as_str(), self.chiffrer_backup()).await,
                     COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
                     COMMANDE_RESET_BACKUP => reset_backup_flag(
                         middleware.as_ref(), self.get_collection_transactions().as_str()).await,
