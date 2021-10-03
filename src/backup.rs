@@ -675,7 +675,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
     );
     parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
 
-    // Upload les transactions valides
+    // Download des transactions
     processeur.sauvegarder_batch(middleware.as_ref(), nom_collection_transactions).await?;
 
     Ok(())
@@ -870,9 +870,15 @@ impl CatalogueHoraireBuilder {
             true => date_str = format!("{}-SNAPSHOT", date_str),
             false => (),
         }
+
+        let nom_domaine_partition = match &self.partition {
+            Some(p) => format!("{}.{}", self.nom_domaine, p),
+            None => self.nom_domaine.clone()
+        };
+
         let nom_fichier = match self.chiffrer {
-            true => format!("{}_{}.jsonl.xz.mgs2", &self.nom_domaine, date_str),
-            false => format!("{}_{}.jsonl.xz", &self.nom_domaine, date_str),
+            true => format!("{}_{}.jsonl.xz.mgs2", &nom_domaine_partition, date_str),
+            false => format!("{}_{}.jsonl.xz", &nom_domaine_partition, date_str),
         };
         PathBuf::from(nom_fichier)
     }
@@ -899,7 +905,12 @@ impl CatalogueHoraireBuilder {
         // Build collections de certificats
         let transactions_hachage = self.transactions_hachage.clone();
         let transactions_nomfichier = self.get_nomfichier_transactions().to_str().expect("str").to_owned();
-        let catalogue_nomfichier = format!("{}_{}.json.xz", &self.nom_domaine, date_str);
+        let catalogue_nomfichier = match &self.partition {
+            Some(p) => {
+                format!("{}.{}_{}.json.xz", &self.nom_domaine, p, date_str)
+            },
+            None => format!("{}_{}.json.xz", &self.nom_domaine, date_str)
+        };
 
         let (format, cle, iv, tag) = match self.cles {
             Some(cles) => {
@@ -2214,8 +2225,83 @@ mod test_integration {
     }
 
     #[tokio::test]
+    async fn uploader_backup_horaire_partition() {
+        setup("uploader_backup_horaire_partition");
+
+        let partition = Some(String::from("MaPartition"));
+
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+
+        let catalogue_heure = DateEpochSeconds::now();
+        let timestamp_backup = catalogue_heure.get_datetime().timestamp().to_string();
+
+        let workdir = PathBuf::from("/tmp");
+
+        let mut path_transactions: PathBuf = workdir.clone();
+        path_transactions.push("upload_transactions.jsonl.xz.mgs2");
+
+        let certificats_chiffrage = vec! [
+            FingerprintCertPublicKey::new(
+                String::from("dummy"),
+                enveloppe.cle_publique().clone(),
+                true
+            )
+        ];
+
+        // Generer transactions, catalogue, commande maitredescles
+        // Test
+        let info = BackupInformation::new(
+            NOM_DOMAINE,
+            NOM_COLLECTION_TRANSACTIONS,
+            true,
+            None
+        ).expect("info");
+        let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
+        let domaine = "Pki";
+        let mut builder = CatalogueHoraire::builder(
+            heure.clone(), domaine.into(), partition, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
+
+        // Connecter mongo
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        futures.push(tokio::spawn(async move {
+
+            // Path fichiers transactions et catalogue
+            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+
+            serialiser_transactions(
+                middleware.as_ref(),
+                &mut transactions,
+                &mut builder,
+                path_transactions.as_path()
+            ).await.expect("serialiser");
+
+            // builder.set_cles(&cles);
+
+            // Signer et serialiser catalogue
+            let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
+                middleware.as_ref(),
+                builder,
+            ).await.expect("serialiser");
+
+            let response = uploader_backup(
+                middleware.as_ref(),
+                path_transactions.as_path(),
+                &catalogue,
+                &catalogue_signe,
+                commande_cles
+            ).await.expect("upload");
+            debug!("Response upload catalogue : {:?}", response);
+
+        }));
+
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+
+    }
+
+    #[tokio::test]
     async fn download_backup_test() {
-        setup("download_backup");
+        setup("download_backup_test");
 
         let workdir = PathBuf::from("/tmp");
 
@@ -2230,6 +2316,29 @@ mod test_integration {
             middleware.clone(),
             NOM_DOMAINE,
             None::<&str>,
+            NOM_COLLECTION_TRANSACTIONS,
+            workdir.as_path()
+        ).await.expect("download");
+
+    }
+
+    #[tokio::test]
+    async fn download_backup_test_partition() {
+        setup("download_backup_test_partition");
+
+        let workdir = PathBuf::from("/tmp");
+
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+
+        debug!("Attente MQ");
+        tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+        debug!("Fin sleep");
+
+        download_backup(
+            middleware.clone(),
+            "Pki".into(),
+            Some(String::from("MaPartition")),
             NOM_COLLECTION_TRANSACTIONS,
             workdir.as_path()
         ).await.expect("download");
