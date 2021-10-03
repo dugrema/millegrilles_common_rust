@@ -222,7 +222,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         None => None,
     };
 
-    let _ = json!({
+    let message = json!({
         "idmg": middleware.idmg(),
         "noeud_id": noeud_id,
         "domaine": nom_domaine,
@@ -236,14 +236,11 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         "primaire": true,
     });
 
-    let _ = RoutageMessageAction::builder("presence", "domaine")
+    let routage = RoutageMessageAction::builder("presence", "domaine")
         .exchanges(vec!(Securite::L3Protege))
         .build();
 
-    // todo Reactiver emettre presence quand modules transactions va etre desactive
-    // Ok(middleware.emettre_evenement(routage, &message).await?)
-
-    Ok(())
+    Ok(middleware.emettre_evenement(routage, &message).await?)
 }
 
 pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine: String)
