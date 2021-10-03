@@ -326,7 +326,7 @@ impl Mgs2CipherKeys {
             domaine: domaine.to_owned(),
             partition,
             identificateurs_document,
-            fingerprint_partitions,
+            fingerprint_partitions: Some(fingerprint_partitions),
         }
     }
 
@@ -376,8 +376,10 @@ pub struct CommandeSauvegarderCle {
     pub identificateurs_document: HashMap<String, String>,
     pub iv: String,
     pub tag: String,
+
     /// Partitions de maitre des cles (fingerprint certs). Utilise pour routage de la commande.
-    pub fingerprint_partitions: Vec<String>
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint_partitions: Option<Vec<String>>
 }
 
 /// Converti en Document Bson pour sauvegarder dans MongoDB
