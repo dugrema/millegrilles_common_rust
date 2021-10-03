@@ -144,17 +144,16 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
             Err(format!("Erreur upload fichier : {:?}", reponse))?;
         }
 
-        // Marquer transactions du backup comme completees
-        marquer_transaction_backup_complete(
-            middleware,
-            info_backup.nom_collection_transactions.as_str(),
-            &catalogue_horaire
-        ).await?;
-
         entete_precedente = Some(catalogue_signe.entete.clone());
         if !catalogue_horaire.snapshot {
-            // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
+            // Marquer transactions du backup comme completees
+            marquer_transaction_backup_complete(
+                middleware,
+                info_backup.nom_collection_transactions.as_str(),
+                &catalogue_horaire
+            ).await?;
 
+            // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
             let routage = RoutageMessageAction::new(BACKUP_NOM_DOMAINE, BACKUP_TRANSACTION_CATALOGUE_HORAIRE);
             // Avertissement : blocking FALSE, sinon sur le meme module que CoreBackup va capturer la transaction comme la reponse sans la traiter
             let reponse_catalogue = middleware.emettre_message_millegrille(
