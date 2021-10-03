@@ -170,10 +170,12 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
     Ok(())
 }
 
-pub async fn restaurer<M, T>(middleware: Arc<M>, nom_domaine: &str, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
-where
-    M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
-    T: TraiterTransaction,
+pub async fn restaurer<M, T, P>(middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
+    -> Result<(), Box<dyn Error>>
+    where
+        M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
+        T: TraiterTransaction,
+        P: AsRef<str>
 {
     if let Err(e) = emettre_evenement_restauration(middleware.as_ref(), nom_domaine, "debutRestauration").await {
         error!("Erreur emission message restauration : {:?}", e);
@@ -181,7 +183,13 @@ where
 
     let workdir = tempfile::tempdir()?;
     info!("Demarrage restauration, utilisation workdir {:?}", workdir);
-    let download_result = match download_backup(middleware.clone(), nom_domaine, nom_collection_transactions, workdir.path()).await {
+    let download_result = match download_backup(
+        middleware.clone(),
+        nom_domaine,
+        partition,
+        nom_collection_transactions,
+        workdir.path()
+    ).await {
         Ok(()) => Ok(()),
         Err(e) => {
             Err(format!("Erreur download backup : {:?}", e))
@@ -230,10 +238,10 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
 
     let nom_collection = backup_information.nom_collection_transactions.as_str();
 
-    let partition = match backup_information.partition.as_ref() {
-        Some(p) => bson!(p),
-        None => bson!({"$exists": false})
-    };
+    // let (partition, partition_bson) = match backup_information.partition.as_ref() {
+    //     Some(p) => (Some(p.as_str()), bson!(p.as_str())),
+    //     None => (None, bson!({"$exists": false}))
+    // };
 
     let limite_snapshot = {
         let limite_snapshot = Utc::now() - Duration::hours(1);
@@ -249,7 +257,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
             TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$lt": limite_snapshot},
             TRANSACTION_CHAMP_BACKUP_FLAG: false,
             TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
-            TRANSACTION_CHAMP_ENTETE_PARTITION: partition,
+            // TRANSACTION_CHAMP_ENTETE_PARTITION: &partition,
         }},
 
         // Grouper par domaines et heure
@@ -294,6 +302,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
         let builder = CatalogueHoraireBuilder::new(
             date,
             domaine.to_owned(),
+            backup_information.partition.clone(),
             backup_information.uuid_backup.clone(),
             backup_information.chiffrer,
             false,
@@ -306,6 +315,7 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
     let builder_snapshot = CatalogueHoraireBuilder::new(
         date_snapshot,
         backup_information.domaine.clone(),
+        backup_information.partition.clone(),
         backup_information.uuid_backup.clone(),
         backup_information.chiffrer,
         true,
@@ -569,7 +579,6 @@ where
 
     debug!("Url backup : {:?}", url);
 
-    // let url_put = format!("https://{}/backup/domaine/{}", "mg-dev4:3021", catalogue.catalogue_nomfichier);
     let request = client.put(url).multipart(form);
 
     let response = request.send().await?;
@@ -602,8 +611,12 @@ async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_coll
     Ok(())
 }
 
-async fn download_backup<M>(middleware: Arc<M>, nom_domaine: &str, nom_collection_transactions: &str, workdir: &Path) -> Result<(), Box<dyn Error>>
-where M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static {
+async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str, workdir: &Path)
+    -> Result<(), Box<dyn Error>>
+    where
+        M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static,
+        P: AsRef<str>
+{
     let path_fichier = {
         let mut path_fichier = PathBuf::from(workdir);
         path_fichier.push(PathBuf::from("download_backup.tar"));
@@ -629,7 +642,13 @@ where M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + I
         Some(u) => u.to_owned(),
         None => Err("Erreur backup - configuration serveur fichiers absente")?,
     };
-    url_fichiers.set_path(format!("/backup/restaurerDomaine/{}", nom_domaine).as_str());
+
+    let url_fichiers_str = match partition {
+        Some(p) => format!("/backup/restaurerDomaine/{}.{}", nom_domaine, p.as_ref()),
+        None => format!("/backup/restaurerDomaine/{}", nom_domaine)
+    };
+
+    url_fichiers.set_path(url_fichiers_str.as_str());
     debug!("Download backup url : {:?}", url_fichiers);
     let response = client.get(url_fichiers)
         .send()
@@ -691,8 +710,10 @@ pub struct CatalogueHoraire {
     pub heure: DateEpochSeconds,
     /// True si c'est un snapshot
     pub snapshot: bool,
-    /// Nom du domaine ou sous-domaine
+    /// Nom du domaine
     pub domaine: String,
+    /// Partition (optionnel)
+    pub partition: Option<String>,
     /// Identificateur unique du groupe de backup (collateur)
     pub uuid_backup: String,
 
@@ -726,8 +747,8 @@ pub struct CatalogueHoraire {
 
 impl CatalogueHoraire {
 
-    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool, snapshot: bool) -> CatalogueHoraireBuilder {
-        CatalogueHoraireBuilder::new(heure, nom_domaine, uuid_backup, chiffrer, snapshot)
+    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String, chiffrer: bool, snapshot: bool) -> CatalogueHoraireBuilder {
+        CatalogueHoraireBuilder::new(heure, nom_domaine, partition, uuid_backup, chiffrer, snapshot)
     }
 
     pub fn get_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
@@ -750,6 +771,7 @@ impl CatalogueHoraire {
 pub struct CatalogueHoraireBuilder {
     heure: DateEpochSeconds,
     nom_domaine: String,
+    partition: Option<String>,
     uuid_backup: String,
     chiffrer: bool,
     snapshot: bool,
@@ -806,9 +828,9 @@ impl BackupHandler for BackupInformation {
 
 impl CatalogueHoraireBuilder {
 
-    fn new(heure: DateEpochSeconds, nom_domaine: String, uuid_backup: String, chiffrer: bool, snapshot: bool) -> Self {
+    fn new(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String, chiffrer: bool, snapshot: bool) -> Self {
         CatalogueHoraireBuilder {
-            heure, nom_domaine, uuid_backup, chiffrer, snapshot,
+            heure, nom_domaine, partition, uuid_backup, chiffrer, snapshot,
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
             transactions_hachage: "".to_owned(),
@@ -890,6 +912,7 @@ impl CatalogueHoraireBuilder {
             heure: self.heure,
             snapshot: self.snapshot,
             domaine: self.nom_domaine,
+            partition: self.partition,
             uuid_backup: self.uuid_backup,
             catalogue_nomfichier,
 
@@ -1697,6 +1720,7 @@ mod backup_tests {
     use crate::fichiers::CompresseurBytes;
     use crate::fichiers::fichiers_tests::ChiffreurDummy;
     use crate::test_setup::setup;
+    use chrono::TimeZone;
 
     use super::*;
 
@@ -1726,7 +1750,7 @@ mod backup_tests {
         let uuid_backup = Uuid::new_v4().to_string();
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup, false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup, false, false);
 
         assert_eq!(catalogue_builder.heure.get_datetime().timestamp(), heure.get_datetime().timestamp());
         assert_eq!(&catalogue_builder.nom_domaine, NOM_DOMAINE_BACKUP);
@@ -1738,7 +1762,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
 
         let catalogue = catalogue_builder.build();
 
@@ -1756,9 +1780,9 @@ mod backup_tests {
         let transactions_hachage = "zABCD1234";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
 
-        catalogue_builder.transactions_hachage(transactions_hachage.to_owned());
+        catalogue_builder.transactions_hachage = transactions_hachage.to_owned();
 
         let catalogue = catalogue_builder.build();
 
@@ -1771,7 +1795,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
 
         let catalogue = catalogue_builder.build();
 
@@ -1786,7 +1810,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
 
         let catalogue = catalogue_builder.build();
 
@@ -1794,9 +1818,9 @@ mod backup_tests {
         let catalogue_str = serde_json::to_string(&value).expect("json");
         // debug!("Json catalogue : {:?}", catalogue_str);
 
-        assert_eq!(catalogue_str.find("1627794000"), Some(9));
-        assert_eq!(catalogue_str.find(NOM_DOMAINE_BACKUP), Some(48));
-        assert_eq!(catalogue_str.find(uuid_backup), Some(60));
+        assert_eq!(true, catalogue_str.find("1627794000").expect("val") > 0);
+        assert_eq!(true, catalogue_str.find(NOM_DOMAINE_BACKUP).expect("val") > 0);
+        assert_eq!(true, catalogue_str.find(uuid_backup).expect("val") > 0);
     }
 
     #[test]
@@ -1805,7 +1829,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
 
         let certificat = prep_enveloppe(CERT_DOMAINES);
         // debug!("!!! Enveloppe : {:?}", certificat);

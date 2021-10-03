@@ -65,7 +65,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
         S: Serialize,
     {
         let enveloppe = self.get_enveloppe_privee();
-        MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None::<&str>, None, None, version)
+        MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None::<&str>, None::<&str>, None::<&str>, version)
     }
 
     fn signer_message(
@@ -238,17 +238,19 @@ impl MessageMilleGrille {
         }
     }
 
-    pub fn new_signer<S, T>(
+    pub fn new_signer<S, T, U, V>(
         enveloppe_privee: &EnveloppePrivee,
         contenu: &S,
         domaine: Option<T>,
-        action: Option<T>,
-        partition: Option<T>,
+        action: Option<U>,
+        partition: Option<V>,
         version: Option<i32>
     ) -> Result<Self, Box<dyn std::error::Error>>
     where
         S: Serialize,
-        T: AsRef<str>
+        T: AsRef<str>,
+        U: AsRef<str>,
+        V: AsRef<str>,
     {
         // Serialiser le contenu
         let value_ordered: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
@@ -284,16 +286,16 @@ impl MessageMilleGrille {
 
     /// Va creer une nouvelle entete, calculer le hachag
     /// Note : value doit etre deja trie (BTreeMap recursif)
-    fn creer_entete<S>(
+    fn creer_entete<S, T, U>(
         enveloppe_privee: &EnveloppePrivee,
         domaine: Option<S>,
-        action: Option<S>,
-        partition: Option<S>,
+        action: Option<T>,
+        partition: Option<U>,
         version: Option<i32>,
         value: &Map<String, Value>
     )
         -> Result<Entete, Box<dyn Error>>
-        where S: AsRef<str>
+        where S: AsRef<str>, T: AsRef<str>, U: AsRef<str>
     {
 
         // Calculer le hachage du contenu
@@ -1132,7 +1134,7 @@ mod serialization_tests {
             "alpaca": true,
         });
         let message = MessageMilleGrille::new_signer(
-            &enveloppe_privee, &val, None, None, None, None).expect("map");
+            &enveloppe_privee, &val, None::<&str>, None::<&str>, None::<&str>, None).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         debug!("Message MilleGrille serialise : {}", message_str)
@@ -1227,7 +1229,8 @@ mod serialization_tests {
             "texte": "oui!",
             "alpaca": true,
         });
-        let mut message = MessageMilleGrille::new_signer(&enveloppe_privee, &val, None, None, None, None).expect("map");
+        let mut message = MessageMilleGrille::new_signer(
+            &enveloppe_privee, &val, None::<&str>, None::<&str>, None::<&str>, None).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         let idx_certificat = message_str.find("\"_certificat\"");

@@ -582,10 +582,10 @@ mod backup_tests {
         openssl::rand::rand_bytes(&mut buffer_random).expect("rand");
         // println!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
 
-        let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random);
+        let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random).expect("chiffrer");
         // println!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
 
-        let buffer_dechiffre = dechiffrer_asymetrique(&cle_privee, &ciphertext);
+        let buffer_dechiffre = dechiffrer_asymetrique(&cle_privee, &ciphertext).expect("dechiffrer");
         // println!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
 
         assert_eq!(buffer_random, buffer_dechiffre.as_slice());
@@ -596,7 +596,7 @@ mod backup_tests {
         // Cles
         let (cle_publique, cle_privee) = charger_cles();
         let fp_cles = vec![FingerprintCertPublicKey::new(String::from("dummy"), cle_publique, true)];
-        let mut cipher = CipherMgs2::new(&fp_cles);
+        let mut cipher = CipherMgs2::new(&fp_cles).expect("cipher");
 
         // Chiffrer
         // println!("Crypter avec info\niv: {}\ncle chiffree: {}", cipher.iv, cipher.cle_chiffree);

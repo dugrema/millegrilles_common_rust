@@ -451,7 +451,6 @@ pub mod fichiers_tests {
     use super::*;
     use tokio::fs::File;
     use crate::formatteur_messages::MessageSerialise;
-    use crate::middleware::MiddlewareDb;
     use crate::middleware_db::MiddlewareDb;
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";

@@ -984,6 +984,7 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
 
 #[cfg(test)]
 pub mod certificats_tests {
+    use std::path::PathBuf;
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
     use crate::test_setup::setup;

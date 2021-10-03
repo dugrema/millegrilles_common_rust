@@ -28,6 +28,9 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     /// Retourne le nom du domaine
     fn get_nom_domaine(&self) -> String;
 
+    /// Identificateur de partition. Optionnel, par defaut None.
+    fn get_partition(&self) -> Option<String> { None }
+
     /// Retourne le nom de la collection de transactions
     fn get_collection_transactions(&self) -> String;
 
@@ -341,6 +344,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         restaurer(
             middleware.clone(),
             self.get_nom_domaine().as_str(),
+            self.get_partition(),
             self.get_collection_transactions().as_str(),
             &noms_collections_docs,
             self
