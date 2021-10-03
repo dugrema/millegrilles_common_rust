@@ -557,236 +557,243 @@ pub fn map_msg_to_bson(msg: &MessageMilleGrille) -> Result<Document, Box<dyn Err
 //     (middleware, rx_messages_verifies, rx_triggers, futures)
 // }
 
-// #[cfg(test)]
-// pub mod serialization_tests {
-//     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
-//     use crate::test_setup::setup;
-//
-//     use super::*;
-//
-//     pub async fn build() -> (Arc<MiddlewareDbPki>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>) {
-//         // Preparer configuration
-//         let queues = Vec::new();
-//
-//         let (tx, rx) = mpsc::channel(1);
-//
-//         let listeners = {
-//             let mut callbacks: Callback<EventMq> = Callback::new();
-//             callbacks.register(Box::new(move |event| {
-//                 debug!("Ceci est un test de callback sur connexion, event : {:?}", event);
-//                 // tx.blocking_send(event).expect("Event connexion MQ");
-//                 let tx_ref = tx.clone();
-//                 let _ = tokio::spawn(async move{
-//                     match tx_ref.send(event).await {
-//                         Ok(_) => (),
-//                         Err(e) => error!("Erreur queuing via callback : {:?}", e)
-//                     }
-//                 });
-//             }));
-//
-//             Some(Mutex::new(callbacks))
-//         };
-//
-//         let (
-//             middleware,
-//             rx_messages_verifies,
-//             rx_triggers,
-//             future_recevoir_messages
-//         ) = preparer_middleware_pki(queues, listeners);
-//
-//         // Demarrer threads
-//         let mut futures : FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-//
-//         // Thread consommation
-//         let (tx_messages, rx_messages) = mpsc::channel::<TypeMessage>(1);
-//         let (tx_triggers, rx_pki_triggers) = mpsc::channel::<TypeMessage>(1);
-//
-//         let mut map_senders: HashMap<String, Sender<TypeMessage>> = HashMap::new();
-//         // map_senders.insert(String::from("Core"), tx_pki_messages.clone());
-//         // map_senders.insert(String::from("certificat"), tx_pki_messages.clone());
-//         // map_senders.insert(String::from("Core/triggers"), tx_pki_triggers.clone());
-//         futures.push(tokio::spawn(consommer( middleware.clone(), rx_messages_verifies, map_senders.clone())));
-//         futures.push(tokio::spawn(consommer( middleware.clone(), rx_triggers, map_senders.clone())));
-//
-//         // Thread d'entretien
-//         //futures.push(tokio::spawn(entretien(middleware.clone(), rx)));
-//
-//         // Thread ecoute et validation des messages
-//         for f in future_recevoir_messages {
-//             futures.push(f);
-//         }
-//
-//         futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_messages)));
-//         futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_pki_triggers)));
-//
-//         // debug!("domaines_middleware: Demarrage traitement domaines middleware");
-//         // let arret = futures.next().await;
-//         // debug!("domaines_middleware: Fermeture du contexte, task daemon terminee : {:?}", arret);
-//
-//         (middleware, futures, tx_messages, tx_triggers)
-//     }
-//
-//     async fn consommer(
-//         _middleware: Arc<impl ValidateurX509 + GenerateurMessages + MongoDao>,
-//         mut rx: Receiver<TypeMessage>,
-//         map_senders: HashMap<String, Sender<TypeMessage>>
-//     ) {
-//         while let Some(message) = rx.recv().await {
-//             match &message {
-//                 TypeMessage::Valide(m) => {
-//                     debug!("traiter_messages_valides: Message valide sans routing key/action : {:?}", m.message);
-//                 },
-//                 TypeMessage::ValideAction(m) => {
-//                     let contenu = &m.message;
-//                     let rk = &m.routing_key;
-//                     let action = &m.action;
-//                     debug!("domaines_middleware.consommer: Traiter message valide (action: {}, rk: {}): {:?}", action, rk, contenu);
-//
-//                     // match map_senders.get(m.domaine.as_str()) {
-//                     //     Some(sender) => {sender.send(message).await.expect("send message vers sous-domaine")},
-//                     //     None => error!("Message de domaine inconnu {}, on le drop", m.domaine),
-//                     // }
-//                 },
-//                 TypeMessage::Certificat(_) => (),  // Rien a faire
-//                 TypeMessage::Regeneration => (),   // Rien a faire
-//             }
-//         }
-//
-//         debug!("Fin consommer");
-//     }
-//
-//     pub async fn consommer_messages(middleware: Arc<MiddlewareDbPki>, mut rx: Receiver<TypeMessage>) {
-//         while let Some(message) = rx.recv().await {
-//             debug!("Message PKI recu : {:?}", message);
-//
-//             match message {
-//                 TypeMessage::ValideAction(inner) => {debug!("Message ValideAction recu : {:?}", inner)},
-//                 TypeMessage::Valide(_inner) => {warn!("Recu MessageValide sur thread consommation"); todo!()},
-//                 TypeMessage::Certificat(_inner) => {warn!("Recu MessageCertificat sur thread consommation"); todo!()},
-//                 TypeMessage::Regeneration => {continue}, // Rien a faire, on boucle
-//             };
-//
-//         }
-//
-//         debug!("Fin consommer_messages");
-//     }
-//
-//     #[tokio::test]
-//     async fn connecter_middleware_pki() {
-//         setup("connecter_middleware_pki");
-//
-//         // Connecter mongo
-//         //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
-//         let (
-//             middleware,
-//             mut futures,
-//             mut tx_messages,
-//             mut tx_triggers
-//         ) = build().await;
-//         futures.push(tokio::spawn(async move {
-//             debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
-//
-//             debug!("Sleeping");
-//             tokio::time::sleep(tokio::time::Duration::new(3, 0)).await;
-//             debug!("Fin sleep");
-//
-//             middleware.charger_certificats_chiffrage().await;
-//
-//             debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
-//             let cles = middleware.cles_chiffrage.lock().expect("lock");
-//             assert_eq!(2, cles.len());
-//
-//         }));
-//         // Execution async du test
-//         futures.next().await.expect("resultat").expect("ok");
-//     }
-//
-//     /// Test d'acces au MaitreDesCles. Doit creer une cle secrete, la chiffrer avec les certificats
-//     /// recus, emettre la cle puis recuperer une version dechiffrable localement.
-//     #[tokio::test]
-//     async fn roundtrip_cle_secrete() {
-//         setup("connecter_middleware_pki");
-//
-//         // Connecter mongo
-//         //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
-//         let (
-//             middleware,
-//             mut futures,
-//             mut tx_messages,
-//             mut tx_triggers
-//         ) = build().await;
-//         futures.push(tokio::spawn(async move {
-//             debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
-//
-//             debug!("Sleeping");
-//             tokio::time::sleep(tokio::time::Duration::new(4, 0)).await;
-//             debug!("Fin sleep");
-//             middleware.charger_certificats_chiffrage().await;
-//
-//             debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
-//
-//             const VALEUR_TEST: &[u8] = b"Du data a chiffrer";
-//
-//             let (vec_output, cipher_keys) = {
-//                 let mut vec_output: Vec<u8> = Vec::new();
-//                 let mut cipher = middleware.get_cipher();
-//                 let mut output = [0u8; 40];
-//                 let len_output = cipher.update(b"Du data a chiffrer", &mut output).expect("update");
-//                 vec_output.extend_from_slice(&output[..len_output]);
-//                 let len_output = cipher.finalize(&mut output).expect("finalize");
-//                 debug!("Finalize cipher : {:?}", &output[..len_output]);
-//                 vec_output.extend_from_slice(&output[..len_output]);
-//
-//                 (vec_output, cipher.get_cipher_keys().expect("cipher keys"))
-//             };
-//
-//             debug!("Data chiffre : {:?}\nCipher keys : {:?}", vec_output, cipher_keys);
-//
-//             let mut id_docs = HashMap::new();
-//             id_docs.insert(String::from("test"), String::from("dummy"));
-//             let commande = cipher_keys.get_commande_sauvegarder_cles("Test", id_docs);
-//             let hachage_bytes = commande.hachage_bytes.clone();
-//             debug!("Commande sauvegarder cles : {:?}", commande);
-//
-//             let reponse_sauvegarde = middleware.transmettre_commande(
-//                 "MaitreDesCles.sauvegarderCle", "sauvegarderCle", None, &commande, None, true)
-//                 .await.expect("reponse");
-//
-//             debug!("Reponse sauvegarde cle : {:?}", reponse_sauvegarde);
-//
-//             let requete = {
-//                 let mut liste_hachage_bytes = Vec::new();
-//                 liste_hachage_bytes.push(hachage_bytes.clone());
-//                 json!({
-//                     "liste_hachage_bytes": liste_hachage_bytes,
-//                 })
-//             };
-//             let reponse_cle_rechiffree = middleware.transmettre_requete(
-//                 "MaitreDesCles.dechiffrage", "dechiffrage", None, &requete, None).await.expect("requete cle");
-//             debug!("Reponse cle rechiffree : {:?}", reponse_cle_rechiffree);
-//
-//             let mut decipher = middleware.get_decipher(&hachage_bytes).await.expect("decipher");
-//             let mut vec_buffer = {
-//                 let mut buffer_output = [0u8; 40];
-//                 let len_dechiffre = decipher.update(vec_output.as_slice(), &mut buffer_output).expect("update");
-//                 let mut vec_buffer = Vec::new();
-//                 vec_buffer.extend(&buffer_output[..len_dechiffre]);
-//
-//                 vec_buffer
-//             };
-//
-//             assert_eq!(VALEUR_TEST, vec_buffer.as_slice());
-//
-//             let message_dechiffre = String::from_utf8(vec_buffer).expect("utf-8");
-//             debug!("Data dechiffre : {}", message_dechiffre);
-//             {
-//                 let mut buffer_output = [0u8; 0];
-//                 let output = decipher.finalize(&mut buffer_output).expect("finalize dechiffrer");
-//                 assert_eq!(0, output);
-//             }
-//
-//         }));
-//         // Execution async du test
-//         futures.next().await.expect("resultat").expect("ok");
-//     }
-// }
+#[cfg(test)]
+pub mod serialization_tests {
+    use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
+    use crate::test_setup::setup;
+    use futures::stream::FuturesUnordered;
+    use tokio::{sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as DurationTokio, timeout}};
+    use crate::recepteur_messages::TypeMessage;
+    use tokio::task::JoinHandle;
+    use tokio_stream::StreamExt;
+    use crate::middleware_db::{MiddlewareDb, preparer_middleware_db};
+
+    use super::*;
+
+    pub async fn build() -> (Arc<MiddlewareDb>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>) {
+        // Preparer configuration
+        let queues = Vec::new();
+
+        let (tx, rx) = mpsc::channel(1);
+
+        let listeners = {
+            let mut callbacks: Callback<EventMq> = Callback::new();
+            callbacks.register(Box::new(move |event| {
+                debug!("Ceci est un test de callback sur connexion, event : {:?}", event);
+                // tx.blocking_send(event).expect("Event connexion MQ");
+                let tx_ref = tx.clone();
+                let _ = tokio::spawn(async move{
+                    match tx_ref.send(event).await {
+                        Ok(_) => (),
+                        Err(e) => error!("Erreur queuing via callback : {:?}", e)
+                    }
+                });
+            }));
+
+            Some(Mutex::new(callbacks))
+        };
+
+        let (
+            middleware,
+            rx_messages_verifies,
+            rx_triggers,
+            future_recevoir_messages
+        ) = preparer_middleware_db(queues, listeners);
+
+        // Demarrer threads
+        let mut futures : FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
+
+        // Thread consommation
+        let (tx_messages, rx_messages) = mpsc::channel::<TypeMessage>(1);
+        let (tx_triggers, rx_pki_triggers) = mpsc::channel::<TypeMessage>(1);
+
+        let mut map_senders: HashMap<String, Sender<TypeMessage>> = HashMap::new();
+        // map_senders.insert(String::from("Core"), tx_pki_messages.clone());
+        // map_senders.insert(String::from("certificat"), tx_pki_messages.clone());
+        // map_senders.insert(String::from("Core/triggers"), tx_pki_triggers.clone());
+        futures.push(tokio::spawn(consommer( middleware.clone(), rx_messages_verifies, map_senders.clone())));
+        futures.push(tokio::spawn(consommer( middleware.clone(), rx_triggers, map_senders.clone())));
+
+        // Thread d'entretien
+        //futures.push(tokio::spawn(entretien(middleware.clone(), rx)));
+
+        // Thread ecoute et validation des messages
+        for f in future_recevoir_messages {
+            futures.push(f);
+        }
+
+        futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_messages)));
+        futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_pki_triggers)));
+
+        // debug!("domaines_middleware: Demarrage traitement domaines middleware");
+        // let arret = futures.next().await;
+        // debug!("domaines_middleware: Fermeture du contexte, task daemon terminee : {:?}", arret);
+
+        (middleware, futures, tx_messages, tx_triggers)
+    }
+
+    async fn consommer(
+        _middleware: Arc<impl ValidateurX509 + GenerateurMessages + MongoDao>,
+        mut rx: Receiver<TypeMessage>,
+        map_senders: HashMap<String, Sender<TypeMessage>>
+    ) {
+        while let Some(message) = rx.recv().await {
+            match &message {
+                TypeMessage::Valide(m) => {
+                    debug!("traiter_messages_valides: Message valide sans routing key/action : {:?}", m.message);
+                },
+                TypeMessage::ValideAction(m) => {
+                    let contenu = &m.message;
+                    let rk = &m.routing_key;
+                    let action = &m.action;
+                    debug!("domaines_middleware.consommer: Traiter message valide (action: {}, rk: {}): {:?}", action, rk, contenu);
+
+                    // match map_senders.get(m.domaine.as_str()) {
+                    //     Some(sender) => {sender.send(message).await.expect("send message vers sous-domaine")},
+                    //     None => error!("Message de domaine inconnu {}, on le drop", m.domaine),
+                    // }
+                },
+                TypeMessage::Certificat(_) => (),  // Rien a faire
+                TypeMessage::Regeneration => (),   // Rien a faire
+            }
+        }
+
+        debug!("Fin consommer");
+    }
+
+    pub async fn consommer_messages(middleware: Arc<MiddlewareDb>, mut rx: Receiver<TypeMessage>) {
+        while let Some(message) = rx.recv().await {
+            debug!("Message PKI recu : {:?}", message);
+
+            match message {
+                TypeMessage::ValideAction(inner) => {debug!("Message ValideAction recu : {:?}", inner)},
+                TypeMessage::Valide(_inner) => {warn!("Recu MessageValide sur thread consommation"); todo!()},
+                TypeMessage::Certificat(_inner) => {warn!("Recu MessageCertificat sur thread consommation"); todo!()},
+                TypeMessage::Regeneration => {continue}, // Rien a faire, on boucle
+            };
+
+        }
+
+        debug!("Fin consommer_messages");
+    }
+
+    #[tokio::test]
+    async fn connecter_middleware_pki() {
+        setup("connecter_middleware_pki");
+
+        // Connecter mongo
+        //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        let (
+            middleware,
+            mut futures,
+            mut tx_messages,
+            mut tx_triggers
+        ) = build().await;
+        futures.push(tokio::spawn(async move {
+            debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
+
+            debug!("Sleeping");
+            tokio::time::sleep(tokio::time::Duration::new(3, 0)).await;
+            debug!("Fin sleep");
+
+            middleware.charger_certificats_chiffrage().await;
+
+            debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
+            let cles = middleware.cles_chiffrage.lock().expect("lock");
+            assert_eq!(true, cles.len() > 1);
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+
+    /// Test d'acces au MaitreDesCles. Doit creer une cle secrete, la chiffrer avec les certificats
+    /// recus, emettre la cle puis recuperer une version dechiffrable localement.
+    #[tokio::test]
+    async fn roundtrip_cle_secrete() {
+        setup("connecter_middleware_pki");
+
+        // Connecter mongo
+        //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
+        let (
+            middleware,
+            mut futures,
+            mut tx_messages,
+            mut tx_triggers
+        ) = build().await;
+        futures.push(tokio::spawn(async move {
+            debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
+
+            debug!("Sleeping");
+            tokio::time::sleep(tokio::time::Duration::new(4, 0)).await;
+            debug!("Fin sleep");
+            middleware.charger_certificats_chiffrage().await;
+
+            debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
+
+            const VALEUR_TEST: &[u8] = b"Du data a chiffrer";
+
+            let (vec_output, cipher_keys) = {
+                let mut vec_output: Vec<u8> = Vec::new();
+                let mut cipher = middleware.get_cipher().expect("cipher");
+                let mut output = [0u8; 40];
+                let len_output = cipher.update(b"Du data a chiffrer", &mut output).expect("update");
+                vec_output.extend_from_slice(&output[..len_output]);
+                let len_output = cipher.finalize(&mut output).expect("finalize");
+                debug!("Finalize cipher : {:?}", &output[..len_output]);
+                vec_output.extend_from_slice(&output[..len_output]);
+
+                (vec_output, cipher.get_cipher_keys().expect("cipher keys"))
+            };
+
+            debug!("Data chiffre : {:?}\nCipher keys : {:?}", vec_output, cipher_keys);
+
+            let mut id_docs = HashMap::new();
+            id_docs.insert(String::from("test"), String::from("dummy"));
+            let commande = cipher_keys.get_commande_sauvegarder_cles("Test", None, id_docs);
+            let hachage_bytes = commande.hachage_bytes.clone();
+            debug!("Commande sauvegarder cles : {:?}", commande);
+
+            let routage_sauvegarde = RoutageMessageAction::new("MaitreDesCles", "sauvegarderCle");
+            let reponse_sauvegarde = middleware.transmettre_commande(routage_sauvegarde, &commande, true)
+                .await.expect("reponse");
+
+            debug!("Reponse sauvegarde cle : {:?}", reponse_sauvegarde);
+
+            let requete = {
+                let mut liste_hachage_bytes = Vec::new();
+                liste_hachage_bytes.push(hachage_bytes.clone());
+                json!({
+                    "liste_hachage_bytes": liste_hachage_bytes,
+                })
+            };
+            let routage_rechiffrer = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
+            let reponse_cle_rechiffree = middleware.transmettre_requete(routage_rechiffrer, &requete).await
+                .expect("requete cle");
+            debug!("Reponse cle rechiffree : {:?}", reponse_cle_rechiffree);
+
+            let mut decipher = middleware.get_decipher(&hachage_bytes).await.expect("decipher");
+            let mut vec_buffer = {
+                let mut buffer_output = [0u8; 40];
+                let len_dechiffre = decipher.update(vec_output.as_slice(), &mut buffer_output).expect("update");
+                let mut vec_buffer = Vec::new();
+                vec_buffer.extend(&buffer_output[..len_dechiffre]);
+
+                vec_buffer
+            };
+
+            assert_eq!(VALEUR_TEST, vec_buffer.as_slice());
+
+            let message_dechiffre = String::from_utf8(vec_buffer).expect("utf-8");
+            debug!("Data dechiffre : {}", message_dechiffre);
+            {
+                let mut buffer_output = [0u8; 0];
+                let output = decipher.finalize(&mut buffer_output).expect("finalize dechiffrer");
+                assert_eq!(0, output);
+            }
+
+        }));
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
+}
