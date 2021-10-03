@@ -23,7 +23,7 @@ use uuid::Uuid;
 use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{Chiffreur, Dechiffreur, DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
+use crate::chiffrage::{Chiffreur, CommandeSauvegarderCle, Dechiffreur, DecipherMgs2, FormatChiffrage, Mgs2CipherData, Mgs2CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
@@ -601,7 +601,7 @@ async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_coll
 }
 
 async fn download_backup<M>(middleware: Arc<M>, nom_domaine: &str, nom_collection_transactions: &str, workdir: &Path) -> Result<(), Box<dyn Error>>
-where M: MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static {
+where M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static {
     let path_fichier = {
         let mut path_fichier = PathBuf::from(workdir);
         path_fichier.push(PathBuf::from("download_backup.tar"));
@@ -1096,6 +1096,8 @@ struct ProcesseurFichierBackup {
     decipher: Option<DecipherMgs2>,
     batch: Vec<MessageMilleGrille>,
     entete_precedente: Option<Entete>,
+    erreurs_catalogues: u32, // Indique le nombre de catalogues en erreur (e.g. cle manquante)
+    skip_transactions: bool,  // Si true, on skip le prochain fichier de transactions
 }
 
 impl ProcesseurFichierBackup {
@@ -1108,11 +1110,13 @@ impl ProcesseurFichierBackup {
             decipher: None,
             batch: Vec::new(),
             entete_precedente: None,
+            erreurs_catalogues: 0,
+            skip_transactions: false,
         }
     }
 
     async fn parse_file<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + Dechiffreur + VerificateurMessage
+    where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
     {
         debug!("ProcesseurFichierBackup.parse_file : {:?}", filepath);
 
@@ -1133,7 +1137,20 @@ impl ProcesseurFichierBackup {
                             Ok(())
                         }
                     },
-                    "mgs2" => self.parse_transactions(middleware, filepath, stream).await,
+                    "mgs2" => {
+                        if self.skip_transactions {
+                            self.skip_transactions = false;  // reset flag
+                            // On va skipper le fichier (manger tous les bytes)
+                            let mut output = [0u8; 4096];
+                            loop {
+                                let len = stream.read(&mut output).await?;
+                                if len == 0 { break }
+                            }
+                            Ok(())
+                        } else {
+                            self.parse_transactions(middleware, filepath, stream).await
+                        }
+                    },
                     _ => {
                         warn ! ("ProcesseurFichierBackup.parse_file Type fichier inconnu, on skip : {:?}", e);
                         Ok(())
@@ -1148,7 +1165,7 @@ impl ProcesseurFichierBackup {
     }
 
     async fn parse_catalogue<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: Dechiffreur + VerificateurMessage + ValidateurX509
+    where M: GenerateurMessages + Dechiffreur + VerificateurMessage + ValidateurX509
     {
         debug!("ProcesseurFichierBackup.parse_catalogue : {:?}", filepath);
 
@@ -1230,7 +1247,15 @@ impl ProcesseurFichierBackup {
                 // let catalogue_ref = self.catalogue.as_ref().expect("catalogue");
 
                 // Traiter le catalogue horaire
-                self.traiter_catalogue_horaire(middleware, filepath).await?;
+                match self.traiter_catalogue_horaire(middleware, filepath).await {
+                    Ok(()) => {
+                    },
+                    Err(e) => {
+                        debug!("Erreur traitement catalogue, on assume probleme de dechiffrage transactions");
+                        self.skip_transactions = true;
+                        self.erreurs_catalogues += 1;
+                    }
+                }
 
                 // Conserver en-tete du catalogue courant. Va permettre de verifier le chainage avec prochain fichier.
                 if let Some(e) = entete_courante {
@@ -1307,7 +1332,7 @@ impl ProcesseurFichierBackup {
     }
 
     async fn traiter_catalogue_horaire<M>(&mut self, middleware: &M, filepath: &async_std::path::Path) -> Result<(), Box<dyn Error>>
-    where M: Dechiffreur + VerificateurMessage + ValidateurX509,
+    where M: GenerateurMessages + Dechiffreur + VerificateurMessage + ValidateurX509,
     {
         let catalogue = self.catalogue.as_ref().expect("catalogue");
         let uuid_catalogue_courant = match &catalogue.entete {
@@ -1350,10 +1375,22 @@ impl ProcesseurFichierBackup {
             Some(_) => {
                 debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Le catalogue {:?} est chiffre, on recupere la cle", filepath);
                 let transactions_hachage_bytes = catalogue.transactions_hachage.as_str();
-                let dechiffreur = match middleware.get_decipher(transactions_hachage_bytes).await {
-                    Ok(d) => d,
-                    Err(e) => Err(format!("ProcesseurFichierBackup.traiter_catalogue_horaire Erreur recuperation cle {} pour backup horaire {:?} : {:?}", transactions_hachage_bytes, filepath, e))?
+                let resultat = match middleware.get_decipher(transactions_hachage_bytes).await {
+                    Ok(d) => Ok(d),
+                    Err(e) => {
+                        Err(format!("ProcesseurFichierBackup.traiter_catalogue_horaire Erreur recuperation cle {} pour backup horaire {:?} : {:?}", transactions_hachage_bytes, filepath, e))
+                    }
                 };
+
+                let dechiffreur = match resultat {
+                    Ok(d) => d,
+                    Err(e) => {
+                        debug!{"Erreur reception cle pour catalogue ({}), on emet une commande de sauvegarde de la cle", transactions_hachage_bytes};
+                        emettre_cle_catalogue(middleware, &catalogue).await?;
+                        Err(e)?  // Emettre erreur originale
+                    }
+                };
+
                 debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Cles pour le dechiffreur recues pour {:?}", filepath);
                 Some(dechiffreur)
             },
@@ -1469,7 +1506,7 @@ enum TypeCatalogueBackup {
 #[async_trait]
 impl TraiterFichier for ProcesseurFichierBackup {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + Dechiffreur + VerificateurMessage
+        where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
     {
         self.parse_file(middleware, nom_fichier, stream).await
     }
@@ -1581,6 +1618,51 @@ pub async fn emettre_evenement_restauration<M>(
         .build();
 
     Ok(middleware.emettre_evenement(routage, &value).await?)
+}
+
+pub async fn emettre_cle_catalogue<M>(middleware: &M, catalogue_horaire: &CatalogueHoraire) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages
+{
+    if let Some(cle) = catalogue_horaire.cle.as_ref() {
+        if let Some(iv) = catalogue_horaire.iv.as_ref() {
+            if let Some(tag) = catalogue_horaire.tag.as_ref() {
+                if let Some(format) = catalogue_horaire.format.as_ref() {
+
+                    let enveloppe_privee = middleware.get_enveloppe_privee();
+                    if let Some(fingerprint) = enveloppe_privee.fingerprint_ca() {
+
+                        // Conserver la cle chiffree pour le CA
+                        let mut cles = HashMap::new();
+                        cles.insert(fingerprint, cle.to_owned());
+
+                        let mut identificateurs_document = HashMap::new();
+                        identificateurs_document.insert(String::from("domaine"), catalogue_horaire.domaine.clone());
+                        identificateurs_document.insert(String::from("heure"), catalogue_horaire.heure.format_ymdh());
+                        identificateurs_document.insert(String::from("snapshot"), catalogue_horaire.snapshot.to_string());
+
+                        let commande = CommandeSauvegarderCle {
+                            cles,
+                            domaine: BACKUP_NOM_DOMAINE.into(),
+                            partition: None,
+                            format: FormatChiffrage::mgs2,  // todo Charger dynamiquement
+                            hachage_bytes: catalogue_horaire.transactions_hachage.clone(),
+                            identificateurs_document,
+                            iv: iv.clone(),
+                            tag: tag.clone(),
+                            fingerprint_partitions: None,
+                        };
+
+                        let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE)
+                            .exchanges(vec![Securite::L3Protege])
+                            .build();
+                        middleware.transmettre_commande(routage, &commande, false).await?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // def transmettre_evenement_backup(self, uuid_rapport: str, evenement: str, heure: datetime.datetime, info: dict = None, sousdomaine: str = None):
@@ -1877,7 +1959,6 @@ mod backup_tests {
 //     use futures_util::stream::IntoAsyncRead;
 //     use tokio::sync::mpsc::{Receiver, Sender};
 //
-//     use crate::{charger_transaction, CompresseurBytes, MessageValideAction, parse_tar, TransactionImpl, TypeMessage};
 //     use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
 //     use crate::middleware::preparer_middleware_pki;
 //     use crate::middleware::serialization_tests::build;

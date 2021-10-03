@@ -14,6 +14,7 @@ use xz2::stream;
 use crate::certificats::ValidateurX509;
 use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherKeys};
 use crate::constantes::*;
+use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::Hacheur;
 use crate::verificateur::VerificateurMessage;
 
@@ -326,7 +327,7 @@ impl DecompresseurBytes {
 
 // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
 pub async fn parse_tar<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur + VerificateurMessage {
+where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage {
     let reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -352,7 +353,7 @@ where M: ValidateurX509 + Dechiffreur + VerificateurMessage {
 
 // todo : Fix parse_tar recursion async
 pub async fn parse_tar1<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur + VerificateurMessage
+where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
 {
     let reader = Archive::new(stream);
 
@@ -364,7 +365,7 @@ where M: ValidateurX509 + Dechiffreur + VerificateurMessage
         // Process tar or other file type
         match file_path.extension() {
             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
-                "tar" => parse_tar2(middleware, &mut file, processeur).await?,
+                "tar" => panic!("Recursion niveau 2 .tar non supporte"),  // parse_tar2(middleware, &mut file, processeur).await?,
                 _ => processeur.traiter_fichier( middleware, file_path.as_path(), &mut file).await?
             },
             None => {
@@ -376,62 +377,62 @@ where M: ValidateurX509 + Dechiffreur + VerificateurMessage
     Ok(())
 }
 
-// todo : Fix parse_tar recursion async
-pub async fn parse_tar2<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur + VerificateurMessage
-{
-    let reader = Archive::new(stream);
-
-    let mut entries = reader.entries().expect("entries");
-    while let Some(entry) = entries.next().await {
-        let mut file = entry.expect("file");
-        let file_path = file.path().expect("path").into_owned();
-
-        // Process tar or other file type
-        match file_path.extension() {
-            Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
-                "tar" => parse_tar3(middleware, &mut file, processeur).await?,
-                _ => processeur.traiter_fichier( middleware, file_path.as_path(), &mut file).await?
-            },
-            None => {
-                warn!("Fichier de type inconnu, on skip : {:?}", file_path)
-            }
-        }
-    }
-
-    Ok(())
-}
-
-// todo : Fix parse_tar recursion async
-pub async fn parse_tar3<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: ValidateurX509 + Dechiffreur + VerificateurMessage
-{
-    let reader = Archive::new(stream);
-
-    let mut entries = reader.entries().expect("entries");
-    while let Some(entry) = entries.next().await {
-        let mut file = entry.expect("file");
-        let file_path = file.path().expect("path").into_owned();
-
-        // Process tar or other file type
-        match file_path.extension() {
-            Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
-                "tar" => panic!("Recursion niveau 3 .tar non supporte"),
-                _ => processeur.traiter_fichier( middleware, file_path.as_path(), &mut file).await?
-            },
-            None => {
-                warn!("Fichier de type inconnu, on skip : {:?}", file_path)
-            }
-        }
-    }
-
-    Ok(())
-}
+// // todo : Fix parse_tar recursion async
+// pub async fn parse_tar2<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
+// where M: ValidateurX509 + Dechiffreur + VerificateurMessage
+// {
+//     let reader = Archive::new(stream);
+//
+//     let mut entries = reader.entries().expect("entries");
+//     while let Some(entry) = entries.next().await {
+//         let mut file = entry.expect("file");
+//         let file_path = file.path().expect("path").into_owned();
+//
+//         // Process tar or other file type
+//         match file_path.extension() {
+//             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
+//                 "tar" => parse_tar3(middleware, &mut file, processeur).await?,
+//                 _ => processeur.traiter_fichier( middleware, file_path.as_path(), &mut file).await?
+//             },
+//             None => {
+//                 warn!("Fichier de type inconnu, on skip : {:?}", file_path)
+//             }
+//         }
+//     }
+//
+//     Ok(())
+// }
+//
+// // todo : Fix parse_tar recursion async
+// pub async fn parse_tar3<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
+// where M: ValidateurX509 + Dechiffreur + VerificateurMessage
+// {
+//     let reader = Archive::new(stream);
+//
+//     let mut entries = reader.entries().expect("entries");
+//     while let Some(entry) = entries.next().await {
+//         let mut file = entry.expect("file");
+//         let file_path = file.path().expect("path").into_owned();
+//
+//         // Process tar or other file type
+//         match file_path.extension() {
+//             Some(e) => match e.to_ascii_lowercase().to_str().expect("str") {
+//                 "tar" => panic!("Recursion niveau 3 .tar non supporte"),
+//                 _ => processeur.traiter_fichier( middleware, file_path.as_path(), &mut file).await?
+//             },
+//             None => {
+//                 warn!("Fichier de type inconnu, on skip : {:?}", file_path)
+//             }
+//         }
+//     }
+//
+//     Ok(())
+// }
 
 #[async_trait]
 pub trait TraiterFichier {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: ValidateurX509 + Dechiffreur + VerificateurMessage;
+    where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage;
 }
 
 #[cfg(test)]
@@ -476,6 +477,8 @@ pub mod fichiers_tests {
     pub struct ChiffreurDummy {
         pub public_keys: Vec<FingerprintCertPublicKey>,
     }
+
+    #[async_trait]
     impl Chiffreur for ChiffreurDummy {
         fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
             self.public_keys.clone()

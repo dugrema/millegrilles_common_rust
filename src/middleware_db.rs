@@ -249,14 +249,12 @@ impl Dechiffreur for MiddlewareDb {
         let routage = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
         let reponse_cle_rechiffree = self.transmettre_requete(routage, &requete).await?;
 
-        let m = match reponse_cle_rechiffree {
-            TypeMessage::Valide(m) => m.message,
+        error!("Reponse reechiffrage cle : {:?}", reponse_cle_rechiffree);
+
+        let contenu_dechiffrage = match reponse_cle_rechiffree {
+            TypeMessage::Valide(m) => m.message.get_msg().map_contenu::<ReponseDechiffrageCle>(None)?,
             _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
         };
-
-        let contenu_dechiffrage: ReponseDechiffrageCle = serde_json::from_value(
-            serde_json::to_value(m.get_msg().contenu.clone())?
-        )?;
 
         contenu_dechiffrage.to_cipher_data()
     }

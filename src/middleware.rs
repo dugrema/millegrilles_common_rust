@@ -91,10 +91,11 @@ pub struct ReponseDechiffrageCle {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReponseDechiffrageCleInfo {
-    acces: String,
+    acces: Option<String>,
     cle: String,
     domaine: String,
     format: String,
+    hachage_bytes: Option<String>,
     identificateurs_document: Option<HashMap<String, String>>,
     iv: String,
     tag: String,

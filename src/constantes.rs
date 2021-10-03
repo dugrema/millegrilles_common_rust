@@ -212,6 +212,7 @@ pub const MAITREDESCLES_COMMANDE_NOUVELLE_CLE: &str = "MaitreDesCles.nouvelleCle
 pub const MAITREDESCLES_CHAMP_HACHAGE_BYTES: &str = "hachage_bytes";
 pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
 
+pub const COMMANDE_SAUVEGARDER_CLE: &str = "sauvegarderCle";
 pub const COMMANDE_CERT_MAITREDESCLES: &str = "certMaitreDesCles";
 
 

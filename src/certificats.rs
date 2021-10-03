@@ -380,6 +380,13 @@ impl EnveloppeCertificat {
         Ok(vec!(fpleaf, fpmg))
     }
 
+    /// Retourne le fingerprint du certificat CA (certificat de MilleGrille)
+    pub fn fingerprint_ca(&self) -> Option<String> {
+        let pem_vec = self.get_pem_vec();
+        let conversion = pem_vec.into_iter().last().map(|p| p.fingerprint);
+        conversion
+    }
+
     pub fn get_exchanges(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.exchanges) }
     pub fn get_roles(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.roles) }
     pub fn get_domaines(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.domaines) }
@@ -490,6 +497,13 @@ impl EnveloppePrivee {
     pub fn not_valid_after(&self) -> Result<DateTime<Utc>, String> { self.enveloppe.not_valid_after() }
 
     pub fn fingerprint_pk(&self) -> Result<String, String> { self.enveloppe.fingerprint_pk() }
+
+    /// Retourne le fingerprint du certificat CA (certificat de MilleGrille)
+    pub fn fingerprint_ca(&self) -> Option<String> {
+        let pem_vec = self.get_pem_vec();
+        let conversion = pem_vec.into_iter().last().map(|p| p.fingerprint);
+        conversion
+    }
 
     pub fn get_exchanges(&self) -> Result<&Option<Vec<String>>, String> { self.enveloppe.get_exchanges() }
     pub fn get_roles(&self) -> Result<&Option<Vec<String>>, String> { self.enveloppe.get_roles() }
