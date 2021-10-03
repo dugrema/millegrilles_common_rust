@@ -207,7 +207,7 @@ pub const PKI_DOCUMENT_CHAMP_CERTIFICAT: &str = "certificat";
 
 // Maitre des cles
 pub const DOMAINE_NOM_MAITREDESCLES: &str = "MaitreDesCles";
-pub const MAITREDESCLES_COMMANDE_NOUVELLE_CLE: &str = "MaitreDesCles.nouvelleCle";
+pub const MAITREDESCLES_COMMANDE_NOUVELLE_CLE: &str = "nouvelleCle";
 
 pub const MAITREDESCLES_CHAMP_HACHAGE_BYTES: &str = "hachage_bytes";
 pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";

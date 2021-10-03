@@ -458,13 +458,16 @@ async fn serialiser_catalogue(
                 identificateurs_document,
             );
 
+            let fingerprint_partitions = cles.get_fingerprint_partitions();
+            let partition = fingerprint_partitions[0].as_str();  // Prendre une partition au hazard
+
             let value_commande: Value = serde_json::to_value(commande_maitredescles).expect("commande");
             // let msg_commande = MessageJson::new(value_commande);
             let commande_signee = middleware.formatter_message(
                 &value_commande,
+                Some(DOMAINE_NOM_MAITREDESCLES),
                 Some(MAITREDESCLES_COMMANDE_NOUVELLE_CLE),
-                None,
-                None,
+                Some(partition),
                 None
             )?;
 
