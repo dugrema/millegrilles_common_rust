@@ -13,7 +13,7 @@ use openssl::sign::{RsaPssSaltlen, Verifier};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::certificats::EnveloppeCertificat;
+use crate::certificats::{EnveloppeCertificat, VerificateurRegles};
 use crate::certificats::ValidateurX509;
 use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise, preparer_btree_recursif, map_valeur_recursif};
 use crate::hachages::verifier_multihash;
@@ -33,26 +33,29 @@ pub struct ResultatValidation {
     pub signature_valide: bool,
     pub hachage_valide: Option<bool>,
     pub certificat_valide: bool,
+    pub regles_valides: bool,
 }
 
 impl ResultatValidation {
     pub fn valide(&self) -> bool {
-        self.signature_valide && self.certificat_valide
+        self.signature_valide && self.certificat_valide && self.regles_valides
     }
 }
 
-pub struct ValidationOptions {
+pub struct ValidationOptions<'a> {
     utiliser_idmg_message: bool,
     utiliser_date_message: bool,
     toujours_verifier_hachage: bool,
+    pub verificateur: Option<&'a VerificateurRegles<'a>>,
 }
 
-impl ValidationOptions {
+impl ValidationOptions<'_> {
     pub fn new(utiliser_idmg_message: bool, utiliser_date_message: bool, toujours_verifier_hachage: bool) -> Self {
         ValidationOptions {
             utiliser_idmg_message,
             utiliser_date_message,
             toujours_verifier_hachage,
+            verificateur: None
         }
     }
 }
@@ -65,9 +68,9 @@ pub fn verifier_message<V>(
 where
     V: ValidateurX509,
 {
-    let (utiliser_idmg_message, utiliser_date_message, toujours_verifier_hachage) = match options {
-        Some(o) => (o.utiliser_idmg_message, o.utiliser_date_message, o.toujours_verifier_hachage),
-        None => (false, false, false),
+    let (utiliser_idmg_message, utiliser_date_message, toujours_verifier_hachage, verificateur) = match options {
+        Some(o) => (o.utiliser_idmg_message, o.utiliser_date_message, o.toujours_verifier_hachage, o.verificateur),
+        None => (false, false, false, None),
     };
 
     let entete = message.get_entete().clone();
@@ -83,12 +86,37 @@ where
         None => Err("Signature manquante")?,
     };
 
+    // Verifier les regles de validation custom du certificat
+    let regles_ok = match verificateur {
+        Some(v) => {
+            // Verifier les regles de certificat
+            v.verifier(certificat)
+        },
+        None => true
+    };
+
     let certificat_idmg_valide = match utiliser_idmg_message {
-        true => idmg == certificat.idmg()?,
+        true => {
+            let idmg_cert = certificat.idmg()?;
+            let msg_match_certificat = idmg == idmg_cert.as_str();
+            if msg_match_certificat {
+                // Verifier si le IDMG est local ou celui d'un tiers
+                let idmg_validateur = validateur.idmg();
+                let idmg_validation = match idmg_validateur == idmg_cert.as_str() {
+                    true => None,  // IDMG local, on utilise store local
+                    false => Some(idmg_cert.as_str())  // IDMG tiers, on va devoir batir un nouveau store
+                };
+                validateur.valider_chaine(certificat, idmg_validation)?
+            } else {
+                false
+            }
+        },
         false => idmg == validateur.idmg()
     };
     let certificat_date_valide = match utiliser_date_message {
-        true => validateur.valider_pour_date(certificat, estampille)?,
+        true => {
+            validateur.valider_pour_date(certificat, estampille)?
+        },
         false => certificat.presentement_valide
     };
 
@@ -124,6 +152,7 @@ where
             signature_valide: true,
             hachage_valide: None,
             certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
+            regles_valides: regles_ok,
         })
     } else if resultat_verifier_signature == false {
         debug!("Signature invalide pour message {}", uuid_transaction);
@@ -135,10 +164,13 @@ where
         Err(e) => Err(format!("Erreur verification du message : {:?}", e)),
     }?;
 
+    debug!("Certificat {} idmg: {}, cert date {}, msg date {}", certificat.fingerprint, certificat_idmg_valide, certificat_date_valide, message_date_valide);
+
     Ok(ResultatValidation{
         signature_valide: resultat_verifier_signature,
         hachage_valide: Some(hachage_valide),
         certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
+        regles_valides: regles_ok,
     })
 }
 

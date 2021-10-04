@@ -799,7 +799,7 @@ impl MessageSerialise {
         &self.parsed
     }
 
-    pub async fn valider<V>(&mut self, validateur: &V, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>>
+    pub async fn valider<V>(&mut self, validateur: &V, options: Option<&ValidationOptions<'_>>) -> Result<ResultatValidation, Box<dyn Error>>
     where
         V: ValidateurX509,
     {

@@ -10,7 +10,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::{DateTime, ParseResult};
 use chrono::prelude::*;
-use log::{debug, error, warn};
+use log::{debug, info, error, warn};
 use multibase::{Base, encode};
 use multicodec::Codec::Sha2_256 as MCSha2_256;
 use multihash::{Code, Multihash};
@@ -236,9 +236,8 @@ pub fn build_store_path(ca_path: &Path) -> Result<ValidateurX509Impl, ErrorStack
 }
 
 pub fn build_store(ca_cert: &X509, check_time: bool) -> Result<X509Store, ErrorStack> {
-
     let mut builder = X509StoreBuilder::new()?;
-    let ca_cert = ca_cert.clone();  // Requis par methode add_cert
+    let ca_cert = ca_cert.to_owned();  // Requis par methode add_cert
     let _ = builder.add_cert(ca_cert);
 
     if check_time == false {
@@ -249,8 +248,12 @@ pub fn build_store(ca_cert: &X509, check_time: bool) -> Result<X509Store, ErrorS
     Ok(builder.build())
 }
 
-pub fn charger_enveloppe_privee(path_cert: &Path, path_cle: &Path, validateur: Arc<impl ValidateurX509>) -> Result<EnveloppePrivee, ErrorStack> {
-    let pem_cle = read_to_string(path_cle).unwrap();
+pub fn charger_enveloppe_privee<V>(path_cert: &Path, path_cle: &Path, validateur: Arc<V>)
+    -> Result<EnveloppePrivee, ErrorStack>
+    where V: ValidateurX509
+{
+    let path_cle_str = format!("cle : {:?}", path_cle);
+    let pem_cle = read_to_string(path_cle).expect(path_cle_str.as_str());
     let cle_privee = Rsa::private_key_from_pem(pem_cle.as_bytes())?;
     let cle_privee: PKey<Private> = PKey::from_rsa(cle_privee)?;
 
@@ -556,30 +559,59 @@ pub trait ValidateurX509: Send + Sync {
     /// Invoquer regulierement pour faire l'entretien du cache.
     async fn entretien_validateur(&self);
 
-    fn valider_pour_date(&self, enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
-        {
-            let before = enveloppe.not_valid_before()?;
-            let after = enveloppe.not_valid_after()?;
-            let inclus = date >= &before && date <= &after;
-            if inclus == false {
-                // La date n'est pas dans le range du certificat
-                debug!("Pas inclus, date {:?} n'est pas entre {:?} et {:?}", date, before, after);
-                return Ok(false)
-            }
-        }
-
-        // let resultat_notime = verifier_certificat(enveloppe.certificat(), enveloppe.intermediaire(), validateur.store_notime());
-
+    fn valider_chaine(&self, enveloppe: &EnveloppeCertificat, idmg: Option<&str>) -> Result<bool, String> {
         let certificat = &enveloppe.certificat;
         let chaine = &enveloppe.intermediaire;
-        let store = self.store_notime();
-        match verifier_certificat(certificat, chaine, store) {
-            Ok(b) => {
-                debug!("Verifier certificat result apres check date OK : {}", b);
-                Ok(b)
+        match idmg {
+            Some(i) => {
+                // Idmg tiers, on bati un store on the fly
+                let cert_ca = chaine[chaine.len()-1].to_owned();
+                let store = match build_store(&cert_ca, false) {
+                    Ok(s) => s,
+                    Err(e) => Err(format!("certificats.valider_chaine Erreur preparation store pour idmg {}", i))?
+                };
+                match verifier_certificat(certificat, chaine, &store) {
+                    Ok(b) => {
+                        debug!("Verifier certificat result idmg {} = {}", i, b);
+                        Ok(b)
+                    },
+                    Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat idmg {} : {:?}", i, e)),
+                }
             },
-            Err(e) => Err(format!("Erreur verification certificat avec no time : {:?}", e)),
+            None => {
+                match verifier_certificat(certificat, chaine, self.store()) {
+                    Ok(b) => {
+                        debug!("Verifier certificat result apres check date OK : {}", b);
+                        Ok(b)
+                    },
+                    Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat avec no time : {:?}", e)),
+                }
+            }
         }
+    }
+
+    fn valider_pour_date(&self, enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
+        let before = enveloppe.not_valid_before()?;
+        let after = enveloppe.not_valid_after()?;
+        let inclus = date >= &before && date <= &after;
+        if inclus == false {
+            // La date n'est pas dans le range du certificat
+            debug!("Pas inclus, date {:?} n'est pas entre {:?} et {:?}", date, before, after);
+        }
+        Ok(inclus)
+
+        // // let resultat_notime = verifier_certificat(enveloppe.certificat(), enveloppe.intermediaire(), validateur.store_notime());
+        //
+        // let certificat = &enveloppe.certificat;
+        // let chaine = &enveloppe.intermediaire;
+        // let store = self.store_notime();
+        // match verifier_certificat(certificat, chaine, store) {
+        //     Ok(b) => {
+        //         debug!("Verifier certificat result apres check date OK : {}", b);
+        //         Ok(b)
+        //     },
+        //     Err(e) => Err(format!("Erreur verification certificat avec no time : {:?}", e)),
+        // }
     }
 
 }
@@ -980,6 +1012,91 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
     let routage = RoutageMessageAction::new(DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES);
     middleware.transmettre_commande(routage, &requete, false).await?;
     Ok(())
+}
+
+#[derive(Debug)]
+pub struct VerificateurRegles<'a> {
+    /// Regles "or", une seule regle doit etre valide
+    pub regles_disjointes: Option<Vec<Box<dyn RegleValidation + 'a>>>,
+    /// Regles "and", toutes doivent etre valides
+    pub regles_conjointes: Option<Vec<Box<dyn RegleValidation + 'a>>>
+}
+
+impl<'a> VerificateurRegles<'a> {
+
+    pub fn new() -> Self {
+        VerificateurRegles { regles_disjointes: None, regles_conjointes: None }
+    }
+
+    pub fn ajouter_conjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
+        let mut regles = match &mut self.regles_conjointes {
+            Some(r) => r,
+            None => {
+                self.regles_conjointes = Some(Vec::new());
+                match &mut self.regles_conjointes { Some(r) => r, None => panic!("vec mut")}
+            }
+        };
+        regles.push(Box::new(regle));
+    }
+
+    pub fn ajouter_disjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
+        let mut regles = match &mut self.regles_disjointes {
+            Some(r) => r,
+            None => {
+                self.regles_disjointes = Some(Vec::new());
+                match &mut self.regles_disjointes { Some(r) => r, None => panic!("vec mut")}
+            }
+        };
+        regles.push(Box::new(regle));
+    }
+
+    pub fn verifier(&self, certificat: &EnveloppeCertificat) -> bool {
+        // Verifier conjonction
+        if let Some(regles) = &self.regles_conjointes {
+            for r in regles {
+                if ! r.verifier(certificat) {
+                    return false;  // Court-circuit
+                }
+            }
+            // Toutes les regles sont true
+        }
+
+        // Verifier disjonction
+        if let Some(regles) = &self.regles_disjointes {
+            for r in regles {
+                if r.verifier(certificat) {
+                    return true;  // Court-circuit
+                }
+            }
+
+            // Aucunes des regles "or" n'a ete true
+            return false
+        }
+
+        // Toutes les regles "and" et "or" sont true
+        true
+    }
+
+}
+
+pub trait RegleValidation: Debug + Send + Sync {
+    /// Retourne true si la regle est valide pour ce certificat
+    fn verifier(&self, certificat: &EnveloppeCertificat) -> bool;
+}
+
+/// Regle de validation pour un IDMG tiers
+#[derive(Debug)]
+pub struct RegleValidationIdmg { pub idmg: String }
+impl RegleValidation for RegleValidationIdmg {
+    fn verifier(&self, certificat: &EnveloppeCertificat) -> bool {
+        match certificat.idmg() {
+            Ok(i) => i.as_str() == self.idmg.as_str(),
+            Err(e) => {
+                info!("RegleValidationIdmg Erreur verification idmg : {:?}", e);
+                false
+            }
+        }
+    }
 }
 
 #[cfg(test)]
