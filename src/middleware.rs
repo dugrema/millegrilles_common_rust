@@ -370,12 +370,14 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Value {
 //     Ok(())
 // }
 
-pub async fn sauvegarder_transaction_recue<M>(middleware: &M, m: MessageValideAction, nom_collection: &str) -> Result<(), String>
-    where M: ValidateurX509 + GenerateurMessages + MongoDao,
+pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValideAction, nom_collection: C) -> Result<(), String>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao,
+        C: AsRef<str>
 {
     let entete = m.message.get_entete();
 
-    match sauvegarder_transaction(middleware, &m, nom_collection).await {
+    match sauvegarder_transaction(middleware, &m, nom_collection.as_ref()).await {
         Ok(()) => (),
         Err(e) => Err(format!("Erreur sauvegarde transaction : {:?}", e))?
     }
