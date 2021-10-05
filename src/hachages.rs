@@ -5,8 +5,10 @@ use std::io::ErrorKind;
 use log::{debug, error, info};
 use multibase::{Base, decode, encode};
 use multicodec::MultiCodec;
-use multihash::{Code, Multihash, MultihashDigest, Sha2_256, Sha2_512, Sha2Digest, Sha3_256, Size, StatefulHasher};
+use multihash::{Code, Digest, Multihash, MultihashDigest, Sha2_256, Sha2_512, Sha2Digest, Sha3_256, Size, StatefulHasher};
 use serde::Serialize;
+use uuid::Uuid;
+use substring::Substring;
 
 pub fn hacher_message(contenu: &str) -> String {
     hacher_bytes(contenu.as_bytes(), Some(Code::Sha2_256), Some(Base::Base64))
@@ -188,12 +190,39 @@ impl HacheurInterne for HacheurSha2_512 {
     }
 }
 
+/// Hachage d'un UUID format string - extrait UUID en bytes pour hacher
+pub fn hacher_uuid<S>(uuid_in: S, len_bytes: Option<u8>) -> Result<String, uuid::Error>
+    where S: AsRef<str>
+{
+    let uuid_str = uuid_in.as_ref();
+    let uuid_val = Uuid::parse_str(uuid_str)?;
+    let uuid_bytes = uuid_val.as_bytes();
+
+    let len_hachage = match len_bytes {
+        Some(l) => l,
+        None => 12
+    };
+
+    // let hachage_str = hacher_bytes(
+    //     uuid_bytes, Some(Code::Sha2_256), Some(Base::Base64));
+
+    let mut hacheur = Sha2_256::default();
+    hacheur.update(uuid_bytes);
+    let hachage = hacheur.finalize();
+    let hachage_str: String = multibase::encode(Base::Base58Btc, hachage.as_ref());
+    debug!("hacher_uuid str : {}", hachage_str);
+
+    Ok(String::from(hachage_str.substring(1, (len_hachage+1) as usize)))
+}
+
 #[cfg(test)]
 mod backup_tests {
     use super::*;
+    use crate::test_setup::setup;
 
     #[test]
     fn hacheur_update() {
+        setup("hacheur_update");
         let hacheur_interne = Box::new(HacheurSha2_256::new());
 
         let mut hacheur = Hacheur {
@@ -210,6 +239,7 @@ mod backup_tests {
 
     #[test]
     fn hacheur_build_default() {
+        setup("hacheur_build_default");
         let mut hacheur = Hacheur::builder().build();
         hacheur.update("Allo tout le monde".as_bytes());
         let mh = hacheur.finalize();
@@ -218,6 +248,7 @@ mod backup_tests {
 
     #[test]
     fn hacheur_build_params() {
+        setup("hacheur_build_params");
         let mut hacheur = Hacheur::builder()
             .digester(Code::Sha2_256)
             .base(Base::Base58Btc)
@@ -226,5 +257,14 @@ mod backup_tests {
         hacheur.update(" une fois".as_bytes());
         let mh = hacheur.finalize();
         assert_eq!(mh, "zQmcT37HrJ3zm5qMVDcMaZLamdGUZFUkbCV5c9VoUGDpEFF");
+    }
+
+    #[test]
+    fn hacher_uuid_test() {
+        setup("hacher_uuid_test");
+        const uuid_str: &str = "7a2764fa-c457-4f25-af0d-0fc915439b21";
+        let valeur_hachee = hacher_uuid(uuid_str, None).expect("uuid");
+        debug!("hachage_uuid_test : {}", valeur_hachee);
+
     }
 }
