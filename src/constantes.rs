@@ -143,6 +143,7 @@ pub const DEFAULT_Q_TTL: u32 = 300000;
 pub const DOMAINE_SERVICE_MONITOR: &str = "servicemonitor";
 
 // Evenements/commandes globaux
+pub const DOMAINE_GLOBAL: &str = "evenement.global.cedule";
 pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
 pub const EVENEMENT_GLOBAL_CEDULE: &str = "evenement.global.cedule";
 pub const COMMANDE_GLOBAL_BACKUP_HORAIRE: &str = "commande.global.declencherBackupHoraire";

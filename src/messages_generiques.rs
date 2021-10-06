@@ -4,13 +4,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageCedule {
     /// Date en secondes epoch
-    estampille: usize,
-    date_string: String,
-    flag_heure: bool,
-    flag_jour: bool,
-    flag_mois: bool,
-    flag_annee: bool,
-    flag_semaine: bool,
+    pub estampille: usize,
+    pub date_string: String,
+    pub flag_heure: bool,
+    pub flag_jour: bool,
+    pub flag_mois: bool,
+    pub flag_annee: bool,
+    pub flag_semaine: bool,
 }
 impl MessageCedule {
     pub fn now() -> Self {

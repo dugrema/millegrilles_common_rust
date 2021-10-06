@@ -16,6 +16,7 @@ use crate::certificats::VerificateurPermissions;
 use crate::constantes::*;
 use crate::formatteur_messages::{MessageMilleGrille};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
+use crate::messages_generiques::MessageCedule;
 use crate::middleware::{Middleware, thread_emettre_presence_domaine};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{QueueType, TypeMessageOut};
@@ -69,7 +70,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
        where M: Middleware + 'static;
 
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
-    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: MessageValideAction)
+    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule)
         -> Result<(), Box<dyn Error>>
         where M: Middleware + 'static;
 
@@ -297,7 +298,9 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         Ok(reponse)
                     },
                     EVENEMENT_CEDULE => {
-                        self.traiter_cedule(middleware.as_ref(), message).await?;
+                        let trigger: MessageCedule = message.message.get_msg().map_contenu(None)?;
+                        self.verifier_backup_cedule(middleware.as_ref(), &trigger).await?;
+                        self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
                     },
                     _ => self.consommer_evenement(middleware.as_ref(), message).await
@@ -305,6 +308,23 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             },
             false => self.consommer_evenement(middleware.as_ref(), message).await
         }
+    }
+
+    async fn verifier_backup_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule)
+        -> Result<(), Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        if trigger.flag_heure {
+            info!("verifier_backup_cedule Demarre backup horaire : {:?}", trigger);
+            backup(
+                middleware,
+                self.get_nom_domaine().as_str(),
+                self.get_collection_transactions().as_str(),
+                self.chiffrer_backup()
+            ).await?;
+        }
+
+        Ok(())
     }
 
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)

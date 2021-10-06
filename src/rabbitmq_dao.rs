@@ -476,6 +476,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
     let routing_keys_secure = vec!(
         // Ecouter les evenements internes pour le domaine
         String::from(format!("evenement.{}.{}", nom_domaine, EVENEMENT_TRANSACTION_PERSISTEE)),
+        String::from(EVENEMENT_GLOBAL_CEDULE),
     );
     for rk in routing_keys_secure {
         let _ = channel.queue_bind(
@@ -495,7 +496,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
         String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESET_BACKUP)),
 
         // Evenement globaux
-        String::from(EVENEMENT_GLOBAL_CEDULE),
+        // String::from(EVENEMENT_GLOBAL_CEDULE),
         String::from(COMMANDE_GLOBAL_BACKUP_HORAIRE),
         String::from(COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS),
         String::from(COMMANDE_GLOBAL_RESET_BACKUP),

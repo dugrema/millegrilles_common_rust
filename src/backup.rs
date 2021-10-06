@@ -40,10 +40,11 @@ use crate::transactions::{regenerer, sauvegarder_batch, TraiterTransaction};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-where
-    M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
-    S: Into<&'a str>,
+pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where
+        M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
+        S: Into<&'a str>,
 {
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
