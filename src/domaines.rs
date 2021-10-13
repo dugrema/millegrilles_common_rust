@@ -146,7 +146,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             };
 
             if let Err(e) = resultat {
-                error!("Erreur traitement message : {:?}\n", e);
+                error!("Erreur traitement message : {:?}", e);
             }
         }
 
