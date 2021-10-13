@@ -724,7 +724,27 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
             Value::Array(vec_values)
         },
         Value::Bool(o) => Value::Bool(o),
-        Value::Number(o) => Value::Number(o),
+        Value::Number(o) => {
+            match o.is_f64() {
+                true => {
+                    // Traiter un float, on converti en i64 si le nombre fini en .0
+                    match o.as_f64() {
+                        Some(float_num) => {
+                            let int_num = float_num.floor() as i64;
+                            match int_num as f64 == float_num {
+                                true => {
+                                    // Float fini par .0, on transforme en i64
+                                    Value::from(int_num)
+                                },
+                                false => Value::from(float_num),  // partie fractionnaire presente
+                            }
+                        },
+                        None => Value::Number(o)
+                    }
+                },
+                false => Value::Number(o)
+            }
+        },
         Value::String(o) => Value::String(o),
         Value::Null => Value::Null,
     };
