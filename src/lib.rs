@@ -17,6 +17,7 @@ pub mod fichiers;
 pub mod messages_generiques;
 pub mod domaines;
 pub mod middleware_db;
+pub mod redis_dao;
 
 // Re-exports
 pub use async_trait;
