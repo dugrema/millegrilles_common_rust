@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
-use log::{debug, info, error};
+use log::{debug, info, warn, error};
 use mongodb::Database;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
@@ -23,6 +23,7 @@ use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certif
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, task_requetes_certificats, TypeMessage};
+use crate::redis_dao::RedisDao;
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
 // Middleware avec MongoDB
@@ -32,6 +33,7 @@ pub struct MiddlewareDb {
     validateur: Arc<ValidateurX509Impl>,
     generateur_messages: Arc<GenerateurMessagesImpl>,
     pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
+    redis: RedisDao,
 }
 
 impl MiddlewareDb {
@@ -270,12 +272,19 @@ impl VerificateurMessage for MiddlewareDb {
 impl EmetteurCertificat for MiddlewareDb {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
         let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
-        let message = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
+        let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
+        let message = formatter_message_certificat(enveloppe_certificat);
         let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
 
         let routage = RoutageMessageAction::builder("certificat", "infoCertificat")
             .exchanges(exchanges)
             .build();
+
+        // Sauvegarder dans redis
+        match self.redis.save_certificat(enveloppe_certificat).await {
+            Ok(()) => (),
+            Err(e) => warn!("MiddlewareDb.emettre_certificat Erreur sauvegarde certificat local sous redis : {:?}", e)
+        }
 
         match generateur_message.emettre_evenement(routage, &message).await {
             Ok(_) => Ok(()),
@@ -314,12 +323,19 @@ pub fn preparer_middleware_db(
         map
     };
 
+    let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
+        Some(u) => Some(u.as_str()),
+        None => None,
+    };
+    let redis_dao = RedisDao::new(redis_url).expect("connexion redis");
+
     let middleware = Arc::new(MiddlewareDb {
         configuration,
         mongo,
         validateur: validateur.clone(),
         generateur_messages: generateur_messages_arc.clone(),
         cles_chiffrage: Mutex::new(cles_chiffrage),
+        redis: redis_dao,
     });
 
     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(3);
