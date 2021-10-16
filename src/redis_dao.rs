@@ -16,7 +16,7 @@ impl RedisDao {
     {
         let url = match url_connexion {
             Some(u) => u.into(),
-            None => String::from("redis://localhost:6379/")
+            None => String::from("redis://redis:6379/")
         };
         info!("Connexion redis client sur {}", url.as_str());
 
@@ -90,10 +90,12 @@ mod test_integration_redis_dao {
     use crate::test_setup::setup;
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
 
+    const URL_REDIS: &str = "redis://localhost:6379";
+
     #[tokio::test]
     async fn connecter_redis() {
         setup("connecter_redis");
-        let client = RedisDao::new(None::<&str>).expect("client");
+        let client = RedisDao::new(Some(URL_REDIS)).expect("client");
         // let mut con = client.get_async_connection().await?;
         let resultat = client.liste_certificats_fingerprints().await.expect("resultat");
         info!("Resultat : {:?}", resultat);
@@ -102,7 +104,7 @@ mod test_integration_redis_dao {
     #[tokio::test]
     async fn get_certificat() {
         setup("get_certificat");
-        let client = RedisDao::new(None::<&str>).expect("client");
+        let client = RedisDao::new(Some(URL_REDIS)).expect("client");
         let resultat = client.get_certificat("zQmdmwoc9cync8afXBXvnBar2yHyZihVnHvYrt3zSG4wHoX").await.expect("resultat");
         info!("Resultat : {:?}", resultat);
     }
@@ -113,7 +115,7 @@ mod test_integration_redis_dao {
         let (_, enveloppe) = charger_enveloppe_privee_env();
         let cert = enveloppe.enveloppe;
 
-        let client = RedisDao::new(None::<&str>).expect("client");
+        let client = RedisDao::new(Some(URL_REDIS)).expect("client");
 
         let _ = client.save_certificat(cert).await.expect("resultat");
     }
