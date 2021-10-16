@@ -162,9 +162,20 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         Err(_) => None,
     };
 
+    let redis_url = match std::env::var("MG_REDIS_URL") {
+        Ok(url_str) => {
+            match Url::parse(url_str.as_str()) {
+                Ok(url) => Some(url),
+                Err(e) => Err(format!("Erreur parse url fichiers : {}", url_str))?,
+            }
+        },
+        Err(_) => None,
+    };
+
     Ok(ConfigurationNoeud{
         noeud_id,
         fichiers_url,
+        redis_url,
     })
 }
 
@@ -188,6 +199,7 @@ pub struct ConfigurationMongo {
 pub struct ConfigurationNoeud {
     pub noeud_id: Option<String>,
     pub fichiers_url: Option<Url>,
+    pub redis_url: Option<Url>,
 }
 
 #[derive(Debug)]

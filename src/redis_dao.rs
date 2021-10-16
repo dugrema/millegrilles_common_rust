@@ -5,7 +5,7 @@ use crate::certificats::EnveloppeCertificat;
 
 const TTL_CERTIFICAT: i32 = 48 * 60 * 60;  // 48 heures en secondes
 
-struct RedisDao {
+pub struct RedisDao {
     url_connexion: String,
     client: Client,
 }
@@ -54,14 +54,11 @@ impl RedisDao {
         }
     }
 
-    pub async fn save_certificat<S>(&self, certificat: S) -> Result<(), Box<dyn Error>>
-        where S: AsRef<EnveloppeCertificat>
-    {
+    pub async fn save_certificat(&self, certificat: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
         let mut con = self.client.get_async_connection().await?;
-        let cert_ref = certificat.as_ref();
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
-        let cle_cert = format!("certificat:{}", cert_ref.fingerprint);
+        let cle_cert = format!("certificat:{}", certificat.fingerprint);
         debug!("Verifier presence {}, reset TTL", cle_cert);
         let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
         debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
@@ -71,12 +68,16 @@ impl RedisDao {
             debug!("Conserver certificat {} dans redis", cle_cert.as_str());
 
             // Preparer cle, pems en format json str
-            let pems: Vec<String> = cert_ref.get_pem_vec().into_iter().map(|c| { c.pem }).collect();
+            let pems: Vec<String> = certificat.get_pem_vec().into_iter().map(|c| { c.pem }).collect();
             let pems_value = serde_json::to_value(pems)?;
             let cert_json = serde_json::to_string(&pems_value)?;
 
             // Conserver certificat
-            let _: () = redis::cmd("SET").arg(cle_cert).arg(cert_json).query_async(&mut con).await?;
+            let _: () = redis::cmd("SET")
+                .arg(cle_cert).arg(cert_json)
+                .arg("NX")
+                .arg("EX").arg(TTL_CERTIFICAT)  // TTL certificat
+                .query_async(&mut con).await?;
         }
 
         Ok(())
@@ -117,6 +118,6 @@ mod test_integration_redis_dao {
 
         let client = RedisDao::new(Some(URL_REDIS)).expect("client");
 
-        let _ = client.save_certificat(cert).await.expect("resultat");
+        let _ = client.save_certificat(cert.as_ref()).await.expect("resultat");
     }
 }
