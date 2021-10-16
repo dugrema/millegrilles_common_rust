@@ -1284,8 +1284,8 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 
     pub fn charger_enveloppe_privee_env() -> (Arc<ValidateurX509Impl>, EnveloppePrivee) {
         const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
-        const DOMAINES_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.domaines.cert";
-        const DOMAINES_KEY_PATH: &str = "/home/mathieu/mgdev/certs/pki.domaines.key";
+        const DOMAINES_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.core.cert";
+        const DOMAINES_KEY_PATH: &str = "/home/mathieu/mgdev/certs/pki.core.key";
         let validateur = build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store");
         let validateur = Arc::new(validateur);
         let enveloppe_privee = charger_enveloppe_privee(
