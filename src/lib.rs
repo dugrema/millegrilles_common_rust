@@ -29,6 +29,7 @@ pub use multibase;
 pub use multihash;
 pub use openssl;
 pub use rand;
+pub use redis;
 pub use tokio;
 pub use tokio_stream;
 pub use uuid;
