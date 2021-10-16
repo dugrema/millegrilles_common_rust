@@ -45,15 +45,51 @@ impl Middleware for MiddlewareDb {
 #[async_trait]
 impl ValidateurX509 for MiddlewareDb {
     async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
-        self.validateur.charger_enveloppe(chaine_pem, fingerprint).await
+        let enveloppe = self.validateur.charger_enveloppe(chaine_pem, fingerprint).await?;
+
+        // Conserver dans redis (reset TTL)
+        match self.redis.save_certificat(&enveloppe).await {
+            Ok(()) => (),
+            Err(e) => warn!("MiddlewareDbPki.charger_enveloppe Erreur sauvegarde certificat dans redis : {:?}", e)
+        }
+
+        Ok(enveloppe)
     }
 
     async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat> {
+        match self.redis.save_certificat(&certificat).await {
+            Ok(()) => debug!("Certificat {} sauvegarde dans redis", &certificat.fingerprint),
+            Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", certificat.fingerprint(), e)
+        }
         self.validateur.cacher(certificat).await
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-        self.validateur.get_certificat(fingerprint).await
+        match self.validateur.get_certificat(fingerprint).await {
+            Some(c) => Some(c),
+            None => {
+                // Cas special, certificat inconnu a PKI. Tenter de le charger de redis
+                let pems_vec = match self.redis.get_certificat(fingerprint).await {
+                    Ok(c) => match c {
+                        Some(cert_pem) => cert_pem,
+                        None => return None
+                    },
+                    Err(e) => {
+                        warn!("MiddlewareDbPki.get_certificat (2) Erreur acces certificat via redis : {:?}", e);
+                        return None
+                    }
+                };
+
+                // Le certificat est dans redis, on le sauvegarde localement en chargeant l'enveloppe
+                match self.validateur.charger_enveloppe(&pems_vec, None).await {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        warn!("MiddlewareDbPki.get_certificat (1) Erreur acces certificat via redis : {:?}", e);
+                        None
+                    }
+                }
+            }
+        }
     }
 
     fn idmg(&self) -> &str {
