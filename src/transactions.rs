@@ -260,11 +260,12 @@ pub enum EtatTransaction {
     Complete,
 }
 
-pub async fn marquer_transaction<'a, M, S>(middleware: &M, nom_collection: S, uuid_transaction: S, etat: EtatTransaction)
+pub async fn marquer_transaction<'a, M, S, T>(middleware: &M, nom_collection: S, uuid_transaction: T, etat: EtatTransaction)
     -> Result<(), String>
     where
         M: MongoDao,
-        S: AsRef<str>
+        S: AsRef<str>,
+        T: AsRef<str>,
 {
 
     let mut set = doc! {};

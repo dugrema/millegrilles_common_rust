@@ -22,7 +22,7 @@ use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, Rou
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::MessageValideAction;
-use crate::transactions::{TransactionImpl, transmettre_evenement_persistance};
+use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::VerificateurMessage;
 
 /// Super-trait pour tous les traits implementes par Middleware
@@ -386,9 +386,19 @@ pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageVal
 
     // Convertir message en format transaction
     let transaction = TransactionImpl::new(doc_transaction, m.message.certificat);
+    let uuid_transaction = transaction.get_uuid_transaction().to_owned();
 
     // Traiter transaction
-    gestionnaire.aiguillage_transaction(middleware, transaction).await
+    let reponse = gestionnaire.aiguillage_transaction(middleware, transaction).await?;
+
+    marquer_transaction(
+        middleware,
+        &nom_collection_transactions,
+        uuid_transaction,
+        EtatTransaction::Complete
+    ).await?;
+
+    Ok(reponse)
 }
 
 pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValideAction, nom_collection: C) -> Result<(), String>
