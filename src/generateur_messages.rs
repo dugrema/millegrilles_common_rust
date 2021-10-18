@@ -154,10 +154,11 @@ pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
 
     async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String>;
 
-    /// Emettre un message en str deja formatte
+    /// Emettre un message en str deja serialise
     async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
         -> Result<Option<TypeMessage>, String>;
 
+    /// Emettre un message MilleGrille deja signe
     async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
         -> Result<Option<TypeMessage>, String>;
 

@@ -16,12 +16,13 @@ use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPu
 use crate::chiffrage::{Chiffreur, Dechiffreur, Mgs2CipherData};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, IsConfigNoeud};
 use crate::constantes::*;
+use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutor};
 use crate::recepteur_messages::MessageValideAction;
-use crate::transactions::transmettre_evenement_persistance;
+use crate::transactions::{TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::VerificateurMessage;
 
 /// Super-trait pour tous les traits implementes par Middleware
@@ -370,6 +371,26 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Value {
 //     Ok(())
 // }
 
+/// Sauvegarde une nouvelle transaction et de la traite immediatement
+pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageValideAction, gestionnaire: &G)
+    -> Result<Option<MessageMilleGrille>, String>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao,
+        G: GestionnaireDomaine
+{
+    let nom_collection_transactions = gestionnaire.get_collection_transactions();
+    let doc_transaction = match sauvegarder_transaction(middleware, &m, nom_collection_transactions.as_str()).await {
+        Ok(d) => Ok(d),
+        Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur sauvegarde transaction : {:?}", e))
+    }?;
+
+    // Convertir message en format transaction
+    let transaction = TransactionImpl::new(doc_transaction, m.message.certificat);
+
+    // Traiter transaction
+    gestionnaire.aiguillage_transaction(middleware, transaction).await
+}
+
 pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValideAction, nom_collection: C) -> Result<(), String>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao,
@@ -378,7 +399,7 @@ pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValid
     let entete = m.message.get_entete();
 
     match sauvegarder_transaction(middleware, &m, nom_collection.as_ref()).await {
-        Ok(()) => (),
+        Ok(_) => (),
         Err(e) => Err(format!("Erreur sauvegarde transaction : {:?}", e))?
     }
 
@@ -404,7 +425,7 @@ pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValid
     Ok(())
 }
 
-pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction, nom_collection: &str) -> Result<(), Box<dyn Error>>
+pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction, nom_collection: &str) -> Result<Document, Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
     debug!("Sauvegarder transaction avec document {:?}", &m.message);
@@ -453,7 +474,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction,
     debug!("Inserer nouvelle transaction\n:{:?}", contenu_doc);
 
     let collection = middleware.get_collection(nom_collection)?;
-    match collection.insert_one(contenu_doc, None).await {
+    match collection.insert_one(&contenu_doc, None).await {
         Ok(_) => {
             debug!("Transaction sauvegardee dans collection de reception");
             Ok(())
@@ -464,7 +485,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction,
         }
     }?;
 
-    Ok(())
+    Ok(contenu_doc)
 }
 
 pub fn map_msg_to_bson(msg: &MessageMilleGrille) -> Result<Document, Box<dyn Error>> {
