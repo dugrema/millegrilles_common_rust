@@ -186,6 +186,7 @@ pub const TRANSACTION_LIMITE_RESOUMISSION: i32 = 4;
 // Documents
 pub const CHAMP_CREATION: &str = "_mg-creation";
 pub const CHAMP_MODIFICATION: &str = "_mg-derniere-modification";
+pub const CHAMP_SECURITE: &str = "securite";
 
 // Certificats, PKI
 // pub const PKI_DOMAINE_LEGACY_NOM: &str = "Pki";
