@@ -656,11 +656,11 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static,
         P: AsRef<str>
 {
-    let path_fichier = {
-        let mut path_fichier = PathBuf::from(workdir);
-        path_fichier.push(PathBuf::from("download_backup.tar"));
-        path_fichier
-    };
+    // let path_fichier = {
+    //     let mut path_fichier = PathBuf::from(workdir);
+    //     path_fichier.push(PathBuf::from("download_backup.tar"));
+    //     path_fichier
+    // };
 
     let enveloppe_privee = middleware.get_enveloppe_privee();
     let ca_cert_pem = match enveloppe_privee.chaine_pem().last() {
@@ -675,49 +675,133 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         .identity(identity)
         .https_only(true)
         .use_rustls_tls()
+        // .http1_only()
+        .http2_adaptive_window(true)
         .build()?;
 
-    let mut url_fichiers = match &middleware.get_configuration_noeud().fichiers_url {
+    let url_fichiers = match &middleware.get_configuration_noeud().fichiers_url {
         Some(u) => u.to_owned(),
         None => Err("Erreur backup - configuration serveur fichiers absente")?,
     };
 
     let url_fichiers_str = match partition {
-        Some(p) => format!("/backup/restaurerDomaine/{}.{}", nom_domaine, p.as_ref()),
-        None => format!("/backup/restaurerDomaine/{}", nom_domaine)
+        Some(p) => format!("/{}.{}", nom_domaine, p.as_ref()),
+        None => nom_domaine.to_owned()
     };
 
-    url_fichiers.set_path(url_fichiers_str.as_str());
-    debug!("Download backup url : {:?}", url_fichiers);
-    let response = client.get(url_fichiers)
-        .send()
-        .await?;
+    // Recuperer la liste de ficheirs de backup du domaine
+    let mut url_liste_fichiers = url_fichiers.clone();
+    let url_liste_fichiers_str = format!("/backup/listeFichiers/{}", url_fichiers_str.as_str());
+    url_liste_fichiers.set_path(url_liste_fichiers_str.as_str());
+    debug!("Download liste fichiers pour backup url : {:?}", url_liste_fichiers);
+    let response_liste_fichiers = client.get(url_liste_fichiers).send().await?;
+    let reponse_liste_fichiers_status = &response_liste_fichiers.status();
+    let reponse_liste_fichiers_text = response_liste_fichiers.text().await?;
+    let reponse_val: ReponseListeFichiersBackup = serde_json::from_str(&reponse_liste_fichiers_text)?;
+    debug!("Liste fichiers du domaine {} code: {:?} : {:?}", url_liste_fichiers_str, reponse_liste_fichiers_status, reponse_val);
 
-    debug!("Response get backup {}", response.status());
+    for fichier in &reponse_val.fichiers {
+        let mut copie_url_fichiers = url_fichiers.clone();
+        let path_fichier_courant = PathBuf::from(fichier);
+        let nom_fichier = path_fichier_courant.file_name().expect("nom fichier").to_str().expect("str");
 
-    // Conserver fichier sur le disque (temporaire)
-    // todo Trouver comment streamer en memoire
-    {
-        let mut stream = response.bytes_stream();
+        let url_fichiers_complet_str = format!("/backup/fichier/{}/{}", url_fichiers_str.as_str(), fichier);
+
+        copie_url_fichiers.set_path(url_fichiers_complet_str.as_str());
+        debug!("Download backup url : {:?}", url_fichiers_complet_str);
+
+        let mut path_fichier = PathBuf::from(workdir);
+        path_fichier.push(nom_fichier);
+        debug!("Sauvegarder fichier backup sous : {:?}", path_fichier);
         let mut file_output = File::create(path_fichier.as_path()).await?;
-        while let Some(item) = stream.next().await {
-            let content = item?;
+
+        let mut response = client.get(copie_url_fichiers).send().await?;
+        debug!("Response get backup {} = {}, headers: {:?}", url_fichiers_complet_str, response.status(), response.headers());
+
+        while let Some(content) = response.chunk().await? {
+            debug!("Write content {}", content.len());
             file_output.write_all(content.as_ref()).await?;
         }
         file_output.flush().await?;
+        debug!("Fichier backup sauvegarde : {:?}", path_fichier);
     }
 
-    let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
+    // Parcourir tous les fichiers en ordre
     let mut processeur = ProcesseurFichierBackup::new(
         enveloppe_privee.clone(),
         middleware.clone()
     );
-    parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
+    for fichier in &reponse_val.fichiers {
+        let mut copie_url_fichiers = url_fichiers.clone();
+        let path_fichier_courant = PathBuf::from(fichier);
+        let nom_fichier = path_fichier_courant.file_name().expect("nom fichier").to_str().expect("str");
+        let mut path_fichier = PathBuf::from(workdir);
+        path_fichier.push(nom_fichier);
 
-    // Download des transactions
-    processeur.sauvegarder_batch(middleware.as_ref(), nom_collection_transactions).await?;
+        if nom_fichier.ends_with(".tar") {
+            debug!("Fichier tar {:?}", path_fichier);
+            let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
+            parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
+        } else if nom_fichier.ends_with(".jsonl.xz") {
+            let nom_fichier_catalogue = if nom_fichier == "transactions.jsonl.xz" {
+                String::from("catalogue.json.xz")
+            } else {
+                nom_fichier.replace(".jsonl.xz", ".json.xz")
+            };
+            // let nom_fichier_catalogue = nom_fichier.replace(".jsonl.xz", ".json.xz");
+            debug!("Catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
+            //let mut path_fichier_catalogue = path_fichier.clone();
+            let mut path_fichier_catalogue = async_std::path::PathBuf::from(path_fichier.as_path());
+            path_fichier_catalogue.set_file_name(nom_fichier_catalogue);
+            let mut fichier_catalogue = async_std::fs::File::open(path_fichier_catalogue.as_path()).await?;
+            debug!("Parse catalogue {:?}", path_fichier_catalogue);
+            processeur.parse_catalogue(middleware.as_ref(), path_fichier_catalogue.as_path(), &mut fichier_catalogue).await?;
 
-    Ok(())
+            let mut path_fichier_transactions = async_std::path::PathBuf::from(path_fichier.as_path());
+            let mut fichier_transactions = async_std::fs::File::open(path_fichier.as_path()).await?;
+            debug!("Parse transactions {:?}", path_fichier_transactions);
+            processeur.parse_transactions(middleware.as_ref(), path_fichier_transactions.as_path(), &mut fichier_transactions).await?;
+        } else if nom_fichier.ends_with(".jsonl.xz.mgs2") {
+            let nom_fichier_catalogue = nom_fichier.replace(".jsonl.xz.mgs2", ".json.xz");
+            debug!("Catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
+        } else {
+            debug!("Skip fichier {}", nom_fichier);
+        }
+
+        processeur.sauvegarder_batch(middleware.as_ref(), nom_collection_transactions).await?;
+    }
+
+    todo!()
+
+    // // Conserver fichier sur le disque (temporaire)
+    // // todo Trouver comment streamer en memoire
+    // {
+    //     let mut stream = response.bytes_stream();
+    //     let mut file_output = File::create(path_fichier.as_path()).await?;
+    //     while let Some(item) = stream.next().await {
+    //         let content = item?;
+    //         file_output.write_all(content.as_ref()).await?;
+    //     }
+    //     file_output.flush().await?;
+    // }
+    //
+    // let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
+    // let mut processeur = ProcesseurFichierBackup::new(
+    //     enveloppe_privee.clone(),
+    //     middleware.clone()
+    // );
+    // parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
+    //
+    // // Download des transactions
+    // processeur.sauvegarder_batch(middleware.as_ref(), nom_collection_transactions).await?;
+    //
+    // Ok(())
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ReponseListeFichiersBackup {
+    domaine: String,
+    fichiers: Vec<String>
 }
 
 trait BackupHandler {
@@ -1565,9 +1649,11 @@ impl ProcesseurFichierBackup {
             transactions.push(t);
         }
 
-        // Inserer transactions
-        let resultat = sauvegarder_batch(middleware, nom_collection, transactions).await?;
-        debug!("Resultat sauvegarder batch : {:?}", resultat);
+        if transactions.len() > 0 {
+            // Inserer transactions
+            let resultat = sauvegarder_batch(middleware, nom_collection, transactions).await?;
+            debug!("Resultat sauvegarder batch : {:?}", resultat);
+        }
 
         Ok(())
     }
@@ -2062,9 +2148,9 @@ mod test_integration {
     use super::*;
     use crate::transactions::TransactionImpl;
 
-    const NOM_DOMAINE: &str = "CorePki";
-    const NOM_COLLECTION_TRANSACTIONS: &str = "CorePki";
-    const NOM_COLLECTION_CERTIFICATS: &str = "CorePki/certificat";
+    const NOM_DOMAINE: &str = "GrosFichiers";
+    const NOM_COLLECTION_TRANSACTIONS: &str = "GrosFichiers";
+    // const NOM_COLLECTION_CERTIFICATS: &str = "CorePki/certificat";
 
     #[tokio::test]
     async fn grouper_transactions() {
@@ -2364,17 +2450,21 @@ mod test_integration {
         let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
 
         debug!("Attente MQ");
-        tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+        tokio::time::sleep(tokio::time::Duration::new(1, 0)).await;
         debug!("Fin sleep");
 
-        download_backup(
-            middleware.clone(),
-            NOM_DOMAINE,
-            None::<&str>,
-            NOM_COLLECTION_TRANSACTIONS,
-            workdir.as_path()
-        ).await.expect("download");
+        futures.push(tokio::spawn(async move {
+            download_backup(
+                middleware.clone(),
+                NOM_DOMAINE,
+                None::<&str>,
+                NOM_COLLECTION_TRANSACTIONS,
+                workdir.as_path()
+            ).await.expect("download");
+        }));
 
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
     }
 
     #[tokio::test]
@@ -2390,14 +2480,18 @@ mod test_integration {
         tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
         debug!("Fin sleep");
 
-        download_backup(
-            middleware.clone(),
-            "Pki".into(),
-            Some(String::from("MaPartition")),
-            NOM_COLLECTION_TRANSACTIONS,
-            workdir.as_path()
-        ).await.expect("download");
+        futures.push(tokio::spawn(async move {
+            download_backup(
+                middleware.clone(),
+                "Pki".into(),
+                Some(String::from("MaPartition")),
+                NOM_COLLECTION_TRANSACTIONS,
+                workdir.as_path()
+            ).await.expect("download");
+        }));
 
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
     }
 
     #[tokio::test]
