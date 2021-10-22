@@ -152,6 +152,7 @@ pub const EVENEMENT_GLOBAL_CEDULE: &str = "evenement.global.cedule";
 pub const COMMANDE_GLOBAL_BACKUP_HORAIRE: &str = "commande.global.declencherBackupHoraire";
 pub const COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS: &str = "commande.global.restaurerTransactions";
 pub const COMMANDE_GLOBAL_RESET_BACKUP: &str = "commande.global.resetBackup";
+pub const COMMANDE_GLOBAL_REGENERER: &str = "commande.global.regenerer";
 
 // Transactions
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
@@ -236,5 +237,6 @@ pub const COMMANDE_BACKUP_HORAIRE: &str = "declencherBackupHoraire";
 pub const COMMANDE_BACKUP_QUOTIDIEN: &str = "declencherBackupQuotidien";
 pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";
 pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";
+pub const COMMANDE_REGENERER: &str = "regenerer";
 
 pub const BACKUP_EVENEMENT_MAJ: &str = "backupMaj";

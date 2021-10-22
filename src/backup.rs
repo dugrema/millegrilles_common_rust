@@ -234,6 +234,44 @@ pub async fn restaurer<M, T, P>(middleware: Arc<M>, nom_domaine: &str, partition
     Ok(())
 }
 
+pub async fn regenerer_operation<M, T, P>(middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
+    -> Result<(), Box<dyn Error>>
+    where
+        M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
+        T: TraiterTransaction,
+        P: AsRef<str>
+{
+    if let Err(e) = emettre_evenement_regeneration(middleware.as_ref(), nom_domaine, "debutRestauration").await {
+        error!("Erreur emission message restauration : {:?}", e);
+    }
+
+    debug!("Debut regeneration {}", nom_collection_transactions);
+    let regenerer_result = match regenerer(middleware.as_ref(), nom_collection_transactions, noms_collections_docs, processor).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            Err(format!("Erreur regenerer : {:?}", e))
+        }
+    };
+
+    match regenerer_result {
+        Ok(()) => (),
+        Err(e) => {
+            if let Err(e) = emettre_evenement_regeneration(middleware.as_ref(), nom_domaine, "erreurRegeneration").await {
+                error!("backup.regenerer_operation Erreur emission message regeneration : {:?}", e);
+            }
+            Err(e)?
+        }
+    }
+
+    info!("regenerer_operation Fin regeneration {}", nom_collection_transactions);
+
+    if let Err(e) = emettre_evenement_regeneration(middleware.as_ref(), nom_domaine, "regenerationTerminee").await {
+        error!("backup.regenerer_operation Erreur emission message restauration : {:?}", e);
+    }
+
+    Ok(())
+}
+
 /// Identifie les sousdomaines/heures a inclure dans le backup.
 async fn grouper_backups(middleware: &impl MongoDao, backup_information: &BackupInformation) -> Result<Vec<CatalogueHoraireBuilder>, Box<dyn Error>> {
 
@@ -1651,6 +1689,22 @@ pub async fn emettre_evenement_restauration<M>(
     });
 
     let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, "restaurationMaj")
+        .exchanges(vec![L3Protege])
+        .build();
+
+    Ok(middleware.emettre_evenement(routage, &value).await?)
+}
+
+pub async fn emettre_evenement_regeneration<M>(
+    middleware: &M, domaine: &str, evenement: &str) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages
+{
+    let value = json!({
+        "evenement": evenement,
+        "domaine": domaine,
+    });
+
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, "regenerationMaj")
         .exchanges(vec![L3Protege])
         .build();
 

@@ -10,7 +10,7 @@ use tokio::spawn;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 
-use crate::backup::{backup, reset_backup_flag, restaurer};
+use crate::backup::{backup, regenerer_operation, reset_backup_flag, restaurer};
 use crate::certificats::ValidateurX509;
 use crate::certificats::VerificateurPermissions;
 use crate::constantes::*;
@@ -336,7 +336,12 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
         // Autorisation : les commandes globales sont de niveau 3 ou 4
         // Fallback sur les commandes specifiques au domaine
-        match m.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure)) {
+        let autorise_global = match m.verifier_exchanges(vec!(Securite::L4Secure)) {
+            true => true,
+            false => m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)
+        };
+
+        match autorise_global {
             true => {
                 match m.action.as_str() {
                     // Commandes standard
@@ -344,6 +349,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         middleware.as_ref(), self.get_nom_domaine().as_str(),
                         self.get_collection_transactions().as_str(), self.chiffrer_backup()).await,
                     COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
+                    COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
                     COMMANDE_RESET_BACKUP => reset_backup_flag(
                         middleware.as_ref(), self.get_collection_transactions().as_str()).await,
 
@@ -362,6 +368,24 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         //let processor = self.get_processeur_transactions();
 
         restaurer(
+            middleware.clone(),
+            self.get_nom_domaine().as_str(),
+            self.get_partition(),
+            self.get_collection_transactions().as_str(),
+            &noms_collections_docs,
+            self
+        ).await?;
+
+        Ok(None)
+    }
+
+    async fn regenerer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        let noms_collections_docs = self.get_collections_documents();
+        //let processor = self.get_processeur_transactions();
+
+        regenerer_operation(
             middleware.clone(),
             self.get_nom_domaine().as_str(),
             self.get_partition(),
