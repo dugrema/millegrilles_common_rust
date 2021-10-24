@@ -224,6 +224,7 @@ pub const COMMANDE_CERT_MAITREDESCLES: &str = "certMaitreDesCles";
 
 // Backup
 pub const BACKUP_NOM_DOMAINE: &str = "CoreBackup";
+pub const BACKUP_NOM_DOMAINE_GLOBAL: &str = "backup";
 
 pub const BACKUP_TRANSACTION_CATALOGUE_QUOTIDIEN: &str = "catalogueQuotidien";
 pub const BACKUP_TRANSACTION_CATALOGUE_HORAIRE: &str = "catalogueHoraire";

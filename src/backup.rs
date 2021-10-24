@@ -70,6 +70,10 @@ pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_tra
         },
         Err(e) => {
             error!("Erreur traitement backup : {:?}", e);
+            if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
+                error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
+            }
+
             let reponse = middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?;
 
             (reponse, true)
@@ -229,7 +233,7 @@ pub async fn restaurer<M, T, P>(
         }
     }
 
-    info!("Fin regeneration {}", nom_collection_transactions);
+    info!("restaurer Fin regeneration {}", nom_collection_transactions);
 
     if let Err(e) = emettre_evenement_restauration(middleware.as_ref(), nom_domaine, "restaurationTerminee").await {
         error!("Erreur emission message restauration : {:?}", e);
@@ -245,7 +249,7 @@ pub async fn regenerer_operation<M, T, P>(middleware: Arc<M>, nom_domaine: &str,
         T: TraiterTransaction,
         P: AsRef<str>
 {
-    if let Err(e) = emettre_evenement_regeneration(middleware.as_ref(), nom_domaine, "debutRestauration").await {
+    if let Err(e) = emettre_evenement_regeneration(middleware.as_ref(), nom_domaine, "debutRegeneration").await {
         error!("Erreur emission message restauration : {:?}", e);
     }
 
@@ -1784,7 +1788,7 @@ pub async fn emettre_evenement_backup<M>(
         "timestamp": timestamp.timestamp(),
     });
 
-    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, BACKUP_EVENEMENT_MAJ)
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, BACKUP_EVENEMENT_MAJ)
         .exchanges(vec![L3Protege])
         .build();
 
@@ -1800,7 +1804,7 @@ pub async fn emettre_evenement_restauration<M>(
         "domaine": domaine,
     });
 
-    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, "restaurationMaj")
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, "restaurationMaj")
         .exchanges(vec![L3Protege])
         .build();
 
@@ -1816,7 +1820,7 @@ pub async fn emettre_evenement_regeneration<M>(
         "domaine": domaine,
     });
 
-    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE, "regenerationMaj")
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, "regenerationMaj")
         .exchanges(vec![L3Protege])
         .build();
 
