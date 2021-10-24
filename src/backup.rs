@@ -70,9 +70,10 @@ pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_tra
         },
         Err(e) => {
             error!("Erreur traitement backup : {:?}", e);
-            if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
-                error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
-            }
+            // let timestamp_backup = Utc::now();
+            // if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
+            //     error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
+            // }
 
             let reponse = middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?;
 
