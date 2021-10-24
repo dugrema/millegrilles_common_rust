@@ -171,7 +171,10 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
     Ok(())
 }
 
-pub async fn restaurer<M, T, P>(middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
+pub async fn restaurer<M, T, P>(
+    middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str,
+    noms_collections_docs: &Vec<String>, processor: &T
+)
     -> Result<(), Box<dyn Error>>
     where
         M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
@@ -656,12 +659,6 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static,
         P: AsRef<str>
 {
-    // let path_fichier = {
-    //     let mut path_fichier = PathBuf::from(workdir);
-    //     path_fichier.push(PathBuf::from("download_backup.tar"));
-    //     path_fichier
-    // };
-
     let enveloppe_privee = middleware.get_enveloppe_privee();
     let ca_cert_pem = match enveloppe_privee.chaine_pem().last() {
         Some(cert) => cert.as_str(),
@@ -689,7 +686,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         None => nom_domaine.to_owned()
     };
 
-    // Recuperer la liste de ficheirs de backup du domaine
+    // Recuperer la liste de fichiers de backup du domaine
     let mut url_liste_fichiers = url_fichiers.clone();
     let url_liste_fichiers_str = format!("/backup/listeFichiers/{}", url_fichiers_str.as_str());
     url_liste_fichiers.set_path(url_liste_fichiers_str.as_str());
@@ -742,28 +739,31 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
             debug!("Fichier tar {:?}", path_fichier);
             let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
             parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
-        } else if nom_fichier.ends_with(".jsonl.xz") {
-            let nom_fichier_catalogue = if nom_fichier == "transactions.jsonl.xz" {
+        } else if nom_fichier.contains(".jsonl.xz") {
+            // Trouver le nom du catalogue associe, soit catalogue.json.xz soit [NOMDOMAINE_PARTITION].json.xz
+            let nom_fichier_catalogue = if nom_fichier.starts_with("transactions.jsonl.xz") {
+                // Snapshot
                 String::from("catalogue.json.xz")
             } else {
+                // Fichier horaire
+                let nom_fichier = nom_fichier.replace(".jsonl.xz.mgs2", ".json.xz");
                 nom_fichier.replace(".jsonl.xz", ".json.xz")
             };
-            // let nom_fichier_catalogue = nom_fichier.replace(".jsonl.xz", ".json.xz");
+
             debug!("Catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
-            //let mut path_fichier_catalogue = path_fichier.clone();
             let mut path_fichier_catalogue = async_std::path::PathBuf::from(path_fichier.as_path());
             path_fichier_catalogue.set_file_name(nom_fichier_catalogue);
+            let mut path_fichier_transactions = async_std::path::PathBuf::from(path_fichier.as_path());
+            let mut fichier_transactions = async_std::fs::File::open(path_fichier.as_path()).await?;
+
+            // Charger catalogue
             let mut fichier_catalogue = async_std::fs::File::open(path_fichier_catalogue.as_path()).await?;
             debug!("Parse catalogue {:?}", path_fichier_catalogue);
             processeur.parse_catalogue(middleware.as_ref(), path_fichier_catalogue.as_path(), &mut fichier_catalogue).await?;
 
-            let mut path_fichier_transactions = async_std::path::PathBuf::from(path_fichier.as_path());
-            let mut fichier_transactions = async_std::fs::File::open(path_fichier.as_path()).await?;
+            // Charger et traiter transactions
             debug!("Parse transactions {:?}", path_fichier_transactions);
             processeur.parse_transactions(middleware.as_ref(), path_fichier_transactions.as_path(), &mut fichier_transactions).await?;
-        } else if nom_fichier.ends_with(".jsonl.xz.mgs2") {
-            let nom_fichier_catalogue = nom_fichier.replace(".jsonl.xz.mgs2", ".json.xz");
-            debug!("Catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
         } else {
             debug!("Skip fichier {}", nom_fichier);
         }
@@ -771,31 +771,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         processeur.sauvegarder_batch(middleware.as_ref(), nom_collection_transactions).await?;
     }
 
-    todo!()
-
-    // // Conserver fichier sur le disque (temporaire)
-    // // todo Trouver comment streamer en memoire
-    // {
-    //     let mut stream = response.bytes_stream();
-    //     let mut file_output = File::create(path_fichier.as_path()).await?;
-    //     while let Some(item) = stream.next().await {
-    //         let content = item?;
-    //         file_output.write_all(content.as_ref()).await?;
-    //     }
-    //     file_output.flush().await?;
-    // }
-    //
-    // let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
-    // let mut processeur = ProcesseurFichierBackup::new(
-    //     enveloppe_privee.clone(),
-    //     middleware.clone()
-    // );
-    // parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
-    //
-    // // Download des transactions
-    // processeur.sauvegarder_batch(middleware.as_ref(), nom_collection_transactions).await?;
-    //
-    // Ok(())
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1595,6 +1571,10 @@ impl ProcesseurFichierBackup {
 
         let tr_iter = transactions_str.split("\n");
         for transaction_str in tr_iter {
+            if transaction_str.len() == 0 {
+                // On a termine, ligne vide
+                continue
+            }
             match self.ajouter_transaction(middleware, transaction_str).await {
                 Ok(_) => (),
                 Err(e) => {
@@ -2150,7 +2130,7 @@ mod test_integration {
 
     const NOM_DOMAINE: &str = "GrosFichiers";
     const NOM_COLLECTION_TRANSACTIONS: &str = "GrosFichiers";
-    // const NOM_COLLECTION_CERTIFICATS: &str = "CorePki/certificat";
+    const NOM_COLLECTION_DOCUMENTS: [&str; 2] = ["GrosFichiers/fichiersRep", "GrosFichiers/versionsFichiers"];
 
     #[tokio::test]
     async fn grouper_transactions() {
@@ -2534,39 +2514,40 @@ mod test_integration {
         }
     }
 
-    // #[tokio::test]
-    // async fn effectuer_restauration() {
-    //     setup("effectuer_backup");
-    //
-    //     let (
-    //         middleware,
-    //         mut futures,
-    //         mut tx_messages,
-    //         mut tx_triggers
-    //     ) = build().await;
-    //
-    //     futures.push(tokio::spawn(async move {
-    //
-    //         debug!("Attente MQ");
-    //         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-    //         debug!("Fin sleep");
-    //
-    //         let mut collections_certificats = Vec::new();
-    //         collections_certificats.push(String::from(NOM_COLLECTION_CERTIFICATS));
-    //
-    //         let mut processeur = TraiterTransactionsDummy {};
-    //
-    //         restaurer(
-    //             middleware.clone(),
-    //             NOM_DOMAINE,
-    //             NOM_COLLECTION_TRANSACTIONS,
-    //             &collections_certificats,
-    //             &processeur
-    //         ).await.expect("backup");
-    //
-    //     }));
-    //
-    //     // Execution async du test
-    //     futures.next().await.expect("resultat").expect("ok");
-    // }
+    #[tokio::test]
+    async fn effectuer_restauration() {
+        setup("effectuer_backup");
+
+        let (
+            middleware,
+            mut futures,
+            mut tx_messages,
+            mut tx_triggers
+        ) = build().await;
+
+        futures.push(tokio::spawn(async move {
+
+            debug!("Attente MQ");
+            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+            debug!("Fin sleep");
+
+            let mut collections_documents = Vec::new();
+            for cd in NOM_COLLECTION_DOCUMENTS { collections_documents.push(String::from(cd)); }
+
+            let mut processeur = TraiterTransactionsDummy {};
+
+            restaurer(
+                middleware.clone(),
+                NOM_DOMAINE,
+                None::<&str>,
+                NOM_COLLECTION_TRANSACTIONS,
+                &collections_documents,
+                &processeur
+            ).await.expect("restaurer");
+
+        }));
+
+        // Execution async du test
+        futures.next().await.expect("resultat").expect("ok");
+    }
 }
