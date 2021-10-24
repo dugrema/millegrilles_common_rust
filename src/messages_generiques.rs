@@ -1,5 +1,6 @@
 use chrono::{Utc, Timelike, Datelike};
 use serde::{Deserialize, Serialize};
+use crate::formatteur_messages::DateEpochSeconds;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageCedule {
@@ -36,5 +37,9 @@ impl MessageCedule {
             flag_annee,
             flag_semaine,
         }
+    }
+
+    pub fn get_date(&self) -> DateEpochSeconds {
+        DateEpochSeconds::from_i64(self.estampille as i64)
     }
 }
