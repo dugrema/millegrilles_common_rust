@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -653,6 +654,7 @@ async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_coll
     Ok(())
 }
 
+/// Download les fichiers de backup du domaine et restaure les transactions
 async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str, workdir: &Path)
     -> Result<(), Box<dyn Error>>
     where
@@ -694,7 +696,12 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
     let response_liste_fichiers = client.get(url_liste_fichiers).send().await?;
     let reponse_liste_fichiers_status = &response_liste_fichiers.status();
     let reponse_liste_fichiers_text = response_liste_fichiers.text().await?;
-    let reponse_val: ReponseListeFichiersBackup = serde_json::from_str(&reponse_liste_fichiers_text)?;
+    let reponse_val = {
+        let mut reponse: ReponseListeFichiersBackup = serde_json::from_str(&reponse_liste_fichiers_text)?;
+        reponse.trier_fichiers();
+        info!("Traiter restauration {} avec liste\n{:?}", nom_domaine, reponse.fichiers);
+        reponse
+    };
     debug!("Liste fichiers du domaine {} code: {:?} : {:?}", url_liste_fichiers_str, reponse_liste_fichiers_status, reponse_val);
 
     for fichier in &reponse_val.fichiers {
@@ -723,7 +730,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         debug!("Fichier backup sauvegarde : {:?}", path_fichier);
     }
 
-    // Parcourir tous les fichiers en ordre
+    // Parcourir tous les fichiers en ordre (verifie le chainage)
     let mut processeur = ProcesseurFichierBackup::new(
         enveloppe_privee.clone(),
         middleware.clone()
@@ -778,6 +785,45 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
 struct ReponseListeFichiersBackup {
     domaine: String,
     fichiers: Vec<String>
+}
+
+impl ReponseListeFichiersBackup {
+    fn trier_fichiers(&mut self) {
+        self.fichiers.sort_by(|a, b| {
+
+            if a == b { return Ordering::Equal }
+
+            // Verifier si .tar ou catalogue ou transaction
+            let a_tar = a.ends_with(".tar");
+            let b_tar = b.ends_with(".tar");
+
+            if a_tar && b_tar {
+                // Trier .tar par date (ordre str)
+                return a.cmp(b)
+            }
+            if a_tar && !b_tar { return Ordering::Less }
+            if !a_tar && b_tar { return Ordering::Greater }
+
+            // Catalogue en premier, transaction apres
+            let a_catalogue = a.ends_with(".json.xz");
+            let b_catalogue = b.ends_with(".json.xz");
+
+            // Snapshot doit passer en premier, catalogue puis transaction
+            let a_snapshot = a.starts_with("snapshot/");
+            let b_snapshot = b.starts_with("snapshot/");
+
+            if a_snapshot == b_snapshot {
+                // 2 snapshots ou 2 horaires, on tri par type
+                if a_catalogue == b_catalogue { a.cmp(b) }
+                else if a_catalogue && !b_catalogue { Ordering::Less }
+                else if !a_catalogue && b_catalogue { Ordering::Greater }
+                else { panic!("backup.ReponseListeFichiersBackup Erreur logique comparaison") }
+            }
+            else if a_snapshot && !b_snapshot { Ordering::Greater }
+            else if !a_snapshot && b_snapshot { Ordering::Less }
+            else { panic!("backup.ReponseListeFichiersBackup Erreur logique comparaison") }
+        });
+    }
 }
 
 trait BackupHandler {
