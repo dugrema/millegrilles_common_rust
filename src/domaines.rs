@@ -146,7 +146,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             };
 
             if let Err(e) = resultat {
-                error!("Erreur traitement message : {:?}", e);
+                error!("domaines.consommer_messages Erreur traitement message : {:?}", e);
             }
         }
 
@@ -187,7 +187,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     Some(correlation_id) => Ok(correlation_id),
                     None => Err("Correlation id manquant pour reponse"),
                 }?;
-                info!("Emettre reponse vers reply_q {} correlation_id {}", reply_q, correlation_id);
+                debug!("Emettre reponse vers reply_q {} correlation_id {}", reply_q, correlation_id);
                 let routage = RoutageMessageReponse::new(reply_q, correlation_id);
                 middleware.repondre(routage, reponse).await?;
             },
@@ -221,7 +221,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     if let Some(routage_reponse) = trigger.reply_info() {
                         debug!("Emettre reponse vers {:?} = {:?}", routage_reponse, reponse);
                         if let Err(e) = middleware.repondre(routage_reponse, reponse).await {
-                            error!("traiter_transaction: Erreur emission reponse pour une transaction : {:?}", e);
+                            error!("domaines.traiter_transaction: Erreur emission reponse pour une transaction : {:?}", e);
                         }
                     }
                 }

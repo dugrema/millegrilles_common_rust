@@ -152,31 +152,37 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         Err(_) => None,
     };
 
-    let fichiers_url = match std::env::var("MG_FICHIERS_URL") {
-        Ok(url_str) => {
-            match Url::parse(url_str.as_str()) {
-                Ok(url) => Some(url),
-                Err(e) => Err(format!("Erreur parse url fichiers : {}", url_str))?,
-            }
-        },
-        Err(_) => None,
-    };
-
-    let redis_url = match std::env::var("MG_REDIS_URL") {
-        Ok(url_str) => {
-            match Url::parse(url_str.as_str()) {
-                Ok(url) => Some(url),
-                Err(e) => Err(format!("Erreur parse url fichiers : {}", url_str))?,
-            }
-        },
-        Err(_) => None,
-    };
+    let fichiers_url = charger_url("MG_FICHIERS_URL", "https://fichiers:443")?;
+    let redis_url = charger_url("MG_REDIS_URL", "redis://redis:6379")?;
+    let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
 
     Ok(ConfigurationNoeud{
         noeud_id,
-        fichiers_url,
-        redis_url,
+        fichiers_url: Some(fichiers_url),
+        redis_url: Some(redis_url),
+        elastic_search_url: Some(elastic_search_url),
     })
+}
+
+fn charger_url<S, T>(nom_variable: S, valeur_defaut: T) -> Result<Url, String>
+    where S: AsRef<str>, T: AsRef<str>
+{
+    let var_str = nom_variable.as_ref();
+    let url = match std::env::var(var_str) {
+        Ok(url_str) => {
+            match Url::parse(url_str.as_str()) {
+                Ok(url) => url,
+                Err(e) => Err(format!("Erreur parse url fichiers : {}", url_str))?,
+            }
+        },
+        Err(_) => {
+            match Url::parse(valeur_defaut.as_ref()) {
+                Ok(u)=>u,
+                Err(e) => Err(format!("configuration.charger_configuration_noeud"))?
+            }
+        },
+    };
+    Ok(url)
 }
 
 #[derive(Clone, Debug)]
@@ -200,6 +206,7 @@ pub struct ConfigurationNoeud {
     pub noeud_id: Option<String>,
     pub fichiers_url: Option<Url>,
     pub redis_url: Option<Url>,
+    pub elastic_search_url: Option<Url>,
 }
 
 #[derive(Debug)]
