@@ -254,7 +254,7 @@ pub async fn regenerer_operation<M, T, P>(middleware: Arc<M>, nom_domaine: &str,
         error!("Erreur emission message restauration : {:?}", e);
     }
 
-    debug!("Debut regeneration {}", nom_collection_transactions);
+    info!("Debut regeneration {}", nom_collection_transactions);
     let regenerer_result = match regenerer(middleware.as_ref(), nom_collection_transactions, noms_collections_docs, processor).await {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -704,7 +704,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
     let reponse_val = {
         let mut reponse: ReponseListeFichiersBackup = serde_json::from_str(&reponse_liste_fichiers_text)?;
         reponse.trier_fichiers();
-        info!("Traiter restauration {} avec liste\n{:?}", nom_domaine, reponse.fichiers);
+        info!("Traiter restauration {} avec {} fichiers", nom_domaine, reponse.fichiers.len());
         reponse
     };
     debug!("Liste fichiers du domaine {} code: {:?} : {:?}", url_liste_fichiers_str, reponse_liste_fichiers_status, reponse_val);
@@ -748,7 +748,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         path_fichier.push(nom_fichier);
 
         if nom_fichier.ends_with(".tar") {
-            debug!("Fichier tar {:?}", path_fichier);
+            info!("Fichier tar {:?}", path_fichier);
             let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
             parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
         } else if nom_fichier.contains(".jsonl.xz") {
@@ -762,7 +762,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
                 nom_fichier.replace(".jsonl.xz", ".json.xz")
             };
 
-            debug!("Catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
+            info!("Catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
             let mut path_fichier_catalogue = async_std::path::PathBuf::from(path_fichier.as_path());
             path_fichier_catalogue.set_file_name(nom_fichier_catalogue);
             let mut path_fichier_transactions = async_std::path::PathBuf::from(path_fichier.as_path());
