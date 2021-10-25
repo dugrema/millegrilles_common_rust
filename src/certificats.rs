@@ -579,7 +579,7 @@ pub trait ValidateurX509: Send + Sync {
                 }
             },
             None => {
-                match verifier_certificat(certificat, chaine, self.store()) {
+                match verifier_certificat(certificat, chaine, self.store_notime()) {
                     Ok(b) => {
                         debug!("Verifier certificat result apres check date OK : {}", b);
                         Ok(b)
