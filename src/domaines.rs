@@ -138,16 +138,21 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         while let Some(message) = rx.recv().await {
             trace!("Message {} recu : {:?}", self.get_nom_domaine(), message);
 
-            let resultat = match message {
-                TypeMessage::ValideAction(inner) => self.traiter_message_valide_action(middleware.clone(), inner).await,
-                TypeMessage::Valide(inner) => {warn!("Recu MessageValide sur thread consommation, skip : {:?}", inner); Ok(())},
-                TypeMessage::Certificat(inner) => {warn!("Recu MessageCertificat sur thread consommation, skip : {:?}", inner); Ok(())},
-                TypeMessage::Regeneration => continue, // Rien a faire, on boucle
+            match message {
+                TypeMessage::ValideAction(inner) => {
+                    let rk = inner.routing_key.clone();  // Pour troubleshooting erreurs
+                    match self.traiter_message_valide_action(middleware.clone(), inner).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("domaines.consommer_messages/ValideAction Erreur traitement message domaine={}, rk={}: {:?}", self.get_nom_domaine(), rk, e);
+                        }
+                    }
+                },
+                TypeMessage::Valide(inner) => {warn!("Recu MessageValide sur thread consommation, skip : {:?}", inner)},
+                TypeMessage::Certificat(inner) => {warn!("Recu MessageCertificat sur thread consommation, skip : {:?}", inner)},
+                TypeMessage::Regeneration => (), // Rien a faire, on boucle
             };
 
-            if let Err(e) = resultat {
-                error!("domaines.consommer_messages Erreur traitement message : {:?}", e);
-            }
         }
 
         info!("domaines.consommer_messages : Fin thread {}", self.get_q_transactions());
