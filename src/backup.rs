@@ -47,13 +47,12 @@ pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_tra
         M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
         S: Into<&'a str>,
 {
+    let nom_coll_str = nom_collection_transactions.into();
+    let nom_domaine_str = nom_domaine.into();
+
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
-    debug!("Backup vers tmp : {:?}", workdir);
-
-    let nom_coll_str = nom_collection_transactions.into();
-
-    let nom_domaine_str = nom_domaine.into();
+    info!("backup.backup Backup horaire de {} vers tmp : {:?}", nom_domaine_str, workdir);
 
     let info_backup = BackupInformation::new(
         nom_domaine_str,
@@ -108,7 +107,7 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
     // Generer liste builders domaine/heures
     let builders = grouper_backups(middleware, &info_backup).await?;
 
-    debug!("backup_horaire: Backup horaire collection {} : {:?}", nom_coll_str, builders);
+    info!("backup.backup_horaire: Backup horaire collection {} : {:?}", nom_coll_str, builders);
 
     // Tenter de charger entete du dernier backup de ce domaine/partition
     let mut entete_precedente: Option<Entete> = requete_entete_dernier(middleware, nom_coll_str).await?;
@@ -138,7 +137,7 @@ where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurM
         // Signer et serialiser catalogue
         let (catalogue_horaire, catalogue_signe, commande_cles) = serialiser_catalogue(
             middleware, builder).await?;
-        debug!("backup_horaire: Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
+        info!("backup_horaire: Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
         let reponse = uploader_backup(
             middleware,
             path_fichier_transactions.as_path(),
@@ -704,7 +703,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
     let reponse_val = {
         let mut reponse: ReponseListeFichiersBackup = serde_json::from_str(&reponse_liste_fichiers_text)?;
         reponse.trier_fichiers();
-        info!("Traiter restauration {} avec {} fichiers", nom_domaine, reponse.fichiers.len());
+        info!("Traiter restauration {} avec liste\n{:?}", nom_domaine, reponse.fichiers);
         reponse
     };
     debug!("Liste fichiers du domaine {} code: {:?} : {:?}", url_liste_fichiers_str, reponse_liste_fichiers_status, reponse_val);
@@ -725,7 +724,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         let mut file_output = File::create(path_fichier.as_path()).await?;
 
         let mut response = client.get(copie_url_fichiers).send().await?;
-        debug!("Response get backup {} = {}, headers: {:?}", url_fichiers_complet_str, response.status(), response.headers());
+        info!("Response get backup {} = {}, headers: {:?}", url_fichiers_complet_str, response.status(), response.headers());
 
         while let Some(content) = response.chunk().await? {
             debug!("Write content {}", content.len());
@@ -748,7 +747,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         path_fichier.push(nom_fichier);
 
         if nom_fichier.ends_with(".tar") {
-            info!("Fichier tar {:?}", path_fichier);
+            info!("backup.download_backup Restaurer fichier tar {:?}", path_fichier);
             let mut fichier_tar = async_std::fs::File::open(path_fichier.as_path()).await?;
             parse_tar(middleware.as_ref(), &mut fichier_tar, &mut processeur).await?;
         } else if nom_fichier.contains(".jsonl.xz") {
@@ -762,7 +761,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
                 nom_fichier.replace(".jsonl.xz", ".json.xz")
             };
 
-            info!("Catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
+            info!("backup.download_backup Restaurer catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
             let mut path_fichier_catalogue = async_std::path::PathBuf::from(path_fichier.as_path());
             path_fichier_catalogue.set_file_name(nom_fichier_catalogue);
             let mut path_fichier_transactions = async_std::path::PathBuf::from(path_fichier.as_path());
