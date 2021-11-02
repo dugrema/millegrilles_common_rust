@@ -155,12 +155,14 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let fichiers_url = charger_url("MG_FICHIERS_URL", "https://fichiers:443")?;
     let redis_url = charger_url("MG_REDIS_URL", "redis://redis:6379")?;
     let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
+    let certissuer_url = charger_url("MG_CERTISSUER_URL", "http://certissuer:80")?;
 
     Ok(ConfigurationNoeud{
         noeud_id,
         fichiers_url: Some(fichiers_url),
         redis_url: Some(redis_url),
         elastic_search_url: Some(elastic_search_url),
+        certissuer_url: Some(certissuer_url),
     })
 }
 
@@ -207,6 +209,7 @@ pub struct ConfigurationNoeud {
     pub fichiers_url: Option<Url>,
     pub redis_url: Option<Url>,
     pub elastic_search_url: Option<Url>,
+    pub certissuer_url: Option<Url>,
 }
 
 #[derive(Debug)]

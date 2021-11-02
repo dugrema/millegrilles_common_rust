@@ -69,6 +69,7 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
     let tls_options = TlsOptions::builder()
         .ca_file_path(Some(PathBuf::from(pki.ca_certfile.to_str().expect("Erreur conversion path CA"))))
         .cert_key_file_path(Some(PathBuf::from(mongo_configuration.keycert_file.to_str().expect("Erreur conversion key/cert path"))))
+        .allow_invalid_certificates(false)
         .build();
 
     let credential = Credential::builder()

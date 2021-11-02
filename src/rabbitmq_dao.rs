@@ -108,13 +108,22 @@ async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
                                         AMQPSoftError::ACCESSREFUSED => {
                                             info!("MQ Erreur access refused, emettre certificat vers monitor");
                                         },
-                                        _ => { resultat?; }  // Erreur non geree
+                                        _ => {
+                                            error!("rabbitmq_dao.connecter AMQPSoftError {:?}", resultat);
+                                            resultat?;
+                                        }  // Erreur non geree
                                     }
                                 },
-                                _ => { resultat?; }  // Erreur non geree
+                                _ => {
+                                    error!("rabbitmq_dao.connecter ProtocolError {:?}", resultat);
+                                    resultat?;
+                                }  // Erreur non geree
                             }
                         },
-                        _ => { resultat?; }  // Erreur non geree
+                        _ => {
+                            error!("rabbitmq_dao.connecter Erreur generique {:?}", resultat);
+                            resultat?;
+                        }  // Erreur non geree
                     }
                 }
             };
@@ -173,7 +182,7 @@ async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn E
             .use_rustls_tls()
             .timeout(core::time::Duration::new(5, 0))
 
-            // Accepter serveur sans certs/mauvais hosts - on s'inscript avec cle publique, c'est safe
+            // Accepter serveur sans certs/mauvais hosts - on s'inscrit avec cle publique, c'est safe
             .danger_accept_invalid_certs(true)
             //.danger_accept_invalid_hostnames(true)
 
