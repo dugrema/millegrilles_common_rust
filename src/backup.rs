@@ -54,6 +54,9 @@ pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_tra
     let workdir = tempfile::tempdir()?;
     info!("backup.backup Backup horaire de {} vers tmp : {:?}", nom_domaine_str, workdir);
 
+    // S'assurer d'avoir des certificats de maitredescles presentement valide
+    middleware.charger_certificats_chiffrage(middleware.get_enveloppe_privee().enveloppe.as_ref()).await?;
+
     let info_backup = BackupInformation::new(
         nom_domaine_str,
         nom_coll_str,

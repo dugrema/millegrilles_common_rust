@@ -223,8 +223,19 @@ impl Chiffreur for MiddlewareDb {
         vals
     }
 
-    async fn charger_certificats_chiffrage(&self) -> Result<(), Box<dyn Error>> {
+    async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
         debug!("Charger les certificats de maitre des cles pour chiffrage");
+
+        // Reset certificats maitredescles. Reinserer cert millegrille immediatement.
+        {
+            let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+            let mut guard = self.cles_chiffrage.lock().expect("lock");
+            guard.clear();
+            for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
+                guard.insert(f.fingerprint.clone(), f);
+            }
+        }
+
         emettre_commande_certificat_maitredescles(self).await?;
 
         // Donner une chance aux certificats de rentrer

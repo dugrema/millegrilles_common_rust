@@ -444,7 +444,7 @@ pub mod fichiers_tests {
     use tokio_util::codec::{BytesCodec, FramedRead};
 
     //use crate::{MiddlewareDbPki, ValidateurX509};
-    use crate::certificats::{ValidateurX509, FingerprintCertPublicKey};
+    use crate::certificats::{ValidateurX509, FingerprintCertPublicKey, EnveloppeCertificat};
     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
     use crate::test_setup::setup;
 
@@ -483,7 +483,7 @@ pub mod fichiers_tests {
             self.public_keys.clone()
         }
 
-        async fn charger_certificats_chiffrage(&self) -> Result<(), Box<dyn Error>> {
+        async fn charger_certificats_chiffrage(&self, _cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
             todo!()
         }
 
