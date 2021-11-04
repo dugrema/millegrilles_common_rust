@@ -100,7 +100,11 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
     info!("backup.backup Backup horaire de {} vers tmp : {:?}", nom_domaine_str, workdir);
 
     // S'assurer d'avoir des certificats de maitredescles presentement valide
-    middleware.charger_certificats_chiffrage(middleware.get_enveloppe_privee().enveloppe.as_ref()).await?;
+    if middleware.get_publickeys_chiffrage().len() < 2 {
+        Err(format!("Certificats de chiffrage non disponibles"))?
+    }
+
+    //middleware.charger_certificats_chiffrage(middleware.get_enveloppe_privee().enveloppe.as_ref()).await?;
 
     let info_backup = BackupInformation::new(
         nom_domaine_str,
