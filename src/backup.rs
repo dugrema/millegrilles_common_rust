@@ -37,18 +37,40 @@ use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::MongoDao;
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
+use crate::tokio::sync::mpsc::Receiver;
 use crate::transactions::{regenerer, sauvegarder_batch, TraiterTransaction};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
+/// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
+pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
+    where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages
+{
+    while let Some(commande) = rx.recv().await {
+        let nom_domaine = commande.nom_domaine;
+        info!("Debug backup {}", nom_domaine);
+        match backup(middleware.as_ref(), &nom_domaine, commande.nom_collection_transactions, commande.chiffrer).await {
+            Ok(_) => info!("Backup {} OK", nom_domaine),
+            Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", nom_domaine, e)
+        };
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CommandeBackup {
+    pub nom_domaine: String,
+    pub nom_collection_transactions: String,
+    pub chiffrer: bool,
+}
+
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<'a, M, S>(middleware: &M, nom_domaine: S, nom_collection_transactions: S, chiffrer: bool)
+pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T, chiffrer: bool)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
         M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
-        S: Into<&'a str>,
+        S: AsRef<str>, T: AsRef<str>,
 {
-    let nom_coll_str = nom_collection_transactions.into();
-    let nom_domaine_str = nom_domaine.into();
+    let nom_coll_str = nom_collection_transactions.as_ref();
+    let nom_domaine_str = nom_domaine.as_ref();
 
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempfile::tempdir()?;
