@@ -310,7 +310,8 @@ async fn boucle_execution(
     loop {
         let resultat = {
             let mq: RabbitMq = initialiser(configuration.as_ref()).await.expect("Erreur connexion RabbitMq");
-            let conn = &mq.connexion;
+            let arc_mq = Arc::new(mq);
+            let conn = &arc_mq.connexion;
 
             // Setup channels MQ
             let channel_reponses = conn.create_channel().await.unwrap();
@@ -378,6 +379,11 @@ async fn boucle_execution(
                 }
             }
 
+            // Verifier etat connexion
+            {
+                futures.push(task::spawn(entretien_connexion(arc_mq.clone())));
+            }
+
             info!("Debut execution consumers MQ");
             let arret = futures.next().await;
 
@@ -406,6 +412,18 @@ async fn boucle_execution(
         // Attendre et redemarrer la connexion MQ
         sleep(ATTENTE_RECONNEXION);
         continue;
+    }
+}
+
+async fn entretien_connexion(mq: Arc<RabbitMq>) {
+    loop {
+        tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
+        let status = mq.connexion.status();
+        debug!("Verification etat connexion MQ : {:?}", status);
+        if ! status.connected() || status.errored() {
+            info!("Connexion MQ perdue, on va se reconnecter");
+            break
+        }
     }
 }
 
