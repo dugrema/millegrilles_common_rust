@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
+use tokio::sync::mpsc::Sender;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
@@ -60,6 +61,28 @@ pub struct CommandeBackup {
     pub nom_domaine: String,
     pub nom_collection_transactions: String,
     pub chiffrer: bool,
+}
+
+#[async_trait]
+pub trait BackupStarter {
+    fn get_tx_backup(&self) -> Sender<CommandeBackup>;
+
+    async fn demarrer_backup<S,T>(&self, nom_domaine: S, nom_collection_transactions: T, chiffrer: bool)
+        -> Result<(), Box<dyn Error>>
+        where S: Into<String> + Send, T: Into<String> + Send
+    {
+        let commande = CommandeBackup {
+            nom_domaine: nom_domaine.into(),
+            nom_collection_transactions: nom_collection_transactions.into(),
+            chiffrer,
+        };
+
+        let tx_backup = self.get_tx_backup();
+        debug!("backup.BackupStarter Demarrage backup {:?}", &commande);
+        tx_backup.send(commande).await?;
+
+        Ok(())
+    }
 }
 
 /// Lance un backup complet de la collection en parametre.

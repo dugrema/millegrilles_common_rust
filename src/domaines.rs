@@ -315,21 +315,29 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
     }
 
-    async fn verifier_backup_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule)
+    async fn verifier_backup_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
         -> Result<(), Box<dyn Error>>
         where M: Middleware + 'static
     {
         if trigger.flag_heure {
             info!("verifier_backup_cedule Demarre backup horaire : {:?}", trigger);
-            backup(
-                middleware,
-                self.get_nom_domaine().as_str(),
-                self.get_collection_transactions().as_str(),
-                self.chiffrer_backup()
-            ).await?;
+            self.demarrer_backup(middleware).await?;
         }
 
         Ok(())
+    }
+
+    async fn demarrer_backup<M>(&self, middleware: &M)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        middleware.demarrer_backup(
+            self.get_nom_domaine().as_str(),
+            self.get_collection_transactions().as_str(),
+            self.chiffrer_backup()
+        ).await?;
+
+        Ok(None)
     }
 
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
@@ -350,9 +358,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             true => {
                 match m.action.as_str() {
                     // Commandes standard
-                    COMMANDE_BACKUP_HORAIRE => backup(
-                        middleware.as_ref(), self.get_nom_domaine().as_str(),
-                        self.get_collection_transactions().as_str(), self.chiffrer_backup()).await,
+                    COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref()).await,
                     COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
                     COMMANDE_RESET_BACKUP => reset_backup_flag(

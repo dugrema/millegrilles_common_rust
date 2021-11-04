@@ -10,8 +10,9 @@ use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::{mpsc, mpsc::Receiver};
+use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
+use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
 use crate::chiffrage::{Chiffreur, Dechiffreur, Mgs2CipherData};
@@ -34,6 +35,7 @@ pub struct MiddlewareDb {
     generateur_messages: Arc<GenerateurMessagesImpl>,
     pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
     redis: RedisDao,
+    tx_backup: Sender<CommandeBackup>,
 }
 
 impl MiddlewareDb {
@@ -340,6 +342,12 @@ impl EmetteurCertificat for MiddlewareDb {
     }
 }
 
+#[async_trait]
+impl BackupStarter for MiddlewareDb {
+    fn get_tx_backup(&self) -> Sender<CommandeBackup> {
+        self.tx_backup.clone()
+    }
+}
 
 /// Version speciale du middleware avec un acces a MongoDB
 pub fn preparer_middleware_db(
@@ -376,6 +384,8 @@ pub fn preparer_middleware_db(
     };
     let redis_dao = RedisDao::new(redis_url).expect("connexion redis");
 
+    let (tx_backup, rx_backup) = mpsc::channel::<CommandeBackup>(5);
+
     let middleware = Arc::new(MiddlewareDb {
         configuration,
         mongo,
@@ -383,6 +393,7 @@ pub fn preparer_middleware_db(
         generateur_messages: generateur_messages_arc.clone(),
         cles_chiffrage: Mutex::new(cles_chiffrage),
         redis: redis_dao,
+        tx_backup,
     });
 
     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(3);
@@ -413,6 +424,8 @@ pub fn preparer_middleware_db(
         mq_executor.tx_interne.clone(),
         false
     )));
+
+    futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
 
     (middleware, rx_messages_verifies, rx_triggers, futures)
 }
