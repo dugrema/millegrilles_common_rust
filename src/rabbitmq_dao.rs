@@ -332,11 +332,6 @@ async fn boucle_execution(
             // Demarrer tasks de Q
             {
                 let pki = configuration.get_configuration_pki();
-                // let pki = match configuration.as_ref() {
-                //     TypeConfiguration::ConfigurationMessages {mq: _mq, pki} => pki,
-                //     TypeConfiguration::ConfigurationMessagesDb {mq: _mq, mongo: _mongo, pki} => pki,
-                // };
-
                 let reply_q = ReplyQueue {
                     fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
                     securite: Securite::L3Protege,
@@ -365,8 +360,12 @@ async fn boucle_execution(
             }
 
             // Demarrer tasks de traitement de messages
-            // futures.push(task::spawn(task_pretraiter_messages(rx_delivery, tx_traiter_message.clone())));
-            futures.push(task::spawn(task_emettre_messages(configuration.clone(), channel_out, rx_out, reply_q.clone())));
+            futures.push(task::spawn(
+                task_emettre_messages(configuration.clone(), channel_out, rx_out, reply_q.clone())
+            ));
+
+            // Thread pour verifier etat connexion
+            futures.push(task::spawn(entretien_connexion(arc_mq.clone())));
 
             // Emettre message connexion completee
             match &listeners {
@@ -379,11 +378,7 @@ async fn boucle_execution(
                 }
             }
 
-            // Verifier etat connexion
-            {
-                futures.push(task::spawn(entretien_connexion(arc_mq.clone())));
-            }
-
+            // Executer threads. Des qu'une thread se termine, on abandonne la connexion
             info!("Debut execution consumers MQ");
             let arret = futures.next().await;
 
@@ -392,9 +387,10 @@ async fn boucle_execution(
 
         info!("Fin execution consumers MQ/deconnexion, resultat : {:?}", resultat);
 
-        // S'assurer de vider sender immediatement
+        // Vider sender immediatement
         {
-            let mut guard = tx_message_out.as_ref().lock().expect("Erreur nettoyage tx_message");
+            let mut guard = tx_message_out.as_ref().lock()
+                .expect("Erreur nettoyage tx_message");
             *guard = None;
         }
 
@@ -415,16 +411,25 @@ async fn boucle_execution(
     }
 }
 
+/// Thread de verification de l'etat de connexion. Va se terminer si la connexion est fermee.
 async fn entretien_connexion(mq: Arc<RabbitMq>) {
     loop {
         tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
         let status = mq.connexion.status();
         debug!("Verification etat connexion MQ : {:?}", status);
-        if ! status.connected() || status.errored() {
-            info!("Connexion MQ perdue, on va se reconnecter");
+        if ! status.connected() {
             break
         }
+        if status.errored() || status.closed() {
+            warn!("Connexion MQ en erreur/fermee - note: indique erreur detection _connected_");
+            break
+        }
+        if status.blocked() {
+            warn!("Connexion MQ bloquee (recoverable)");
+            break  // TODO - mettre compteur pour decider de fermer la connexion
+        }
     }
+    warn!("Connexion MQ perdue, on va se reconnecter");
 }
 
 async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
