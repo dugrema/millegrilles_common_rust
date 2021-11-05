@@ -308,7 +308,7 @@ async fn boucle_execution(
     };
 
     loop {
-        let resultat = {
+        // let resultat = {
             let mq: RabbitMq = initialiser(configuration.as_ref()).await.expect("Erreur connexion RabbitMq");
             let arc_mq = Arc::new(mq);
             let conn = &arc_mq.connexion;
@@ -380,10 +380,10 @@ async fn boucle_execution(
 
             // Executer threads. Des qu'une thread se termine, on abandonne la connexion
             info!("Debut execution consumers MQ");
-            let arret = futures.next().await;
+            let resultat = futures.next().await;
 
-            arret
-        };
+            //arret
+        // };
 
         info!("Fin execution consumers MQ/deconnexion, resultat : {:?}", resultat);
 
