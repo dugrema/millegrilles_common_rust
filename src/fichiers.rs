@@ -18,6 +18,8 @@ use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::Hacheur;
 use crate::verificateur::VerificateurMessage;
 
+const PRESET_COMPRESSION_XZ: u32 = 6;
+
 pub struct FichierWriter<'a> {
     path_fichier: &'a Path,
     fichier: Box<tokio::fs::File>,
@@ -37,7 +39,7 @@ impl<'a> FichierWriter<'a> {
         let output_file = tokio::fs::File::create(path_fichier).await?;
         // let xz_encodeur = XzEncoder::new(output_file, 9);
         // Utilisation preset 6 (<20MB RAM) - avec 9, utilise plus de 40MB de RAM.
-        let xz_encodeur = stream::Stream::new_easy_encoder(6, stream::Check::Crc64).expect("stream");
+        let xz_encodeur = stream::Stream::new_easy_encoder(PRESET_COMPRESSION_XZ, stream::Check::Crc64).expect("stream");
         let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base58Btc).build();
 
         let chiffreur = match chiffreur {
