@@ -473,6 +473,7 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     let find_options = FindOptions::builder()
         .sort(sort)
         .hint(Hint::Name(String::from("backup_transactions")))
+        .batch_size(50)
         .build();
 
     let curseur = collection.find(filtre, find_options).await?;
@@ -501,6 +502,8 @@ where
         let entete = d.get("en-tete").expect("en-tete").as_document().expect("document");
         let uuid_transaction = entete.get(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("uuid-transaction").as_str().expect("str");
         let fingerprint_certificat = entete.get(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint certificat").as_str().expect("str");
+
+        info!("Backup transaction {}", uuid_transaction);
 
         // Trouver certificat et ajouter au catalogue
         match middleware.get_certificat(fingerprint_certificat).await {

@@ -36,7 +36,8 @@ impl<'a> FichierWriter<'a> {
     {
         let output_file = tokio::fs::File::create(path_fichier).await?;
         // let xz_encodeur = XzEncoder::new(output_file, 9);
-        let xz_encodeur = stream::Stream::new_easy_encoder(9, stream::Check::Crc64).expect("stream");
+        // Utilisation preset 6 (<20MB RAM) - avec 9, utilise plus de 40MB de RAM.
+        let xz_encodeur = stream::Stream::new_easy_encoder(6, stream::Check::Crc64).expect("stream");
         let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base58Btc).build();
 
         let chiffreur = match chiffreur {
