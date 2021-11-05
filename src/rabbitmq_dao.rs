@@ -614,7 +614,11 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
     while let Some(delivery) = consumer.next().await {
         debug!("ecouter_consumer({}): Reception nouveau message {}: {:?}", &nom_queue, &nom_queue, &delivery);
 
-        let (_, delivery) = delivery.expect("error in consumer");
+        let (channel, delivery) = delivery.expect("error in consumer");
+        if ! channel.status().connected() {
+            warn!("ecouter_consumer Channel closed, on ferme la connexion");
+            break
+        }
 
         let acker = delivery.acker.clone();
 
@@ -638,19 +642,29 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
         match tx.send(message_interne).await {
             Ok(()) => {
                 // Emettre le Ack
-                acker.ack(BasicAckOptions::default())
-                    .await
-                    .expect("ack");
+                match acker.ack(BasicAckOptions::default()).await {
+                    Ok(d) => (),
+                    Err(e) => {
+                        warn!("Erreur ACK message, on ferme le consumer : {:?}", e);
+                        break
+                    }
+                }
             },
             Err(e) => {
                 // Erreur de queuing interne, emettre un nack (remet message sur la Q)
                 debug!("Erreur Q interne, NACK : {:?}", e);
-                acker.nack(BasicNackOptions::default())
-                    .await
-                    .expect("ack");
+                match acker.nack(BasicNackOptions::default()).await {
+                    Ok(d) => (),
+                    Err(e) => {
+                        warn!("Erreur NACK message, on ferme le consumer : {:?}", e);
+                        break
+                    }
+                }
             }
         }
     }
+
+    info!("rabbitmq_dao.ecouter_consumer Fermeture consumer (Q {:?})", queue_type);
 }
 
 fn concatener_rk(message: &MessageOut) -> Result<String, String> {
@@ -692,6 +706,12 @@ where
         compteur += 1;
         debug!("Emettre_message {}, On a recu de quoi", compteur);
         let contenu = &message.message;
+
+        // Verifier etat du channel (doit etre connecte)
+        if ! channel.status().connected() {
+            warn!("task_emettre_messages Channel OUT est ferme, on ferme la connexion MQ");
+            break
+        }
 
         let entete = &contenu.entete;
         debug!("Emettre_message {:?}", entete);
@@ -800,7 +820,7 @@ where
         }
     };
 
-    debug!("rabbitmq_dao.emettre_message : Fin thread");
+    info!("emettre_message : Fin thread");
 }
 
 #[derive(Debug)]
