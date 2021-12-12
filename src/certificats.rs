@@ -759,7 +759,7 @@ pub struct ExtensionsMilleGrille {
     exchanges: Option<Vec<String>>,
     roles: Option<Vec<String>>,
     domaines: Option<Vec<String>>,
-    user_id: Option<String>,
+    pub user_id: Option<String>,
     delegation_globale: Option<String>,
     delegation_domaines: Option<Vec<String>>,
 }
@@ -878,6 +878,15 @@ impl CollectionCertificatsPem {
 
 pub trait VerificateurPermissions {
     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille>;
+
+    fn get_user_id(&self) -> Option<String> {
+        match self.get_extensions() {
+            Some(e) => {
+                e.user_id.to_owned()
+            },
+            None => None
+        }
+    }
 
     fn verifier(&self, exchanges: Option<Vec<Securite>>, roles: Option<Vec<RolesCertificats>>) -> bool {
         let mut valide = true;
