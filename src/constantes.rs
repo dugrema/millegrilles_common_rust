@@ -102,6 +102,7 @@ pub const ROLE_WEB_PRIVE: &str = "web_prive";
 pub const ROLE_MONITOR: &str = "monitor";
 pub const ROLE_MAITRE_DES_CLES: &str = "maitrecles";
 pub const ROLE_FICHIERS: &str = "fichiers";
+pub const ROLE_COMPTE_PRIVE: &str = "compte_prive";
 
 pub enum RolesCertificats {
     NoeudProtege,
@@ -111,6 +112,7 @@ pub enum RolesCertificats {
     Monitor,
     MaitreDesCles,
     Fichiers,  // ConsignationFichiers
+    ComptePrive,
 }
 impl Into<&str> for RolesCertificats {
     fn into(self) -> &'static str {
@@ -122,6 +124,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::Monitor => ROLE_MONITOR,
             RolesCertificats::MaitreDesCles => ROLE_MAITRE_DES_CLES,
             RolesCertificats::Fichiers => ROLE_FICHIERS,
+            RolesCertificats::ComptePrive => ROLE_COMPTE_PRIVE,
         }
     }
 }
