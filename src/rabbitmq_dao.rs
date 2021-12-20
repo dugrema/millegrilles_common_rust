@@ -225,8 +225,9 @@ pub fn executer_mq<'a>(
 ) -> Result<RabbitMqExecutor, String> {
 
     // Creer le channel utilise pour recevoir et traiter les messages mis sur les Q
-    let (tx_traiter_message, rx_traiter_message) = mpsc::channel(5);
-    let (tx_traiter_trigger, rx_traiter_trigger) = mpsc::channel(5);
+    let (tx_traiter_message, rx_traiter_message) = mpsc::channel(1);
+    let (tx_traiter_reply, rx_traiter_reply) = mpsc::channel(1);
+    let (tx_traiter_trigger, rx_traiter_trigger) = mpsc::channel(1);
 
     // Preparer recepteur de tx_message_out pour emettre des messages vers MQ (cree dans la boucle)
     let tx_message_out = Arc::new(Mutex::new(None));
@@ -238,6 +239,7 @@ pub fn executer_mq<'a>(
             configuration,
             queues,
             tx_traiter_message.clone(),
+            tx_traiter_reply.clone(),
             tx_traiter_trigger.clone(),
             tx_message_out.clone(),
             listeners,
@@ -248,9 +250,10 @@ pub fn executer_mq<'a>(
     Ok(RabbitMqExecutor {
         handle: boucle_execution,
         rx_messages: rx_traiter_message,
+        rx_reply: rx_traiter_reply,
         rx_triggers: rx_traiter_trigger,
         tx_out: tx_message_out.clone(),
-        tx_interne: tx_traiter_message.clone(),
+        tx_reply: tx_traiter_reply.clone(),
         reply_q,
     })
 }
@@ -264,9 +267,10 @@ pub trait MqMessageSendInformation {
 pub struct RabbitMqExecutor {
     handle: JoinHandle<()>,
     pub rx_messages: Receiver<MessageInterne>,
+    pub rx_reply: Receiver<MessageInterne>,
     pub rx_triggers: Receiver<MessageInterne>,
     pub tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
-    pub tx_interne: Sender<MessageInterne>,
+    pub tx_reply: Sender<MessageInterne>,
     pub reply_q: Arc<Mutex<Option<String>>>,
 }
 
@@ -296,6 +300,7 @@ async fn boucle_execution(
     configuration: Arc<impl ConfigMessages + 'static>,
     queues: Option<Vec<QueueType>>,
     tx_traiter_delivery: Sender<MessageInterne>,
+    tx_traiter_reply: Sender<MessageInterne>,
     tx_traiter_trigger: Sender<MessageInterne>,
     tx_message_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     listeners: Option<Mutex<Callback<'_, EventMq>>>,
@@ -308,82 +313,78 @@ async fn boucle_execution(
     };
 
     loop {
-        // let resultat = {
-            let mq: RabbitMq = initialiser(configuration.as_ref()).await.expect("Erreur connexion RabbitMq");
-            let arc_mq = Arc::new(mq);
-            let conn = &arc_mq.connexion;
+        let mq: RabbitMq = initialiser(configuration.as_ref()).await.expect("Erreur connexion RabbitMq");
+        let arc_mq = Arc::new(mq);
+        let conn = &arc_mq.connexion;
 
-            // Setup channels MQ
-            let channel_reponses = conn.create_channel().await.unwrap();
-            let channel_out = conn.create_channel().await.unwrap();
+        // Setup channels MQ
+        let channel_reponses = conn.create_channel().await.unwrap();
+        let channel_out = conn.create_channel().await.unwrap();
 
-            // Setup mpsc
-            // let (tx_delivery, rx_delivery) = mpsc::channel(5);
-            let (tx_out, rx_out) = mpsc::channel(3);
+        // Setup mpsc
+        // let (tx_delivery, rx_delivery) = mpsc::channel(5);
+        let (tx_out, rx_out) = mpsc::channel(3);
 
-            // Injecter tx_out dans tx_message_arc
-            {
-                let mut guard = tx_message_out.as_ref().lock().expect("Erreur injection tx_message");
-                *guard = Some(tx_out);
-            }
+        // Injecter tx_out dans tx_message_arc
+        {
+            let mut guard = tx_message_out.as_ref().lock().expect("Erreur injection tx_message");
+            *guard = Some(tx_out);
+        }
 
-            let mut futures = FuturesUnordered::new();
+        let mut futures = FuturesUnordered::new();
 
-            // Demarrer tasks de Q
-            {
-                let pki = configuration.get_configuration_pki();
-                let reply_q = ReplyQueue {
-                    fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
-                    securite: Securite::L3Protege,
-                    ttl: Some(300000),
-                    reply_q_name: reply_q.clone(),  // Permet de maj le nom de la reply_q globalement
-                };
-                futures.push(task::spawn(ecouter_consumer(
-                    channel_reponses,
-                    QueueType::ReplyQueue(reply_q),
-                    tx_traiter_delivery.clone()
-                )));
-            }
+        // Demarrer tasks de Q
+        {
+            let pki = configuration.get_configuration_pki();
+            let reply_q = ReplyQueue {
+                fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
+                securite: Securite::L3Protege,
+                ttl: Some(300000),
+                reply_q_name: reply_q.clone(),  // Permet de maj le nom de la reply_q globalement
+            };
+            futures.push(task::spawn(ecouter_consumer(
+                channel_reponses,
+                QueueType::ReplyQueue(reply_q),
+                tx_traiter_reply.clone()
+            )));
+        }
 
-            for config_q in &vec_queues {
-                let channel_main = conn.create_channel().await.unwrap();
+        for config_q in &vec_queues {
+            let channel_main = conn.create_channel().await.unwrap();
 
-                let sender = match &config_q {
-                    QueueType::ExchangeQueue(_) => tx_traiter_delivery.clone(),
-                    QueueType::ReplyQueue(_) => tx_traiter_delivery.clone(),
-                    QueueType::Triggers(_) => tx_traiter_trigger.clone(),
-                };
+            let sender = match &config_q {
+                QueueType::ExchangeQueue(_) => tx_traiter_delivery.clone(),
+                QueueType::ReplyQueue(_) => tx_traiter_reply.clone(),
+                QueueType::Triggers(_) => tx_traiter_trigger.clone(),
+            };
 
-                futures.push(task::spawn(
-                    ecouter_consumer(channel_main,config_q.clone(),sender)
-                ));
-            }
-
-            // Demarrer tasks de traitement de messages
             futures.push(task::spawn(
-                task_emettre_messages(configuration.clone(), channel_out, rx_out, reply_q.clone())
+                ecouter_consumer(channel_main,config_q.clone(),sender)
             ));
+        }
 
-            // Thread pour verifier etat connexion
-            futures.push(task::spawn(entretien_connexion(arc_mq.clone())));
+        // Demarrer tasks de traitement de messages
+        futures.push(task::spawn(
+            task_emettre_messages(configuration.clone(), channel_out, rx_out, reply_q.clone())
+        ));
 
-            // Emettre message connexion completee
-            match &listeners {
-                Some(inner) => {
-                    debug!("MQ Connecte, appel les listeners");
-                    inner.lock().expect("callback").call(EventMq::Connecte);
-                },
-                None => {
-                    debug!("MQ Connecte, aucuns listeners");
-                }
+        // Thread pour verifier etat connexion
+        futures.push(task::spawn(entretien_connexion(arc_mq.clone())));
+
+        // Emettre message connexion completee
+        match &listeners {
+            Some(inner) => {
+                debug!("MQ Connecte, appel les listeners");
+                inner.lock().expect("callback").call(EventMq::Connecte);
+            },
+            None => {
+                debug!("MQ Connecte, aucuns listeners");
             }
+        }
 
-            // Executer threads. Des qu'une thread se termine, on abandonne la connexion
-            info!("Debut execution consumers MQ");
-            let resultat = futures.next().await;
-
-            //arret
-        // };
+        // Executer threads. Des qu'une thread se termine, on abandonne la connexion
+        info!("Debut execution consumers MQ");
+        let resultat = futures.next().await;
 
         info!("Fin execution consumers MQ/deconnexion, resultat : {:?}", resultat);
 

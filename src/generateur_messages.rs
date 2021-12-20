@@ -176,7 +176,7 @@ pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
 
 pub struct GenerateurMessagesImpl {
     tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
-    tx_interne: Sender<MessageInterne>,
+    tx_reply: Sender<MessageInterne>,
     enveloppe_privee: Arc<EnveloppePrivee>,
     mode_regeneration: Mutex<bool>,
 }
@@ -186,7 +186,7 @@ impl GenerateurMessagesImpl {
     pub fn new(config: &ConfigurationPki, mq: &RabbitMqExecutor) -> GenerateurMessagesImpl {
         GenerateurMessagesImpl {
             tx_out: mq.tx_out.clone(),
-            tx_interne: mq.tx_interne.clone(),
+            tx_reply: mq.tx_reply.clone(),
             enveloppe_privee: config.get_enveloppe_privee(),
             mode_regeneration: Mutex::new(false),
         }
@@ -440,7 +440,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             });
 
             // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
-            self.tx_interne.send(demande).await.expect("Erreur emission message interne");
+            self.tx_reply.send(demande).await.expect("Erreur emission message reply (attente)");
         }
 
         // Emettre la requete sur MQ

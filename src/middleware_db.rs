@@ -412,6 +412,13 @@ pub fn preparer_middleware_db(
 
     futures.push(tokio::spawn(recevoir_messages(
         middleware.clone(),
+        mq_executor.rx_reply,
+        tx_messages_verifies.clone(),
+        tx_certificats_manquants.clone()
+    )));
+
+    futures.push(tokio::spawn(recevoir_messages(
+        middleware.clone(),
         mq_executor.rx_triggers,
         tx_triggers,
         tx_certificats_manquants.clone()
@@ -421,7 +428,7 @@ pub fn preparer_middleware_db(
     futures.push(tokio::spawn(task_requetes_certificats(
         middleware.clone(),
         rx_certificats_manquants,
-        mq_executor.tx_interne.clone(),
+        mq_executor.tx_reply.clone(),
         false
     )));
 
