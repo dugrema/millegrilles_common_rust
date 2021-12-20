@@ -778,11 +778,6 @@ where
             properties
         };
 
-        // if let Some(reply_q) = message.replying_to {
-        //     debug!("Emission message vers reply_q {} avec correlation_id {}", reply_q, correlation_id);
-        //     properties = properties.with_reply_to(reply_q.into());
-        // }
-
         match message.exchanges {
             Some(inner) => {
                 for exchange in inner {
@@ -792,7 +787,7 @@ where
                         options,
                         payload.clone(),
                         properties.clone()
-                    ).wait();
+                    ).await;
                     if resultat.is_err() {
                         error!("Erreur emission message {:?}", resultat)
                     } else {
@@ -811,7 +806,7 @@ where
                     options,
                     payload.to_vec(),
                     properties
-                ).wait();
+                ).await;
                 if resultat.is_err() {
                     error!("Erreur emission message {:?}", resultat);
                 } else {

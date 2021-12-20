@@ -46,10 +46,12 @@ pub async fn recevoir_messages<M>(
         let (delivery, nom_q, tx) = match mi {
             MessageInterne::Delivery(d, q) => (d, q, &tx_verifie),
             MessageInterne::AttenteReponse(a) => {
+                debug!("AttenteReponse : {:?}", a.correlation);
                 map_attente.insert(a.correlation.clone(), a);
                 continue
             },
             MessageInterne::CancelDemandeReponse(fp) => {
+                debug!("CancelDemandeReponse : {:?}", fp);
                 map_attente.remove(&fp);
                 continue
             },
@@ -74,6 +76,7 @@ pub async fn recevoir_messages<M>(
             let rk = delivery.routing_key.as_str();
             let ex = delivery.exchange.as_str();
             if ex == "" {
+                debug!("Reponse recue pour {:?}", entete.uuid_transaction);
                 (None, Some(TypeMessageIn::Reponse), None, None)
             } else {
                 let copie_rk = rk.to_owned();

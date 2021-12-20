@@ -353,7 +353,7 @@ impl BackupStarter for MiddlewareDb {
 pub fn preparer_middleware_db(
     queues: Vec<QueueType>,
     listeners: Option<Mutex<Callback<'static, EventMq>>>
-) -> (Arc<MiddlewareDb>, Receiver<TypeMessage>, Receiver<TypeMessage>, FuturesUnordered<JoinHandle<()>>) {
+) -> (Arc<MiddlewareDb>, Receiver<TypeMessage>, Receiver<TypeMessage>, Receiver<TypeMessage>, FuturesUnordered<JoinHandle<()>>) {
     let (
         configuration,
         validateur,
@@ -396,8 +396,9 @@ pub fn preparer_middleware_db(
         tx_backup,
     });
 
-    let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(3);
-    let (tx_triggers, rx_triggers) = mpsc::channel(3);
+    let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);
+    let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
+    let (tx_triggers, rx_triggers) = mpsc::channel(1);
 
     let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(10);
 
@@ -413,7 +414,7 @@ pub fn preparer_middleware_db(
     futures.push(tokio::spawn(recevoir_messages(
         middleware.clone(),
         mq_executor.rx_reply,
-        tx_messages_verifies.clone(),
+        tx_messages_verif_reply.clone(),
         tx_certificats_manquants.clone()
     )));
 
@@ -434,5 +435,5 @@ pub fn preparer_middleware_db(
 
     futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
 
-    (middleware, rx_messages_verifies, rx_triggers, futures)
+    (middleware, rx_messages_verifies, rx_messages_verif_reply, rx_triggers, futures)
 }
