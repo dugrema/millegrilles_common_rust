@@ -18,7 +18,8 @@ use crate::certificats::ValidateurX509;
 use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise, preparer_btree_recursif, map_valeur_recursif};
 use crate::hachages::verifier_multihash;
 use crate::rabbitmq_dao::MqMessageSendInformation;
-use crate::signatures::{SALT_LENGTH, VERSION_1};
+// use crate::signatures::{SALT_LENGTH, VERSION_1};
+use crate::signatures::{verifier_message as ref_verifier_message, VERSION_2};
 
 pub trait VerificateurMessage {
     fn verifier_message(
@@ -208,22 +209,24 @@ where
 
 pub fn verifier_signature_str(public_key: &PKey<Public>, signature: &str, message: &str) -> Result<bool, Box<dyn Error>> {
     // let contenu_str = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
-    debug!("verifier_signature_str (signature: {}, public key: {:?})\n{}", signature, public_key, message);
+    // debug!("verifier_signature_str (signature: {}, public key: {:?})\n{}", signature, public_key, message);
 
-    let signature_bytes: (Base, Vec<u8>) = decode(signature).unwrap();
-    let version_signature = signature_bytes.1[0];
-    if version_signature != VERSION_1 {
-        Err(format!("La version de la signature n'est pas 1"))?;
-    }
+    ref_verifier_message(public_key, message.as_bytes(), signature)
 
-    let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key).unwrap();
-    verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
-    verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
-    verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
-    verifier.update(message.as_bytes())?;
-
-    // Retourner la reponse
-    Ok(verifier.verify(&signature_bytes.1[1..])?)
+    // let signature_bytes: (Base, Vec<u8>) = decode(signature).unwrap();
+    // let version_signature = signature_bytes.1[0];
+    // if version_signature != VERSION_2 {
+    //     Err(format!("La version de la signature n'est pas 1"))?;
+    // }
+    //
+    // let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key).unwrap();
+    // verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
+    // verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
+    // verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
+    // verifier.update(message.as_bytes())?;
+    //
+    // // Retourner la reponse
+    // Ok(verifier.verify(&signature_bytes.1[1..])?)
 }
 
 pub fn verifier_signature_serialize<S>(public_key: &PKey<Public>, signature: &str, message: &S)

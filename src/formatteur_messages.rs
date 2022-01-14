@@ -25,7 +25,7 @@ use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGr
 use crate::constantes::*;
 use crate::hachages::{hacher_message, verifier_multihash};
 use crate::middleware::{IsConfigurationPki, map_msg_to_bson};
-use crate::signatures::{SALT_LENGTH, signer_message, VERSION_1};
+use crate::signatures::{signer_message, verifier_message as ref_verifier_message, VERSION_2};
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 use crate::bson::{Document, Bson};
 use std::convert::{TryFrom, TryInto};
@@ -609,30 +609,33 @@ impl MessageMilleGrille {
         // let contenu_str = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
         debug!("verifier_signature_str (signature: {:?}, public key: {:?})", self.signature, public_key);
 
-        let signature_bytes: (Base, Vec<u8>) = match &self.signature {
-            Some(s) => decode(s)?,
-            None => Err(format!("Signature absente"))?,
-        };
-        let version_signature = signature_bytes.1[0];
-        if version_signature != VERSION_1 {
-            Err(format!("La version de la signature n'est pas 1"))?;
-        }
-
-        let mut verifier = match Verifier::new(MessageDigest::sha512(), &public_key) {
-            Ok(v) => v,
-            Err(e) => Err(format!("Erreur verification signature : {:?}", e))?
-        };
-
         let message = self.preparer_pour_signature()?;
-        debug!("Message prepare pour signature\n{}", message);
+        match &self.signature {
+            Some(s) => {
+                debug!("Message prepare pour signature\n{}", message);
+                let resultat = ref_verifier_message(public_key, message.as_bytes(), s.as_str())?;
+                Ok(resultat)
+                // decode(s)?
+            },
+            None => Err(format!("Signature absente"))?,
+        }
+        // let version_signature = signature_bytes.1[0];
+        // if version_signature != VERSION_2 {
+        //     Err(format!("La version de la signature n'est pas 2"))?;
+        // }
 
-        verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
-        verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
-        verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
-        verifier.update(message.as_bytes())?;
-
-        // Retourner la reponse
-        Ok(verifier.verify(&signature_bytes.1[1..])?)
+        // let mut verifier = match Verifier::new(MessageDigest::sha512(), &public_key) {
+        //     Ok(v) => v,
+        //     Err(e) => Err(format!("Erreur verification signature : {:?}", e))?
+        // };
+        //
+        // verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
+        // verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
+        // verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
+        // verifier.update(message.as_bytes())?;
+        //
+        // // Retourner la reponse
+        // Ok(verifier.verify(&signature_bytes.1[1..])?)
     }
 }
 
