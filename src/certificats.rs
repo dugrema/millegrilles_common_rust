@@ -12,7 +12,7 @@ use chrono::{DateTime, ParseResult};
 use chrono::prelude::*;
 use log::{debug, info, error, warn};
 use multibase::{Base, encode};
-use multicodec::Codec::Sha2_256 as MCSha2_256;
+use multicodec::Codec::{Blake2s_256, Sha2_256 as MCSha2_256};
 use multihash::{Code, Multihash};
 use num_traits::cast::ToPrimitive;
 use openssl::asn1::Asn1TimeRef;
@@ -20,7 +20,7 @@ use openssl::error::ErrorStack;
 use openssl::hash::{DigestBytes, MessageDigest};
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private, Public};
-use openssl::rsa::Rsa;
+//use openssl::rsa::Rsa;
 use openssl::stack::{Stack, StackRef};
 use openssl::x509::{X509, X509Ref, X509StoreContext};
 use openssl::x509::store::{X509Store, X509StoreBuilder};
@@ -28,6 +28,7 @@ use openssl::x509::verify::X509VerifyFlags;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use x509_parser::parse_x509_certificate;
+use blake2::{Blake2s256, Digest};
 
 use crate::constantes::*;
 use crate::hachages::hacher_bytes;
@@ -187,18 +188,28 @@ pub fn calculer_idmg(cert: &X509) -> Result<String, String> {
 pub fn calculer_idmg_ref(cert: &X509Ref) -> Result<String, String> {
     let fingerprint: DigestBytes = cert.digest(MessageDigest::sha256()).unwrap();
 
+    let fingerprint = {
+        let der = match cert.to_der() {
+            Ok(v) => v,
+            Err(e) => Err(format!("calculer_idmg_ref fingerprint error : {:?}", e))?
+        };
+        let mut hasher = Blake2s256::new();
+        hasher.update(der);
+        hasher.finalize()
+    };
+
     // Multihash
-    let mh = Multihash::wrap(MCSha2_256.code().into(), fingerprint.as_ref()).unwrap();
+    let mh = Multihash::wrap(Blake2s_256.code().into(), fingerprint.as_ref()).unwrap();
     let mh_bytes: Vec<u8> = mh.to_bytes();
 
-    // Preparation slice du IDMG, 39 bytes
-    let mut idmg_slice: [u8; 39] = [0; 39];
+    // Preparation slice du IDMG, 41 bytes
+    let mut idmg_slice: [u8; 41] = [0; 41];
 
     // Version
     idmg_slice[0] = 0x2;
 
     // SHA-256
-    idmg_slice[5..39].clone_from_slice(mh_bytes.as_slice());
+    idmg_slice[5..41].clone_from_slice(mh_bytes.as_slice());
 
     // Date expiration ( ceil(epoch sec/1000) )
     let not_after: &Asn1TimeRef = cert.not_after();
@@ -254,8 +265,9 @@ pub fn charger_enveloppe_privee<V>(path_cert: &Path, path_cle: &Path, validateur
 {
     let path_cle_str = format!("cle : {:?}", path_cle);
     let pem_cle = read_to_string(path_cle).expect(path_cle_str.as_str());
-    let cle_privee = Rsa::private_key_from_pem(pem_cle.as_bytes())?;
-    let cle_privee: PKey<Private> = PKey::from_rsa(cle_privee)?;
+    // let cle_privee = Rsa::private_key_from_pem(pem_cle.as_bytes())?;
+    // let cle_privee: PKey<Private> = PKey::from_rsa(cle_privee)?;
+    let cle_privee = PKey::private_key_from_pem(pem_cle.as_bytes())?;
 
     let pem_cert = read_to_string(path_cert).unwrap();
     let enveloppe = charger_enveloppe(&pem_cert, Some(validateur.store()))?;
@@ -383,12 +395,12 @@ impl EnveloppeCertificat {
         Ok(vec!(fpleaf, fpmg))
     }
 
-    /// Retourne le fingerprint du certificat CA (certificat de MilleGrille)
-    pub fn fingerprint_ca(&self) -> Option<String> {
-        let pem_vec = self.get_pem_vec();
-        let conversion = pem_vec.into_iter().last().map(|p| p.fingerprint);
-        conversion
-    }
+    // /// Retourne le fingerprint du certificat CA (certificat de MilleGrille)
+    // pub fn fingerprint_ca(&self) -> Option<String> {
+    //     let pem_vec = self.get_pem_vec();
+    //     let conversion = pem_vec.into_iter().last().map(|p| p.fingerprint);
+    //     conversion
+    // }
 
     pub fn get_exchanges(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.exchanges) }
     pub fn get_roles(&self) -> Result<&Option<Vec<String>>, String> { Ok(&self.extensions_millegrille.roles) }
@@ -502,11 +514,11 @@ impl EnveloppePrivee {
     pub fn fingerprint_pk(&self) -> Result<String, String> { self.enveloppe.fingerprint_pk() }
 
     /// Retourne le fingerprint du certificat CA (certificat de MilleGrille)
-    pub fn fingerprint_ca(&self) -> Option<String> {
-        let pem_vec = self.get_pem_vec();
-        let conversion = pem_vec.into_iter().last().map(|p| p.fingerprint);
-        conversion
-    }
+    // pub fn fingerprint_ca(&self) -> Option<String> {
+    //     let pem_vec = self.get_pem_vec();
+    //     let conversion = pem_vec.into_iter().last().map(|p| p.fingerprint);
+    //     conversion
+    // }
 
     pub fn get_exchanges(&self) -> Result<&Option<Vec<String>>, String> { self.enveloppe.get_exchanges() }
     pub fn get_roles(&self) -> Result<&Option<Vec<String>>, String> { self.enveloppe.get_roles() }
@@ -1117,179 +1129,74 @@ pub mod certificats_tests {
 
     pub const CERT_MILLEGRILLE: &str = r#"
 -----BEGIN CERTIFICATE-----
-MIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD
-VQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa
-MBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A
-MIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6
-pg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau
-bJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q
-TYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+
-jTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2
-1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z
-XPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM
-eFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq
-LsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE
-FBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk
-a+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh
-2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O
-EYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3
-NK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk
-6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr
-o/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG
-erI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda
-yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
-qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
------END CERTIFICATE-----"#;
+MIIBQzCB9qADAgECAgoHBykXJoaCCWAAMAUGAytlcDAWMRQwEgYDVQQDEwtNaWxs
+ZUdyaWxsZTAeFw0yMjAxMTMyMjQ3NDBaFw00MjAxMTMyMjQ3NDBaMBYxFDASBgNV
+BAMTC01pbGxlR3JpbGxlMCowBQYDK2VwAyEAnnixameVCZAzfx4dO+L63DOk/34I
+/TC4fIA1Rxn19+KjYDBeMA8GA1UdEwEB/wQFMAMBAf8wCwYDVR0PBAQDAgLkMB0G
+A1UdDgQWBBTTiP/MFw4DDwXqQ/J2LLYPRUkkETAfBgNVHSMEGDAWgBTTiP/MFw4D
+DwXqQ/J2LLYPRUkkETAFBgMrZXADQQBSb0vXhw3pw25qrWoMjqROjawe7/kMlu7p
+MJyb/Ppa2C6PraSVPgJGWKl+/5S5tBr58KFNg+0H94CH4d1VCPwI
+-----END CERTIFICATE-----
+"#;
 
-    pub const CERT_DOMAINES: &str = r#"
+    pub const CERT_CORE: &str = r#"
 -----BEGIN CERTIFICATE-----
-MIID/zCCAuegAwIBAgIUOhOPjxIYcu/2KtUKOfVf9gjtRWswDQYJKoZIhvcNAQEL
-BQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj
-YjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5
-ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X
-DTIxMDgxMDExMzkzOFoXDTIxMDkwOTExNDEzOFowZjE/MD0GA1UECgw2ejJXMkVD
-blA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz
-MREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI
-hvcNAQEBBQADggEPADCCAQoCggEBANQpo8awOOHgdRO56fwZ3/eQbAsqJSS8LNR/
-JHf/1ExHY0AbqH88w+X9Rhh2uU92ECQA1usueJHSMDsKeOSTAuw/7yZNxs5Pv/uu
-fgH4Yq1JnM0r1SqT2zeiLxpKyYuB06XgD1jA5+rz0nD593ARTpGP6bx1HQO7F5sj
-c1+N1Ujf/XHDA9SDptREbpsmwzgmgBgVlbTVm4VQrl99B1LZhQPjDX6nLomQ2jmc
-42CXJRzgihIh7Ym6wggKDgVqlOIevlIRuK4oxITaFRMgtzeBbhj7bw1nMZ8BjxYw
-UpvangdvT3W5s9zTg0C4LgRdihCtFMHIXZOR86J27x1DqhLvH7sCAwEAAaOBgTB/
-MB0GA1UdDgQWBBQhkD483zW0QLedR2BlAZcR0glN6zAfBgNVHSMEGDAWgBT170DQ
-e1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq
-AwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC
-AQEAPLe/7wTifOq24aGzbuB/BXcAbKm53CcnUQH7CbrnFh7VaHEM8WssZmKX5nYw
-KAts+ORk10xoLMddO9mEFtuKQD4QTjMFQe5EXnOuEuxzF51c3Gv2cY+b0Q/GcAcX
-u/UDN5Cw1SoRYd1SfYkvK8+8Deo7ds1Zib1gYehWmTYPA9ZD+bBIISd1pvgif6cz
-Hl12aMusZ2F2m6Qhnot31vB90NPNa/hZ9cOAz+WnjwvcYXUXhCKV/wwuHtNWVNOS
-AphmpcYYJxAjqj1ok/EJF9L5/Z83NvTyz6omZbdptxa0ak4Qchql87rM1B6tGEVD
-kA1HOXEzYkfgtP4gGZZsKQhcxA==
+MIICFTCCAcegAwIBAgIUDgk2RY9xKdhV9H2sbaRwuV7tSB8wBQYDK2VwMHIxLTAr
+BgNVBAMTJDI2MmVhZTMzLTI1ZTQtNDRiNy04ZmNkLTQ0NjcxMTdhMmZmZTFBMD8G
+A1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6
+WHJwMjJiQXR3R203SmYwHhcNMjIwMTE0MTkzODI2WhcNMjIwMjA0MTk0MDI2WjBk
+MUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpGdUhHNzk2ZVN2Q1RXRTRN
+NDMyaXpYcnAyMmJBdHdHbTdKZjENMAsGA1UECwwEY29yZTEQMA4GA1UEAwwHbWct
+ZGV2NTAqMAUGAytlcAMhAOZNry7yvtjalT4jAc8OpwI+ysCgtS6SaW5SIBYUnP/z
+o30wezAdBgNVHQ4EFgQUzzXqIfw8aogDTo5LZboRMLnasmAwHwYDVR0jBBgwFoAU
+MkSbvTt6igrEK2uRJ/coCRhLd6kwDAYDVR0TAQH/BAIwADALBgNVHQ8EBAMCBPAw
+EAYEKgMEAAQINC5zZWN1cmUwDAYEKgMEAQQEY29yZTAFBgMrZXADQQACgFhgYbZI
+a3sgHcgS6fbaxGq4oVj+1CEaI6Lx/CMH6pHKreAKMcfVl8WCRsaYCWPk45R/DY7I
+a4ik+RVCK1sK
 -----END CERTIFICATE-----
 -----BEGIN CERTIFICATE-----
-MIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV
-BAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow
-gYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh
-YjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1
-TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN
-BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ
-TkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t
-i//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B
-dj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5
-ylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR
-TrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB
-o1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu
-POZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG
-9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U
-ic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU
-20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY
-m8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok
-QN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq
-xbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0
-MsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L
-zgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm
-SLqr6N7dHrSBO27B
+MIIBozCCAVWgAwIBAgIKBgaEZ0OASVdwADAFBgMrZXAwFjEUMBIGA1UEAxMLTWls
+bGVHcmlsbGUwHhcNMjIwMTE0MTk0MDE4WhcNMjMwNzI2MTk0MDE4WjByMS0wKwYD
+VQQDEyQyNjJlYWUzMy0yNWU0LTQ0YjctOGZjZC00NDY3MTE3YTJmZmUxQTA/BgNV
+BAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy
+cDIyYkF0d0dtN0pmMCowBQYDK2VwAyEA6UoxhuJKARsV5XeovcX91+eFFlwxU3CP
+fZ1+xCvs7GCjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G
+A1UdDgQWBBQyRJu9O3qKCsQra5En9ygJGEt3qTAfBgNVHSMEGDAWgBTTiP/MFw4D
+DwXqQ/J2LLYPRUkkETAFBgMrZXADQQC3BaK5TWjXole4f/TP9Fzsb4lsYyJJi/q+
+JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
 -----END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD
-VQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa
-MBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A
-MIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6
-pg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau
-bJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q
-TYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+
-jTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2
-1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z
-XPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM
-eFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq
-LsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE
-FBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk
-a+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh
-2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O
-EYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3
-NK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk
-6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr
-o/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG
-erI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda
-yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
-qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
------END CERTIFICATE-----"#;
+"#;
 
     pub const CERT_FICHIERS: &str = r#"
 -----BEGIN CERTIFICATE-----
-MIIETzCCAzegAwIBAgIUcdGmFDjYwUMTr2svrUTEcZt7B7QwDQYJKoZIhvcNAQEL
-BQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj
-YjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5
-ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X
-DTIxMDgxMDExMzkzNloXDTIxMDkwOTExNDEzNlowZjE/MD0GA1UECgw2ejJXMkVD
-blA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz
-MREwDwYDVQQLDAhmaWNoaWVyczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI
-hvcNAQEBBQADggEPADCCAQoCggEBAMYO7rtbVrtbCIuR2Fs3azXxS9ZYPWiIA+YR
-uF4FAm/JSRuQuVdPeGIsOQcsGqtpuhZZuq4CfOFApFDFATrK7/8OtiLE3O2SnPw3
-44gzQttH8tbexQ2S1oMRdk0+C0z+akGOoT9DK9xndjMiBDmty3NYNQmJSpMNs6J0
-kC3z77QURE+zv61dphpb8PkeHIgDT0xg625Kcqh8en22FzonrPtsvgXoZJ2F7g9P
-vMTGpgdQpdXpTymOUOLDDaPLye2G2IA69t97BwTFaxKox+OsYcqPscpYdnatjYsV
-H9vFOL32vU+hQqgF+ggrxXkYdRropzfFHXjQSCcGGtJKRrj0tpcCAwEAAaOB0TCB
-zjAdBgNVHQ4EFgQUm2RNN/y6cSyxWYIDIE3P/d7M/mowHwYDVR0jBBgwFoAU9e9A
-0HtTccqyqdhnbjzmej/W+YgwDAYDVR0TAQH/BAIwADALBgNVHQ8EBAMCBPAwEQYE
-KgMEAAQJMy5wcm90ZWdlMB0GBCoDBAEEFWZpY2hpZXJzLEdyb3NGaWNoaWVyczA/
-BgNVHREEODA2gghmaWNoaWVyc4IHbWctZGV2NIIJbG9jYWxob3N0hwR/AAABhxAA
-AAAAAAAAAAAAAAAAAAABMA0GCSqGSIb3DQEBCwUAA4IBAQBKxkNVy651GWqcdT43
-O/g+skOmNGNJsLp3LexMxuZhYd1fPCbbfOzrP7YfuoPBy4wqvWlK0uYApXbzd1wU
-6/c5Z3kfzteqXGYL6f7/JK+Wk8nv1eVTesOSkKHSkM9FLVxH0AToPF9XZyuHXY7E
-eLFzqbCpdBjfXw3H9W5N6q5rtiZytOmM/PpupUtGJjodrL8BLKAjXhy+FPjJdvvW
-MfIM/9lGrQs/NtXjxePhsBZXVGXvdyn7G8NiZERXxeBqKODzP52Qu89TvYWY0oTm
-xWKSNeZPelMdurL7RyZemmSb9f1vsMPvokr58A9q3z9KRJ6yfZ580xpevZNyNe0g
-7YuG
+MIICqTCCAlugAwIBAgIUE9zbINmwer1nFwGPiCF+MBF6avYwBQYDK2VwMHIxLTAr
+BgNVBAMTJDI2MmVhZTMzLTI1ZTQtNDRiNy04ZmNkLTQ0NjcxMTdhMmZmZTFBMD8G
+A1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6
+WHJwMjJiQXR3R203SmYwHhcNMjIwMTE0MTkzODI2WhcNMjIwMjA0MTk0MDI2WjBo
+MUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpGdUhHNzk2ZVN2Q1RXRTRN
+NDMyaXpYcnAyMmJBdHdHbTdKZjERMA8GA1UECwwIZmljaGllcnMxEDAOBgNVBAMM
+B21nLWRldjUwKjAFBgMrZXADIQC/U7Ip/+ztO3s4ZDjkw6TeGq53Qr75Qrb2Nkcs
+u56icKOCAQswggEHMB0GA1UdDgQWBBSTsPpP4VRI1AM/b5EI4di3bt4DuDAfBgNV
+HSMEGDAWgBQyRJu9O3qKCsQra5En9ygJGEt3qTAMBgNVHRMBAf8EAjAAMAsGA1Ud
+DwQEAwIE8DAiBgQqAwQABBoxLnB1YmxpYywyLnByaXZlLDMucHJvdGVnZTAXBgQq
+AwQBBA9maWNoaWVycyxiYWNrdXAwbQYDVR0RBGYwZIIIZmljaGllcnOCBmJhY2t1
+cIIkMjYyZWFlMzMtMjVlNC00NGI3LThmY2QtNDQ2NzExN2EyZmZlgglsb2NhbGhv
+c3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAGCB21nLWRldjUwBQYDK2VwA0EAMHW/
+nCFEzeTK04+CKqJDummtzg4FuMrvXm6jZPK+yy5BIVI4MUqGG9gNooQ3mVaGRcsH
+1HNbIPtAIMhlubcXBg==
 -----END CERTIFICATE-----
 -----BEGIN CERTIFICATE-----
-MIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV
-BAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow
-gYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh
-YjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1
-TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN
-BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ
-TkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t
-i//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B
-dj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5
-ylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR
-TrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB
-o1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu
-POZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG
-9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U
-ic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU
-20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY
-m8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok
-QN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq
-xbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0
-MsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L
-zgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm
-SLqr6N7dHrSBO27B
+MIIBozCCAVWgAwIBAgIKBgaEZ0OASVdwADAFBgMrZXAwFjEUMBIGA1UEAxMLTWls
+bGVHcmlsbGUwHhcNMjIwMTE0MTk0MDE4WhcNMjMwNzI2MTk0MDE4WjByMS0wKwYD
+VQQDEyQyNjJlYWUzMy0yNWU0LTQ0YjctOGZjZC00NDY3MTE3YTJmZmUxQTA/BgNV
+BAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy
+cDIyYkF0d0dtN0pmMCowBQYDK2VwAyEA6UoxhuJKARsV5XeovcX91+eFFlwxU3CP
+fZ1+xCvs7GCjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G
+A1UdDgQWBBQyRJu9O3qKCsQra5En9ygJGEt3qTAfBgNVHSMEGDAWgBTTiP/MFw4D
+DwXqQ/J2LLYPRUkkETAFBgMrZXADQQC3BaK5TWjXole4f/TP9Fzsb4lsYyJJi/q+
+JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
 -----END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD
-VQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa
-MBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A
-MIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6
-pg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau
-bJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q
-TYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+
-jTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2
-1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z
-XPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM
-eFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq
-LsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE
-FBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk
-a+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh
-2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O
-EYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3
-NK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk
-6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr
-o/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG
-erI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda
-yGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ
-qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
------END CERTIFICATE-----"#;
+"#;
 
     pub fn charger_enveloppe_privee_env() -> (Arc<ValidateurX509Impl>, EnveloppePrivee) {
         const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
@@ -1313,20 +1220,27 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
     }
 
     #[test]
+    fn calculer_idmg() {
+        let ca_x509 = charger_certificat(CERT_MILLEGRILLE);
+        let idmg = calculer_idmg_ref(ca_x509.as_ref()).expect("idmg");
+        assert_eq!(idmg, "zeYncRqEqZ6eTEmUZ8whJFuHG796eSvCTWE4M432izXrp22bAtwGm7Jf");
+    }
+
+    #[test]
     fn test_charger_enveloppe() {
-        let enveloppe = prep_enveloppe(CERT_DOMAINES);
-        assert_eq!(enveloppe.fingerprint, "zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds");
+        let enveloppe = prep_enveloppe(CERT_CORE);
+        assert_eq!(enveloppe.fingerprint, "zQmQCmN73oW1WRGMdY92cgo1Lw7fZQauKuY76Cek8YcME9W");
     }
 
     #[test]
     fn collection_pems_1cert() {
-        let certificat = prep_enveloppe(CERT_DOMAINES);
+        let certificat = prep_enveloppe(CERT_CORE);
         let mut collection_pems = CollectionCertificatsPem::new();
         collection_pems.ajouter_certificat(&certificat);
 
         // println!("!!! Collection pems {:?}", collection_pems);
         assert_eq!(collection_pems.certificats.len(), 1);
-        assert_eq!(collection_pems.pems.len(), 3);
+        assert_eq!(collection_pems.pems.len(), 2);
 
         // Test presence certificat (via fingerprint)
         let _ = collection_pems.pems.get(&certificat.fingerprint).expect("cert");
@@ -1334,7 +1248,7 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 
     #[test]
     fn collection_pems_2cert() {
-        let certificat_domaines = prep_enveloppe(CERT_DOMAINES);
+        let certificat_domaines = prep_enveloppe(CERT_CORE);
         let certificat_fichiers = prep_enveloppe(CERT_FICHIERS);
         let mut collection_pems = CollectionCertificatsPem::new();
         collection_pems.ajouter_certificat(&certificat_domaines).expect("ajouter");
@@ -1342,7 +1256,7 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 
         // println!("!!! Collection pems {:?}", collection_pems);
         assert_eq!(collection_pems.certificats.len(), 2);
-        assert_eq!(collection_pems.pems.len(), 4);
+        assert_eq!(collection_pems.pems.len(), 3);
 
         // Test presence certificat (via fingerprint)
         let _ = collection_pems.pems.get(&certificat_domaines.fingerprint).expect("cert");
@@ -1351,7 +1265,7 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
 
     #[test]
     fn collection_serialiser() {
-        let certificat = prep_enveloppe(CERT_DOMAINES);
+        let certificat = prep_enveloppe(CERT_CORE);
         let mut collection_pems = CollectionCertificatsPem::new();
         collection_pems.ajouter_certificat(&certificat).expect("ajouter");
 
@@ -1364,19 +1278,22 @@ qn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=
     async fn recuperer_enveloppe() {
         setup("recuperer_enveloppe");
         const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
+        const FINGERPRINT: &str = "zQmQCmN73oW1WRGMdY92cgo1Lw7fZQauKuY76Cek8YcME9W";
         let validateur = Arc::new(build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store"));
 
-        let certificat = prep_enveloppe(CERT_DOMAINES);
+        let certificat = prep_enveloppe(CERT_CORE);
         let mut collection_pems = CollectionCertificatsPem::new();
         collection_pems.ajouter_certificat(&certificat).expect("ajouter");
 
+        assert_eq!(FINGERPRINT, certificat.fingerprint);
+
         let enveloppe = collection_pems.get_enveloppe(
             validateur.as_ref(),
-            "zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds"
+            FINGERPRINT
         ).await.expect("enveloppe");
 
         debug!("Enveloppe chargee : {:?}", enveloppe);
-        assert_eq!("zQmRUqgaeEJiB4uM1M8ui7jV7bD8zdcgDufeu9fczwUSrds", enveloppe.fingerprint);
+        assert_eq!(enveloppe.fingerprint, FINGERPRINT);
     }
 
 }

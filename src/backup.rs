@@ -1891,34 +1891,35 @@ pub async fn emettre_cle_catalogue<M>(middleware: &M, catalogue_horaire: &Catalo
                 if let Some(format) = catalogue_horaire.format.as_ref() {
 
                     let enveloppe_privee = middleware.get_enveloppe_privee();
-                    if let Some(fingerprint) = enveloppe_privee.fingerprint_ca() {
-
-                        // Conserver la cle chiffree pour le CA
-                        let mut cles = HashMap::new();
-                        cles.insert(fingerprint, cle.to_owned());
-
-                        let mut identificateurs_document = HashMap::new();
-                        identificateurs_document.insert(String::from("domaine"), catalogue_horaire.domaine.clone());
-                        identificateurs_document.insert(String::from("heure"), catalogue_horaire.heure.format_ymdh());
-                        identificateurs_document.insert(String::from("snapshot"), catalogue_horaire.snapshot.to_string());
-
-                        let commande = CommandeSauvegarderCle {
-                            cles,
-                            domaine: BACKUP_NOM_DOMAINE.into(),
-                            partition: None,
-                            format: FormatChiffrage::mgs2,  // todo Charger dynamiquement
-                            hachage_bytes: catalogue_horaire.transactions_hachage.clone(),
-                            identificateurs_document,
-                            iv: iv.clone(),
-                            tag: tag.clone(),
-                            fingerprint_partitions: None,
-                        };
-
-                        let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE)
-                            .exchanges(vec![Securite::L3Protege])
-                            .build();
-                        middleware.transmettre_commande(routage, &commande, false).await?;
-                    }
+                    Err(format!("Fix me"))?;
+                    // if let Some(fingerprint) = enveloppe_privee.fingerprint_ca() {
+                    //
+                    //     // Conserver la cle chiffree pour le CA
+                    //     let mut cles = HashMap::new();
+                    //     cles.insert(fingerprint, cle.to_owned());
+                    //
+                    //     let mut identificateurs_document = HashMap::new();
+                    //     identificateurs_document.insert(String::from("domaine"), catalogue_horaire.domaine.clone());
+                    //     identificateurs_document.insert(String::from("heure"), catalogue_horaire.heure.format_ymdh());
+                    //     identificateurs_document.insert(String::from("snapshot"), catalogue_horaire.snapshot.to_string());
+                    //
+                    //     let commande = CommandeSauvegarderCle {
+                    //         cles,
+                    //         domaine: BACKUP_NOM_DOMAINE.into(),
+                    //         partition: None,
+                    //         format: FormatChiffrage::mgs2,  // todo Charger dynamiquement
+                    //         hachage_bytes: catalogue_horaire.transactions_hachage.clone(),
+                    //         identificateurs_document,
+                    //         iv: iv.clone(),
+                    //         tag: tag.clone(),
+                    //         fingerprint_partitions: None,
+                    //     };
+                    //
+                    //     let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE)
+                    //         .exchanges(vec![Securite::L3Protege])
+                    //         .build();
+                    //     middleware.transmettre_commande(routage, &commande, false).await?;
+                    // }
                 }
             }
         }
@@ -1952,7 +1953,7 @@ pub async fn emettre_cle_catalogue<M>(middleware: &M, catalogue_horaire: &Catalo
 mod backup_tests {
     use serde_json::json;
 
-    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
+    use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::fichiers::CompresseurBytes;
     use crate::fichiers::fichiers_tests::ChiffreurDummy;
     use crate::test_setup::setup;
@@ -2070,7 +2071,7 @@ mod backup_tests {
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
 
-        let certificat = prep_enveloppe(CERT_DOMAINES);
+        let certificat = prep_enveloppe(CERT_CORE);
         // debug!("!!! Enveloppe : {:?}", certificat);
 
         catalogue_builder.ajouter_certificat(&certificat);
@@ -2177,7 +2178,7 @@ mod backup_tests {
     #[tokio::test]
     async fn processeur_fichier_backup_catalogue() {
         setup("processeur_fichier_backup_catalogue");
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
 
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
@@ -2224,7 +2225,7 @@ mod test_integration {
     use futures_util::stream::IntoAsyncRead;
     use tokio::sync::mpsc::{Receiver, Sender};
 
-    use crate::certificats::certificats_tests::{CERT_DOMAINES, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
+    use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     use crate::certificats::FingerprintCertPublicKey;
     use crate::middleware_db::preparer_middleware_db;
     use crate::middleware::serialization_tests::build;
@@ -2241,7 +2242,7 @@ mod test_integration {
     async fn grouper_transactions() {
         setup("grouper_transactions");
         // Connecter mongo
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         futures.push(tokio::spawn(async move {
 
             // Test
@@ -2273,7 +2274,7 @@ mod test_integration {
         let workdir = PathBuf::from("/tmp");
 
         // Connecter mongo
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         futures.push(tokio::spawn(async move {
 
             // Test
@@ -2324,6 +2325,7 @@ mod test_integration {
             middleware,
             mut rx_messages,
             mut rx_triggers,
+            mut rx_messages_verif_reply,
             mut futures
         ) = preparer_middleware_db(Vec::new(), None);
         futures.push(tokio::spawn(async move {
@@ -2413,7 +2415,7 @@ mod test_integration {
             heure.clone(), domaine.into(), None, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
 
         // Connecter mongo
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         futures.push(tokio::spawn(async move {
 
             // Path fichiers transactions et catalogue
@@ -2488,7 +2490,7 @@ mod test_integration {
             heure.clone(), domaine.into(), partition, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
 
         // Connecter mongo
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
         futures.push(tokio::spawn(async move {
 
             // Path fichiers transactions et catalogue
@@ -2532,7 +2534,7 @@ mod test_integration {
         let workdir = PathBuf::from("/tmp");
 
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
 
         debug!("Attente MQ");
         tokio::time::sleep(tokio::time::Duration::new(1, 0)).await;
@@ -2559,7 +2561,7 @@ mod test_integration {
         let workdir = PathBuf::from("/tmp");
 
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
-        let (middleware, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
 
         debug!("Attente MQ");
         tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
@@ -2579,35 +2581,35 @@ mod test_integration {
         futures.next().await.expect("resultat").expect("ok");
     }
 
-    #[tokio::test]
-    async fn effectuer_backup() {
-        setup("effectuer_backup");
-
-        let (
-            middleware,
-            mut futures,
-            mut tx_messages,
-            mut tx_triggers
-        ) = build().await;
-
-        futures.push(tokio::spawn(async move {
-
-            debug!("Attente MQ");
-            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-            debug!("Fin sleep");
-
-            debug!("S'assurer d'avoir les certificats de chiffrage");
-            middleware.charger_certificats_chiffrage().await;
-            debug!("Certificats de chiffrage recus : {:?}", middleware.get_publickeys_chiffrage());
-            assert_eq!(middleware.get_publickeys_chiffrage().len() > 1, true);
-
-            backup(middleware.as_ref(), NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
-
-        }));
-
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
+    // #[tokio::test]
+    // async fn effectuer_backup() {
+    //     setup("effectuer_backup");
+    //
+    //     let (
+    //         middleware,
+    //         mut futures,
+    //         mut tx_messages,
+    //         mut tx_triggers
+    //     ) = build().await;
+    //
+    //     futures.push(tokio::spawn(async move {
+    //
+    //         debug!("Attente MQ");
+    //         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+    //         debug!("Fin sleep");
+    //
+    //         debug!("S'assurer d'avoir les certificats de chiffrage");
+    //         middleware.charger_certificats_chiffrage().await;
+    //         debug!("Certificats de chiffrage recus : {:?}", middleware.get_publickeys_chiffrage());
+    //         assert_eq!(middleware.get_publickeys_chiffrage().len() > 1, true);
+    //
+    //         backup(middleware.as_ref(), NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+    //
+    //     }));
+    //
+    //     // Execution async du test
+    //     futures.next().await.expect("resultat").expect("ok");
+    // }
 
     struct TraiterTransactionsDummy {}
 

@@ -273,8 +273,8 @@ impl ConfigurationPki {
         // let key_pem: String = read_to_string(&self.keyfile).expect("Erreur lecture cle PEM");
 
         // Convertir la cle privee en format RSA
-        let cle_privee: Rsa<Private> = self.enveloppe_privee.cle_privee().rsa().unwrap();
-        let cle_privee: Vec<u8> = cle_privee.private_key_to_pem().expect("Conversion cle privee en PKCS8");;
+        // let cle_privee: Rsa<Private> = self.enveloppe_privee.cle_privee().rsa().unwrap();
+        let cle_privee: Vec<u8> = self.enveloppe_privee.cle_privee().private_key_to_pem_pkcs8().expect("Conversion cle privee en PKCS8");;
 
         let cert_pem: String = read_to_string(&self.certfile).expect("Erreur lecture cert PEM");
 
