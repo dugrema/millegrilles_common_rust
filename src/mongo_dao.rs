@@ -16,6 +16,7 @@ use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, Configu
 use crate::constantes::*;
 use serde::de::DeserializeOwned;
 use std::error::Error;
+use std::time::Duration;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
@@ -86,6 +87,7 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
         .direct_connection(true)
         .tls(tls_options)
         .credential(credential)
+        .server_selection_timeout(Duration::from_secs(5))
         .build();
 
     Client::with_options(options)
