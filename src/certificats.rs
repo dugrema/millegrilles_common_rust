@@ -64,14 +64,14 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>) -> Result<Envelop
 
     // Calculer fingerprint du certificat
     let cert: &X509 = chaine_x509.get(0).unwrap();
-    let fingerprint = calculer_fingerprint(cert)?;
+    let fingerprint = calculer_fingerprint(cert).expect("fingerprint");
     debug!("Fingerprint certificat : {:?}", fingerprint);
 
     // let chaine_pem: Vec<String> = Vec::new();
     // Pousser les certificats intermediaires (pas le .0, ni le dernier)
-    let mut intermediaire: Stack<X509> = Stack::new().unwrap();
+    let mut intermediaire: Stack<X509> = Stack::new()?;
     for cert_idx in 1..chaine_x509.len() {
-        let _ = intermediaire.push(chaine_x509.get(cert_idx).unwrap().to_owned());
+        let _ = intermediaire.push(chaine_x509.get(cert_idx).expect("charger_enveloppe intermediaire").to_owned());
     }
 
     // Verifier la chaine avec la date courante.
@@ -158,10 +158,23 @@ pub fn verifier_certificat(cert: &X509, chaine_pem: &StackRef<X509>, store: &X50
     })
 }
 
-fn calculer_fingerprint(cert: &X509) -> Result<String, ErrorStack> {
-    let fingerprint = cert.digest(MessageDigest::sha256())?;
+fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
+    // let fingerprint = cert.digest(MessageDigest::sha256())?;
 
-    let mh = Multihash::wrap(MCSha2_256.code().into(), fingerprint.as_ref()).unwrap();
+    let fingerprint = {
+        let der = match cert.to_der() {
+            Ok(v) => v,
+            Err(e) => Err(format!("calculer_fingerprint fingerprint error : {:?}", e))?
+        };
+        let mut hasher = Blake2s256::new();
+        hasher.update(der);
+        hasher.finalize()
+    };
+
+    let mh = match Multihash::wrap(Blake2s_256.code().into(), fingerprint.as_ref()) {
+        Ok(m) => m,
+        Err(e) => Err(format!("calculer_fingerprint multihash error : {:?}", e))?
+    };
     let mh_bytes: Vec<u8> = mh.to_bytes();
 
     Ok(encode(Base::Base58Btc, mh_bytes))
@@ -645,7 +658,7 @@ impl ValidateurX509Impl {
     }
 
     /// Expose la fonction pour creer un certificat
-    fn charger_certificat(pem: &str) -> Result<(X509, String), ErrorStack> {
+    fn charger_certificat(pem: &str) -> Result<(X509, String), String> {
         let cert = charger_certificat(pem);
         let fingerprint = calculer_fingerprint(&cert)?;
         Ok((cert, fingerprint))
@@ -1229,7 +1242,7 @@ JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
     #[test]
     fn test_charger_enveloppe() {
         let enveloppe = prep_enveloppe(CERT_CORE);
-        assert_eq!(enveloppe.fingerprint, "zQmQCmN73oW1WRGMdY92cgo1Lw7fZQauKuY76Cek8YcME9W");
+        assert_eq!(enveloppe.fingerprint, "z2i3XjxDSREuw2h9thRXe9kAo1YJWECjDaEVEzmt44HMdBwpgzS");
     }
 
     #[test]
@@ -1278,7 +1291,7 @@ JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
     async fn recuperer_enveloppe() {
         setup("recuperer_enveloppe");
         const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
-        const FINGERPRINT: &str = "zQmQCmN73oW1WRGMdY92cgo1Lw7fZQauKuY76Cek8YcME9W";
+        const FINGERPRINT: &str = "z2i3XjxDSREuw2h9thRXe9kAo1YJWECjDaEVEzmt44HMdBwpgzS";
         let validateur = Arc::new(build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store"));
 
         let certificat = prep_enveloppe(CERT_CORE);
