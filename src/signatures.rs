@@ -3,11 +3,13 @@ use std::os::raw::c_int;
 
 use log::{debug, error, info};
 use multibase::{Base, Base::Base64, decode, encode};
+use multihash::Code;
 use openssl::error::ErrorStack;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, PKeyRef, Private, Public};
 use openssl::rsa::{Padding, Rsa};
 use openssl::sign::{RsaPssSaltlen, Signer, Verifier};
+use crate::hachages::{hacher_bytes, hacher_bytes_vu8};
 
 // pub const SALT_LENGTH: c_int = 64;
 // pub const VERSION_1: u8 = 0x1;
@@ -18,12 +20,14 @@ pub fn signer_message(private_key: &PKey<Private>, message: &[u8]) -> Result<Str
     let mut to_bytes: [u8; 65] = [0u8; 65];
     to_bytes[0] = VERSION_2;  // Version 2 de la signature MilleGrilles (ed25519)
 
+    let message_hache = hacher_bytes_vu8(message, Some(Code::Blake2b512));
+
     let mut signer = Signer::new_without_digest(&private_key).unwrap();
 
-    let _resultat = signer.sign_oneshot(&mut to_bytes[1..], message)?;
+    let _resultat = signer.sign_oneshot(&mut to_bytes[1..], &message_hache[..])?;
 
     let signature_base64 = encode(Base64, to_bytes);
-    // debug!("Ok, taille signature {}\nSignature : {}\n{:02x?}", len, signature_base64, to_bytes);
+    debug!("Ok, taille signature {}\nSignature : {}\n{:02x?}", to_bytes.len(), signature_base64, to_bytes);
     Ok(signature_base64)
 }
 
@@ -36,12 +40,15 @@ pub fn verifier_message(public_key: &PKey<Public>, message: &[u8], signature: &s
     debug!("Verifier signature type {:?} / {:?} avec public key {:?}", type_sign, signature_bytes, public_key);
 
     if *type_sign != VERSION_2 {
+        debug!("Version signature est {:?}, devrait etre 2", type_sign);
         Err(format!("La version de la signature n'est pas 2"))?;
     }
 
+    let message_hache = hacher_bytes_vu8(message, Some(Code::Blake2b512));
+
     let mut verifier = Verifier::new_without_digest(&public_key)?;
     // let resultat = verifier.verify_oneshot(signature_bytes, &message[0..10])?;
-    let resultat = verifier.verify_oneshot(signature_bytes, message)?;
+    let resultat = verifier.verify_oneshot(signature_bytes, &message_hache[..])?;
 
     Ok(resultat)
 }

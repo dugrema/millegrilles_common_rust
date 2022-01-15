@@ -19,14 +19,14 @@ where S: Serialize
 {
     let value = serde_json::to_value(s)?;
     let ser_bytes = serde_json::to_vec(&value)?;
-    Ok(hacher_bytes(ser_bytes.as_slice(), Some(Code::Sha2_512), Some(Base::Base64)))
+    Ok(hacher_bytes(ser_bytes.as_slice(), Some(Code::Blake2b512), Some(Base::Base64)))
 }
 
 pub fn hacher_bytes(contenu: &[u8], code: Option<Code>, base: Option<Base>) -> String {
     let mut digester: Code;
     match code {
         Some(inner) => digester = inner,
-        None => digester = Code::Sha2_512,
+        None => digester = Code::Blake2b512,
     }
 
     // Digest direct (une passe)
@@ -41,6 +41,23 @@ pub fn hacher_bytes(contenu: &[u8], code: Option<Code>, base: Option<Base>) -> S
     let valeur_hachee = encode(base_mb, mh_bytes);
 
     valeur_hachee
+}
+
+pub fn hacher_bytes_vu8(contenu: &[u8], code: Option<Code>) -> Vec<u8> {
+    let mut digester: Code;
+    match code {
+        Some(inner) => digester = inner,
+        None => digester = Code::Blake2b512,
+    }
+
+    // Digest direct (une passe)
+    let mh_digest = digester.digest(contenu);
+
+    let digest_vec: Vec<u8> = mh_digest.into();
+
+    debug!("hachage_bytes_vu8 Digest : {:?}", digest_vec);
+
+    digest_vec
 }
 
 pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Result<bool, Box<dyn Error>>
