@@ -53,7 +53,7 @@ pub fn hacher_bytes_vu8(contenu: &[u8], code: Option<Code>) -> Vec<u8> {
     // Digest direct (une passe)
     let mh_digest = digester.digest(contenu);
 
-    let digest_vec: Vec<u8> = mh_digest.into();
+    let digest_vec: Vec<u8> = mh_digest.digest().into();
 
     debug!("hachage_bytes_vu8 Digest : {:?}", digest_vec);
 
