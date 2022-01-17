@@ -394,6 +394,17 @@ impl EnveloppeCertificat {
         calculer_fingerprint_pk(&pk)
     }
 
+    pub fn publickey_bytes(&self) -> Result<String, String> {
+        let pk = match self.certificat.public_key() {
+            Ok(pk) => pk,
+            Err(e) => Err(format!("certificat.public_bytes Erreur public_key() {:?}", e))?
+        };
+        match pk.raw_public_key() {
+            Ok(b) => Ok(multibase::encode(Base::Base64, b)),
+            Err(e) => Err(format!("certificat.public_bytes Erreur raw_private_key() {:?}", e))?
+        }
+    }
+
     /// Retourne la cle publique pour le certificat (leaf) et le CA (millegrille)
     /// Utilise pour chiffrage de cles secretes
     pub fn fingerprint_cert_publickeys(&self) -> Result<Vec<FingerprintCertPublicKey>, Box<dyn Error>> {
