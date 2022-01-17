@@ -69,12 +69,12 @@ pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Re
     debug!("Verification hachage message {}", String::from_utf8(ser_bytes.clone()).expect("string"));
 
     let mh_digest = code.digest(ser_bytes.as_slice());
-    let mut mh_bytes: Vec<u8> = mh_digest.to_bytes();
+    let mut hachage_calcule: &[u8] = mh_digest.digest(); // to_bytes();
 
     // Enlever 2 premiers bytes (multibase et multihash)
-    let hachage_calcule = &mh_bytes.as_slice()[2..];
+    // let hachage_calcule = mh_bytes.as_slice();  //[2..];
 
-    debug!("Hachage comparaison recu/calcule\n{:?}\n{:?}", hachage_calcule, hachage);
+    debug!("Hachage comparaison recu/calcule\n{:?}\n{:?}", hachage, hachage_calcule);
 
     Ok(hachage_calcule == hachage)
 }
