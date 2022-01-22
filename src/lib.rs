@@ -18,6 +18,7 @@ pub mod messages_generiques;
 pub mod domaines;
 pub mod middleware_db;
 pub mod redis_dao;
+pub mod chacha20poly1305_incremental;
 
 // Re-exports
 pub use async_trait;
