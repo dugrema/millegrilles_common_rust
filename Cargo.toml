@@ -37,6 +37,7 @@ blake2 = "0.10.2"
 aead = { version = "0.4", default-features = false, features = ['alloc'] }
 chacha20 = { version = "0.8", features = ["zeroize"] }
 cipher = "0.3"
+dryoc = { version = "^0.3.11" }
 poly1305 = "0.7"
 zeroize = { version = ">=1, <1.5", default-features = false }
 

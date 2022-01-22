@@ -6,23 +6,83 @@ use async_trait::async_trait;
 use log::debug;
 use multibase::{Base, decode, encode};
 use multihash::Code;
+use openssl::derive::Deriver;
 use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, Private, Public};
+use openssl::pkey::{Id, PKey, Private, Public};
 use openssl::rsa::Padding;
 use openssl::symm::{Cipher, Crypter, Mode};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use crate::bson::Document;
+use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
 
+use crate::bson::Document;
 use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey, ordered_map};
 use crate::formatteur_messages::MessageSerialise;
-use crate::hachages::Hacheur;
+use crate::hachages::{Hacheur, hacher_bytes_vu8};
 use crate::middleware::IsConfigurationPki;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage {
     mgs2,
+}
+
+pub fn deriver_asymetrique_ed25519(public_key: &PKey<Public>) -> Result<([u8; 32], String), Box<dyn Error>> {
+    let cle_peer = PKey::generate_x25519()?;
+    let public_peer = String::from_utf8(cle_peer.public_key_to_pem()?)?;
+
+    // Convertir cle CA publique Ed25519 en X25519
+    let cle_public_x25519 = {
+        let cle_publique_bytes = public_key.raw_public_key()?;
+        let mut cle_public_ref: PublicKey = [0u8; 32];
+        cle_public_ref.clone_from_slice(&cle_publique_bytes[0..32]);
+        let mut cle_publique_x25519: PublicKey = [0u8; 32];
+        crypto_sign_ed25519::crypto_sign_ed25519_pk_to_curve25519(
+            &mut cle_publique_x25519,
+            &cle_public_ref
+        )?;
+        let cle_public_x25519_pkey = PKey::public_key_from_raw_bytes(&cle_publique_x25519, Id::X25519)?;
+
+        cle_public_x25519_pkey
+    };
+
+    let mut deriver = Deriver::new(&cle_peer)?;
+    deriver.set_peer(cle_public_x25519.as_ref())?;
+    let mut cle_secrete = [0u8; 32];
+    deriver.derive(&mut cle_secrete)?;
+
+    // Hacher la cle avec blake2s-256
+    let cle_hachee = hacher_bytes_vu8(&cle_secrete, Some(Code::Blake2s256));
+    cle_secrete.copy_from_slice(&cle_hachee[0..32]); // Override cle secrete avec version hachee
+
+    Ok((cle_secrete, public_peer))
+}
+
+pub fn deriver_asymetrique_ed25519_peer(peer_x25519: &PKey<Public>, ca_key: &PKey<Private>) -> Result<[u8; 32], Box<dyn Error>> {
+
+    // Convertir cle privee en format X25519
+    let cle_privee_ca_pkey = {
+        let cle_privee_ca = ca_key.raw_private_key()?;
+        let mut cle_privee_ca_sk: SecretKey = [0u8; 64];
+        cle_privee_ca_sk[0..32].copy_from_slice(&cle_privee_ca[0..32]);
+        let mut cle_privee_ca_x25519 = [0u8; 32];
+        crypto_sign_ed25519::crypto_sign_ed25519_sk_to_curve25519(
+            &mut cle_privee_ca_x25519,
+            &cle_privee_ca_sk
+        );
+        PKey::private_key_from_raw_bytes(&cle_privee_ca_x25519, Id::X25519)?
+    };
+
+    let mut deriver = Deriver::new(&cle_privee_ca_pkey)?;
+    deriver.set_peer(peer_x25519)?;
+    let mut cle_secrete = [0u8; 32];
+    deriver.derive(&mut cle_secrete)?;
+
+    // Hacher la cle avec blake2s-256
+    let cle_hachee = hacher_bytes_vu8(&cle_secrete, Some(Code::Blake2s256));
+    cle_secrete.copy_from_slice(&cle_hachee[0..32]); // Override cle secrete avec version hachee
+
+    Ok(cle_secrete)
 }
 
 pub fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
