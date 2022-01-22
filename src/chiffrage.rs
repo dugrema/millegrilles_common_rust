@@ -30,7 +30,15 @@ pub enum FormatChiffrage {
     mgs2,
 }
 
+/**
+Derive une cle secrete a partir d'une cle publique. Utiliser avec cle publique du cert CA.
+*/
 pub fn deriver_asymetrique_ed25519(public_key: &PKey<Public>) -> Result<([u8; 32], String), Box<dyn Error>> {
+
+    if public_key.id() != Id::ED25519 {
+        Err(String::from("deriver_asymetrique_ed25519 Mauvais type de cle publique, doit etre ED25519"))?
+    }
+
     let cle_peer = PKey::generate_x25519()?;
     let public_peer = String::from_utf8(cle_peer.public_key_to_pem()?)?;
 
@@ -49,19 +57,9 @@ pub fn deriver_asymetrique_ed25519(public_key: &PKey<Public>) -> Result<([u8; 32
     Ok((cle_secrete, public_peer))
 }
 
-fn convertir_public_ed25519_to_x25519(public_key: &PKey<Public>) -> Result<PKey<Public>, Box<dyn Error>> {
-    let cle_publique_bytes = public_key.raw_public_key()?;
-    let mut cle_public_ref: PublicKey = [0u8; 32];
-    cle_public_ref.clone_from_slice(&cle_publique_bytes[0..32]);
-    let mut cle_publique_x25519: PublicKey = [0u8; 32];
-    crypto_sign_ed25519::crypto_sign_ed25519_pk_to_curve25519(
-        &mut cle_publique_x25519,
-        &cle_public_ref
-    )?;
-
-    Ok(PKey::public_key_from_raw_bytes(&cle_publique_x25519, Id::X25519)?)
-}
-
+/**
+Rederive une cle secrete a partir d'une cle publique et cle privee.
+*/
 pub fn deriver_asymetrique_ed25519_peer(peer_x25519: &PKey<Public>, private_key_in: &PKey<Private>) -> Result<[u8; 32], Box<dyn Error>> {
 
     if peer_x25519.id() != Id::X25519 {
@@ -85,22 +83,6 @@ pub fn deriver_asymetrique_ed25519_peer(peer_x25519: &PKey<Public>, private_key_
     cle_secrete.copy_from_slice(&cle_hachee[0..32]); // Override cle secrete avec version hachee
 
     Ok(cle_secrete)
-}
-
-fn convertir_private_ed25519_to_x25519(ca_key: &PKey<Private>) -> Result<PKey<Private>, Box<dyn Error>> {
-    let cle_privee_ca = ca_key.raw_private_key()?;
-    debug!("Cle privee CA: {:?}", cle_privee_ca);
-    // let cle_publique_ca = ca_key.raw_public_key()?;
-    let mut cle_privee_ca_sk: SecretKey = [0u8; 64];
-    cle_privee_ca_sk[0..32].copy_from_slice(&cle_privee_ca[..]);
-    // cle_privee_ca_sk[32..64].copy_from_slice(&cle_publique_ca[..]);
-    let mut cle_privee_ca_x25519 = [0u8; 32];
-    crypto_sign_ed25519::crypto_sign_ed25519_sk_to_curve25519(
-        &mut cle_privee_ca_x25519,
-        &cle_privee_ca_sk
-    );
-
-    Ok(PKey::private_key_from_raw_bytes(&cle_privee_ca_x25519, Id::X25519)?)
 }
 
 pub fn chiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_publique: &PKey<Public>) -> Result<[u8; 80], Box<dyn Error>> {
@@ -653,6 +635,35 @@ pub fn random_vec(nb_bytes: usize) -> Vec<u8> {
     }
 
     v
+}
+
+fn convertir_public_ed25519_to_x25519(public_key: &PKey<Public>) -> Result<PKey<Public>, Box<dyn Error>> {
+    let cle_publique_bytes = public_key.raw_public_key()?;
+    let mut cle_public_ref: PublicKey = [0u8; 32];
+    cle_public_ref.clone_from_slice(&cle_publique_bytes[0..32]);
+    let mut cle_publique_x25519: PublicKey = [0u8; 32];
+    crypto_sign_ed25519::crypto_sign_ed25519_pk_to_curve25519(
+        &mut cle_publique_x25519,
+        &cle_public_ref
+    )?;
+
+    Ok(PKey::public_key_from_raw_bytes(&cle_publique_x25519, Id::X25519)?)
+}
+
+fn convertir_private_ed25519_to_x25519(ca_key: &PKey<Private>) -> Result<PKey<Private>, Box<dyn Error>> {
+    let cle_privee_ca = ca_key.raw_private_key()?;
+    debug!("Cle privee CA: {:?}", cle_privee_ca);
+    // let cle_publique_ca = ca_key.raw_public_key()?;
+    let mut cle_privee_ca_sk: SecretKey = [0u8; 64];
+    cle_privee_ca_sk[0..32].copy_from_slice(&cle_privee_ca[..]);
+    // cle_privee_ca_sk[32..64].copy_from_slice(&cle_publique_ca[..]);
+    let mut cle_privee_ca_x25519 = [0u8; 32];
+    crypto_sign_ed25519::crypto_sign_ed25519_sk_to_curve25519(
+        &mut cle_privee_ca_x25519,
+        &cle_privee_ca_sk
+    );
+
+    Ok(PKey::private_key_from_raw_bytes(&cle_privee_ca_x25519, Id::X25519)?)
 }
 
 #[cfg(test)]
