@@ -171,7 +171,7 @@ impl DecipherMgs<Mgs2CipherData> for DecipherMgs2 {
         }
     }
 
-    fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
+    fn finalize(mut self, out: &mut [u8]) -> Result<usize, String> {
         match self.decrypter.finalize(out) {
             Ok(s) => Ok(s),
             Err(e) => {

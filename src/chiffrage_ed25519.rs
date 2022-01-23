@@ -113,9 +113,10 @@ pub fn chiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_publique: &PKey<Pub
     Ok(resultat)
 }
 
-pub fn dechiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_privee: &PKey<Private>) -> Result<[u8; 32], Box<dyn Error>> {
+pub fn dechiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_privee: &PKey<Private>) -> Result<CleSecrete, Box<dyn Error>> {
 
-    if cle_secrete.len() != 80 {
+    // Verifier si la cle est 32 bytes (dechiffrage avec cle de millegrille) ou 80 bytes (standard)
+    if cle_secrete.len() != 32 && cle_secrete.len() != 80 {
         Err(String::from("dechiffrer_asymmetrique_ed25519 Mauvaise taille de cle secrete, doit etre 80 bytes"))?
     }
     if cle_privee.id() != Id::ED25519 {
@@ -125,26 +126,32 @@ pub fn dechiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_privee: &PKey<Pri
     // let cle_privee_x25519 = convertir_private_ed25519_to_x25519(cle_privee)?;
     let cle_peer_public_raw = &cle_secrete[0..32];
     let cle_peer_intermediaire = PKey::public_key_from_raw_bytes(cle_peer_public_raw, Id::X25519)?;
-    let cle_secrete_chiffree_tag = &cle_secrete[32..80];
-
-    // Trouver cle secrete de dechiffrage de la cle privee
-    let cle_secrete_intermediaire = deriver_asymetrique_ed25519_peer(&cle_peer_intermediaire, &cle_privee)?;
-
     debug!("Cle peer public : {:?}", cle_peer_public_raw);
 
-    // Utiliser chacha20poly1305 pour dechiffrer la cle secrete
-    let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
 
-    // Note : on utilise la cle publique du peer (valeur random) comme nonce pour le chiffrage
-    let cle_secrete_dechiffree = match aead.decrypt(cle_peer_public_raw[0..12].into(), cle_secrete_chiffree_tag.as_ref()) {
-        Ok(m) => m,
-        Err(e) => Err(format!("millegrilles_common chiffrer_asymmetrique_ed25519 encrypt error {:?}", e))?
+    let mut cle_secrete_dechiffree = if cle_secrete.len() == 32 {
+        deriver_asymetrique_ed25519_peer(&cle_peer_intermediaire, cle_privee)?
+    } else {
+        // Dechiffage de la cle secrete avec ChaCha20Poly1305
+        let cle_secrete_chiffree_tag = &cle_secrete[32..80];
+        // Trouver cle secrete de dechiffrage de la cle privee
+        let cle_secrete_intermediaire = deriver_asymetrique_ed25519_peer(&cle_peer_intermediaire, &cle_privee)?;
+        // Utiliser chacha20poly1305 pour dechiffrer la cle secrete
+        let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
+        // Note : on utilise la cle publique du peer (valeur random) comme nonce pour le chiffrage
+
+        match aead.decrypt(cle_peer_public_raw[0..12].into(), cle_secrete_chiffree_tag.as_ref()) {
+            Ok(m) => {
+                let mut cle_secrete_dechiffree = CleSecrete([0u8; 32]);
+                cle_secrete_dechiffree.0.copy_from_slice(&m[..]);
+
+                cle_secrete_dechiffree
+            },
+            Err(e) => Err(format!("millegrilles_common chiffrer_asymmetrique_ed25519 encrypt error {:?}", e))?
+        }
     };
 
-    let mut resultat = [0u8; 32];
-    resultat.copy_from_slice(&cle_secrete_dechiffree[..]);
-
-    Ok(resultat)
+    Ok(cle_secrete_dechiffree)
 }
 
 fn convertir_public_ed25519_to_x25519(public_key: &PKey<Public>) -> Result<PKey<Public>, Box<dyn Error>> {
@@ -221,9 +228,9 @@ mod test {
 
         // Tenter de dechiffrer la cle secrete avec la cle privee
         let cle_dechiffree = dechiffrer_asymmetrique_ed25519(&cle_chiffree[..], &cle_ed25519)?;
-        debug!("Cle dechiffree: {:?}", cle_dechiffree);
+        debug!("Cle dechiffree: {:?}", cle_dechiffree.0);
 
-        assert_eq!(cle_secrete, cle_dechiffree);
+        assert_eq!(cle_secrete, cle_dechiffree.0);
         debug!("Cle secrete dechiffree OK");
 
         Ok(())

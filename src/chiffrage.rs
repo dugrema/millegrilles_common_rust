@@ -107,7 +107,7 @@ pub trait CipherMgs<K: MgsCipherKeys> {
 
 pub trait DecipherMgs<M: MgsCipherData> {
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>;
-    fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String>;
+    fn finalize(self, out: &mut [u8]) -> Result<usize, String>;
 }
 
 /// Permet de recuperer un Cipher deja initalise avec les certificats de MaitreDesCles.
