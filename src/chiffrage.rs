@@ -101,8 +101,8 @@ pub trait MgsCipherKeys {
 
 pub trait CipherMgs<K: MgsCipherKeys> {
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>;
-    fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String>;
-    fn get_cipher_keys(&self) -> Result<K, String>;
+    fn finalize(self, out: &mut [u8]) -> Result<(usize, K), String>;
+    // fn get_cipher_keys(&self) -> Result<K, String>;
 }
 
 pub trait DecipherMgs<M: MgsCipherData> {

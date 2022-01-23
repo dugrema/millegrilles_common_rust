@@ -69,7 +69,6 @@ impl CipherMgs2 {
             tag: None,
         })
     }
-
 }
 
 impl CipherMgs<Mgs2CipherKeys> for CipherMgs2 {
@@ -84,7 +83,7 @@ impl CipherMgs<Mgs2CipherKeys> for CipherMgs2 {
         }
     }
 
-    fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String> {
+    fn finalize(mut self, out: &mut [u8]) -> Result<(usize, Mgs2CipherKeys), String> {
 
         if self.tag.is_some() {
             Err("Deja finalise")?;
@@ -96,7 +95,6 @@ impl CipherMgs<Mgs2CipherKeys> for CipherMgs2 {
 
                 // Calculer et conserver hachage
                 let hachage_bytes = self.hacheur.finalize();
-                self.hachage_bytes = Some(hachage_bytes);
 
                 // Conserver le compute tag
                 let mut tag = [0u8; 16];
@@ -104,35 +102,19 @@ impl CipherMgs<Mgs2CipherKeys> for CipherMgs2 {
                     Ok(()) => Ok(encode(Base::Base64, &tag)),
                     Err(e) => Err(format!("Erreur tag : {:?}", e)),
                 }?;
-                self.tag = Some(tag_b64);
 
-                Ok(s)
+                let mut cipher_keys = Mgs2CipherKeys::new(
+                    self.cles_chiffrees.clone(),
+                    self.iv.clone(),
+                    tag_b64,
+                    hachage_bytes,
+                );
+                cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
+
+                Ok((s, cipher_keys))
             },
             Err(e) => Err(format!("Erreur update : {:?}", e)),
         }
-    }
-
-    fn get_cipher_keys(&self) -> Result<Mgs2CipherKeys, String> {
-
-        let hachage_bytes = match &self.hachage_bytes {
-            Some(t) => Ok(t.to_owned()),
-            None => Err(String::from("Hachage_bytes pas encore calcule")),
-        }?;
-
-        let tag = match &self.tag {
-            Some(t) => Ok(t.to_owned()),
-            None => Err(String::from("Tag pas encore calcule")),
-        }?;
-
-        let mut cipher_keys = Mgs2CipherKeys::new(
-            self.cles_chiffrees.clone(),
-            self.iv.clone(),
-            tag,
-            hachage_bytes,
-        );
-        cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
-
-        Ok(cipher_keys)
     }
 
 }
@@ -353,13 +335,16 @@ mod chiffrage_tests {
     use openssl::pkey::{PKey, Private, Public};
     use openssl::rsa::Rsa;
     use openssl::x509::X509;
+    use crate::test_setup::setup;
 
     use super::*;
 
-    const PATH_CLE: &str = "/home/mathieu/mgdev/certs/pki.domaines.key";
-    const PATH_CERT: &str = "/home/mathieu/mgdev/certs/pki.domaines.cert";
+    const PATH_CLE: &str = "/home/mathieu/mgdev/certs/pki.web.key";
+    const PATH_CERT: &str = "/home/mathieu/mgdev/certs/pki.web.cert";
 
     fn charger_cles() -> (PKey<Public>, PKey<Private>) {
+        setup("charger_cles");
+
         // Cle privee
         let pem_cle = read_to_string(PathBuf::from(PATH_CLE)).unwrap();
         let cle_privee = Rsa::private_key_from_pem(pem_cle.as_bytes()).unwrap();
@@ -376,18 +361,20 @@ mod chiffrage_tests {
 
     #[test]
     fn chiffrage_asymetrique() {
+        setup("chiffrage_asymetrique");
+
         // Cles
         let (cle_publique, cle_privee) = charger_cles();
 
         let mut buffer_random = [0u8; 32];
         openssl::rand::rand_bytes(&mut buffer_random).expect("rand");
-        // println!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
+        debug!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
 
         let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random).expect("chiffrer");
-        // println!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
+        debug!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
 
         let buffer_dechiffre = dechiffrer_asymetrique(&cle_privee, &ciphertext).expect("dechiffrer");
-        // println!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
+        debug!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
 
         assert_eq!(buffer_random, buffer_dechiffre.as_slice());
     }
@@ -400,27 +387,21 @@ mod chiffrage_tests {
         let mut cipher = CipherMgs2::new(&fp_cles).expect("cipher");
 
         // Chiffrer
-        // println!("Crypter avec info\niv: {}\ncle chiffree: {}", cipher.iv, cipher.cle_chiffree);
+        debug!("Crypter avec info\niv: {}\ncle chiffree: {:?}", cipher.iv, cipher.cles_chiffrees);
         let input = b"Data en input";
         let mut output = [0u8; 13];
 
         let len_output = cipher.update(input, &mut output).expect("output");
         assert_eq!(len_output, input.len());
 
-        let _ = cipher.finalize(&mut output).expect("finalize");
-        let tag = cipher.tag.as_ref().expect("tag").to_owned();
+        let (_outlen, cipher_keys) = cipher.finalize(&mut output).expect("finalize");
+        let tag = cipher_keys.tag.clone();
         assert_eq!(tag.len(), 23);
 
-        // println!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
+        debug!("Output tag: {}\nCiphertext: {}", tag, encode(Base::Base64, output));
 
         // Dechiffrer
-        let cipher_keys = cipher.get_cipher_keys().expect("keys");
         let mut cipher_data = cipher_keys.get_cipher_data("dummy").expect("cle dummy");
-        // let mut cipher_data = Mgs2CipherData::new(
-        //     &cipher.cle_chiffree,
-        //     &cipher.iv,
-        //     &tag,
-        // ).expect("cipher_data");
         cipher_data.dechiffrer_cle(&cle_privee).expect("Dechiffrer cle");
         let mut dechiffreur = DecipherMgs2::new(&cipher_data).expect("dechiffreur");
 
@@ -429,8 +410,8 @@ mod chiffrage_tests {
         assert_eq!(&dechiffrer_out, input);
 
         let vec_out = dechiffrer_out.to_vec();
-        let _ = String::from_utf8(vec_out).expect("str out");
-        // println!("Contenu dechiffre : {:?} (len {})", dechiffre_str, len_decipher);
+        let str_out = String::from_utf8(vec_out).expect("str out");
+        debug!("Contenu dechiffre : {:?} (len {})", str_out, str_out.len());
 
     }
 
