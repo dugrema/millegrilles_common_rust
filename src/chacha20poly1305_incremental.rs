@@ -10,7 +10,6 @@ use aead::{
     consts::{U0, U12, U16, U24, U32},
     generic_array::{ArrayLength, GenericArray},
     AeadCore, AeadInPlace, Error, NewAead,
-    AeadMut,
 };
 
 use ::cipher::{NewCipher, StreamCipher, StreamCipherSeek};

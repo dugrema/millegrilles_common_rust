@@ -10,7 +10,7 @@ use tokio::spawn;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 
-use crate::backup::{backup, regenerer_operation, reset_backup_flag, restaurer};
+use crate::backup::{regenerer_operation, reset_backup_flag, restaurer};
 use crate::certificats::ValidateurX509;
 use crate::certificats::VerificateurPermissions;
 use crate::constantes::*;

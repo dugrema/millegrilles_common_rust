@@ -1,29 +1,14 @@
-use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::{Debug, Formatter};
 
-use aead::{NewAead, AeadMut, Payload};
-use async_trait::async_trait;
+use aead::{NewAead, AeadMut};
 use log::debug;
-use multibase::{Base, decode, encode};
 use multihash::Code;
 use openssl::derive::Deriver;
-use openssl::encrypt::{Decrypter, Encrypter};
-use openssl::hash::MessageDigest;
 use openssl::pkey::{Id, PKey, Private, Public};
-use openssl::rsa::Padding;
-use openssl::symm::{Cipher, Crypter, Mode};
-use rand::Rng;
-use serde::{Deserialize, Serialize};
 use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
-use x509_parser::nom::Parser;
 
-use crate::bson::Document;
-use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey, ordered_map};
 use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
-use crate::formatteur_messages::MessageSerialise;
-use crate::hachages::{Hacheur, hacher_bytes_vu8};
-use crate::middleware::IsConfigurationPki;
+use crate::hachages::hacher_bytes_vu8;
 
 /**
 Derive une cle secrete a partir d'une cle publique. Utiliser avec cle publique du cert CA.
@@ -171,4 +156,59 @@ fn convertir_private_ed25519_to_x25519(ca_key: &PKey<Private>) -> Result<PKey<Pr
     );
 
     Ok(PKey::private_key_from_raw_bytes(&cle_privee_ca_x25519, Id::X25519)?)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::test_setup::setup;
+
+    #[test]
+    fn test_chiffrage_asymmetrique() -> Result<(), Box<dyn Error>> {
+        setup("test_chiffrage_asymmetrique");
+        debug!("Chiffrer cle secrete");
+
+        // Creer ensemble de cles
+        let cle_ca = PKey::generate_ed25519()?;
+        let cle_ca_public = PKey::public_key_from_raw_bytes(&cle_ca.raw_public_key()?[..], Id::ED25519)?;
+
+        // Chiffrer cle secrete
+        let (cle_secrete, peer) = deriver_asymetrique_ed25519(&cle_ca_public)?;
+        debug!("Cle secrete recue: {:?}\nPeer:\n{}", cle_secrete, peer);
+
+        // Recalculer avec cle publique peer et cle privee ca
+        let peer_x25519 = PKey::public_key_from_pem(peer.as_bytes())?;
+        debug!("Peer x25519 lu : {:?}", peer_x25519);
+        let cle_secrete_rederivee = deriver_asymetrique_ed25519_peer(&peer_x25519, &cle_ca)?;
+        debug!("Cle secrete rederivee: {:?}", cle_secrete_rederivee);
+
+        assert_eq!(cle_secrete, cle_secrete_rederivee);
+        debug!{"Cle secretes match OK!"};
+
+        Ok(())
+    }
+
+    #[test]
+    fn chiffrer_cle_secrete() -> Result<(), Box<dyn Error>> {
+
+        // Generer une cle publique pour chiffrer
+        let cle_ed25519 = PKey::generate_ed25519()?;
+        let cle_ed25519_publique = PKey::public_key_from_raw_bytes(
+            &cle_ed25519.raw_public_key()?, Id::ED25519)?;
+
+        // Generer une cle secrete de 32 bytes
+        let cle_secrete = [4u8; 32];  // Cle secrete, val 0x04 sur 32 bytes
+
+        let cle_chiffree = chiffrer_asymmetrique_ed25519(&cle_secrete, &cle_ed25519_publique)?;
+        debug!("Cle chiffree: {:?}", cle_chiffree);
+
+        // Tenter de dechiffrer la cle secrete avec la cle privee
+        let cle_dechiffree = dechiffrer_asymmetrique_ed25519(&cle_chiffree[..], &cle_ed25519)?;
+        debug!("Cle dechiffree: {:?}", cle_dechiffree);
+
+        assert_eq!(cle_secrete, cle_dechiffree);
+        debug!("Cle secrete dechiffree OK");
+
+        Ok(())
+    }
 }

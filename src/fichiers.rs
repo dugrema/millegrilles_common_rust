@@ -487,20 +487,20 @@ pub mod fichiers_tests {
         pub public_keys: Vec<FingerprintCertPublicKey>,
     }
 
-    #[async_trait]
-    impl Chiffreur<CipherMgs2, Mgs2CipherKeys> for ChiffreurDummy {
-        fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-            self.public_keys.clone()
-        }
-
-        async fn charger_certificats_chiffrage(&self, _cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
-            todo!()
-        }
-
-        async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>> {
-            todo!()
-        }
-    }
+    // #[async_trait]
+    // impl Chiffreur<CipherMgs2, Mgs2CipherKeys> for ChiffreurDummy {
+    //     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+    //         self.public_keys.clone()
+    //     }
+    //
+    //     async fn charger_certificats_chiffrage(&self, _cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
+    //         todo!()
+    //     }
+    //
+    //     async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>> {
+    //         todo!()
+    //     }
+    // }
 
     #[tokio::test]
     async fn ecrire_bytes_writer() {
@@ -528,35 +528,35 @@ pub mod fichiers_tests {
         debug!("Resultat decompresse : {}", resultat_str);
     }
 
-    #[tokio::test]
-    async fn ecrire_bytes_chiffres_writer() {
-        setup("ecrire_bytes_chiffres_writer");
-
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-
-        let fp_certs = vec!(FingerprintCertPublicKey::new(
-            String::from("dummy"),
-            enveloppe.certificat().public_key().clone().expect("cle"),
-            true
-        ));
-
-        let path_fichier = PathBuf::from("/tmp/fichier_tests.2.xz.mgs2");
-        let chiffreur = ChiffreurDummy {public_keys: fp_certs};
-        let mut writer = FichierWriter::new(path_fichier.as_path(), Some(&chiffreur)).await.expect("writer");
-        writer.write(BYTES_TEST).await.expect("write");
-        let (mh, cipher_keys) = writer.fermer().await.expect("finish");
-
-        assert_ne!(HASH_FICHIER_TEST, mh.as_str());
-        debug!("cipher_keys : {:?}", cipher_keys);
-
-        let mut id_docs: HashMap<String, String> = HashMap::new();
-        id_docs.insert(String::from("dummy_id"), String::from("dummy_valeur"));
-        let commande_cles = cipher_keys
-            .expect("cles")
-            .get_commande_sauvegarder_cles("dummy", None, id_docs);
-
-        debug!("Commande cles : {:?}", commande_cles);
-    }
+    // #[tokio::test]
+    // async fn ecrire_bytes_chiffres_writer() {
+    //     setup("ecrire_bytes_chiffres_writer");
+    //
+    //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
+    //
+    //     let fp_certs = vec!(FingerprintCertPublicKey::new(
+    //         String::from("dummy"),
+    //         enveloppe.certificat().public_key().clone().expect("cle"),
+    //         true
+    //     ));
+    //
+    //     let path_fichier = PathBuf::from("/tmp/fichier_tests.2.xz.mgs2");
+    //     let chiffreur = ChiffreurDummy {public_keys: fp_certs};
+    //     let mut writer = FichierWriter::new(path_fichier.as_path(), Some(&chiffreur)).await.expect("writer");
+    //     writer.write(BYTES_TEST).await.expect("write");
+    //     let (mh, cipher_keys) = writer.fermer().await.expect("finish");
+    //
+    //     assert_ne!(HASH_FICHIER_TEST, mh.as_str());
+    //     debug!("cipher_keys : {:?}", cipher_keys);
+    //
+    //     let mut id_docs: HashMap<String, String> = HashMap::new();
+    //     id_docs.insert(String::from("dummy_id"), String::from("dummy_valeur"));
+    //     let commande_cles = cipher_keys
+    //         .expect("cles")
+    //         .get_commande_sauvegarder_cles("dummy", None, id_docs);
+    //
+    //     debug!("Commande cles : {:?}", commande_cles);
+    // }
 
     // #[tokio::test]
     // async fn tar_parse() {

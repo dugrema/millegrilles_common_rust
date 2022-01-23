@@ -21,7 +21,7 @@ use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, Configuratio
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, ReponseDechiffrageCle, ReponseCertificatMaitredescles};
+use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, ReponseDechiffrageCle};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, task_requetes_certificats, TypeMessage};

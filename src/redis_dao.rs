@@ -1,6 +1,6 @@
 use std::error::Error;
 use {redis::Client};
-use log::{debug, error, info, warn};
+use log::{debug, info};
 use crate::certificats::EnveloppeCertificat;
 
 const TTL_CERTIFICAT: i32 = 48 * 60 * 60;  // 48 heures en secondes

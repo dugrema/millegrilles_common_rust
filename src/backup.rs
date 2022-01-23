@@ -2134,47 +2134,47 @@ mod backup_tests {
         assert_eq!(mh.as_str(), &mh_reference);
     }
 
-    #[tokio::test]
-    async fn chiffrer_roundtrip_backup() {
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-
-        let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz.mgs2");
-        let fp_certs = vec!(FingerprintCertPublicKey::new(
-            String::from("dummy"),
-            enveloppe.certificat().public_key().clone().expect("cle"),
-            true
-        ));
-
-        let chiffreur_dummy = ChiffreurDummy {public_keys: fp_certs};
-
-        let mut writer = TransactionWriter::new(
-            path_fichier.as_path(),
-            Some(&chiffreur_dummy)
-        ).await.expect("writer");
-
-        let (mh_reference, doc_bson) = get_doc_reference();
-        writer.write_bson_line(&doc_bson).await.expect("write chiffre");
-        let (mh, mut decipher_data_option) = writer.fermer().await.expect("fermer");
-
-        let decipher_keys = decipher_data_option.expect("decipher data");
-        let mut decipher_key = decipher_keys.get_cipher_data("dummy").expect("cle");
-
-        // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
-        assert_ne!(mh.as_str(), &mh_reference);
-
-        decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
-
-        let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
-        let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
-        let transactions = reader.read_transactions().await.expect("transactions");
-
-        for t in transactions {
-            // debug!("Transaction dechiffree : {:?}", t);
-            let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
-            assert_eq!(valeur_chiffre, 5678);
-        }
-
-    }
+    // #[tokio::test]
+    // async fn chiffrer_roundtrip_backup() {
+    //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
+    //
+    //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz.mgs2");
+    //     let fp_certs = vec!(FingerprintCertPublicKey::new(
+    //         String::from("dummy"),
+    //         enveloppe.certificat().public_key().clone().expect("cle"),
+    //         true
+    //     ));
+    //
+    //     let chiffreur_dummy = ChiffreurDummy {public_keys: fp_certs};
+    //
+    //     let mut writer = TransactionWriter::new(
+    //         path_fichier.as_path(),
+    //         Some(&chiffreur_dummy)
+    //     ).await.expect("writer");
+    //
+    //     let (mh_reference, doc_bson) = get_doc_reference();
+    //     writer.write_bson_line(&doc_bson).await.expect("write chiffre");
+    //     let (mh, mut decipher_data_option) = writer.fermer().await.expect("fermer");
+    //
+    //     let decipher_keys = decipher_data_option.expect("decipher data");
+    //     let mut decipher_key = decipher_keys.get_cipher_data("dummy").expect("cle");
+    //
+    //     // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
+    //     assert_ne!(mh.as_str(), &mh_reference);
+    //
+    //     decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
+    //
+    //     let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
+    //     let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
+    //     let transactions = reader.read_transactions().await.expect("transactions");
+    //
+    //     for t in transactions {
+    //         // debug!("Transaction dechiffree : {:?}", t);
+    //         let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
+    //         assert_eq!(valeur_chiffre, 5678);
+    //     }
+    //
+    // }
 
     #[tokio::test]
     async fn processeur_fichier_backup_catalogue() {

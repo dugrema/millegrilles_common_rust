@@ -2,29 +2,15 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
 
-use aead::{NewAead, AeadMut, Payload};
-use async_trait::async_trait;
 use log::debug;
 use multibase::{Base, decode, encode};
 use multihash::Code;
-use openssl::derive::Deriver;
-use openssl::encrypt::{Decrypter, Encrypter};
-use openssl::hash::MessageDigest;
-use openssl::pkey::{Id, PKey, Private, Public};
-use openssl::rsa::Padding;
+use openssl::pkey::{PKey, Private};
 use openssl::symm::{Cipher, Crypter, Mode};
-use rand::Rng;
-use serde::{Deserialize, Serialize};
-use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
-use x509_parser::nom::Parser;
 
-use crate::bson::Document;
-use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey, ordered_map};
-use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
+use crate::certificats::FingerprintCertPublicKey;
 use crate::chiffrage::{CipherMsg, CommandeSauvegarderCle, DecipherMsg, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
-use crate::formatteur_messages::MessageSerialise;
-use crate::hachages::{Hacheur, hacher_bytes_vu8};
-use crate::middleware::IsConfigurationPki;
+use crate::hachages::Hacheur;
 use crate::chiffrage_rsa::*;
 
 pub struct CipherMgs2 {
@@ -361,7 +347,6 @@ impl Debug for Mgs2CipherData {
 
 #[cfg(test)]
 mod chiffrage_tests {
-    use std::error::Error;
     use std::fs::read_to_string;
     use std::path::PathBuf;
 

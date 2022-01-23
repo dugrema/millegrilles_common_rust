@@ -63,5 +63,5 @@ tokio-amqp = { version = "1.0.0" }
 
 redis = { version = "0.21.3", features = ["tokio-comp"] }
 
-[dev-dependencies]
-aead = { version = "0.4", features = ["dev"], default-features = false }
+#[dev-dependencies]
+#aead = { version = "0.4", features = ["dev"], default-features = false }
