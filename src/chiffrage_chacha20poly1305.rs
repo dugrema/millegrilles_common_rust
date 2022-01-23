@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fmt::{Debug, Formatter};
 
 use aead::{NewAead, AeadMut, Payload};
+use log::debug;
 use multibase::{Base, decode, encode};
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
@@ -303,7 +304,10 @@ mod test {
         });
 
         let cipher = CipherMgs3::new(&fpkeys)?;
+        debug!("Nouveau cipher info : iv = {:?}\nCles chiffrees: {:?}", cipher.iv, cipher.cles_chiffrees);
 
+        let (out_len, info_keys) = cipher.finalize(&mut [0u8])?;
+        debug!("Output keys : {:?}", info_keys);
 
         Ok(())
     }
