@@ -97,8 +97,9 @@ pub fn chiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_publique: &PKey<Pub
     // Utiliser chacha20poly1305 pour dechiffrer la cle secrete
     let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
 
-    // Note : on utilise la cle publique du peer (valeur random) comme nonce pour le chiffrage
-    let cle_secrete_chiffree_tag = match aead.encrypt(cle_peer_public_raw[0..12].into(), cle_secrete.as_ref()) {
+    // Note : on utilise la cle publique du peer (valeur random) hachee en blake2s comme nonce (12 bytes) pour le chiffrage
+    let nonce = hacher_bytes_vu8(&cle_peer_public_raw[..], Some(Code::Blake2s256));
+    let cle_secrete_chiffree_tag = match aead.encrypt(nonce[0..12].into(), cle_secrete.as_ref()) {
         Ok(m) => m,
         Err(e) => Err(format!("millegrilles_common chiffrer_asymmetrique_ed25519 encrypt error {:?}", e))?
     };
@@ -140,7 +141,8 @@ pub fn dechiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_privee: &PKey<Pri
         let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
         // Note : on utilise la cle publique du peer (valeur random) comme nonce pour le chiffrage
 
-        match aead.decrypt(cle_peer_public_raw[0..12].into(), cle_secrete_chiffree_tag.as_ref()) {
+        let nonce = hacher_bytes_vu8(&cle_peer_public_raw[..], Some(Code::Blake2s256));
+        match aead.decrypt(nonce[0..12].into(), cle_secrete_chiffree_tag.as_ref()) {
             Ok(m) => {
                 let mut cle_secrete_dechiffree = CleSecrete([0u8; 32]);
                 cle_secrete_dechiffree.0.copy_from_slice(&m[..]);
