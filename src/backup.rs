@@ -25,7 +25,7 @@ use uuid::Uuid;
 use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{Chiffreur, CommandeSauvegarderCle, Dechiffreur, DecipherMsg, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage::{Chiffreur, CommandeSauvegarderCle, Dechiffreur, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_aesgcm::{CipherMgs2, DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;

@@ -13,7 +13,7 @@ use tokio_stream::StreamExt;
 use xz2::stream;
 
 use crate::certificats::ValidateurX509;
-use crate::chiffrage::{Chiffreur, CipherMsg, Dechiffreur, MgsCipherKeys};
+use crate::chiffrage::{Chiffreur, CipherMgs, Dechiffreur, MgsCipherKeys};
 use crate::chiffrage_aesgcm::{DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
@@ -24,7 +24,7 @@ const PRESET_COMPRESSION_XZ: u32 = 6;
 const BUFFER_SIZE: usize = 64 * 1024;
 
 pub struct FichierWriter<'a, K, M>
-    where M: CipherMsg<K>,
+    where M: CipherMgs<K>,
           K: MgsCipherKeys
 {
     path_fichier: &'a Path,
@@ -35,7 +35,7 @@ pub struct FichierWriter<'a, K, M>
     _keys: PhantomData<K>,
 }
 
-impl<'a, K: MgsCipherKeys, M: CipherMsg<K>> FichierWriter<'a, K, M> {
+impl<'a, K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<'a, K, M> {
 
     pub async fn new<C>(path_fichier: &'a Path, chiffreur: Option<&C>) -> Result<FichierWriter<'a, K, M>, Box<dyn Error>>
     where

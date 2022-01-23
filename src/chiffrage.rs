@@ -42,10 +42,6 @@ pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key:
     Ok(multibase::encode(Base::Base64, cle_rechiffree.as_slice()))
 }
 
-trait CipherMillegrille {
-
-}
-
 // Structure qui conserve une cle chiffree pour un fingerprint de certificat
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FingerprintCleChiffree {
@@ -97,42 +93,37 @@ pub trait MgsCipherKeys {
     fn get_cle_millegrille(&self) -> Option<String>;
 }
 
-pub trait CipherMsg<K: MgsCipherKeys> {
+pub trait CipherMgs<K: MgsCipherKeys> {
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>;
     fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String>;
     fn get_cipher_keys(&self) -> Result<K, String>;
 }
 
-pub trait DecipherMsg<M: MgsCipherData> {
+pub trait DecipherMgs<M: MgsCipherData> {
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String>;
     fn finalize(&mut self, out: &mut [u8]) -> Result<usize, String>;
 }
 
 /// Permet de recuperer un Cipher deja initalise avec les certificats de MaitreDesCles.
 #[async_trait]
-pub trait Chiffreur<C: CipherMsg<K>, K: MgsCipherKeys> {
+pub trait Chiffreur<C: CipherMgs<K>, K: MgsCipherKeys> {
     /// Retourne les certificats qui peuvent etre utilises pour chiffrer une cle secrete.
     /// Devrait inclure le certificat de MilleGrille avec flag est_cle_millegrille==true.
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey>;
 
     /// Recupere un cipher initialise avec les cles publiques
     fn get_cipher(&self) -> Result<C, Box<dyn Error>>;
-    // {
-    //     let fp_public_keys = self.get_publickeys_chiffrage();
-    //     Ok(C::new(&fp_public_keys)?)
-    // }
 
     /// Recycle les certificats de chiffrage - fait une requete pour obtenir les certs courants
     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>>;
 
     /// Recoit un certificat de chiffrage
     async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>>;
-
 }
 
 /// Permet de recuperer un Decipher deja initialise pour une cle
 #[async_trait]
-pub trait Dechiffreur<D: DecipherMsg<M>, M: MgsCipherData>: IsConfigurationPki + Send + Sync {
+pub trait Dechiffreur<D: DecipherMgs<M>, M: MgsCipherData>: IsConfigurationPki + Send + Sync {
     /// Appel au MaitreDesCles pour une version dechiffrable de la cle
     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<M, Box<dyn Error>>;
 
@@ -141,14 +132,6 @@ pub trait Dechiffreur<D: DecipherMsg<M>, M: MgsCipherData>: IsConfigurationPki +
 
     /// Retourne une instance de Decipher pleinement initialisee et prete a dechiffrer
     async fn get_decipher(&self, hachage_bytes: &str) -> Result<D, Box<dyn Error>>;
-    // {
-    //     let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
-    //     let env_privee = self.get_enveloppe_privee();
-    //     let cle_privee = env_privee.cle_privee();
-    //     info_cle.dechiffrer_cle(cle_privee)?;
-    //
-    //     Ok(D::new(&info_cle)?)
-    // }
 }
 
 /// Genere un Vec de nb_bytes aleatoires.

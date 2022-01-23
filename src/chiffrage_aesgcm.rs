@@ -9,7 +9,7 @@ use openssl::pkey::{PKey, Private};
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use crate::certificats::FingerprintCertPublicKey;
-use crate::chiffrage::{CipherMsg, CommandeSauvegarderCle, DecipherMsg, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage::{CipherMgs, CommandeSauvegarderCle, DecipherMgs, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::hachages::Hacheur;
 use crate::chiffrage_rsa::*;
 
@@ -72,7 +72,7 @@ impl CipherMgs2 {
 
 }
 
-impl CipherMsg<Mgs2CipherKeys> for CipherMgs2 {
+impl CipherMgs<Mgs2CipherKeys> for CipherMgs2 {
 
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String> {
         match self.encrypter.update(data, out) {
@@ -180,7 +180,7 @@ impl DecipherMgs2 {
 
 }
 
-impl DecipherMsg<Mgs2CipherData> for DecipherMgs2 {
+impl DecipherMgs<Mgs2CipherData> for DecipherMgs2 {
 
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String> {
         match self.decrypter.update(data, out) {
