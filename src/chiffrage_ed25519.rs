@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::fmt::{Debug, Formatter};
 
 use aead::{NewAead, AeadMut};
 use log::debug;
@@ -6,21 +7,43 @@ use multihash::Code;
 use openssl::derive::Deriver;
 use openssl::pkey::{Id, PKey, Private, Public};
 use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
+use zeroize::Zeroize;
 
 use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
 use crate::hachages::hacher_bytes_vu8;
 
+pub struct CleDerivee {
+    pub secret: CleSecrete,
+    pub public_peer: [u8; 32],
+}
+
+impl Debug for CleDerivee {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("Secret : [hidden], Public peer : {:?}", self.public_peer).as_str())
+    }
+}
+
+/// Struct qui efface la cle secrete en memoire sur drop
+#[derive(Zeroize)]
+#[zeroize(drop)]
+pub struct CleSecrete([u8; 32]);
+
 /**
 Derive une cle secrete a partir d'une cle publique. Utiliser avec cle publique du cert CA.
+Retourne : (secret key, public peer)
 */
-pub fn deriver_asymetrique_ed25519(public_key: &PKey<Public>) -> Result<([u8; 32], String), Box<dyn Error>> {
+pub fn deriver_asymetrique_ed25519(public_key: &PKey<Public>) -> Result<CleDerivee, Box<dyn Error>> {
 
     if public_key.id() != Id::ED25519 {
         Err(String::from("deriver_asymetrique_ed25519 Mauvais type de cle publique, doit etre ED25519"))?
     }
 
     let cle_peer = PKey::generate_x25519()?;
-    let public_peer = String::from_utf8(cle_peer.public_key_to_pem()?)?;
+    let public_peer = {
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&cle_peer.raw_public_key()?[..]);
+        pk
+    };
 
     // Convertir cle CA publique Ed25519 en X25519
     let cle_public_x25519 = convertir_public_ed25519_to_x25519(public_key)?;
@@ -34,13 +57,13 @@ pub fn deriver_asymetrique_ed25519(public_key: &PKey<Public>) -> Result<([u8; 32
     let cle_hachee = hacher_bytes_vu8(&cle_secrete, Some(Code::Blake2s256));
     cle_secrete.copy_from_slice(&cle_hachee[0..32]); // Override cle secrete avec version hachee
 
-    Ok((cle_secrete, public_peer))
+    Ok(CleDerivee {secret: CleSecrete(cle_secrete), public_peer})
 }
 
 /**
 Rederive une cle secrete a partir d'une cle publique et cle privee.
 */
-pub fn deriver_asymetrique_ed25519_peer(peer_x25519: &PKey<Public>, private_key_in: &PKey<Private>) -> Result<[u8; 32], Box<dyn Error>> {
+pub fn deriver_asymetrique_ed25519_peer(peer_x25519: &PKey<Public>, private_key_in: &PKey<Private>) -> Result<CleSecrete, Box<dyn Error>> {
 
     if peer_x25519.id() != Id::X25519 {
         Err(String::from("deriver_asymetrique_ed25519_peer Mauvais type de cle publique, doit etre X25519"))?
@@ -62,7 +85,7 @@ pub fn deriver_asymetrique_ed25519_peer(peer_x25519: &PKey<Public>, private_key_
     let cle_hachee = hacher_bytes_vu8(&cle_secrete, Some(Code::Blake2s256));
     cle_secrete.copy_from_slice(&cle_hachee[0..32]); // Override cle secrete avec version hachee
 
-    Ok(cle_secrete)
+    Ok(CleSecrete(cle_secrete))
 }
 
 pub fn chiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_publique: &PKey<Public>) -> Result<[u8; 80], Box<dyn Error>> {
@@ -74,10 +97,10 @@ pub fn chiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_publique: &PKey<Pub
     // Trouver cle secrete de dechiffrage de la cle privee
     let cle_secrete_intermediaire = deriver_asymetrique_ed25519_peer(&cle_publique_x25519, &cle_peer)?;
 
-    debug!("Cle secrete intermediaire : {:?} \nCle peer public : {:?}", cle_secrete_intermediaire, cle_peer_public_raw);
+    debug!("Cle peer public : {:?}", cle_peer_public_raw);
 
     // Utiliser chacha20poly1305 pour dechiffrer la cle secrete
-    let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire[..].into());
+    let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
 
     // Note : on utilise la cle publique du peer (valeur random) comme nonce pour le chiffrage
     let cle_secrete_chiffree_tag = match aead.encrypt(cle_peer_public_raw[0..12].into(), cle_secrete.as_ref()) {
@@ -112,10 +135,10 @@ pub fn dechiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_privee: &PKey<Pri
     // Trouver cle secrete de dechiffrage de la cle privee
     let cle_secrete_intermediaire = deriver_asymetrique_ed25519_peer(&cle_peer_intermediaire, &cle_privee)?;
 
-    debug!("Cle secrete intermediaire : {:?} \nCle peer public : {:?}", cle_secrete_intermediaire, cle_peer_public_raw);
+    debug!("Cle peer public : {:?}", cle_peer_public_raw);
 
     // Utiliser chacha20poly1305 pour dechiffrer la cle secrete
-    let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire[..].into());
+    let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
 
     // Note : on utilise la cle publique du peer (valeur random) comme nonce pour le chiffrage
     let cle_secrete_dechiffree = match aead.decrypt(cle_peer_public_raw[0..12].into(), cle_secrete_chiffree_tag.as_ref()) {
@@ -173,16 +196,15 @@ mod test {
         let cle_ca_public = PKey::public_key_from_raw_bytes(&cle_ca.raw_public_key()?[..], Id::ED25519)?;
 
         // Chiffrer cle secrete
-        let (cle_secrete, peer) = deriver_asymetrique_ed25519(&cle_ca_public)?;
-        debug!("Cle secrete recue: {:?}\nPeer:\n{}", cle_secrete, peer);
+        let derived_key = deriver_asymetrique_ed25519(&cle_ca_public)?;
+        debug!("Peer:\n{:?}", derived_key);
 
         // Recalculer avec cle publique peer et cle privee ca
-        let peer_x25519 = PKey::public_key_from_pem(peer.as_bytes())?;
+        let peer_x25519 = PKey::public_key_from_raw_bytes(&derived_key.public_peer, Id::X25519)?;
         debug!("Peer x25519 lu : {:?}", peer_x25519);
         let cle_secrete_rederivee = deriver_asymetrique_ed25519_peer(&peer_x25519, &cle_ca)?;
-        debug!("Cle secrete rederivee: {:?}", cle_secrete_rederivee);
 
-        assert_eq!(cle_secrete, cle_secrete_rederivee);
+        assert_eq!(derived_key.secret.0, cle_secrete_rederivee.0);
         debug!{"Cle secretes match OK!"};
 
         Ok(())
