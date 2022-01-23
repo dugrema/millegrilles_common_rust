@@ -11,6 +11,9 @@ use zeroize::Zeroize;
 
 use crate::bson::Document;
 use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey, ordered_map};
+use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherKeys};
+use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
+use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::chiffrage_rsa::{chiffrer_asymetrique as chiffrer_asymetrique_aesgcm, dechiffrer_asymetrique as dechiffrer_asymetrique_aesgcm};
 use crate::formatteur_messages::MessageSerialise;
 use crate::middleware::IsConfigurationPki;
@@ -33,9 +36,10 @@ pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key:
         // Determiner le type de cle. Supporte RSA et ED25519.
         match private_key.id() {
             Id::ED25519 => {
-                Err(String::from("Fix me"))?
-                //let cle_secrete = dechiffrer_asymetrique_ed25519(private_key, cle_bytes.as_slice())?;
-                //chiffrer_asymetrique_ed25519(public_key, cle_secrete.as_slice())
+                // Err(String::from("Fix me"))?
+                let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes[..], private_key)?;
+                let cle_rechiffree = chiffrer_asymmetrique_ed25519(&cle_secrete.0[..], public_key)?;
+                Ok(cle_rechiffree.to_vec())
             },
             Id::RSA => {
                 let cle_secrete = dechiffrer_asymetrique_aesgcm(private_key, cle_bytes.as_slice())?;
@@ -45,7 +49,7 @@ pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key:
         }
     }?;
 
-    Ok(multibase::encode(Base::Base64, cle_rechiffree.as_slice()))
+    Ok(multibase::encode(Base::Base64, &cle_rechiffree[..]))
 }
 
 // Structure qui conserve une cle chiffree pour un fingerprint de certificat
@@ -165,3 +169,6 @@ pub fn random_vec(nb_bytes: usize) -> Vec<u8> {
 
     v
 }
+
+pub type ChiffreurMgs2 = dyn Chiffreur<CipherMgs2, Mgs2CipherKeys>;
+pub type ChiffreurMgs3 = dyn Chiffreur<CipherMgs3, Mgs3CipherKeys>;

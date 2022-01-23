@@ -14,7 +14,7 @@ use xz2::stream;
 
 use crate::certificats::ValidateurX509;
 use crate::chiffrage::{Chiffreur, CipherMgs, Dechiffreur, MgsCipherKeys};
-use crate::chiffrage_aesgcm::{DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
+use crate::chiffrage_chacha20poly1305::{DecipherMgs3, Mgs3CipherData};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::Hacheur;
@@ -337,7 +337,7 @@ impl DecompresseurBytes {
 
 // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
 pub async fn parse_tar<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage {
+where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs3, Mgs3CipherData> + VerificateurMessage {
     let reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -363,7 +363,7 @@ where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2Cip
 
 // todo : Fix parse_tar recursion async
 pub async fn parse_tar1<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage
+where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs3, Mgs3CipherData> + VerificateurMessage
 {
     let reader = Archive::new(stream);
 
@@ -442,7 +442,7 @@ where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2Cip
 #[async_trait]
 pub trait TraiterFichier {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage;
+    where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs3, Mgs3CipherData> + VerificateurMessage;
 }
 
 #[cfg(test)]
@@ -460,7 +460,6 @@ pub mod fichiers_tests {
 
     use super::*;
     use tokio::fs::File;
-    use crate::chiffrage_aesgcm::CipherMgs2;
     use crate::formatteur_messages::MessageSerialise;
     use crate::middleware_db::MiddlewareDb;
 
@@ -476,7 +475,7 @@ pub mod fichiers_tests {
             nom_fichier: &async_std::path::Path,
             stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)
         ) -> Result<(), Box<dyn Error>>
-        where M: ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData>
+        where M: ValidateurX509 + Dechiffreur<DecipherMgs3, Mgs3CipherData>
         {
             debug!("Traiter fichier {:?}", nom_fichier);
 
