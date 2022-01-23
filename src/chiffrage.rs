@@ -7,6 +7,7 @@ use multibase::Base;
 use openssl::pkey::{Id, PKey, Private, Public};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use crate::bson::Document;
 use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey, ordered_map};
@@ -16,6 +17,11 @@ use crate::middleware::IsConfigurationPki;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage { mgs2, mgs3 }
+
+/// Struct qui efface la cle secrete en memoire sur drop
+#[derive(Zeroize)]
+#[zeroize(drop)]
+pub struct CleSecrete(pub [u8; 32]);
 
 /// Rechiffre une cle asymetrique pour une nouvelle cle publique
 pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key: &PKey<Public>, cle: &str)

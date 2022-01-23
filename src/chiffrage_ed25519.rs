@@ -7,9 +7,9 @@ use multihash::Code;
 use openssl::derive::Deriver;
 use openssl::pkey::{Id, PKey, Private, Public};
 use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
-use zeroize::Zeroize;
 
 use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
+use crate::chiffrage::CleSecrete;
 use crate::hachages::hacher_bytes_vu8;
 
 pub struct CleDerivee {
@@ -22,11 +22,6 @@ impl Debug for CleDerivee {
         f.write_str(format!("Secret : [hidden], Public peer : {:?}", self.public_peer).as_str())
     }
 }
-
-/// Struct qui efface la cle secrete en memoire sur drop
-#[derive(Zeroize)]
-#[zeroize(drop)]
-pub struct CleSecrete([u8; 32]);
 
 /**
 Derive une cle secrete a partir d'une cle publique. Utiliser avec cle publique du cert CA.
