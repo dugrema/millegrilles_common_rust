@@ -19,6 +19,10 @@ pub mod domaines;
 pub mod middleware_db;
 pub mod redis_dao;
 pub mod chacha20poly1305_incremental;
+pub mod chiffrage_ed25519;
+pub mod chiffrage_chacha20poly1305;
+pub mod chiffrage_rsa;
+pub mod chiffrage_aesgcm;
 
 // Re-exports
 pub use async_trait;

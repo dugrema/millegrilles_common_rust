@@ -16,6 +16,7 @@ use TypeMessageOut as TypeMessageIn;
 use crate::bson::Document;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509, VerificateurPermissions};
 use crate::chiffrage::Chiffreur;
+use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
 use crate::configuration::charger_configuration_avec_db;
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
@@ -34,7 +35,7 @@ pub async fn recevoir_messages<M>(
     mut tx_verifie: Sender<TypeMessage>,
     mut tx_certificats_manquants: Sender<RequeteCertificatInterne>
 )
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur<CipherMgs2, Mgs2CipherKeys>
 {
     debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
 
@@ -256,7 +257,7 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
 }
 
 pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur<CipherMgs2, Mgs2CipherKeys>
 {
     // Intercepter reponses et requetes de certificat
     match &message {

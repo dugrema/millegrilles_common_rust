@@ -15,7 +15,8 @@ use tokio::task::JoinHandle;
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{Chiffreur, Dechiffreur, Mgs2CipherData};
+use crate::chiffrage::{Chiffreur, Dechiffreur, MgsCipherData};
+use crate::chiffrage_aesgcm::{CipherMgs2, DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
 use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
@@ -215,7 +216,8 @@ impl IsConfigNoeud for MiddlewareDb {
 }
 
 #[async_trait]
-impl Chiffreur for MiddlewareDb {
+impl Chiffreur<CipherMgs2, Mgs2CipherKeys> for MiddlewareDb {
+
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
         let guard = self.cles_chiffrage.lock().expect("lock");
 
@@ -223,6 +225,11 @@ impl Chiffreur for MiddlewareDb {
         let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
 
         vals
+    }
+
+    fn get_cipher(&self) -> Result<CipherMgs2, Box<dyn Error>> {
+        let fp_public_keys = self.get_publickeys_chiffrage();
+        Ok(CipherMgs2::new(&fp_public_keys)?)
     }
 
     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
@@ -287,7 +294,7 @@ impl Chiffreur for MiddlewareDb {
 }
 
 #[async_trait]
-impl Dechiffreur for MiddlewareDb {
+impl Dechiffreur<DecipherMgs2, Mgs2CipherData> for MiddlewareDb {
 
     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs2CipherData, Box<dyn Error>> {
         let requete = {
@@ -309,6 +316,16 @@ impl Dechiffreur for MiddlewareDb {
 
         contenu_dechiffrage.to_cipher_data()
     }
+
+    async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs2, Box<dyn Error>> {
+        let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
+        let env_privee = self.get_enveloppe_privee();
+        let cle_privee = env_privee.cle_privee();
+        info_cle.dechiffrer_cle(cle_privee)?;
+
+        Ok(DecipherMgs2::new(&info_cle)?)
+    }
+
 }
 
 impl VerificateurMessage for MiddlewareDb {

@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::marker::PhantomData;
 use std::path::Path;
 
 use async_std::io::ReadExt;
@@ -12,29 +13,33 @@ use tokio_stream::StreamExt;
 use xz2::stream;
 
 use crate::certificats::ValidateurX509;
-use crate::chiffrage::{Chiffreur, CipherMgs2, Dechiffreur, Mgs2CipherKeys};
+use crate::chiffrage::{Chiffreur, CipherMsg, Dechiffreur, MgsCipherKeys};
+use crate::chiffrage_aesgcm::{DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::Hacheur;
 use crate::verificateur::VerificateurMessage;
 
 const PRESET_COMPRESSION_XZ: u32 = 6;
+const BUFFER_SIZE: usize = 64 * 1024;
 
-pub struct FichierWriter<'a> {
+pub struct FichierWriter<'a, K, M>
+    where M: CipherMsg<K>,
+          K: MgsCipherKeys
+{
     path_fichier: &'a Path,
     fichier: Box<tokio::fs::File>,
     xz_encodeur: stream::Stream,
     hacheur: Hacheur,
-    chiffreur: Option<CipherMgs2>,
+    chiffreur: Option<M>,
+    _keys: PhantomData<K>,
 }
 
-impl<'a> FichierWriter<'a> {
+impl<'a, K: MgsCipherKeys, M: CipherMsg<K>> FichierWriter<'a, K, M> {
 
-    const BUFFER_SIZE: usize = 64 * 1024;
-
-    pub async fn new<C>(path_fichier: &'a Path, chiffreur: Option<&C>) -> Result<FichierWriter<'a>, Box<dyn Error>>
+    pub async fn new<C>(path_fichier: &'a Path, chiffreur: Option<&C>) -> Result<FichierWriter<'a, K, M>, Box<dyn Error>>
     where
-        C: Chiffreur,
+        C: Chiffreur<M, K>,
     {
         let output_file = tokio::fs::File::create(path_fichier).await?;
         // let xz_encodeur = XzEncoder::new(output_file, 9);
@@ -56,18 +61,19 @@ impl<'a> FichierWriter<'a> {
             xz_encodeur,
             hacheur,
             chiffreur,
+            _keys: PhantomData,
         })
     }
 
     pub async fn write(&mut self, contenu: &[u8]) -> Result<usize, Box<dyn Error>> {
 
-        let chunks = contenu.chunks(FichierWriter::BUFFER_SIZE);
+        let chunks = contenu.chunks(BUFFER_SIZE);
         let mut chunks = tokio_stream::iter(chunks);
 
         // Preparer vecteur pour recevoir data compresse (avant chiffrage) pour output vers fichier
-        let mut buffer_chiffre = [0u8; FichierWriter::BUFFER_SIZE];
+        let mut buffer_chiffre = [0u8; BUFFER_SIZE];
         let mut buffer : Vec<u8> = Vec::new();
-        buffer.reserve(FichierWriter::BUFFER_SIZE);
+        buffer.reserve(BUFFER_SIZE);
 
         let mut count_bytes = 0usize;
 
@@ -97,10 +103,10 @@ impl<'a> FichierWriter<'a> {
         Ok(count_bytes)
     }
 
-    pub async fn fermer(mut self) -> Result<(String, Option<Mgs2CipherKeys>), Box<dyn Error>> {
-        let mut buffer_chiffre = [0u8; FichierWriter::BUFFER_SIZE];
+    pub async fn fermer(mut self) -> Result<(String, Option<K>), Box<dyn Error>> {
+        let mut buffer_chiffre = [0u8; BUFFER_SIZE];
         let mut buffer : Vec<u8> = Vec::new();
-        buffer.reserve(FichierWriter::BUFFER_SIZE);
+        buffer.reserve(BUFFER_SIZE);
 
         // Flush xz
         loop {
@@ -330,7 +336,7 @@ impl DecompresseurBytes {
 
 // pub async fn parse(&mut self, stream: impl tokio::io::AsyncRead+Send+Sync+Unpin) -> Result<(), Box<dyn Error>> {
 pub async fn parse_tar<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage {
+where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage {
     let reader = Archive::new(stream);
 
     let mut entries = reader.entries().expect("entries");
@@ -356,7 +362,7 @@ where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
 
 // todo : Fix parse_tar recursion async
 pub async fn parse_tar1<M>(middleware: &M, stream: impl futures::io::AsyncRead+Send+Sync+Unpin, processeur: &mut impl TraiterFichier) -> Result<(), Box<dyn Error>>
-where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
+where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage
 {
     let reader = Archive::new(stream);
 
@@ -435,7 +441,7 @@ where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
 #[async_trait]
 pub trait TraiterFichier {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage;
+    where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage;
 }
 
 #[cfg(test)]
@@ -453,6 +459,7 @@ pub mod fichiers_tests {
 
     use super::*;
     use tokio::fs::File;
+    use crate::chiffrage_aesgcm::CipherMgs2;
     use crate::formatteur_messages::MessageSerialise;
     use crate::middleware_db::MiddlewareDb;
 
@@ -468,7 +475,7 @@ pub mod fichiers_tests {
             nom_fichier: &async_std::path::Path,
             stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)
         ) -> Result<(), Box<dyn Error>>
-        where M: ValidateurX509 + Dechiffreur
+        where M: ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData>
         {
             debug!("Traiter fichier {:?}", nom_fichier);
 
@@ -481,7 +488,7 @@ pub mod fichiers_tests {
     }
 
     #[async_trait]
-    impl Chiffreur for ChiffreurDummy {
+    impl Chiffreur<CipherMgs2, Mgs2CipherKeys> for ChiffreurDummy {
         fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
             self.public_keys.clone()
         }

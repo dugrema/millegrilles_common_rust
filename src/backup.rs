@@ -25,7 +25,8 @@ use uuid::Uuid;
 use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{Chiffreur, CommandeSauvegarderCle, Dechiffreur, DecipherMgs2, FormatChiffrage, Mgs2CipherData, Mgs2CipherKeys};
+use crate::chiffrage::{Chiffreur, CommandeSauvegarderCle, Dechiffreur, DecipherMsg, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage_aesgcm::{CipherMgs2, DecipherMgs2, Mgs2CipherData, Mgs2CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
@@ -44,7 +45,7 @@ use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMes
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages
+    where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs2, Mgs2CipherKeys> + FormatteurMessage + GenerateurMessages + ConfigMessages
 {
     while let Some(commande) = rx.recv().await {
         let nom_domaine = commande.nom_domaine;
@@ -89,7 +90,7 @@ pub trait BackupStarter {
 pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T, chiffrer: bool)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
+        M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs2, Mgs2CipherKeys> + FormatteurMessage + GenerateurMessages + ConfigMessages,
         S: AsRef<str>, T: AsRef<str>,
 {
     let nom_coll_str = nom_collection_transactions.as_ref();
@@ -149,7 +150,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 
 /// Effectue un backup horaire
 async fn backup_horaire<M>(middleware: &M, workdir: TempDir, nom_coll_str: &str, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
-where M: MongoDao + ValidateurX509 + Chiffreur + FormatteurMessage + GenerateurMessages + ConfigMessages,
+where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs2, Mgs2CipherKeys> + FormatteurMessage + GenerateurMessages + ConfigMessages,
 {
     let timestamp_backup = Utc::now();
     if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireDebut", &timestamp_backup).await {
@@ -234,7 +235,7 @@ pub async fn restaurer<M, T, P>(
 )
     -> Result<(), Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
+        M: MongoDao + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
         T: TraiterTransaction,
         P: AsRef<str>
 {
@@ -297,7 +298,7 @@ pub async fn restaurer<M, T, P>(
 pub async fn regenerer_operation<M, T, P>(middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
     -> Result<(), Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + Dechiffreur + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
+        M: MongoDao + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + GenerateurMessages + IsConfigNoeud + VerificateurMessage + 'static,
         T: TraiterTransaction,
         P: AsRef<str>
 {
@@ -488,7 +489,7 @@ async fn serialiser_transactions<M>(
     path_transactions: &Path,
 ) -> Result<(), Box<dyn Error>>
 where
-    M: ValidateurX509 + Chiffreur,
+    M: ValidateurX509 + Chiffreur<CipherMgs2, Mgs2CipherKeys>,
 {
 
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
@@ -717,7 +718,7 @@ async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_coll
 async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition: Option<P>, nom_collection_transactions: &str, workdir: &Path)
     -> Result<(), Box<dyn Error>>
     where
-        M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur + VerificateurMessage + 'static,
+        M: GenerateurMessages + MongoDao + ValidateurX509 + IsConfigurationPki + IsConfigNoeud + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage + 'static,
         P: AsRef<str>
 {
     let enveloppe_privee = middleware.get_enveloppe_privee();
@@ -1147,14 +1148,14 @@ impl CatalogueHoraireBuilder {
 }
 
 struct TransactionWriter<'a> {
-    fichier_writer: FichierWriter<'a>,
+    fichier_writer: FichierWriter<'a, Mgs2CipherKeys, CipherMgs2>,
 }
 
 impl<'a> TransactionWriter<'a> {
 
     pub async fn new<C>(path_fichier: &'a Path, middleware: Option<&C>) -> Result<TransactionWriter<'a>, Box<dyn Error>>
     where
-        C: Chiffreur,
+        C: Chiffreur<CipherMgs2, Mgs2CipherKeys>,
     {
         let fichier_writer = FichierWriter::new(path_fichier, middleware).await?;
         Ok(TransactionWriter{fichier_writer})
@@ -1356,7 +1357,7 @@ impl ProcesseurFichierBackup {
     }
 
     async fn parse_file<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
+    where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage
     {
         debug!("ProcesseurFichierBackup.parse_file : {:?}", filepath);
 
@@ -1405,7 +1406,7 @@ impl ProcesseurFichierBackup {
     }
 
     async fn parse_catalogue<M>(&mut self, middleware: &M, filepath: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + Dechiffreur + VerificateurMessage + ValidateurX509
+    where M: GenerateurMessages + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage + ValidateurX509
     {
         debug!("ProcesseurFichierBackup.parse_catalogue : {:?}", filepath);
 
@@ -1572,7 +1573,7 @@ impl ProcesseurFichierBackup {
     }
 
     async fn traiter_catalogue_horaire<M>(&mut self, middleware: &M, filepath: &async_std::path::Path) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + Dechiffreur + VerificateurMessage + ValidateurX509,
+    where M: GenerateurMessages + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage + ValidateurX509,
     {
         let catalogue = self.catalogue.as_ref().expect("catalogue");
         let uuid_catalogue_courant = match &catalogue.entete {
@@ -1752,7 +1753,7 @@ enum TypeCatalogueBackup {
 #[async_trait]
 impl TraiterFichier for ProcesseurFichierBackup {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl AsyncRead + Send + Sync + Unpin)) -> Result<(), Box<dyn Error>>
-        where M: GenerateurMessages + ValidateurX509 + Dechiffreur + VerificateurMessage
+        where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs2, Mgs2CipherData> + VerificateurMessage
     {
         self.parse_file(middleware, nom_fichier, stream).await
     }
