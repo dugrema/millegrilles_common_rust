@@ -156,7 +156,7 @@ pub fn verifier_certificat(cert: &X509, chaine_pem: &StackRef<X509>, store: &X50
     })
 }
 
-fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
+pub fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
     // let fingerprint = cert.digest(MessageDigest::sha256())?;
 
     let fingerprint = {
