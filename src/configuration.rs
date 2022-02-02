@@ -4,16 +4,14 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use log::{debug, error, info};
+use log::debug;
 use multibase;
-use openssl::pkcs12::{Pkcs12, Pkcs12Builder};
-use openssl::pkey::{PKey, Private};
-use openssl::rsa::Rsa;
+use openssl::pkcs12::Pkcs12;
 use openssl::stack::Stack;
 use openssl::x509::X509;
 use rand::Rng;
 
-use crate::certificats::{build_store_path, charger_enveloppe, charger_enveloppe_privee, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
+use crate::certificats::{build_store_path, charger_enveloppe_privee, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
 use url::Url;
 
 pub trait ConfigMessages: IsConfigNoeud + Send + Sync {

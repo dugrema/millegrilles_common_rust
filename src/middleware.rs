@@ -14,7 +14,8 @@ use serde_json::{json, Value};
 use crate::backup::BackupStarter;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
-use crate::chiffrage::{Chiffreur, Dechiffreur, Mgs2CipherData};
+use crate::chiffrage::{Chiffreur, Dechiffreur};
+use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
@@ -29,7 +30,7 @@ use crate::verificateur::VerificateurMessage;
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait Middleware:
     ValidateurX509 + GenerateurMessages + MongoDao + ConfigMessages + IsConfigurationPki +
-    IsConfigNoeud + FormatteurMessage + Chiffreur + Dechiffreur + EmetteurCertificat +
+    IsConfigNoeud + FormatteurMessage + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData> + EmetteurCertificat +
     VerificateurMessage + BackupStarter
 {}
 
@@ -105,7 +106,7 @@ pub struct ReponseDechiffrageCleInfo {
 }
 
 impl ReponseDechiffrageCle {
-    pub fn to_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
+    pub fn to_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
         match &self.cles {
             Some(cles) => {
                 if cles.len() == 1 {
@@ -123,8 +124,8 @@ impl ReponseDechiffrageCle {
 }
 
 impl ReponseDechiffrageCleInfo {
-    pub fn to_cipher_data(&self) -> Result<Mgs2CipherData, Box<dyn Error>> {
-        Mgs2CipherData::new(&self.cle, &self.iv, &self.tag)
+    pub fn to_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
+        Mgs3CipherData::new(&self.cle, &self.iv, &self.tag)
     }
 }
 

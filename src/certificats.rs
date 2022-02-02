@@ -12,7 +12,7 @@ use chrono::{DateTime, ParseResult};
 use chrono::prelude::*;
 use log::{debug, info, error, warn};
 use multibase::{Base, encode};
-use multicodec::Codec::{Blake2s_256, Sha2_256 as MCSha2_256};
+use multicodec::Codec::Blake2s_256;
 use multihash::{Code, Multihash};
 use num_traits::cast::ToPrimitive;
 use openssl::asn1::Asn1TimeRef;
@@ -36,8 +36,6 @@ use std::error::Error;
 use crate::constantes::Securite::L1Public;
 use std::convert::TryInto;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::middleware::ReponseCertificatMaitredescles;
-use crate::recepteur_messages::TypeMessage;
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -158,7 +156,7 @@ pub fn verifier_certificat(cert: &X509, chaine_pem: &StackRef<X509>, store: &X50
     })
 }
 
-fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
+pub fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
     // let fingerprint = cert.digest(MessageDigest::sha256())?;
 
     let fingerprint = {
