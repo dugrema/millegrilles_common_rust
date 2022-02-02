@@ -34,6 +34,7 @@ use crate::mongo_dao::convertir_to_bson;
 const ENTETE: &str = "en-tete";
 const SIGNATURE: &str = "_signature";
 const CERTIFICATS: &str = "_certificat";
+const MILLEGRILLE: &str = "_millegrille";
 
 pub trait FormatteurMessage: IsConfigurationPki {
     // /// Retourne l'enveloppe privee utilisee pour signer le message
@@ -208,9 +209,13 @@ pub struct MessageMilleGrille {
     #[serde(rename = "en-tete")]
     pub entete: Entete,
 
-    /// Chaine de certificats en format PEM. Inclus le certificat root (dernier de la liste).
+    /// Chaine de certificats en format PEM.
     #[serde(rename = "_certificat", skip_serializing_if = "Option::is_none")]
     pub certificat: Option<Vec<String>>,
+
+    /// Certificat de millegrille (root).
+    #[serde(rename = "_millegrille", skip_serializing_if = "Option::is_none")]
+    pub millegrille: Option<String>,
 
     /// Signature encodee en multibase
     #[serde(rename = "_signature")]
@@ -232,6 +237,7 @@ impl MessageMilleGrille {
         MessageMilleGrille {
             entete: Entete::builder(PLACEHOLDER, PLACEHOLDER, PLACEHOLDER).build(),
             certificat: None,
+            millegrille: None,
             signature: None,
             contenu: Map::new(),
             contenu_traite: false,
@@ -274,6 +280,7 @@ impl MessageMilleGrille {
         let mut message = MessageMilleGrille {
             entete,
             certificat: Some(pems),
+            millegrille: None,
             signature: None,
             contenu: value_ordered,
             contenu_traite: true,
@@ -522,6 +529,7 @@ impl MessageMilleGrille {
         // Remplacer l'entete
         self.entete = entete;
         self.certificat = Some(enveloppe_privee.chaine_pem().to_owned());
+        self.millegrille = None;
 
         self.signer_message(enveloppe_privee)?;
 
@@ -558,7 +566,7 @@ impl MessageMilleGrille {
     }
 
     /// Sert a retirer les certificats pour serialisation (e.g. backup, transaction Mongo, etc)
-    pub fn retirer_certificats(&mut self) { self.certificat = None }
+    pub fn retirer_certificats(&mut self) { self.certificat = None; self.millegrille = None; }
 
     /// Mapper le contenu ou un champ (1er niveau) du contenu vers un objet Deserialize
     pub fn map_contenu<C>(&self, nom_champ: Option<&str>) -> Result<C, Box<dyn Error>>
@@ -662,6 +670,13 @@ impl Serialize for MessageMilleGrille {
         if cert != Value::Null {
             ordered.insert("_certificat", &cert);
         }
+        let cert_millegrille = match &self.millegrille {
+            Some(c) => serde_json::to_value(c).expect("cert millegrille"),
+            None => Value::Null
+        };
+        if cert_millegrille != Value::Null {
+            ordered.insert("_millegrille", &cert_millegrille);
+        }
 
         // Ajouter signature si presente
         let signature = match &self.signature {
@@ -762,6 +777,7 @@ pub struct MessageSerialise {
     message: String,
     pub parsed: MessageMilleGrille,
     pub certificat: Option<Arc<EnveloppeCertificat>>,
+    pub millegrille: Option<Arc<EnveloppeCertificat>>,
 }
 
 impl MessageSerialise {
@@ -772,6 +788,7 @@ impl MessageSerialise {
             message: msg_str,
             parsed: msg,
             certificat: None,
+            millegrille: None,
         })
     }
 
@@ -787,6 +804,7 @@ impl MessageSerialise {
             entete: msg_parsed.entete.clone(),
             parsed: msg_parsed,
             certificat: None,
+            millegrille: None,
         })
     }
 
@@ -803,11 +821,16 @@ impl MessageSerialise {
             entete: msg_parsed.entete.clone(),
             parsed: msg_parsed,
             certificat: None,
+            millegrille: None,
         })
     }
 
     pub fn set_certificat(&mut self, certificat: Arc<EnveloppeCertificat>) {
         self.certificat = Some(certificat);
+    }
+
+    pub fn set_millegrille(&mut self, certificat: Arc<EnveloppeCertificat>) {
+        self.millegrille = Some(certificat);
     }
 
     pub fn get_entete(&self) -> &Entete {
@@ -856,6 +879,19 @@ impl MessageSerialise {
                 validateur.get_certificat(fp_certificat).await
             }
         };
+
+        match &self.parsed.millegrille {
+            Some(c) => {
+                if self.millegrille.is_none() {
+                    debug!("Chargement du certificat de millegrille inclue {}", c);
+                    let vec_certs = vec!(c.to_owned());
+                    let enveloppe = validateur.charger_enveloppe(&vec_certs, None).await?;
+                    self.millegrille = Some(enveloppe);
+                }
+            },
+            None => ()
+        }
+
         Ok(enveloppe)
     }
 

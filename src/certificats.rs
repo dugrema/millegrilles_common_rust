@@ -595,23 +595,24 @@ pub trait ValidateurX509: Send + Sync {
     /// Invoquer regulierement pour faire l'entretien du cache.
     async fn entretien_validateur(&self);
 
-    fn valider_chaine(&self, enveloppe: &EnveloppeCertificat, idmg: Option<&str>) -> Result<bool, String> {
+    fn valider_chaine(&self, enveloppe: &EnveloppeCertificat, certificat_millegrille: Option<&EnveloppeCertificat>) -> Result<bool, String> {
         let certificat = &enveloppe.certificat;
         let chaine = &enveloppe.intermediaire;
-        match idmg {
-            Some(i) => {
+        match certificat_millegrille {
+            Some(cm) => {
                 // Idmg tiers, on bati un store on the fly
-                let cert_ca = chaine[chaine.len()-1].to_owned();
-                let store = match build_store(&cert_ca, false) {
+                let cert_ca = &cm.certificat;
+                // let cert_ca = chaine[chaine.len()-1].to_owned();
+                let store = match build_store(cert_ca, false) {
                     Ok(s) => s,
-                    Err(e) => Err(format!("certificats.valider_chaine Erreur preparation store pour idmg {}", i))?
+                    Err(e) => Err(format!("certificats.valider_chaine Erreur preparation store pour certificat {:?}", certificat))?
                 };
                 match verifier_certificat(certificat, chaine, &store) {
                     Ok(b) => {
-                        debug!("Verifier certificat result idmg {} = {}", i, b);
+                        debug!("Verifier certificat result {:?} = {}", certificat, b);
                         Ok(b)
                     },
-                    Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat idmg {} : {:?}", i, e)),
+                    Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat idmg {:?} : {:?}", certificat, e)),
                 }
             },
             None => {

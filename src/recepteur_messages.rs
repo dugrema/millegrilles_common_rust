@@ -594,6 +594,25 @@ where
                 }
             }?;
             message.set_certificat(certificat);
+
+            // Charger certificat de millegrille si present
+            match &message.get_msg().millegrille {
+                Some(c) => {
+                    let vec_cert = vec!(c.to_owned());
+                    // Utiliser certificat attache
+                    match middleware.charger_enveloppe(&vec_cert, None).await {
+                        Ok(e) => {
+                            // Set le certificat de millegrille dans le message
+                            message.set_millegrille(e);
+                        },
+                        Err(e) => {
+                            error!("Erreur chargement certificat {:?}", e);
+                            Err(ErreurVerification::ErreurGenerique)?
+                        }
+                    }
+                },
+                None => ()
+            }
         }
     };
 

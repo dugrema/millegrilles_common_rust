@@ -91,6 +91,7 @@ where
     let regles_ok = match verificateur {
         Some(v) => {
             // Verifier les regles de certificat
+            debug!("Verifier regles message {:?}", message);
             v.verifier(certificat)
         },
         None => true
@@ -103,11 +104,16 @@ where
             if msg_match_certificat {
                 // Verifier si le IDMG est local ou celui d'un tiers
                 let idmg_validateur = validateur.idmg();
-                let idmg_validation = match idmg_validateur == idmg_cert.as_str() {
+                let certificat_millegrille = match idmg_validateur == idmg_cert.as_str() {
                     true => None,  // IDMG local, on utilise store local
-                    false => Some(idmg_cert.as_str())  // IDMG tiers, on va devoir batir un nouveau store
+                    false => {
+                        match &message.millegrille {
+                            Some(certmg) => Some(certmg.as_ref()),
+                            None => Err(format!("verifier_message certificat de millegrille tiers manquant (_millegrille)"))?
+                        }
+                    }  // IDMG tiers, on va devoir batir un nouveau store
                 };
-                validateur.valider_chaine(certificat, idmg_validation)?
+                validateur.valider_chaine(certificat, certificat_millegrille)?
             } else {
                 false
             }
