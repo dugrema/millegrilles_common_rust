@@ -23,8 +23,8 @@ use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageS
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, ReponseDechiffrageCle};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
-use crate::rabbitmq_dao::{Callback, EventMq, QueueType, TypeMessageOut};
-use crate::recepteur_messages::{recevoir_messages, task_requetes_certificats, TypeMessage};
+use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
+use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
 use crate::redis_dao::RedisDao;
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
@@ -370,12 +370,12 @@ impl BackupStarter for MiddlewareDb {
 pub fn preparer_middleware_db(
     queues: Vec<QueueType>,
     listeners: Option<Mutex<Callback<'static, EventMq>>>
-) -> (Arc<MiddlewareDb>, Receiver<TypeMessage>, Receiver<TypeMessage>, Receiver<TypeMessage>, FuturesUnordered<JoinHandle<()>>) {
+) -> MiddlewareHooks {
     let (
         configuration,
         validateur,
         mongo,
-        mq_executor,
+        mq_executor_config,
         generateur_messages
     ) = configurer(queues, listeners);
 
@@ -421,23 +421,26 @@ pub fn preparer_middleware_db(
 
     let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
 
+    let mq_executor = mq_executor_config.executor;  // Move
+    let mq_executor_rx = mq_executor_config.rx_queues;
+
     futures.push(tokio::spawn(recevoir_messages(
         middleware.clone(),
-        mq_executor.rx_messages,
+        mq_executor_rx.rx_messages,
         tx_messages_verifies.clone(),
         tx_certificats_manquants.clone()
     )));
 
     futures.push(tokio::spawn(recevoir_messages(
         middleware.clone(),
-        mq_executor.rx_reply,
+        mq_executor_rx.rx_reply,
         tx_messages_verif_reply.clone(),
         tx_certificats_manquants.clone()
     )));
 
     futures.push(tokio::spawn(recevoir_messages(
         middleware.clone(),
-        mq_executor.rx_triggers,
+        mq_executor_rx.rx_triggers,
         tx_triggers,
         tx_certificats_manquants.clone()
     )));
@@ -452,5 +455,20 @@ pub fn preparer_middleware_db(
 
     futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
 
-    (middleware, rx_messages_verifies, rx_messages_verif_reply, rx_triggers, futures)
+    MiddlewareHooks {
+        middleware, mq_executor,
+        rx_messages_verifies, rx_messages_verif_reply, rx_triggers, tx_certificats_manquants,
+        futures
+    }
+}
+
+/// Structure avec hooks interne de preparation du middleware
+pub struct MiddlewareHooks {
+    pub middleware: Arc<MiddlewareDb>,
+    pub mq_executor: RabbitMqExecutor,
+    pub rx_messages_verifies: Receiver<TypeMessage>,
+    pub rx_messages_verif_reply: Receiver<TypeMessage>,
+    pub rx_triggers: Receiver<TypeMessage>,
+    pub tx_certificats_manquants: Sender<RequeteCertificatInterne>,
+    pub futures: FuturesUnordered<JoinHandle<()>>,
 }

@@ -22,7 +22,7 @@ use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
-use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutor};
+use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutor, RabbitMqExecutorConfig};
 use crate::recepteur_messages::MessageValideAction;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::VerificateurMessage;
@@ -41,7 +41,7 @@ pub trait IsConfigurationPki {
 pub fn configurer(
     queues: Vec<QueueType>,
     listeners: Option<Mutex<Callback<'static, EventMq>>>
-) -> (Arc<ConfigurationMessagesDb>, Arc<ValidateurX509Impl>, Arc<MongoDaoImpl>, RabbitMqExecutor, GenerateurMessagesImpl) {
+) -> (Arc<ConfigurationMessagesDb>, Arc<ValidateurX509Impl>, Arc<MongoDaoImpl>, RabbitMqExecutorConfig, GenerateurMessagesImpl) {
     let configuration = Arc::new(charger_configuration_avec_db().expect("Erreur configuration"));
 
     let pki = configuration.get_configuration_pki();
@@ -51,7 +51,7 @@ pub fn configurer(
 
     // Connecter au middleware mongo et MQ
     let mongo: Arc<MongoDaoImpl> = Arc::new(initialiser_mongodb(configuration.as_ref()).expect("Erreur connexion MongoDB"));
-    let mq_executor = executer_mq(
+    let mq_executor_config = executer_mq(
         configuration.clone(),
         Some(queues),
         listeners,
@@ -59,10 +59,10 @@ pub fn configurer(
 
     let generateur_messages = GenerateurMessagesImpl::new(
         configuration.get_configuration_pki(),
-        &mq_executor
+        &mq_executor_config.executor
     );
 
-    (configuration, validateur, mongo, mq_executor, generateur_messages)
+    (configuration, validateur, mongo, mq_executor_config, generateur_messages)
 }
 
 // Middleware de base avec validateur et generateur de messages

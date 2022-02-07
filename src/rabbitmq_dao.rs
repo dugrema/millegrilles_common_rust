@@ -222,7 +222,7 @@ pub fn executer_mq<'a>(
     configuration: Arc<impl ConfigMessages + 'static>,
     queues: Option<Vec<QueueType>>,
     listeners: Option<Mutex<Callback<'static, EventMq>>>,
-) -> Result<RabbitMqExecutor, String> {
+) -> Result<RabbitMqExecutorConfig, String> {
 
     // Creer le channel utilise pour recevoir et traiter les messages mis sur les Q
     let (tx_traiter_message, rx_traiter_message) = mpsc::channel(1);
@@ -247,15 +247,19 @@ pub fn executer_mq<'a>(
         )
     );
 
-    Ok(RabbitMqExecutor {
+    let executor = RabbitMqExecutor {
         handle: boucle_execution,
-        rx_messages: rx_traiter_message,
-        rx_reply: rx_traiter_reply,
-        rx_triggers: rx_traiter_trigger,
         tx_out: tx_message_out.clone(),
         tx_reply: tx_traiter_reply.clone(),
         reply_q,
-    })
+    };
+    let rx_queues = RabbitMqExecutorRx {
+        rx_messages: rx_traiter_message,
+        rx_reply: rx_traiter_reply,
+        rx_triggers: rx_traiter_trigger,
+    };
+
+    Ok(RabbitMqExecutorConfig { executor, rx_queues })
 }
 
 #[async_trait]
@@ -264,14 +268,22 @@ pub trait MqMessageSendInformation {
     fn get_reqly_q_name(&self) -> Option<String>;
 }
 
+pub struct RabbitMqExecutorConfig {
+    pub executor: RabbitMqExecutor,
+    pub rx_queues: RabbitMqExecutorRx,
+}
+
 pub struct RabbitMqExecutor {
     handle: JoinHandle<()>,
-    pub rx_messages: Receiver<MessageInterne>,
-    pub rx_reply: Receiver<MessageInterne>,
-    pub rx_triggers: Receiver<MessageInterne>,
     pub tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     pub tx_reply: Sender<MessageInterne>,
     pub reply_q: Arc<Mutex<Option<String>>>,
+}
+
+pub struct RabbitMqExecutorRx {
+    pub rx_messages: Receiver<MessageInterne>,
+    pub rx_reply: Receiver<MessageInterne>,
+    pub rx_triggers: Receiver<MessageInterne>,
 }
 
 #[async_trait]
