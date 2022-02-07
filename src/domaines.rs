@@ -80,8 +80,16 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             M: ValidateurX509 + GenerateurMessages + MongoDao,
             T: Transaction;
 
-    /// Initialise le domaine.
+    /// Methode qui peut etre re-implementee dans une impl
     async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
+        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        self.preparer_threads_super(middleware).await
+    }
+
+    /// Initialise le domaine.
+    async fn preparer_threads_super<M>(self: &'static Self, middleware: Arc<M>)
         -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
         where M: Middleware + 'static
     {
