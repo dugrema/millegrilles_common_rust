@@ -9,7 +9,7 @@ use mongodb::{bson::{doc, to_bson}, Collection};
 use mongodb::bson::{Bson, Document};
 use mongodb::bson as bson;
 use mongodb::options::UpdateOptions;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use crate::backup::BackupStarter;
 
@@ -420,6 +420,28 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction,
 
 pub fn map_msg_to_bson(msg: &MessageMilleGrille) -> Result<Document, Box<dyn Error>> {
     let val = match serde_json::to_value(msg) {
+        Ok(v) => match v.as_object() {
+            Some(o) => o.to_owned(),
+            None => Err(format!("Erreur sauvegarde transaction, mauvais type objet JSON"))?,
+        },
+        Err(e) => Err(format!("Erreur sauvegarde transaction, conversion : {:?}", e))?,
+    };
+
+    let contenu_doc = match Document::try_from(val) {
+        Ok(c) => Ok(c),
+        Err(e) => {
+            error!("Erreur conversion json -> bson\n{:?}", e.to_string());
+            Err(format!("Erreur sauvegarde transaction, conversion json -> bson : {:?}", e))
+        },
+    }?;
+
+    Ok(contenu_doc)
+}
+
+pub fn map_serializable_to_bson<S>(val_serializable: &S) -> Result<Document, Box<dyn Error>>
+    where S: Serialize
+{
+    let val = match serde_json::to_value(val_serializable) {
         Ok(v) => match v.as_object() {
             Some(o) => o.to_owned(),
             None => Err(format!("Erreur sauvegarde transaction, mauvais type objet JSON"))?,
