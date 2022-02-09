@@ -384,7 +384,7 @@ impl MessageMilleGrille {
 
     fn calculer_hachage_contenu(&mut self) -> Result<String, Box<dyn std::error::Error>> {
         if ! self.contenu_traite {
-            self.traiter_contenu();
+            self.traiter_contenu()?;
         }
 
         // Filtrer champs avec _
@@ -414,7 +414,7 @@ impl MessageMilleGrille {
 
     fn preparer_pour_signature(&mut self) -> Result<String, Box<dyn Error>> {
         if !self.contenu_traite {
-            self.traiter_contenu();
+            self.traiter_contenu()?;
         }
 
         // Creer une map avec l'entete (refs uniquements)
@@ -593,7 +593,7 @@ impl MessageMilleGrille {
 
     pub fn verifier_hachage(&mut self) -> Result<bool, Box<dyn Error>> {
         if ! self.contenu_traite {
-            self.traiter_contenu();
+            self.traiter_contenu()?;
         }
 
         let entete = &self.entete;

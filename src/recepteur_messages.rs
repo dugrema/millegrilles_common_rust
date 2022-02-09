@@ -42,21 +42,27 @@ pub async fn recevoir_messages<M>(
     let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
 
     while let Some(mi) = rx.recv().await {
-        debug!("traiter_messages: Message recu : {:?}", mi);
+        trace!("recevoir_messages: Message recu : {:?}", mi);
 
         let (delivery, nom_q, tx) = match mi {
-            MessageInterne::Delivery(d, q) => (d, q, &tx_verifie),
+            MessageInterne::Delivery(d, q) => {
+                debug!("recevoir_messages Delivery via {}", q);
+                (d, q, &tx_verifie)
+            },
             MessageInterne::AttenteReponse(a) => {
-                debug!("AttenteReponse : {:?}", a.correlation);
+                debug!("recevoir_messages AttenteReponse {:?}", a);
                 map_attente.insert(a.correlation.clone(), a);
                 continue
             },
             MessageInterne::CancelDemandeReponse(fp) => {
-                debug!("CancelDemandeReponse : {:?}", fp);
+                debug!("recevoir_messages CancelDemandeReponse : {}", fp);
                 map_attente.remove(&fp);
                 continue
             },
-            MessageInterne::Trigger(d, q) => (d, q, &tx_verifie),
+            MessageInterne::Trigger(d, q) => {
+                debug!("recevoir_messages Trigger via {}", q);
+                (d, q, &tx_verifie)
+            },
         };
 
         // Extraire le contenu du message
