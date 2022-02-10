@@ -30,6 +30,7 @@ pub struct RoutageMessageAction {
     reply_to: Option<String>,
     correlation_id: Option<String>,
     ajouter_reply_q: bool,
+    blocking: Option<bool>,
 }
 impl RoutageMessageAction {
 
@@ -39,7 +40,7 @@ impl RoutageMessageAction {
         RoutageMessageAction {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false
+            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None,
         }
     }
 
@@ -59,6 +60,7 @@ pub struct RoutageMessageActionBuilder {
     reply_to: Option<String>,
     correlation_id: Option<String>,
     ajouter_reply_q: bool,
+    blocking: Option<bool>,
 }
 impl RoutageMessageActionBuilder {
     pub fn new<S>(domaine: S, action: S) -> Self
@@ -67,7 +69,7 @@ impl RoutageMessageActionBuilder {
         RoutageMessageActionBuilder {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false
+            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None,
         }
     }
 
@@ -99,9 +101,15 @@ impl RoutageMessageActionBuilder {
         self
     }
 
-    pub fn ajouter_reply_q<S>(mut self, flag: bool) -> Self
+    pub fn ajouter_reply_q(mut self, flag: bool) -> Self
     {
         self.ajouter_reply_q = flag;
+        self
+    }
+
+    pub fn blocking(mut self, flag: bool) -> Self
+    {
+        self.blocking = Some(flag);
         self
     }
 
@@ -114,6 +122,7 @@ impl RoutageMessageActionBuilder {
             reply_to: self.reply_to,
             correlation_id: self.correlation_id,
             ajouter_reply_q: self.ajouter_reply_q,
+            blocking: self.blocking,
         }
     }
 }
@@ -298,64 +307,24 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         -> Result<TypeMessage, String>
         where M: Serialize + Send + Sync
     {
-
         if self.get_mode_regeneration() {
             // Rien a faire
             return Ok(TypeMessage::Regeneration)
         }
 
-        match self.emettre_message_serializable(routage, message,true, TypeMessageOut::Requete).await {
+        // Blocking, true par defaut pour requete
+        let blocking = match routage.blocking {
+            Some(b) => b,
+            None => true,
+        };
+
+        match self.emettre_message_serializable(routage, message,blocking, TypeMessageOut::Requete).await {
             Ok(r) => match r {
                 Some(m) => Ok(m),
                 None => Err(String::from("Aucune reponse")),
             },
             Err(e) => Err(e),
         }
-
-        // let message_signe = match self.formatter_message(message, Some(domaine), None) {
-        //     Ok(m) => m,
-        //     Err(e) => Err(format!("Erreur transmission requete : {:?}", e))?
-        // };
-        //
-        // let exchanges = match exchange {
-        //     Some(inner) => Some(vec!(inner)),
-        //     None => Some(vec!(Securite::L3Protege)),
-        // };
-        //
-        // let message_out = MessageOut::new(
-        //     domaine,
-        //     message_signe,
-        //     TypeMessageOut::Requete,
-        //     exchanges
-        // );
-        //
-        // let entete = &message_out.message.entete;
-        // let correlation_id = entete.uuid_transaction.clone();
-        //
-        // let (tx_delivery, mut rx_delivery) = oneshot::channel();
-        // let demande = MessageInterne::AttenteReponse(AttenteReponse {
-        //     correlation: correlation_id.clone(),
-        //     sender: tx_delivery,
-        // });
-        //
-        // // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
-        // self.tx_interne.send(demande).await.expect("Erreur emission message interne");
-        //
-        // // Emettre la requete sur MQ
-        // debug!("Emettre requete correlation {}", correlation_id);
-        // let _ = self.emettre(message_out).await?;
-        //
-        // // Retourner le channel pour attendre la reponse
-        // let reponse= timeout(Duration::from_millis(15_000), rx_delivery).await;
-        // match reponse {
-        //     Ok(inner) => {
-        //         match inner {
-        //             Ok(inner2) => Ok(inner2),
-        //             Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
-        //         }
-        //     },
-        //     Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
-        // }
     }
 
     async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
