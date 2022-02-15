@@ -3,15 +3,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, error, info, warn};
-use mongodb::{bson::{doc, to_bson}, Client, Collection, Cursor, Database};
+use log::{debug, error, warn};
+use mongodb::{bson::doc, Collection, Cursor};
 use mongodb::bson as bson;
 use mongodb::bson::{Bson, Document};
-use mongodb::error::{BulkWriteError, BulkWriteFailure, ErrorKind};
-use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
-use serde::{Deserialize, Serialize};
+use mongodb::error::{BulkWriteError, ErrorKind};
+use mongodb::options::{FindOptions, Hint, InsertManyOptions};
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
@@ -19,11 +19,8 @@ use crate::constantes::*;
 use crate::formatteur_messages::{Entete, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::MongoDao;
-use crate::rabbitmq_dao::TypeMessageOut;
-use crate::recepteur_messages::{MessageTrigger, MessageValideAction};
-use std::convert::{TryInto, TryFrom};
+use std::convert::TryFrom;
 use std::fmt::Debug;
-use std::borrow::Borrow;
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
@@ -44,7 +41,7 @@ pub async fn transmettre_evenement_persistance<S>(
         "partition": partition,
     });
 
-    let mut evenement_map = evenement.as_object_mut().expect("map");
+    let evenement_map = evenement.as_object_mut().expect("map");
 
     if let Some(reply_to) = reply_to {
         evenement_map.insert("reply_to".into(), Value::from(reply_to.to_owned()));
@@ -109,7 +106,7 @@ where
     }
 }
 
-async fn extraire_transaction(validateur: &(impl ValidateurX509), doc_transaction: Document) -> Result<TransactionImpl, String> {
+async fn extraire_transaction(validateur: &impl ValidateurX509, doc_transaction: Document) -> Result<TransactionImpl, String> {
     let entete = doc_transaction.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
     let fingerprint = entete.get_str(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint_certificat");
     let enveloppe = match validateur.get_certificat(fingerprint).await {
@@ -204,7 +201,7 @@ impl Transaction for TransactionImpl {
         &self.contenu
     }
 
-    fn contenu(mut self) -> Document {
+    fn contenu(self) -> Document {
         self.contenu
     }
 
@@ -393,7 +390,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
     Ok(())
 }
 
-async fn resoumettre<M>(middleware: &M, collection: &Collection<Document>, ops: &Document, d: Document) -> Result<(), ErreurResoumission>
+async fn resoumettre<M>(middleware: &M, _collection: &Collection<Document>, _ops: &Document, d: Document) -> Result<(), ErreurResoumission>
 where
     M: GenerateurMessages + MongoDao
 {
@@ -432,9 +429,9 @@ where
         None => None
     };
 
-    let filtre_transaction_resoumise = doc! {
-                TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
-            };
+    // let filtre_transaction_resoumise = doc! {
+    //             TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
+    //         };
 
     debug!("Transaction a resoumettre : {:?}", uuid_transaction);
     let resultat = transmettre_evenement_persistance(
@@ -444,7 +441,7 @@ where
         Ok(()) => {
             Ok(())
         },
-        Err(e) => {
+        Err(_e) => {
             error!("Erreur resoumission transaction avec mongo : {:?}", resultat);
             Err(ErreurResoumission::new(true, Some(uuid_transaction)))
         }
@@ -485,7 +482,7 @@ where
     debug!("Soumettre batch transactions dans collection {} : {:?}", nom_collection, transactions_bson);
     let collection = match middleware.get_collection(nom_collection) {
         Ok(c) => c,
-        Err(e) => Err(format!("Erreur ouverture collection {}", nom_collection))?
+        Err(_e) => Err(format!("Erreur ouverture collection {}", nom_collection))?
     };
 
     let options = InsertManyOptions::builder()
@@ -537,7 +534,7 @@ where
                     // Calculer le nombre d'insertion avec la difference entre total, dups et erreurs
                     res_insert.inserted = nombre_transactions - res_insert.duplicate - res_insert.errors;
 
-                    Ok((res_insert))
+                    Ok(res_insert)
                 },
                 _ => Err(format!("Erreur non supportee : {:?}", e))
             }
@@ -625,7 +622,7 @@ where
 
         let entete = match get_entete_from_doc(&transaction) {
             Ok(t) => t,
-            Err(e) => {
+            Err(_e) => {
                 error!("Erreur transaction chargement en-tete");
                 continue  // Skip
             }

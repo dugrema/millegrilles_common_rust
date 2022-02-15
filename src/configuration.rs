@@ -172,13 +172,13 @@ fn charger_url<S, T>(nom_variable: S, valeur_defaut: T) -> Result<Url, String>
         Ok(url_str) => {
             match Url::parse(url_str.as_str()) {
                 Ok(url) => url,
-                Err(e) => Err(format!("Erreur parse url fichiers : {}", url_str))?,
+                Err(e) => Err(format!("configuration.charger_configuration_noeud  Erreur parse url fichiers : {} ({:?})", url_str, e))?,
             }
         },
         Err(_) => {
             match Url::parse(valeur_defaut.as_ref()) {
                 Ok(u)=>u,
-                Err(e) => Err(format!("configuration.charger_configuration_noeud"))?
+                Err(e) => Err(format!("configuration.charger_configuration_noeud Erreur : {:?}", e))?
             }
         },
     };
@@ -272,7 +272,7 @@ impl ConfigurationPki {
 
         // Convertir la cle privee en format RSA
         // let cle_privee: Rsa<Private> = self.enveloppe_privee.cle_privee().rsa().unwrap();
-        let cle_privee: Vec<u8> = self.enveloppe_privee.cle_privee().private_key_to_pem_pkcs8().expect("Conversion cle privee en PKCS8");;
+        let cle_privee: Vec<u8> = self.enveloppe_privee.cle_privee().private_key_to_pem_pkcs8().expect("Conversion cle privee en PKCS8");
 
         let cert_pem: String = read_to_string(&self.certfile).expect("Erreur lecture cert PEM");
 

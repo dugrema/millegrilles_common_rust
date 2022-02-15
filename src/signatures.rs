@@ -1,22 +1,19 @@
 use std::error::Error;
-use std::os::raw::c_int;
 
-use log::{debug, error, info};
-use multibase::{Base, Base::Base64, decode, encode};
+use log::debug;
+use multibase::{Base::Base64, decode, encode};
 use multihash::Code;
 use openssl::error::ErrorStack;
-use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, PKeyRef, Private, Public};
-use openssl::rsa::{Padding, Rsa};
-use openssl::sign::{RsaPssSaltlen, Signer, Verifier};
-use crate::hachages::{hacher_bytes, hacher_bytes_vu8};
+use openssl::pkey::{PKey, Private, Public};
+use openssl::sign::{Signer, Verifier};
+use crate::hachages::hacher_bytes_vu8;
 
 // pub const SALT_LENGTH: c_int = 64;
 // pub const VERSION_1: u8 = 0x1;
 pub const VERSION_2: u8 = 0x2;
 
 pub fn signer_message(private_key: &PKey<Private>, message: &[u8]) -> Result<String, ErrorStack> {
-    let key_size = private_key.size();
+    // let key_size = private_key.size();
     let mut to_bytes: [u8; 65] = [0u8; 65];
     to_bytes[0] = VERSION_2;  // Version 2 de la signature MilleGrilles (ed25519)
 

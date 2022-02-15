@@ -2,17 +2,16 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
 
-use aead::{NewAead, AeadMut, Payload};
+use aead::NewAead;
 use log::debug;
 use multibase::{Base, decode, encode};
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
 
 use crate::certificats::FingerprintCertPublicKey;
-use crate::chacha20poly1305_incremental::{ChaCha20Poly1305, Key, Nonce, AeadUpdate, Tag};
+use crate::chacha20poly1305_incremental::{ChaCha20Poly1305, AeadUpdate};
 use crate::chiffrage::{CipherMgs, CleSecrete, CommandeSauvegarderCle, DecipherMgs, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
-use crate::chiffrage_rsa::dechiffrer_asymetrique;
 use crate::hachages::Hacheur;
 
 pub struct CipherMgs3 {
@@ -169,10 +168,10 @@ impl DecipherMgs3 {
         let mut decrypter = ChaCha20Poly1305::new(&cle_dechiffree.0.into());
         decrypter.set_nonce(decipher_data.iv[..].into());
 
-        let hacheur = Hacheur::builder()
-            .digester(Code::Blake2b512)
-            .base(Base::Base58Btc)
-            .build();
+        // let hacheur = Hacheur::builder()
+        //     .digester(Code::Blake2b512)
+        //     .base(Base::Base58Btc)
+        //     .build();
 
         // let mut decrypter = Crypter::new(
         //     Cipher::aes_256_gcm(),
@@ -214,7 +213,7 @@ impl DecipherMgs<Mgs3CipherData> for DecipherMgs3 {
         }
     }
 
-    fn finalize(mut self, _out: &mut [u8]) -> Result<usize, String> {
+    fn finalize(self, _out: &mut [u8]) -> Result<usize, String> {
         match self.decrypter.decrypt_finalize(self.tag[0..16].into()) {
             Ok(()) => Ok(0),
             Err(e) => Err(format!("Erreur finalize : {:?}", e))

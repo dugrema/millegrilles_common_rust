@@ -3,37 +3,29 @@ use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use futures::stream::FuturesUnordered;
 use lapin::message::Delivery;
 use log::{debug, error, info, trace, warn};
-use serde_json::{json, Map, Value};
-use tokio::{join, sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as DurationTokio, sleep, timeout}, try_join};
-use tokio_stream::StreamExt;
+use serde_json::json;
+use tokio::sync::mpsc::{Receiver, Sender};
 use TypeMessageOut as TypeMessageIn;
 
-use crate::bson::Document;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509, VerificateurPermissions};
 use crate::chiffrage::Chiffreur;
-use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
-use crate::configuration::charger_configuration_avec_db;
+use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
+use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
-use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
-use crate::rabbitmq_dao::{AttenteReponse, ConfigQueue, ConfigRoutingExchange, executer_mq, MessageInterne, MessageOut, QueueType, TypeMessageOut};
-use crate::serde::de::DeserializeOwned;
-use crate::transactions::{Transaction, TransactionImpl};
+use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, TypeMessageOut};
+use crate::transactions::TransactionImpl;
 use crate::verificateur::verifier_message;
 
 /// Thread de traitement des messages
 pub async fn recevoir_messages<M>(
     middleware: Arc<M>,
     mut rx: Receiver<MessageInterne>,
-    mut tx_verifie: Sender<TypeMessage>,
-    mut tx_certificats_manquants: Sender<RequeteCertificatInterne>
+    tx_verifie: Sender<TypeMessage>,
+    tx_certificats_manquants: Sender<RequeteCertificatInterne>
 )
     where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
@@ -75,11 +67,11 @@ pub async fn recevoir_messages<M>(
         };
 
         let entete = contenu.get_entete().clone();
-        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+        // let fingerprint_certificat = entete.fingerprint_certificat.as_str();
         debug!("Traiter message {:?}", entete);
 
         // Extraire routing key pour gerer messages qui ne requierent pas de validation
-        let (mut routing_key, type_message, domaine, action) = {
+        let (routing_key, type_message, domaine, action) = {
             let rk = delivery.routing_key.as_str();
             let ex = delivery.exchange.as_str();
             if ex == "" {
@@ -127,14 +119,14 @@ pub async fn recevoir_messages<M>(
                             }.expect("Chaine pem n'est pas un array");
                             debug!("Certificat inconnu, message invalide mais contient chaine_pem, on l'extrait");
                             match middleware.charger_enveloppe(&chaine_pem_vec, Some(fingerprint_dans_message.as_str().expect("fingerprint"))).await {
-                                Ok(enveloppe) => (),
+                                Ok(_enveloppe) => (),
                                 Err(e) => error!("Erreur chargemnet certificat dans (message est aussi invalide) : {:?}", e),
                             };
                         }
                     } else {
                         tx_certificats_manquants.send(RequeteCertificatInterne { fingerprint: fingerprint.clone(), delivery })
                             .await.unwrap_or_else(
-                            |e| error!("Erreur emission requete cert pour {}", fingerprint)
+                            |_e| error!("Erreur emission requete cert pour {}", fingerprint)
                         );
                     }
                 }
@@ -144,7 +136,7 @@ pub async fn recevoir_messages<M>(
             },
         }
 
-        let mut exchange = {
+        let exchange = {
             let ex = delivery.exchange.as_str();
             if ex == "" {
                 None
@@ -198,7 +190,7 @@ pub async fn recevoir_messages<M>(
                     debug!("Recu type message valide ... c'est une reponse? {}", cid);
                     if let Some(ma) = map_attente.remove(cid) {
                         debug!("Recu reponse pour message en attente sur {}", cid);
-                        ma.sender.send(message).unwrap_or_else(|e| error!("Erreur traitement reponse"));
+                        ma.sender.send(message).unwrap_or_else(|_e| error!("Erreur traitement reponse"));
                         continue
                     }
                 }
@@ -239,11 +231,11 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
         if !skip_requete {
             debug!("Faire une requete pour charger le certificat {}", fingerprint);
             let requete = json!({"fingerprint": fingerprint});
-            let domaine_action = format!("certificat.{}", fingerprint);
+            // let domaine_action = format!("certificat.{}", fingerprint);
             // let message = MessageJson::new(requete);
             let routage = RoutageMessageAction::new("certificat", fingerprint.as_str());
             match middleware.transmettre_requete(routage, &requete).await {
-                Ok(r) => {
+                Ok(_r) => {
                     tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
                         .await.expect("resend delivery avec certificat");
                     continue  // Ok
@@ -335,7 +327,7 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
             //     false  // Pas intercepte
             // }
         },
-        TypeMessage::Certificat(inner) => {
+        TypeMessage::Certificat(_inner) => {
             // Rien a faire, le certificat a deja ete intercepte par ValidateurX509
             debug!("Message evenement certificat, message intercepte");
             true
@@ -402,7 +394,7 @@ async fn traiter_certificatintercepter_message<M>(middleware: &M, inner: &Messag
 
 async fn preparer_reponse_certificats<M>(
     middleware: &M,
-    message: &TypeMessage,
+    _message: &TypeMessage,
     enveloppe_privee: &EnveloppePrivee,
     reply_q: &str,
     correlation_id: &str
@@ -415,28 +407,28 @@ async fn preparer_reponse_certificats<M>(
     Ok(middleware.repondre(routage, message).await?)
 }
 
-async fn traiter_certificat_attache(validateur: &impl ValidateurX509, certificat: &Value, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
-    debug!("Recu certficat attache {:?}", certificat);
-
-    // Batir l'enveloppe pour calculer le fingerprint - va permettre de verifier le cache
-    let enveloppe = match certificat.as_array() {
-        Some(certs) => {
-            let mut vec_strings : Vec<String> = Vec::new();
-            for v in certs {
-                match v.as_str() {
-                    Some(c_string) => vec_strings.push(String::from(c_string)),
-                    None => return Err("Valeur invalide sous _certificat".into())
-                }
-            }
-            validateur.charger_enveloppe(&vec_strings, fingerprint).await
-        },
-        None => Err("Contenu de _certificat est vide".into())
-    }?;
-
-    debug!("Enveloppe du certificat attache est charge : {:?}", &enveloppe.fingerprint());
-
-    Ok(enveloppe)
-}
+// async fn traiter_certificat_attache(validateur: &impl ValidateurX509, certificat: &Value, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+//     debug!("Recu certficat attache {:?}", certificat);
+//
+//     // Batir l'enveloppe pour calculer le fingerprint - va permettre de verifier le cache
+//     let enveloppe = match certificat.as_array() {
+//         Some(certs) => {
+//             let mut vec_strings : Vec<String> = Vec::new();
+//             for v in certs {
+//                 match v.as_str() {
+//                     Some(c_string) => vec_strings.push(String::from(c_string)),
+//                     None => return Err("Valeur invalide sous _certificat".into())
+//                 }
+//             }
+//             validateur.charger_enveloppe(&vec_strings, fingerprint).await
+//         },
+//         None => Err("Contenu de _certificat est vide".into())
+//     }?;
+//
+//     debug!("Enveloppe du certificat attache est charge : {:?}", &enveloppe.fingerprint());
+//
+//     Ok(enveloppe)
+// }
 
 fn parse(data: &Vec<u8>) -> Result<MessageSerialise, String> {
     let data = match String::from_utf8(data.to_owned()) {
@@ -573,7 +565,7 @@ where
 {
 
     match &message.certificat {
-        Some(e) => (),
+        Some(_) => (),
         None => {
             let entete = message.get_entete();
             let fingerprint = entete.fingerprint_certificat.as_str();

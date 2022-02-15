@@ -1,11 +1,9 @@
 use std::convert::TryFrom;
 use std::error::Error;
-use std::io::ErrorKind;
 
-use log::{debug, error, info};
+use log::debug;
 use multibase::{Base, decode, encode};
-use multicodec::MultiCodec;
-use multihash::{Code, Digest, Multihash, MultihashDigest, Sha2_256, Sha2_512, Sha2Digest, Sha3_256, Blake2b512, Blake2s256, Size, StatefulHasher};
+use multihash::{Code, Multihash, MultihashDigest, Sha2_256, Sha2_512, Blake2b512, Blake2s256, StatefulHasher};
 use serde::Serialize;
 use uuid::Uuid;
 use substring::Substring;
@@ -23,7 +21,7 @@ where S: Serialize
 }
 
 pub fn hacher_bytes(contenu: &[u8], code: Option<Code>, base: Option<Base>) -> String {
-    let mut digester: Code;
+    let digester: Code;
     match code {
         Some(inner) => digester = inner,
         None => digester = Code::Blake2b512,
@@ -33,7 +31,7 @@ pub fn hacher_bytes(contenu: &[u8], code: Option<Code>, base: Option<Base>) -> S
     let mh_digest = digester.digest(contenu);
     let mh_bytes = mh_digest.to_bytes();
 
-    let mut base_mb: Base;
+    let base_mb: Base;
     match base {
         Some(inner) => base_mb = inner,
         None => base_mb = Base::Base64,
@@ -44,7 +42,7 @@ pub fn hacher_bytes(contenu: &[u8], code: Option<Code>, base: Option<Base>) -> S
 }
 
 pub fn hacher_bytes_vu8(contenu: &[u8], code: Option<Code>) -> Vec<u8> {
-    let mut digester: Code;
+    let digester: Code;
     match code {
         Some(inner) => digester = inner,
         None => digester = Code::Blake2b512,
@@ -69,7 +67,7 @@ pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Re
     debug!("Verification hachage message {}", String::from_utf8(ser_bytes.clone()).expect("string"));
 
     let mh_digest = code.digest(ser_bytes.as_slice());
-    let mut hachage_calcule: &[u8] = mh_digest.digest(); // to_bytes();
+    let hachage_calcule: &[u8] = mh_digest.digest(); // to_bytes();
 
     // Enlever 2 premiers bytes (multibase et multihash)
     // let hachage_calcule = mh_bytes.as_slice();  //[2..];

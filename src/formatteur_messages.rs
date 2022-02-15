@@ -1,40 +1,26 @@
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use std::collections::btree_map::IntoIter;
 use std::error::Error;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use env_logger::fmt::TimestampPrecision::Millis;
-use log::{debug, info, warn};
+use log::{debug, warn};
 use mongodb::bson as bson;
-use multibase::{Base, decode};
-use num_traits::ToPrimitive;
-use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Public};
-use openssl::rsa::Padding;
-use openssl::sign::{RsaPssSaltlen, Verifier};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{DeserializeOwned, Visitor};
 use serde::ser::SerializeMap;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::constantes::*;
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::hachages::{hacher_message, verifier_multihash};
 use crate::middleware::{IsConfigurationPki, map_msg_to_bson};
-use crate::signatures::{signer_message, verifier_message as ref_verifier_message, VERSION_2};
+use crate::signatures::{signer_message, verifier_message as ref_verifier_message};
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 use crate::bson::{Document, Bson};
 use std::convert::{TryFrom, TryInto};
 use crate::mongo_dao::convertir_to_bson;
-
-const ENTETE: &str = "en-tete";
-const SIGNATURE: &str = "_signature";
-const CERTIFICATS: &str = "_certificat";
-const MILLEGRILLE: &str = "_millegrille";
 
 pub trait FormatteurMessage: IsConfigurationPki {
     // /// Retourne l'enveloppe privee utilisee pour signer le message
@@ -377,28 +363,9 @@ impl MessageMilleGrille {
     where
         S: Serialize,
     {
-        let mut map = serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned();
+        let map = serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned();
         let contenu = preparer_btree_recursif(map)?;
         Ok(contenu)
-    }
-
-    fn calculer_hachage_contenu(&mut self) -> Result<String, Box<dyn std::error::Error>> {
-        if ! self.contenu_traite {
-            self.traiter_contenu()?;
-        }
-
-        // Filtrer champs avec _
-        let contenu_string = {
-            let mut map: BTreeMap<&str, &Value> = BTreeMap::new();
-            for (k, v) in &self.contenu {
-                if !k.starts_with("_") {
-                    map.insert(k.as_str(), v);
-                }
-            }
-            serde_json::to_string(&map)?
-        };
-
-        Ok(hacher_message(contenu_string.as_str()))
     }
 
     fn signer_message(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
@@ -539,7 +506,7 @@ impl MessageMilleGrille {
     fn traiter_contenu(&mut self) -> Result<(), Box<dyn Error>>{
         if ! self.contenu_traite {
             let mut contenu = Map::new();
-            let mut contenu_ref = &mut self.contenu;
+            let contenu_ref = &mut self.contenu;
 
             let keys: Vec<String> = contenu_ref.keys().map(|k| k.to_owned()).collect();
             for k in keys {
@@ -697,8 +664,8 @@ impl Serialize for MessageMilleGrille {
     }
 }
 
-pub fn preparer_btree_recursif(mut contenu: Map<String, Value>) -> Result<Map<String, Value>, Box<dyn Error>> {
-    let mut iter: serde_json::map::IntoIter = contenu.into_iter();
+pub fn preparer_btree_recursif(contenu: Map<String, Value>) -> Result<Map<String, Value>, Box<dyn Error>> {
+    let iter: serde_json::map::IntoIter = contenu.into_iter();
     preparer_btree_recursif_into_iter(iter)
 }
 
@@ -708,7 +675,7 @@ fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Res
 
     // Copier dans une BTreeMap (via trier les keys)
     // let mut iter: serde_json::map::IntoIter = contenu.into_iter();
-    while let Some((k, mut v)) = iter.next() {
+    while let Some((k, v)) = iter.next() {
         let value = map_valeur_recursif(v)?;
         ordered.insert(k, value);
     }
@@ -896,7 +863,7 @@ impl MessageSerialise {
     }
 
     /// Sert a extraire le message pour une restauration - deplace (move) le message.
-    pub fn preparation_restaurer(mut self) -> MessageMilleGrille {
+    pub fn preparation_restaurer(self) -> MessageMilleGrille {
         let mut message = self.parsed;
         let evenements = message.contenu
             .get_mut("_evenements").expect("evenements")
@@ -916,44 +883,6 @@ impl VerificateurPermissions for MessageSerialise {
             None => None,
         }
     }
-}
-
-/// Filtrer certains formats speciaux de valeurs
-///   - Les f64 qui se terminent par .0 doivent etre changes en i64  (support ECMAScript)
-fn filtrer_value(value: &Value) -> Option<Value> {
-    if value.is_f64() {
-        if value.to_string().ends_with(".0") {
-            // debug!("On a une f64 en .0 : {:?}", value);
-            let val_i64: i64 = value.as_f64().unwrap().to_i64().unwrap();
-            let nouvelle_valeur = Value::from(val_i64);
-            return Some(nouvelle_valeur)
-        }
-    } else if value.is_object() {
-        // Appel recursif
-        let val_object = value.as_object().unwrap();
-
-        let mut changements = false;
-        let mut nouvel_objet: Map<String, Value> = Map::new();
-        for (champ, valeur) in val_object {
-            // Appel recursif
-            match filtrer_value(valeur) {
-                Some(v) => {
-                    nouvel_objet.insert(champ.to_owned(), v);
-                    changements = true;
-                },
-                None => {
-                    nouvel_objet.insert(champ.to_owned(), valeur.to_owned());
-                },
-            }
-        }
-
-        if changements == true {
-            let nouvelle_valeur = Value::from(nouvel_objet);
-            return Some(nouvelle_valeur);
-        }
-    }
-
-    None
 }
 
 #[derive(Clone, Debug, PartialEq)]

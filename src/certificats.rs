@@ -17,7 +17,6 @@ use multihash::{Code, Multihash};
 use num_traits::cast::ToPrimitive;
 use openssl::asn1::Asn1TimeRef;
 use openssl::error::ErrorStack;
-use openssl::hash::{DigestBytes, MessageDigest};
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private, Public};
 //use openssl::rsa::Rsa;
@@ -197,7 +196,7 @@ pub fn calculer_idmg(cert: &X509) -> Result<String, String> {
 }
 
 pub fn calculer_idmg_ref(cert: &X509Ref) -> Result<String, String> {
-    let fingerprint: DigestBytes = cert.digest(MessageDigest::sha256()).unwrap();
+    // let fingerprint: DigestBytes = cert.digest(MessageDigest::sha256()).unwrap();
 
     let fingerprint = {
         let der = match cert.to_der() {
@@ -603,7 +602,7 @@ pub trait ValidateurX509: Send + Sync {
                 // let cert_ca = chaine[chaine.len()-1].to_owned();
                 let store = match build_store(cert_ca, false) {
                     Ok(s) => s,
-                    Err(e) => Err(format!("certificats.valider_chaine Erreur preparation store pour certificat {:?}", certificat))?
+                    Err(_e) => Err(format!("certificats.valider_chaine Erreur preparation store pour certificat {:?}", certificat))?
                 };
                 match verifier_certificat(certificat, chaine, &store) {
                     Ok(b) => {
@@ -1073,7 +1072,7 @@ impl<'a> VerificateurRegles<'a> {
     }
 
     pub fn ajouter_conjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
-        let mut regles = match &mut self.regles_conjointes {
+        let regles = match &mut self.regles_conjointes {
             Some(r) => r,
             None => {
                 self.regles_conjointes = Some(Vec::new());
@@ -1084,7 +1083,7 @@ impl<'a> VerificateurRegles<'a> {
     }
 
     pub fn ajouter_disjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
-        let mut regles = match &mut self.regles_disjointes {
+        let regles = match &mut self.regles_disjointes {
             Some(r) => r,
             None => {
                 self.regles_disjointes = Some(Vec::new());

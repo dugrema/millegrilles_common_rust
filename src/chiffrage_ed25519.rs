@@ -130,7 +130,7 @@ pub fn dechiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_privee: &PKey<Pri
     debug!("Cle peer public : {:?}", cle_peer_public_raw);
 
 
-    let mut cle_secrete_dechiffree = if cle_secrete.len() == 32 {
+    let cle_secrete_dechiffree = if cle_secrete.len() == 32 {
         deriver_asymetrique_ed25519_peer(&cle_peer_intermediaire, cle_privee)?
     } else {
         // Dechiffage de la cle secrete avec ChaCha20Poly1305

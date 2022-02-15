@@ -1,15 +1,14 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::debug;
 use mongodb::{bson::doc, Client, Collection, Database};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::Result as ResultMongo;
 use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
@@ -132,7 +131,7 @@ pub struct ChampIndex {
     pub direction: i32,
 }
 
-pub fn filtrer_doc_id(mut doc: &mut Document) {
+pub fn filtrer_doc_id(doc: &mut Document) {
     doc.remove(TRANSACTION_CHAMP_ENTETE);
 
     let ks: Vec<String> = doc.keys().cloned().collect();

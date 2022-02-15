@@ -1,25 +1,14 @@
-use std::collections::{BTreeMap, HashMap};
-use std::collections::hash_map::RandomState;
 use std::error::Error;
 
-use chrono::{DateTime, Utc};
-use log::{debug, error, info};
-use multibase::{Base, decode};
-use openssl::error::ErrorStack;
-use openssl::hash::MessageDigest;
+use log::debug;
 use openssl::pkey::{PKey, Public};
-use openssl::rsa::Padding;
-use openssl::sign::{RsaPssSaltlen, Verifier};
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
-use crate::certificats::{EnveloppeCertificat, VerificateurRegles};
+use crate::certificats::VerificateurRegles;
 use crate::certificats::ValidateurX509;
-use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise, preparer_btree_recursif, map_valeur_recursif};
-use crate::hachages::verifier_multihash;
-use crate::rabbitmq_dao::MqMessageSendInformation;
-// use crate::signatures::{SALT_LENGTH, VERSION_1};
-use crate::signatures::{verifier_message as ref_verifier_message, VERSION_2};
+use crate::formatteur_messages::{MessageSerialise, preparer_btree_recursif, map_valeur_recursif};
+use crate::signatures::verifier_message as ref_verifier_message;
 
 pub trait VerificateurMessage {
     fn verifier_message(
@@ -82,10 +71,10 @@ where
         Some(c) => c.as_ref(),
         None => Err("Certificat manquant")?,
     };
-    let signature = match &message.get_msg().signature {
-        Some(s) => s.as_str(),
-        None => Err("Signature manquante")?,
-    };
+    // let signature = match &message.get_msg().signature {
+    //     Some(s) => s.as_str(),
+    //     None => Err("Signature manquante")?,
+    // };
 
     // Verifier les regles de validation custom du certificat
     let regles_ok = match verificateur {

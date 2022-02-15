@@ -20,9 +20,9 @@ use crate::configuration::{charger_configuration_avec_db, ConfigMessages, Config
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille};
-use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
+use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
-use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutor, RabbitMqExecutorConfig};
+use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutorConfig};
 use crate::recepteur_messages::MessageValideAction;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::VerificateurMessage;

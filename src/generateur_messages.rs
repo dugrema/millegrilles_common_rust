@@ -1,15 +1,11 @@
-use std::error::Error;
 use std::marker::Send;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use lapin::message::Delivery;
-use log::{debug, error, info};
+use log::debug;
 use serde::Serialize;
-use serde_json::{Map, Value};
-use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, oneshot};
+use tokio::sync::{mpsc::Sender, oneshot};
 use tokio::time::{Duration, timeout};
-use tokio::time::error::Elapsed;
 
 use crate::certificats::EnveloppePrivee;
 use crate::configuration::ConfigurationPki;
@@ -17,8 +13,7 @@ use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::middleware::IsConfigurationPki;
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
-use crate::recepteur_messages::{MessageValideAction, TypeMessage};
-use std::convert::TryFrom;
+use crate::recepteur_messages::TypeMessage;
 
 /// Conserve l'information de routage in/out d'un message
 #[derive(Clone, Debug)]
@@ -232,7 +227,7 @@ impl GenerateurMessagesImpl {
         }
 
         // Faire un clone du sender
-        let mut sender = {
+        let sender = {
             match self.tx_out.lock().unwrap().as_ref() {
                 Some(sender_ref) => Some(sender_ref.clone()),
                 None => None,
@@ -240,7 +235,7 @@ impl GenerateurMessagesImpl {
         };
 
         match sender {
-            Some(mut s) => {
+            Some(s) => {
                 debug!("Emettre message out : {:?}", &message);
                 let resultat = s.send(message).await;
                 match resultat {
@@ -399,7 +394,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             routage.correlation_id
         );
 
-        let (tx_delivery, mut rx_delivery) = oneshot::channel();
+        let (tx_delivery, rx_delivery) = oneshot::channel();
 
         let correlation_id = message_out.correlation_id.as_ref().expect("correlation_id").to_owned();
         if blocking {
@@ -426,7 +421,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
                         Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
                     }
                 },
-                Err(t) => Err(format!("Timeout reponse {}", correlation_id))?,
+                Err(_t) => Err(format!("Timeout reponse {}", correlation_id))?,
             }
         } else {
             // Non-blocking, emission simple et on n'attend pas

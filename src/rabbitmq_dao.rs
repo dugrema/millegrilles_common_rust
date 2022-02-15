@@ -1,30 +1,24 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex, Weak};
-use std::sync::mpsc::SendError;
+use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::Future;
 use futures::stream::FuturesUnordered;
-use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, publisher_confirm::Confirmation, Queue, Result as ResultLapin, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
+use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, Queue, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
 use log::{debug, error, info, warn};
-use serde_json::Value;
-use tokio::{task, try_join};
+use tokio::task;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
 use tokio_amqp::*;
 use tokio_stream::StreamExt;
-use url::Url;
 
-use crate::certificats::{EnveloppePrivee, ValidateurX509};
+use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageSerialise};
+use crate::formatteur_messages::MessageSerialise;
 use crate::formatteur_messages::MessageMilleGrille;
 use crate::recepteur_messages::TypeMessage;
 
@@ -95,7 +89,7 @@ async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
         if let Ok(c) = resultat {
             return Ok(c)
         } else {
-            let erreur_acces = match &resultat {
+            match &resultat {
                 Ok(_) => panic!("resultat"),  // Ne doit pas arriver
                 Err(e) => {
                     info!("Erreur de connexion MQ : {:?}", e);
@@ -162,7 +156,7 @@ async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn E
     debug!("Tenter creer compte MQ avec hosts {:?}", hosts);
 
     let config_pki = configuration.get_configuration_pki();
-    let certfile = config_pki.certfile.as_path();
+    // let certfile = config_pki.certfile.as_path();
 
     // Preparer certificat pour auth SSL
     let enveloppe = config_pki.get_enveloppe_privee().clone();
@@ -563,7 +557,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
 }
 
 
-async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sender<MessageInterne>) {
+async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<MessageInterne>) {
 
     debug!("Ouvrir queue {:?}", queue_type);
 
@@ -571,7 +565,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
         QueueType::ExchangeQueue(c) => {
             let nom_queue = &c.nom_queue;
 
-            let mut options = QueueDeclareOptions {
+            let options = QueueDeclareOptions {
                 passive: false,
                 durable: c.durable,
                 exclusive: false,
@@ -656,7 +650,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
             Ok(()) => {
                 // Emettre le Ack
                 match acker.ack(BasicAckOptions::default()).await {
-                    Ok(d) => (),
+                    Ok(_d) => (),
                     Err(e) => {
                         warn!("Erreur ACK message, on ferme le consumer : {:?}", e);
                         break
@@ -667,7 +661,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, mut tx: Sende
                 // Erreur de queuing interne, emettre un nack (remet message sur la Q)
                 debug!("Erreur Q interne, NACK : {:?}", e);
                 match acker.nack(BasicNackOptions::default()).await {
-                    Ok(d) => (),
+                    Ok(_d) => (),
                     Err(e) => {
                         warn!("Erreur NACK message, on ferme le consumer : {:?}", e);
                         break
