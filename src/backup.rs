@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Timelike, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use log::{debug, error, info, warn};
-use mongodb::bson::{bson, doc, Document};
+use mongodb::bson::{doc, Document};
 use mongodb::Cursor;
 use mongodb::options::{AggregateOptions, FindOptions, Hint};
 use reqwest::{Body, Response};
@@ -25,7 +25,7 @@ use uuid::Uuid;
 use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{Chiffreur, CommandeSauvegarderCle, Dechiffreur, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage::{Chiffreur, Dechiffreur, DecipherMgs, MgsCipherKeys};
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
@@ -796,7 +796,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
         middleware.clone()
     );
     for fichier in &reponse_val.fichiers {
-        let mut copie_url_fichiers = url_fichiers.clone();
+        let copie_url_fichiers = url_fichiers.clone();
         let path_fichier_courant = PathBuf::from(fichier);
         let nom_fichier = path_fichier_courant.file_name().expect("nom fichier").to_str().expect("str");
         let mut path_fichier = PathBuf::from(workdir);
@@ -820,7 +820,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
             info!("backup.download_backup Restaurer catalogue {} et archive {:?}", nom_fichier_catalogue, path_fichier);
             let mut path_fichier_catalogue = async_std::path::PathBuf::from(path_fichier.as_path());
             path_fichier_catalogue.set_file_name(nom_fichier_catalogue);
-            let mut path_fichier_transactions = async_std::path::PathBuf::from(path_fichier.as_path());
+            let path_fichier_transactions = async_std::path::PathBuf::from(path_fichier.as_path());
             let mut fichier_transactions = async_std::fs::File::open(path_fichier.as_path()).await?;
 
             // Charger catalogue
@@ -1491,7 +1491,7 @@ impl ProcesseurFichierBackup {
                 match self.traiter_catalogue_horaire(middleware, filepath).await {
                     Ok(()) => {
                     },
-                    Err(e) => {
+                    Err(_e) => {
                         debug!("Erreur traitement catalogue, on assume probleme de dechiffrage transactions");
                         self.skip_transactions = true;
                         self.erreurs_catalogues += 1;
