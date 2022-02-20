@@ -4,6 +4,8 @@ use openssl::encrypt::{Decrypter, Encrypter};
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private, Public};
 use openssl::rsa::Padding;
+use zeroize::Zeroize;
+use crate::chiffrage::CleSecrete;
 
 pub fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     const SIZE_MAX: usize = 4096/8;
@@ -25,7 +27,7 @@ pub fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -
     Ok(buffer_ajuste)
 }
 
-pub fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &[u8]) -> Result<CleSecrete, Box<dyn Error>> {
     let mut cle_dechiffree = [0u8; 512];  // Cle max 4096 bits (512 bytes)
 
     let mut decrypter = Decrypter::new(private_key)?;
@@ -35,6 +37,9 @@ pub fn dechiffrer_asymetrique(private_key: &PKey<Private>, cle_chiffree_bytes: &
     decrypter.set_rsa_oaep_md(MessageDigest::sha256())?;
     decrypter.decrypt(cle_chiffree_bytes, &mut cle_dechiffree)?;
 
-    let cle_dechiffree = &cle_dechiffree[..32];
-    Ok(cle_dechiffree.to_vec().to_owned())
+    let cle_secrete: [u8;32] = cle_dechiffree[..32].try_into()?;
+    cle_dechiffree.zeroize();  // Efface contenu cle
+
+    Ok(CleSecrete(cle_secrete))
+
 }

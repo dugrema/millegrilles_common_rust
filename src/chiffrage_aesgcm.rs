@@ -314,7 +314,7 @@ impl MgsCipherData for Mgs2CipherData {
 
     fn dechiffrer_cle(&mut self, cle_privee: &PKey<Private>) -> Result<(), Box<dyn Error>> {
         let cle_dechiffree = dechiffrer_asymetrique(cle_privee, self.cle_chiffree.as_slice())?;
-        self.cle_dechiffree = Some(cle_dechiffree);
+        self.cle_dechiffree = Some(cle_dechiffree.0.into());
 
         Ok(())
     }
