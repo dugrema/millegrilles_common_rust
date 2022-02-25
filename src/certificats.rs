@@ -365,6 +365,14 @@ impl EnveloppeCertificat {
         Err("IDMG non present sur certificat (OrganizationName)".into())
     }
 
+    /// Calcule le idmg pour ce certificat
+    pub fn calculer_idmg(&self) -> Result<String, String> {
+        match self.idmg() {
+            Ok(i) => Ok(i),
+            Err(_) => calculer_idmg(&self.certificat)
+        }
+    }
+
     pub fn subject(&self) -> Result<HashMap<String, String>, String> {
         let certificat = &self.certificat;
         let subject_name = certificat.subject_name();
