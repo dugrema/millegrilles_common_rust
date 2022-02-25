@@ -10,7 +10,7 @@ use openssl::pkey::{PKey, Public};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{DeserializeOwned, Visitor};
 use serde::ser::SerializeMap;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Map, Number, Value};
 use uuid::Uuid;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
@@ -938,6 +938,12 @@ impl Default for DateEpochSeconds {
 impl From<DateTime<Utc>> for DateEpochSeconds {
     fn from(dt: DateTime<Utc>) -> Self {
         DateEpochSeconds {date: dt}
+    }
+}
+
+impl Into<Value> for DateEpochSeconds {
+    fn into(self) -> Value {
+        Value::Number(Number::from(self.date.timestamp()))
     }
 }
 
