@@ -27,6 +27,15 @@ pub struct ResultatValidation {
 }
 
 impl ResultatValidation {
+    pub fn new(signature_valide: bool, hachage_valide: Option<bool>, certificat_valide: bool, regles_valides: bool) -> Self {
+        ResultatValidation {
+            signature_valide,
+            hachage_valide,
+            certificat_valide,
+            regles_valides,
+        }
+    }
+
     pub fn valide(&self) -> bool {
         self.signature_valide && self.certificat_valide && self.regles_valides
     }
