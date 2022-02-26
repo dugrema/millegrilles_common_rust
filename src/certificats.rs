@@ -90,6 +90,7 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>) -> Result<Envelop
         chaine: chaine_x509,
         cle_publique,
         intermediaire,
+        millegrille: None,
         presentement_valide,
         fingerprint,
         date_enveloppe: Instant::now(),
@@ -309,6 +310,7 @@ pub struct EnveloppeCertificat {
     chaine: Vec<X509>,
     cle_publique: PKey<Public>,
     intermediaire: Stack<X509>,
+    millegrille: Option<X509>,
     pub presentement_valide: bool,
     pub fingerprint: String,
     date_enveloppe: Instant,
@@ -389,6 +391,29 @@ impl EnveloppeCertificat {
         Ok(resultat)
     }
 
+    pub fn issuer(&self) -> Result<HashMap<String, String>, String> {
+        let certificat = &self.certificat;
+        let subject_name = certificat.issuer_name();
+
+        let mut resultat = HashMap::new();
+        for entry in subject_name.entries() {
+            // debug!("Entry : {:?}", entry);
+            let cle: String = entry.object().nid().long_name().expect("Erreur chargement Nid de subject").into();
+            let data = entry.data().as_slice().to_vec();
+            let valeur = String::from_utf8(data).expect("Erreur chargement IDMG");
+            resultat.insert(cle, valeur);
+        }
+
+        Ok(resultat)
+    }
+
+    pub fn est_ca(&self) -> Result<bool, String> {
+        let subject = self.subject()?;
+        let issuer = self.issuer()?;
+
+        Ok(subject == issuer)
+    }
+
     pub fn formatter_date_epoch(date: &Asn1TimeRef) -> ParseResult<DateTime<Utc>> {
         let str_date = date.to_string();
         Utc.datetime_from_str(&str_date, "%b %d %T %Y %Z")
@@ -454,6 +479,7 @@ impl Clone for EnveloppeCertificat {
             chaine: self.chaine.clone(),
             cle_publique: self.cle_publique.clone(),
             intermediaire,
+            millegrille: self.millegrille.clone(),
             presentement_valide: self.presentement_valide,
             fingerprint: self.fingerprint.clone(),
             date_enveloppe: self.date_enveloppe.clone(),
@@ -472,6 +498,7 @@ impl Clone for EnveloppeCertificat {
         self.chaine = source.chaine.clone();
         self.cle_publique = source.cle_publique.clone();
         self.intermediaire = intermediaire;
+        self.millegrille = source.millegrille.clone();
         self.presentement_valide = source.presentement_valide;
         self.fingerprint = source.fingerprint.clone();
         self.date_enveloppe = source.date_enveloppe.clone();

@@ -134,6 +134,15 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
 
     let filtre = doc! { "fingerprint": fingerprint };
 
+    let certificat = enveloppe.certificat();
+    let (idmg, est_ca) = match enveloppe.est_ca()? {
+        true => {
+            debug!("Certificat self-signed, on ajout marqueurs de millegrille");
+            (enveloppe.calculer_idmg()?, true)
+        },
+        false => (enveloppe.idmg()?, false)
+    };
+
     // Separer les fingerprint et pems de la chaine.
     let fp_certs = enveloppe.get_pem_vec();
     let mut certs = Vec::new();
@@ -159,6 +168,8 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
         "not_valid_before": enveloppe.not_valid_before().expect("Erreur not_valid_before"),
         "sujet": doc_sujet,
         "_mg-creation": date_courante,
+        "est_ca": est_ca,
+        "idmg": idmg,
     };
 
     // Inserer extensions millegrilles
