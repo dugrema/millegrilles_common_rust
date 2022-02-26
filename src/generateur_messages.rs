@@ -2,7 +2,7 @@ use std::marker::Send;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, error};
 use serde::Serialize;
 use tokio::sync::{mpsc::Sender, oneshot};
 use tokio::time::{Duration, timeout};
@@ -26,6 +26,7 @@ pub struct RoutageMessageAction {
     correlation_id: Option<String>,
     ajouter_reply_q: bool,
     blocking: Option<bool>,
+    ajouter_ca: bool,
 }
 impl RoutageMessageAction {
 
@@ -35,7 +36,7 @@ impl RoutageMessageAction {
         RoutageMessageAction {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None,
+            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None, ajouter_ca: false,
         }
     }
 
@@ -56,6 +57,7 @@ pub struct RoutageMessageActionBuilder {
     correlation_id: Option<String>,
     ajouter_reply_q: bool,
     blocking: Option<bool>,
+    ajouter_ca: bool,
 }
 impl RoutageMessageActionBuilder {
     pub fn new<S>(domaine: S, action: S) -> Self
@@ -64,7 +66,7 @@ impl RoutageMessageActionBuilder {
         RoutageMessageActionBuilder {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None,
+            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None, ajouter_ca: false,
         }
     }
 
@@ -108,6 +110,12 @@ impl RoutageMessageActionBuilder {
         self
     }
 
+    pub fn ajouter_ca(mut self, flag: bool) -> Self
+    {
+        self.ajouter_ca = flag;
+        self
+    }
+
     pub fn build(self) -> RoutageMessageAction {
         RoutageMessageAction {
             domaine: self.domaine,
@@ -118,6 +126,7 @@ impl RoutageMessageActionBuilder {
             correlation_id: self.correlation_id,
             ajouter_reply_q: self.ajouter_reply_q,
             blocking: self.blocking,
+            ajouter_ca: self.ajouter_ca,
         }
     }
 }
@@ -211,7 +220,13 @@ impl GenerateurMessagesImpl {
             None => None
         };
         let message_signe = match self.formatter_message(
-            message, Some(routage.domaine.as_str()), Some(routage.action.as_str()), partition, None) {
+            message,
+            Some(routage.domaine.as_str()),
+            Some(routage.action.as_str()),
+            partition,
+            None,
+            routage.ajouter_ca
+        ) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
         };
@@ -271,7 +286,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             Some(&routage.domaine),
             Some(&routage.action),
             routage.partition.as_ref(),
-            None
+            None,
+            routage.ajouter_ca
         ) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur formattage message {:?}", e))?

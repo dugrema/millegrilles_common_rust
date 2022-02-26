@@ -34,14 +34,15 @@ pub trait FormatteurMessage: IsConfigurationPki {
         domaine: Option<T>,
         action: Option<T>,
         partition: Option<T>,
-        version: Option<i32>
+        version: Option<i32>,
+        ajouter_ca: bool
     ) -> Result<MessageMilleGrille, Box<dyn Error>>
     where
         S: Serialize,
         T: AsRef<str>
     {
         let enveloppe = self.get_enveloppe_privee();
-        MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, action, partition, version)
+        MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, action, partition, version, ajouter_ca)
     }
 
     fn formatter_reponse<S>(
@@ -53,7 +54,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
         S: Serialize,
     {
         let enveloppe = self.get_enveloppe_privee();
-        MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None::<&str>, None::<&str>, None::<&str>, version)
+        MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None::<&str>, None::<&str>, None::<&str>, version, false)
     }
 
     fn signer_message(
@@ -72,7 +73,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
 
     fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {
         let reponse = json!({"ok": ok, "message": message});
-        self.formatter_message(&reponse, None::<&str>, None, None, None)
+        self.formatter_message(&reponse, None::<&str>, None, None, None, false)
     }
 
     fn reponse_ok(&self) -> Result<Option<MessageMilleGrille>, String> {
@@ -237,7 +238,8 @@ impl MessageMilleGrille {
         domaine: Option<T>,
         action: Option<U>,
         partition: Option<V>,
-        version: Option<i32>
+        version: Option<i32>,
+        ajouter_ca: bool
     ) -> Result<Self, Box<dyn std::error::Error>>
     where
         S: Serialize,
@@ -263,11 +265,16 @@ impl MessageMilleGrille {
         };
 
         // let message_ordered = MessageMilleGrille::preparer_message_ordered(entete, value)?;
+        // warn!("Ajouter CA ? {} : {:?}", ajouter_ca, enveloppe_privee.ca);
+        let millegrille = match ajouter_ca {
+            true => Some(enveloppe_privee.ca.clone()),
+            false => None
+        };
 
         let mut message = MessageMilleGrille {
             entete,
             certificat: Some(pems),
-            millegrille: None,
+            millegrille,
             signature: None,
             contenu: value_ordered,
             contenu_traite: true,
@@ -1221,7 +1228,7 @@ mod serialization_tests {
             "alpaca": true,
         });
         let message = MessageMilleGrille::new_signer(
-            &enveloppe_privee, &val, None::<&str>, None::<&str>, None::<&str>, None).expect("map");
+            &enveloppe_privee, &val, None::<&str>, None::<&str>, None::<&str>, None, false).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         debug!("Message MilleGrille serialise : {}", message_str)
@@ -1317,7 +1324,7 @@ mod serialization_tests {
             "alpaca": true,
         });
         let mut message = MessageMilleGrille::new_signer(
-            &enveloppe_privee, &val, None::<&str>, None::<&str>, None::<&str>, None).expect("map");
+            &enveloppe_privee, &val, None::<&str>, None::<&str>, None::<&str>, None, false).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
         let idx_certificat = message_str.find("\"_certificat\"");

@@ -581,7 +581,8 @@ async fn serialiser_catalogue(
                 Some(DOMAINE_NOM_MAITREDESCLES),
                 Some(MAITREDESCLES_COMMANDE_NOUVELLE_CLE),
                 Some(partition),
-                None
+                None,
+                false
             )?;
 
             Some(commande_signee)
@@ -597,7 +598,8 @@ async fn serialiser_catalogue(
         Some(BACKUP_NOM_DOMAINE),
         Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
         None,
-        None
+        None,
+        false
     )?;
 
     Ok((catalogue, catalogue_signe, commande_signee))

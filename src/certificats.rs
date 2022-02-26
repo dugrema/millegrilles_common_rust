@@ -295,11 +295,13 @@ pub fn charger_enveloppe_privee<V>(path_cert: &Path, path_cle: &Path, validateur
         chaine_pem.push(cert_pem);
     }
 
+    let ca_pem = validateur.ca_pem().to_owned();
     let enveloppe_privee = EnveloppePrivee {
         enveloppe: Arc::new(enveloppe),
         cle_privee,
         chaine_pem,
         clecert_pem,
+        ca: ca_pem,
     };
 
     Ok(enveloppe_privee)
@@ -552,6 +554,7 @@ pub struct EnveloppePrivee {
     cle_privee: PKey<Private>,
     chaine_pem: Vec<String>,
     pub clecert_pem: String,
+    pub ca: String,
 }
 
 impl EnveloppePrivee {
