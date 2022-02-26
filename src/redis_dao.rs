@@ -1,9 +1,12 @@
 use std::error::Error;
 use {redis::Client};
 use log::{debug, info};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 use crate::certificats::EnveloppeCertificat;
 
 const TTL_CERTIFICAT: i32 = 48 * 60 * 60;  // 48 heures en secondes
+const CLE_CERTIFICAT: &str = "certificat_v1";
 
 pub struct RedisDao {
     url_connexion: String,
@@ -33,22 +36,23 @@ impl RedisDao {
     pub async fn liste_certificats_fingerprints(&self) -> Result<Vec<String>, Box<dyn Error>> {
         let mut con = self.client.get_async_connection().await?;
         // let resultat: String = redis::cmd("GET").arg("certificat:zQmYZfSGuY86wTDBPM6MdYzRGWSqrYtWdbXfquMVG5buxrm").query_async(&mut con).await?;
-        let resultat: Vec<String> = redis::cmd("KEYS").arg("certificat:*").query_async(&mut con).await?;
+        let resultat: Vec<String> = redis::cmd("KEYS").arg(format!("{}:*", CLE_CERTIFICAT)).query_async(&mut con).await?;
         debug!("Resultat : {:?}", resultat);
         Ok(resultat)
     }
 
-    pub async fn get_certificat<S>(&self, fingerprint: S) -> Result<Option<Vec<String>>, Box<dyn Error>>
+    pub async fn get_certificat<S>(&self, fingerprint: S) -> Result<Option<RediCertificatV1>, Box<dyn Error>>
         where S: AsRef<str>
     {
         let mut con = self.client.get_async_connection().await?;
-        let cle = format!("certificat:{}", fingerprint.as_ref());
+        let cle = format!("{}:{}", CLE_CERTIFICAT, fingerprint.as_ref());
         let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
 
         match resultat {
             Some(r) => {
-                let liste_pems: Vec<String> = serde_json::from_str(r.as_str())?;
-                Ok(Some(liste_pems))
+                let valeur_cache: RediCertificatV1 = serde_json::from_str(r.as_str())?;
+                // let liste_pems: Vec<String> = serde_json::from_str(r.as_str())?;
+                Ok(Some(valeur_cache))
             },
             None => Ok(None)
         }
@@ -58,7 +62,7 @@ impl RedisDao {
         let mut con = self.client.get_async_connection().await?;
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
-        let cle_cert = format!("certificat:{}", certificat.fingerprint);
+        let cle_cert = format!("{}:{}", CLE_CERTIFICAT, certificat.fingerprint);
         debug!("Verifier presence {}, reset TTL", cle_cert);
         let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
         debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
@@ -69,8 +73,13 @@ impl RedisDao {
 
             // Preparer cle, pems en format json str
             let pems: Vec<String> = certificat.get_pem_vec().into_iter().map(|c| { c.pem }).collect();
-            let pems_value = serde_json::to_value(pems)?;
-            let cert_json = serde_json::to_string(&pems_value)?;
+            let ca = certificat.get_pem_ca()?;
+            let certificat_redis = RediCertificatV1 {
+                pems,
+                ca
+            };
+            // let pems_value = serde_json::to_value(pems)?;
+            let cert_json = serde_json::to_string(&certificat_redis)?;
 
             // Conserver certificat
             let _: () = redis::cmd("SET")
@@ -83,6 +92,12 @@ impl RedisDao {
         Ok(())
     }
 
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RediCertificatV1 {
+    pub pems: Vec<String>,
+    pub ca: Option<String>,
 }
 
 #[cfg(test)]

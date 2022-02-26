@@ -1427,7 +1427,7 @@ impl ProcesseurFichierBackup {
             let fingerprint = message.get_entete().fingerprint_certificat.as_str();
             let option_cert = match message.get_msg().certificat.as_ref() {
                 Some(c) => {
-                    Some(middleware.charger_enveloppe(c, Some(fingerprint)).await?)
+                    Some(middleware.charger_enveloppe(c, Some(fingerprint), None).await?)
                 },
                 None => {
                     info!("ProcesseurFichierBackup.parse_catalogue Catalogue sans _cerficat inclus {:?}", &filepath);

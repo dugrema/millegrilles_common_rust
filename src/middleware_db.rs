@@ -47,8 +47,8 @@ impl Middleware for MiddlewareDb {
 
 #[async_trait]
 impl ValidateurX509 for MiddlewareDb {
-    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
-        let enveloppe = self.validateur.charger_enveloppe(chaine_pem, fingerprint).await?;
+    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+        let enveloppe = self.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await?;
 
         // Conserver dans redis (reset TTL)
         match self.redis.save_certificat(&enveloppe).await {
@@ -72,9 +72,9 @@ impl ValidateurX509 for MiddlewareDb {
             Some(c) => Some(c),
             None => {
                 // Cas special, certificat inconnu a PKI. Tenter de le charger de redis
-                let pems_vec = match self.redis.get_certificat(fingerprint).await {
+                let redis_certificat = match self.redis.get_certificat(fingerprint).await {
                     Ok(c) => match c {
-                        Some(cert_pem) => cert_pem,
+                        Some(c) => c,
                         None => return None
                     },
                     Err(e) => {
@@ -84,7 +84,11 @@ impl ValidateurX509 for MiddlewareDb {
                 };
 
                 // Le certificat est dans redis, on le sauvegarde localement en chargeant l'enveloppe
-                match self.validateur.charger_enveloppe(&pems_vec, None).await {
+                let ca_pem = match &redis_certificat.ca {
+                    Some(c) => Some(c.as_str()),
+                    None => None
+                };
+                match self.validateur.charger_enveloppe(&redis_certificat.pems, None, ca_pem).await {
                     Ok(c) => Some(c),
                     Err(e) => {
                         warn!("MiddlewareDbPki.get_certificat (1) Erreur acces certificat via redis : {:?}", e);

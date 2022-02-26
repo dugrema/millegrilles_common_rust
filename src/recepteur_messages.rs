@@ -118,7 +118,7 @@ pub async fn recevoir_messages<M>(
                                 None => Err("Chaine pem n'est pas un array")
                             }.expect("Chaine pem n'est pas un array");
                             debug!("Certificat inconnu, message invalide mais contient chaine_pem, on l'extrait");
-                            match middleware.charger_enveloppe(&chaine_pem_vec, Some(fingerprint_dans_message.as_str().expect("fingerprint"))).await {
+                            match middleware.charger_enveloppe(&chaine_pem_vec, Some(fingerprint_dans_message.as_str().expect("fingerprint")), None).await {
                                 Ok(_enveloppe) => (),
                                 Err(e) => error!("Erreur chargemnet certificat dans (message est aussi invalide) : {:?}", e),
                             };
@@ -382,7 +382,7 @@ async fn traiter_certificatintercepter_message<M>(middleware: &M, inner: &Messag
                 Some(f) => Some(f.as_str()),
                 None => None,
             };
-            match middleware.charger_enveloppe(&chaine_pem, fingerprint).await {
+            match middleware.charger_enveloppe(&chaine_pem, fingerprint, None).await {
                 Ok(_) => (),
                 Err(e) => info!("Erreur chargement message certificat.infoCertificat : {:?}", e)
             }
@@ -572,7 +572,11 @@ where
             let certificat = match &message.get_msg().certificat {
                 Some(c) => {
                     // Utiliser certificat attache au besoin
-                    match middleware.charger_enveloppe(&c, Some(fingerprint)).await {
+                    let ca_pem = match &message.parsed.millegrille {
+                        Some(c) => Some(c.as_str()),
+                        None => None
+                    };
+                    match middleware.charger_enveloppe(&c, Some(fingerprint), ca_pem).await {
                         Ok(e) => {
                             // Set le certificat dans le message
                             Ok(e)
@@ -599,7 +603,7 @@ where
                 Some(c) => {
                     let vec_cert = vec!(c.to_owned());
                     // Utiliser certificat attache
-                    match middleware.charger_enveloppe(&vec_cert, None).await {
+                    match middleware.charger_enveloppe(&vec_cert, None, None).await {
                         Ok(e) => {
                             // Set le certificat de millegrille dans le message
                             message.set_millegrille(e);

@@ -840,19 +840,25 @@ impl MessageSerialise {
         let fp_certificat = self.entete.fingerprint_certificat.as_str();
 
         // Charger l'enveloppe du certificat de millegrille (CA)
-        let ca : Option<Arc<EnveloppeCertificat>> = match &self.parsed.millegrille {
+        //let ca : Option<Arc<EnveloppeCertificat>> =
+        match &self.parsed.millegrille {
             Some(c) => {
                 let vec_pems = vec![c.clone()];
-                let enveloppe = validateur.charger_enveloppe(&vec_pems, None).await?;
-                Some(enveloppe)
+                let enveloppe = validateur.charger_enveloppe(&vec_pems, None, None).await?;
+                self.millegrille = Some(enveloppe.clone());
+                // Some(enveloppe)
             },
-            None => None
+            None => ()  //None
         };
 
         // Charger l'enveloppe du certificat de signature du message
         let enveloppe : Option<Arc<EnveloppeCertificat>> = match &self.parsed.certificat {
             Some(c) => {
-                let enveloppe = validateur.charger_enveloppe(c, Some(fp_certificat)).await?;
+                let ca_pem = match &self.parsed.millegrille {
+                    Some(c) => Some(c.as_str()),
+                    None => None
+                };
+                let enveloppe = validateur.charger_enveloppe(c, Some(fp_certificat), ca_pem).await?;
                 Some(enveloppe)
             },
             None => {
@@ -860,17 +866,17 @@ impl MessageSerialise {
             }
         };
 
-        match &self.parsed.millegrille {
-            Some(c) => {
-                if self.millegrille.is_none() {
-                    debug!("Chargement du certificat de millegrille inclue {}", c);
-                    let vec_certs = vec!(c.to_owned());
-                    let enveloppe = validateur.charger_enveloppe(&vec_certs, None).await?;
-                    self.millegrille = Some(enveloppe);
-                }
-            },
-            None => ()
-        }
+        // match &self.parsed.millegrille {
+        //     Some(c) => {
+        //         if self.millegrille.is_none() {
+        //             debug!("Chargement du certificat de millegrille inclue {}", c);
+        //             let vec_certs = vec!(c.to_owned());
+        //             let enveloppe = validateur.charger_enveloppe(&vec_certs, None, None).await?;
+        //             self.millegrille = Some(enveloppe);
+        //         }
+        //     },
+        //     None => ()
+        // }
 
         Ok(enveloppe)
     }
@@ -887,79 +893,79 @@ impl MessageSerialise {
         message
     }
 
-    pub async fn valider_message_tiers<V>(&mut self, validateur: &V)
-        -> Result<String, ResultatValidation>
-        where V: ValidateurX509
-    {
-        // Charger certificat CA du tiers
-        let certificat_ca_tiers = match &self.millegrille {
-            Some(c) => Ok(c.clone()),
-            None => {
-                info!("valider_message_tiers Fiche publique manquante");
-                Err(ResultatValidation::new(false, None, false, false))
-            }
-        }?;
-
-        debug!("resoudre_url Certificat CA tiers : {:?}", certificat_ca_tiers);
-        let idmg_tiers = match certificat_ca_tiers.calculer_idmg() {
-            Ok(i) => Ok(i),
-            Err(e) => {
-                info!("valider_message_tiers Erreur calcul idmg sur certificat de millegrille : {}", e);
-                Err(ResultatValidation::new(false, None, false, false))
-            }
-        }?;
-        debug!("resoudre_url Certificat idmg tiers : {}", idmg_tiers);
-        self.set_millegrille(certificat_ca_tiers.clone());
-
-        // Charger et verificat certificat tiers
-        let certificat_tiers = match &self.parsed.certificat {
-            Some(c) => match validateur.charger_enveloppe(&c, None).await {
-                Ok(enveloppe) => {
-                    let valide = match validateur.valider_chaine(
-                        enveloppe.as_ref(), Some(certificat_ca_tiers.as_ref())) {
-                        Ok(v) => Ok(v),
-                        Err(e) => {
-                            info!("valider_message_tiers Erreur valider chaine de certificat : {}", e);
-                            Err(ResultatValidation::new(false, None, false, false))
-                        }
-                    }?;
-                    if valide &&
-                        enveloppe.verifier_exchanges(vec![Securite::L4Secure]) &&
-                        enveloppe.verifier_roles(vec![RolesCertificats::Core]) {
-                        Ok(enveloppe)
-                    } else {
-                        info!("core_topologie.resoudre_url Erreur verification certificat fiche publique : chaine invalide");
-                        Err(ResultatValidation::new(false, None, false, false))
-                    }
-                }
-                Err(e) => {
-                    info!("core_topologie.resoudre_url Certificat fiche publique ne peut pas etre charge : {:?}", e);
-                    Err(ResultatValidation::new(false, None, false, false))
-                }
-            },
-            None => {
-                info!("core_topologie.resoudre_url Certificat fiche publique manquant");
-                Err(ResultatValidation::new(false, None, false, false))
-            }
-        }?;
-        self.set_certificat(certificat_tiers);
-
-        // Valider le message avec certificat de la millegrille tierce
-        let validation_option = ValidationOptions::new(true, true, true);
-        let resultat_validation = match self.valider(validateur, Some(&validation_option)).await {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                info!("valider_message_tiers Erreur execution de la validation : {}", e);
-                Err(ResultatValidation::new(false, None, true, false))
-            }
-        }?;
-
-        debug!("resoudre_url Resultat validation : {:?}", resultat_validation);
-        match resultat_validation.valide() {
-            true => Ok(idmg_tiers),
-            false => Err(resultat_validation)
-        }
-    }
+    // pub async fn valider_message_tiers<V>(&mut self, validateur: &V)
+    //     -> Result<String, ResultatValidation>
+    //     where V: ValidateurX509
+    // {
+    //     // Charger certificat CA du tiers
+    //     let certificat_ca_tiers = match &self.millegrille {
+    //         Some(c) => Ok(c.clone()),
+    //         None => {
+    //             info!("valider_message_tiers Fiche publique manquante");
+    //             Err(ResultatValidation::new(false, None, false, false))
+    //         }
+    //     }?;
+    //
+    //     debug!("resoudre_url Certificat CA tiers : {:?}", certificat_ca_tiers);
+    //     let idmg_tiers = match certificat_ca_tiers.calculer_idmg() {
+    //         Ok(i) => Ok(i),
+    //         Err(e) => {
+    //             info!("valider_message_tiers Erreur calcul idmg sur certificat de millegrille : {}", e);
+    //             Err(ResultatValidation::new(false, None, false, false))
+    //         }
+    //     }?;
+    //     debug!("resoudre_url Certificat idmg tiers : {}", idmg_tiers);
+    //     self.set_millegrille(certificat_ca_tiers.clone());
+    //
+    //     // Charger et verificat certificat tiers
+    //     let certificat_tiers = match &self.parsed.certificat {
+    //         Some(c) => match validateur.charger_enveloppe(&c, None).await {
+    //             Ok(enveloppe) => {
+    //                 let valide = match validateur.valider_chaine(
+    //                     enveloppe.as_ref(), Some(certificat_ca_tiers.as_ref())) {
+    //                     Ok(v) => Ok(v),
+    //                     Err(e) => {
+    //                         info!("valider_message_tiers Erreur valider chaine de certificat : {}", e);
+    //                         Err(ResultatValidation::new(false, None, false, false))
+    //                     }
+    //                 }?;
+    //                 if valide &&
+    //                     enveloppe.verifier_exchanges(vec![Securite::L4Secure]) &&
+    //                     enveloppe.verifier_roles(vec![RolesCertificats::Core]) {
+    //                     Ok(enveloppe)
+    //                 } else {
+    //                     info!("core_topologie.resoudre_url Erreur verification certificat fiche publique : chaine invalide");
+    //                     Err(ResultatValidation::new(false, None, false, false))
+    //                 }
+    //             }
+    //             Err(e) => {
+    //                 info!("core_topologie.resoudre_url Certificat fiche publique ne peut pas etre charge : {:?}", e);
+    //                 Err(ResultatValidation::new(false, None, false, false))
+    //             }
+    //         },
+    //         None => {
+    //             info!("core_topologie.resoudre_url Certificat fiche publique manquant");
+    //             Err(ResultatValidation::new(false, None, false, false))
+    //         }
+    //     }?;
+    //     self.set_certificat(certificat_tiers);
+    //
+    //     // Valider le message avec certificat de la millegrille tierce
+    //     let validation_option = ValidationOptions::new(true, true, true);
+    //     let resultat_validation = match self.valider(validateur, Some(&validation_option)).await {
+    //         Ok(r) => Ok(r),
+    //         Err(e) => {
+    //             info!("valider_message_tiers Erreur execution de la validation : {}", e);
+    //             Err(ResultatValidation::new(false, None, true, false))
+    //         }
+    //     }?;
+    //
+    //     debug!("resoudre_url Resultat validation : {:?}", resultat_validation);
+    //     match resultat_validation.valide() {
+    //         true => Ok(idmg_tiers),
+    //         false => Err(resultat_validation)
+    //     }
+    // }
 }
 
 impl VerificateurPermissions for MessageSerialise {

@@ -24,7 +24,7 @@ use openssl::stack::{Stack, StackRef};
 use openssl::x509::{X509, X509Ref, X509StoreContext};
 use openssl::x509::store::{X509Store, X509StoreBuilder};
 use openssl::x509::verify::X509VerifyFlags;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::json;
 use x509_parser::parse_x509_certificate;
 use blake2::{Blake2s256, Digest};
@@ -340,6 +340,19 @@ impl EnveloppeCertificat {
         vec
     }
 
+    pub fn get_pem_ca(&self) -> Result<Option<String>,String> {
+        match &self.millegrille {
+            Some(c) => match c.to_pem() {
+                Ok(c) => match String::from_utf8(c) {
+                    Ok(c) => Ok(Some(c)),
+                    Err(e) => Err(format!("certificats.get_pem_ca Erreur conversion pem CA : {:?}", e))
+                },
+                Err(e) => Err(format!("certificats.get_pem_ca Erreur conversion pem CA : {:?}", e))
+            },
+            None => Ok(None)
+        }
+    }
+
     pub fn not_valid_before(&self) -> Result<DateTime<Utc>, String> {
         let not_before: &Asn1TimeRef = self.certificat.not_before();
         match EnveloppeCertificat::formatter_date_epoch(not_before) {
@@ -605,7 +618,7 @@ impl Debug for EnveloppePrivee {
 #[async_trait]
 pub trait ValidateurX509: Send + Sync {
 
-    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String>;
+    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String>;
 
     async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat>;
 
@@ -713,7 +726,7 @@ impl ValidateurX509Impl {
 #[async_trait]
 impl ValidateurX509 for ValidateurX509Impl {
 
-    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
 
         let fp: String = match fingerprint {
             Some(fp) => Ok(String::from(fp)),
@@ -742,7 +755,22 @@ impl ValidateurX509 for ValidateurX509Impl {
                 debug!("Alignement du _certificat en string concatenee\n{}", pem_str);
                 match charger_enveloppe(pem_str.as_str(), Some(&self.store)) {
                     Ok(e) => {
-                        Ok(self.cacher(e).await)
+
+                        // Verifier si on a un certificat de millegrille tierce (doit avoir CA)
+                        let idmg_local = self.idmg.as_str();
+                        if e.est_ca()? {
+                            // Certificat CA, probablement d'une millegrille tierce. Accepter inconditionnellement.
+                            Ok(self.cacher(e).await)
+                        } else {
+                            // Verifier si le certificat est local (CA n'est pas requis)
+                            // Pour tiers, le CA doit etre inclus dans l'enveloppe.
+                            let idmg_certificat = e.idmg()?;
+                            if idmg_local == idmg_certificat.as_str() || e.millegrille.is_some() {
+                                Ok(self.cacher(e).await)
+                            } else {
+                                Err(format!("Erreur chargement certificat : certificat CA manquant pour millegrille tierce"))
+                            }
+                        }
                     },
                     Err(e) => Err(format!("Erreur chargement certificat : {:?}", e))
                 }
@@ -931,7 +959,7 @@ impl CollectionCertificatsPem {
         if let Some(chaine) = res_chaine {
             debug!("Fingerprints trouves (chaine): {:?}", chaine);
             let pems: Vec<String> = chaine.into_iter().map(|fp| self.pems.get(fp.as_str()).expect("pem").to_owned()).collect();
-            match validateur.charger_enveloppe(&pems, Some(fingerprint_certificat)).await {
+            match validateur.charger_enveloppe(&pems, Some(fingerprint_certificat), None).await {
                 Ok(e) => Some(e),
                 Err(e) => {
                     error!("Erreur chargement enveloppe {} : {:?}", fingerprint_certificat, e);

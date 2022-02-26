@@ -83,7 +83,7 @@ impl ReponseCertificatMaitredescles {
     where
         V: ValidateurX509,
     {
-        Ok(validateur.charger_enveloppe(&self.certificat, None).await?)
+        Ok(validateur.charger_enveloppe(&self.certificat, None, None).await?)
     }
 }
 
