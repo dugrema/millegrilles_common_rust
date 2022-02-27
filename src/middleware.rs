@@ -191,6 +191,9 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
     if let Some(delegation_domaines) = enveloppe.get_delegation_domaines().expect("Erreur lecture delegation_domaines") {
         set_on_insert.insert("delegation_domaines", to_bson(delegation_domaines).expect("Erreur conversion delegation_domaines"));
     }
+    if let Some(c) = enveloppe.get_pem_ca()? {
+        set_on_insert.insert("ca", to_bson(&c).expect("Erreur conversion certificat CA"));
+    }
 
     let mut set = doc! {};
 

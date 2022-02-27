@@ -56,8 +56,13 @@ pub fn charger_chaine(pem: &str) -> Result<Vec<X509>, ErrorStack> {
     stack
 }
 
-pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>) -> Result<EnveloppeCertificat, ErrorStack> {
+pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&str>) -> Result<EnveloppeCertificat, ErrorStack> {
     let chaine_x509 = charger_chaine(pem)?;
+
+    let millegrille = match ca_pem {
+        Some(c) => X509::stack_from_pem(pem.as_bytes())?.pop(),
+        None => None
+    };
 
     // Calculer fingerprint du certificat
     let cert: &X509 = chaine_x509.get(0).unwrap();
@@ -90,7 +95,7 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>) -> Result<Envelop
         chaine: chaine_x509,
         cle_publique,
         intermediaire,
-        millegrille: None,
+        millegrille,
         presentement_valide,
         fingerprint,
         date_enveloppe: Instant::now(),
@@ -243,7 +248,7 @@ pub fn build_store_path(ca_path: &Path) -> Result<ValidateurX509Impl, ErrorStack
     let store: X509Store = build_store(&ca_cert, true)?;
     let store_notime: X509Store = build_store(&ca_cert, false)?;
 
-    let enveloppe_ca = charger_enveloppe(&ca_pem, Some(&store)).unwrap();
+    let enveloppe_ca = charger_enveloppe(&ca_pem, Some(&store), None).unwrap();
 
     // Calculer idmg
     let idmg: String = calculer_idmg(&ca_cert).unwrap();
@@ -281,7 +286,7 @@ pub fn charger_enveloppe_privee<V>(path_cert: &Path, path_cle: &Path, validateur
     let cle_privee = PKey::private_key_from_pem(pem_cle.as_bytes())?;
 
     let pem_cert = read_to_string(path_cert).unwrap();
-    let enveloppe = charger_enveloppe(&pem_cert, Some(validateur.store()))?;
+    let enveloppe = charger_enveloppe(&pem_cert, Some(validateur.store()), None)?;
 
     let clecert_pem = format!("{}\n{}", pem_cle, pem_cert);
 
@@ -756,7 +761,7 @@ impl ValidateurX509 for ValidateurX509Impl {
                 // Creer l'enveloppe et conserver dans le cache local
                 let pem_str: String = chaine_pem.join("\n");
                 debug!("Alignement du _certificat en string concatenee\n{}", pem_str);
-                match charger_enveloppe(pem_str.as_str(), Some(&self.store)) {
+                match charger_enveloppe(pem_str.as_str(), Some(&self.store), ca_pem) {
                     Ok(e) => {
 
                         // Verifier si on a un certificat de millegrille tierce (doit avoir CA)

@@ -41,6 +41,7 @@ impl ResultatValidation {
     }
 }
 
+#[derive(Debug)]
 pub struct ValidationOptions<'a> {
     utiliser_idmg_message: bool,
     utiliser_date_message: bool,
@@ -67,6 +68,8 @@ pub fn verifier_message<V>(
 where
     V: ValidateurX509,
 {
+    debug!("Verifier message {:?}\nOptions : {:?}", message, options);
+
     let (utiliser_idmg_message, utiliser_date_message, toujours_verifier_hachage, verificateur) = match options {
         Some(o) => (o.utiliser_idmg_message, o.utiliser_date_message, o.toujours_verifier_hachage, o.verificateur),
         None => (false, false, false, None),
@@ -105,6 +108,7 @@ where
                 let certificat_millegrille = match idmg_validateur == idmg_cert.as_str() {
                     true => None,  // IDMG local, on utilise store local
                     false => {
+                        debug!("Message avec idmg tiers : {}, verifier avec {:?}", idmg_cert.as_str(), message.millegrille);
                         match &message.millegrille {
                             Some(certmg) => Some(certmg.as_ref()),
                             None => Err(format!("verifier_message certificat de millegrille tiers manquant (_millegrille)"))?
