@@ -291,18 +291,35 @@ impl EmetteurCertificat for ValidateurX509Impl {
     }
 }
 
-pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Value {
+pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Result<ReponseEnveloppe, String> {
     let pem_vec = enveloppe.get_pem_vec();
     let mut pems = Vec::new();
     for cert in pem_vec {
         pems.push(cert.pem);
     };
-    let reponse = json! ({
-        "chaine_pem": pems,
-        "fingerprint": enveloppe.fingerprint(),
-    });
 
-    reponse
+    // let reponse = json! ({
+    //     "chaine_pem": pems,
+    //     "fingerprint": enveloppe.fingerprint(),
+    // });
+    //
+    // reponse
+
+    let reponse = ReponseEnveloppe {
+        chaine_pem: pems,
+        fingerprint: enveloppe.fingerprint().to_owned(),
+        ca_pem: enveloppe.get_pem_ca()?,
+    };
+
+    Ok(reponse)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReponseEnveloppe {
+    pub chaine_pem: Vec<String>,
+    pub fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ca_pem: Option<String>,
 }
 
 /// Sauvegarde une nouvelle transaction et de la traite immediatement

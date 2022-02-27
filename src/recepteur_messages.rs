@@ -401,7 +401,7 @@ async fn preparer_reponse_certificats<M>(
 ) -> Result<(), Box<dyn Error>>
     where M:  GenerateurMessages
 {
-    let message_value = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref());
+    let message_value = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref())?;
     let message = middleware.formatter_reponse(message_value, None)?;
     let routage = RoutageMessageReponse::new(reply_q, correlation_id);
     Ok(middleware.repondre(routage, message).await?)

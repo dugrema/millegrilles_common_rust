@@ -343,7 +343,7 @@ impl EmetteurCertificat for MiddlewareDb {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
         let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
         let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
-        let message = formatter_message_certificat(enveloppe_certificat);
+        let message = formatter_message_certificat(enveloppe_certificat)?;
         let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
 
         let routage = RoutageMessageAction::builder("certificat", "infoCertificat")
