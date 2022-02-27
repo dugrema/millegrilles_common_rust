@@ -851,6 +851,7 @@ impl MessageSerialise {
         match &self.parsed.millegrille {
             Some(c) => {
                 let vec_pems = vec![c.clone()];
+                debug!("charger_certificat Certificat millegrille {:?}", vec_pems);
                 let enveloppe = validateur.charger_enveloppe(&vec_pems, None, None).await?;
                 self.millegrille = Some(enveloppe.clone());
                 // Some(enveloppe)
@@ -862,7 +863,10 @@ impl MessageSerialise {
         let enveloppe : Option<Arc<EnveloppeCertificat>> = match &self.parsed.certificat {
             Some(c) => {
                 let ca_pem = match &self.parsed.millegrille {
-                    Some(c) => Some(c.as_str()),
+                    Some(c) => {
+                        debug!("charger_certificat Utiliser CA {}", c);
+                        Some(c.as_str())
+                    },
                     None => None
                 };
                 let enveloppe = validateur.charger_enveloppe(c, Some(fp_certificat), ca_pem).await?;

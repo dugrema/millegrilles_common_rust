@@ -60,7 +60,7 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&s
     let chaine_x509 = charger_chaine(pem)?;
 
     let millegrille = match ca_pem {
-        Some(c) => X509::stack_from_pem(pem.as_bytes())?.pop(),
+        Some(c) => X509::stack_from_pem(c.as_bytes())?.pop(),
         None => None
     };
 
