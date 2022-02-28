@@ -315,7 +315,7 @@ pub fn charger_enveloppe_privee<V>(path_cert: &Path, path_cle: &Path, validateur
 pub struct EnveloppeCertificat {
     certificat: X509,
     chaine: Vec<X509>,
-    cle_publique: PKey<Public>,
+    pub cle_publique: PKey<Public>,
     intermediaire: Stack<X509>,
     millegrille: Option<X509>,
     pub presentement_valide: bool,

@@ -23,6 +23,7 @@ pub mod chiffrage_ed25519;
 pub mod chiffrage_chacha20poly1305;
 pub mod chiffrage_rsa;
 pub mod chiffrage_aesgcm;
+pub mod chiffrage_cle;
 
 // Re-exports
 pub use async_trait;
