@@ -17,11 +17,217 @@ use crate::constantes::*;
 use crate::formatteur_messages::{MessageMilleGrille};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
-use crate::middleware::{Middleware, thread_emettre_presence_domaine};
+use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction};
+
+#[async_trait]
+pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
+
+    /// Retourne le nom du domaine
+    fn get_nom_domaine(&self) -> String;
+
+    /// Identificateur de partition. Optionnel, par defaut None.
+    fn get_partition(&self) -> Option<String> { None }
+
+    fn get_q_volatils(&self) -> String;
+    fn get_q_triggers(&self) -> String;
+
+    /// Retourne la liste des Q a configurer pour ce domaine
+    fn preparer_queues(&self) -> Vec<QueueType>;
+
+    async fn consommer_requete<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: MiddlewareMessages + 'static;
+
+    async fn consommer_commande<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: MiddlewareMessages + 'static;
+
+    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: MiddlewareMessages + 'static;
+
+    /// Thread d'entretien specifique a chaque gestionnaire
+    async fn entretien<M>(&self, middleware: Arc<M>)
+       where M: MiddlewareMessages + 'static;
+
+    /// Invoque a toutes les minutes sur reception du message global du ceduleur
+    async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule)
+        -> Result<(), Box<dyn Error>>
+        where M: MiddlewareMessages + 'static;
+
+    /// Methode qui peut etre re-implementee dans une impl
+    async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
+        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
+        where M: MiddlewareMessages + 'static
+    {
+        self.preparer_threads_super(middleware).await
+    }
+
+    /// Initialise le domaine.
+    async fn preparer_threads_super<M>(self: &'static Self, middleware: Arc<M>)
+        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
+        where M: MiddlewareMessages + 'static
+    {
+        // Channels pour traiter messages
+        let (tx_messages, rx_messages) = mpsc::channel::<TypeMessage>(3);
+        let (tx_triggers, rx_triggers) = mpsc::channel::<TypeMessage>(10);
+
+        // Routing map pour le domaine
+        let mut routing: HashMap<String, Sender<TypeMessage>> = HashMap::new();
+
+        // Mapping par Q nommee
+        let qs = self.preparer_queues();
+        for q in qs {
+            match q {
+                QueueType::ExchangeQueue(c) => {
+                    debug!("Ajout mapping tx_messages {:?}", c);
+                    routing.insert(c.nom_queue.clone(), tx_messages.clone());
+                },
+                QueueType::Triggers(t) => {
+                    debug!("Ajout mapping tx_triggers {:?}", t);
+                    routing.insert(String::from(format!("{}/triggers", &t)), tx_triggers.clone());
+                }
+                QueueType::ReplyQueue(_) => (),
+            }
+        }
+
+        // Mapping par domaine (routing key)
+        routing.insert(String::from(self.get_nom_domaine()), tx_messages.clone());
+
+        info!("Domaine {} routing mpsc (interne) : {:?}", self.get_nom_domaine(), routing);
+
+        // Thread consommation
+        let futures = FuturesUnordered::new();
+        futures.push(spawn(self.consommer_messages(middleware.clone(), rx_messages)));
+        futures.push(spawn(self.consommer_messages(middleware.clone(), rx_triggers)));
+
+        // Thread entretien
+        futures.push(spawn(self.entretien(middleware.clone())));
+        futures.push(spawn(thread_emettre_presence_domaine(middleware.clone(), self.get_nom_domaine())));
+
+        Ok((routing, futures))
+    }
+
+    async fn consommer_messages<M>(self: &'static Self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
+        where M: MiddlewareMessages + 'static
+    {
+        info!("domaines.consommer_messages : Debut thread {}", self.get_q_volatils());
+        while let Some(message) = rx.recv().await {
+            trace!("Message {} recu : {:?}", self.get_nom_domaine(), message);
+
+            match message {
+                TypeMessage::ValideAction(inner) => {
+                    let rk = inner.routing_key.clone();  // Pour troubleshooting erreurs
+                    match self.traiter_message_valide_action(middleware.clone(), inner).await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            error!("domaines.consommer_messages/ValideAction Erreur traitement message domaine={}, rk={}: {:?}", self.get_nom_domaine(), rk, e);
+                        }
+                    }
+                },
+                TypeMessage::Valide(inner) => {warn!("Recu MessageValide sur thread consommation, skip : {:?}", inner)},
+                TypeMessage::Certificat(inner) => {warn!("Recu MessageCertificat sur thread consommation, skip : {:?}", inner)},
+                TypeMessage::Regeneration => (), // Rien a faire, on boucle
+            };
+
+        }
+
+        info!("domaines.consommer_messages : Fin thread {}", self.get_q_volatils());
+    }
+
+    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction) -> Result<(), Box<dyn Error>>
+        where M: MiddlewareMessages + 'static
+    {
+        debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
+        let correlation_id = match &message.correlation_id {
+            Some(inner) => Some(inner.clone()),
+            None => None,
+        };
+        let reply_q = match &message.reply_q {
+            Some(inner) => Some(inner.clone()),
+            None => None,
+        };
+
+        let resultat = match message.type_message {
+            TypeMessageOut::Requete => self.consommer_requete(middleware.as_ref(), message).await,
+            TypeMessageOut::Commande => self.consommer_commande_trait(middleware.clone(), message).await,
+            TypeMessageOut::Transaction => Err(format!("domaines.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
+            TypeMessageOut::Reponse => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
+            TypeMessageOut::Evenement => self.consommer_evenement_trait(middleware.clone(), message).await,
+        }?;
+
+        match resultat {
+            Some(reponse) => {
+                let reply_q = match reply_q {
+                    Some(reply_q) => reply_q,
+                    None => {
+                        debug!("Reply Q manquante pour reponse a {:?}", correlation_id);
+                        return Ok(())
+                    },
+                };
+                let correlation_id = match correlation_id {
+                    Some(correlation_id) => Ok(correlation_id),
+                    None => Err("Correlation id manquant pour reponse"),
+                }?;
+                debug!("Emettre reponse vers reply_q {} correlation_id {}", reply_q, correlation_id);
+                let routage = RoutageMessageReponse::new(reply_q, correlation_id);
+                middleware.repondre(routage, reponse).await?;
+            },
+            None => (),  // Aucune reponse
+        }
+
+        Ok(())
+    }
+
+    async fn consommer_evenement_trait<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: MiddlewareMessages + 'static
+    {
+        debug!("Consommer evenement trait : {:?}", &message.message);
+        // Autorisation : les evenements (triggers) globaux sont de niveau 4
+        // Fallback sur les evenements specifiques au domaine
+        match message.verifier_exchanges(vec!(Securite::L4Secure)) {
+            true => {
+                match message.action.as_str() {
+                    EVENEMENT_CEDULE => {
+                        let trigger: MessageCedule = message.message.get_msg().map_contenu(None)?;
+                        self.traiter_cedule(middleware.as_ref(), &trigger).await?;
+                        Ok(None)
+                    },
+                    _ => self.consommer_evenement(middleware.as_ref(), message).await
+                }
+            },
+            false => self.consommer_evenement(middleware.as_ref(), message).await
+        }
+    }
+
+    /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
+    async fn consommer_commande_trait<M>(&self, middleware: Arc<M>, m: MessageValideAction)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: MiddlewareMessages + 'static
+    {
+        debug!("Consommer commande trait : {:?}", &m.message);
+
+        // Autorisation : les commandes globales sont de niveau 3 ou 4
+        // Fallback sur les commandes specifiques au domaine
+        let autorise_global = match m.verifier_exchanges(vec!(Securite::L4Secure)) {
+            true => true,
+            false => m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)
+        };
+
+        match autorise_global {
+            true => {
+                match m.action.as_str() {
+                    // Commandes specifiques au domaine
+                    _ => self.consommer_commande(middleware.as_ref(), m).await
+                }
+            },
+            false => self.consommer_commande(middleware.as_ref(), m).await
+        }
+    }
+
+}
 
 #[async_trait]
 pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction {

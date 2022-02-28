@@ -28,10 +28,14 @@ use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, Tra
 use crate::verificateur::VerificateurMessage;
 
 /// Super-trait pour tous les traits implementes par Middleware
-pub trait Middleware:
-    ValidateurX509 + GenerateurMessages + MongoDao + ConfigMessages + IsConfigurationPki +
+pub trait MiddlewareMessages:
+    ValidateurX509 + GenerateurMessages + ConfigMessages + IsConfigurationPki +
     IsConfigNoeud + FormatteurMessage + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData> + EmetteurCertificat +
-    VerificateurMessage + BackupStarter
+    VerificateurMessage
+{}
+
+pub trait Middleware:
+    MiddlewareMessages + MongoDao + BackupStarter
 {}
 
 pub trait IsConfigurationPki {
