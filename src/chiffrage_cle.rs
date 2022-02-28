@@ -44,3 +44,26 @@ pub struct InformationCle {
     pub iv: String,
     pub tag: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MetaInformationCle {
+    pub domaine: String,
+    pub format: String,
+    pub hachage_bytes: String,
+    pub identificateurs_document: Option<HashMap<String, String>>,
+    pub iv: String,
+    pub tag: Option<String>,
+}
+
+impl From<InformationCle> for MetaInformationCle {
+    fn from(value: InformationCle) -> Self {
+        MetaInformationCle {
+            domaine: value.domaine,
+            format: value.format,
+            hachage_bytes: value.hachage_bytes,
+            identificateurs_document: value.identificateurs_document,
+            iv: value.iv,
+            tag: value.tag,
+        }
+    }
+}
