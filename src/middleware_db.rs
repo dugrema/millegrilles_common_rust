@@ -21,7 +21,7 @@ use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, Configuratio
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, ReponseDechiffrageCle};
+use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, ReponseDechiffrageCle};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
@@ -467,6 +467,17 @@ pub fn preparer_middleware_db(
         rx_messages_verifies, rx_messages_verif_reply, rx_triggers, tx_certificats_manquants,
         futures
     }
+}
+
+/// Structure avec hooks interne de preparation du middleware
+pub struct MiddlewareMessagesHooks {
+    pub middleware: Arc<MiddlewareMessage>,
+    pub mq_executor: RabbitMqExecutor,
+    pub rx_messages_verifies: Receiver<TypeMessage>,
+    pub rx_messages_verif_reply: Receiver<TypeMessage>,
+    pub rx_triggers: Receiver<TypeMessage>,
+    pub tx_certificats_manquants: Sender<RequeteCertificatInterne>,
+    pub futures: FuturesUnordered<JoinHandle<()>>,
 }
 
 /// Structure avec hooks interne de preparation du middleware
