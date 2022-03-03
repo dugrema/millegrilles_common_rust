@@ -876,8 +876,8 @@ impl ExtensionsMilleGrille {
                 let mut sec = L1Public;
                 for s in e {
                     if let Ok(inner_sec) = securite_enum(s.as_str()) {
-                        let rk_courant = securite_rank(sec.clone());
-                        let rk_inner = securite_rank(inner_sec.clone());
+                        let rk_courant = sec.get_rank();
+                        let rk_inner = inner_sec.get_rank();
                         if rk_courant < rk_inner {
                             sec = inner_sec;
                         }
@@ -1309,7 +1309,7 @@ JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
     pub fn prep_enveloppe(pem: &str) -> EnveloppeCertificat {
         let ca_x509 = charger_certificat(CERT_MILLEGRILLE);
         let store = build_store(&ca_x509, false).expect("store");
-        charger_enveloppe(pem, Some(&store)).expect("enveloppe")
+        charger_enveloppe(pem, Some(&store), None).expect("enveloppe")
     }
 
     #[test]

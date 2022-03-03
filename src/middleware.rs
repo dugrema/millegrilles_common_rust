@@ -51,7 +51,8 @@ pub trait IsConfigurationPki {
 
 pub fn configurer_messages(
     queues: Vec<QueueType>,
-    listeners: Option<Mutex<Callback<'static, EventMq>>>
+    listeners: Option<Mutex<Callback<'static, EventMq>>>,
+    securite: Securite
 ) -> (Arc<ConfigurationMessages>, Arc<ValidateurX509Impl>, RabbitMqExecutorConfig, GenerateurMessagesImpl) {
     let configuration = Arc::new(charger_configuration().expect("Erreur configuration"));
 
@@ -65,6 +66,7 @@ pub fn configurer_messages(
         configuration.clone(),
         Some(queues),
         listeners,
+        securite
     ).expect("Erreur demarrage MQ");
 
     let generateur_messages = GenerateurMessagesImpl::new(
@@ -92,6 +94,7 @@ pub fn configurer(
         configuration.clone(),
         Some(queues),
         listeners,
+        Securite::L3Protege
     ).expect("Erreur demarrage MQ");
 
     let generateur_messages = GenerateurMessagesImpl::new(
@@ -845,14 +848,15 @@ pub fn map_serializable_to_bson<S>(val_serializable: &S) -> Result<Document, Box
 /// Version speciale du middleware avec un acces a MongoDB
 pub fn preparer_middleware_message(
     queues: Vec<QueueType>,
-    listeners: Option<Mutex<Callback<'static, EventMq>>>
+    listeners: Option<Mutex<Callback<'static, EventMq>>>,
+    securite: Securite
 ) -> MiddlewareMessagesHooks {
     let (
         configuration,
         validateur,
         mq_executor_config,
         generateur_messages
-    ) = configurer_messages(queues, listeners);
+    ) = configurer_messages(queues, listeners, securite);
 
     let generateur_messages_arc = Arc::new(generateur_messages);
 

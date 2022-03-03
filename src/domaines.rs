@@ -84,7 +84,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
                     debug!("Ajout mapping tx_messages {:?}", c);
                     routing.insert(c.nom_queue.clone(), tx_messages.clone());
                 },
-                QueueType::Triggers(t) => {
+                QueueType::Triggers(t, _s) => {
                     debug!("Ajout mapping tx_triggers {:?}", t);
                     routing.insert(String::from(format!("{}/triggers", &t)), tx_triggers.clone());
                 }
@@ -317,7 +317,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     debug!("Ajout mapping tx_messages {:?}", c);
                     routing.insert(c.nom_queue.clone(), tx_messages.clone());
                 },
-                QueueType::Triggers(t) => {
+                QueueType::Triggers(t, _s) => {
                     debug!("Ajout mapping tx_triggers {:?}", t);
                     routing.insert(String::from(format!("{}/triggers", &t)), tx_triggers.clone());
                 }

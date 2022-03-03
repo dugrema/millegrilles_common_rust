@@ -18,6 +18,7 @@ use tokio_stream::StreamExt;
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
+use crate::constantes::Securite::L4Secure;
 use crate::formatteur_messages::MessageSerialise;
 use crate::formatteur_messages::MessageMilleGrille;
 use crate::recepteur_messages::TypeMessage;
@@ -57,7 +58,7 @@ pub struct ReplyQueue {
 pub enum QueueType {
     ExchangeQueue(ConfigQueue),
     ReplyQueue(ReplyQueue),
-    Triggers(String),
+    Triggers(String, Securite),
 }
 
 pub async fn initialiser(configuration: &impl ConfigMessages) -> Result<RabbitMq, lapin::Error> {
@@ -216,6 +217,7 @@ pub fn executer_mq<'a>(
     configuration: Arc<impl ConfigMessages + 'static>,
     queues: Option<Vec<QueueType>>,
     listeners: Option<Mutex<Callback<'static, EventMq>>>,
+    securite: Securite
 ) -> Result<RabbitMqExecutorConfig, String> {
 
     // Creer le channel utilise pour recevoir et traiter les messages mis sur les Q
@@ -238,6 +240,7 @@ pub fn executer_mq<'a>(
             tx_message_out.clone(),
             listeners,
             reply_q.clone(),
+            securite,
         )
     );
 
@@ -310,7 +313,8 @@ async fn boucle_execution(
     tx_traiter_trigger: Sender<MessageInterne>,
     tx_message_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     listeners: Option<Mutex<Callback<'_, EventMq>>>,
-    reply_q: Arc<Mutex<Option<String>>>
+    reply_q: Arc<Mutex<Option<String>>>,
+    securite: Securite
 ) {
 
     let vec_queues = match queues {
@@ -344,7 +348,7 @@ async fn boucle_execution(
             let pki = configuration.get_configuration_pki();
             let reply_q = ReplyQueue {
                 fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
-                securite: Securite::L3Protege,
+                securite: securite.clone(),
                 ttl: Some(300000),
                 reply_q_name: reply_q.clone(),  // Permet de maj le nom de la reply_q globalement
             };
@@ -361,7 +365,7 @@ async fn boucle_execution(
             let sender = match &config_q {
                 QueueType::ExchangeQueue(_) => tx_traiter_delivery.clone(),
                 QueueType::ReplyQueue(_) => tx_traiter_reply.clone(),
-                QueueType::Triggers(_) => tx_traiter_trigger.clone(),
+                QueueType::Triggers(_q,_s) => tx_traiter_trigger.clone(),
             };
 
             futures.push(task::spawn(
@@ -464,12 +468,12 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
     // Ajouter routing keys pour ecouter evenements certificats, requete cert local
     let rk_fingerprint = format!("requete.certificat.{}", rq.fingerprint_certificat);
     let routing_keys = vec!(
-        // Ecouter les evenements de tiers qui emettent leur certificat
-        "evenement.certificat.infoCertificat".into(),
-        // Ecouter les requetes pour notre certificat
-        rk_fingerprint,
+        "evenement.certificat.infoCertificat".into(),  // Ecouter les evenements de tiers qui emettent leur certificat
+        rk_fingerprint,  // Ecouter les requetes pour notre certificat
     );
-    let exchanges: Vec<String> = vec!("3.protege".into(), "2.prive".into(), "1.public".into());
+
+    let exchanges: Vec<String> = securite_cascade_public(&rq.securite).iter().map(|s| s.get_str().to_owned()).collect();
+    debug!("creer_reply_q Binding sur exchanges : {:?}", exchanges);
 
     let nom_queue = reply_queue.name().as_str();
     for rk in routing_keys {
@@ -496,7 +500,7 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
 }
 
 /// Q interne utilisee pour recevoir les triggers et autre evenements sur exchange 4.secure
-async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
+async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Securite) -> Queue {
     let mut params = FieldTable::default();
     params.insert("ttl".into(), 300000.into());  // 5 minutes max pour traitement events
 
@@ -512,40 +516,60 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel) -> Queue {
     let nom_queue = trigger_queue.name().as_str();
 
     // Ajouter routing keys pour ecouter evenements triggers secure
+    let rank_securite = securite.get_rank();
+    if rank_securite == 4 {
+        let routing_keys_secure = vec!(
+            // Ecouter les evenements internes pour le domaine
+            String::from(format!("evenement.{}.{}", nom_domaine, EVENEMENT_TRANSACTION_PERSISTEE)),
+            // String::from(EVENEMENT_GLOBAL_CEDULE),
+        );
+        for rk in routing_keys_secure {
+            let _ = channel.queue_bind(
+                nom_queue,
+                SECURITE_4_SECURE,
+                &rk,
+                QueueBindOptions::default(),
+                FieldTable::default()
+            ).await.expect("Binding routing key");
+        }
+    }
+
+    // Ajouter routing keys pour ecouter evenements certificats, requete cert local
+    if rank_securite >= 3 {
+        let routing_keys_protege = vec!(
+            // Ecouter les evenements pour le domaine
+            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_BACKUP_HORAIRE)),
+            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESTAURER_TRANSACTIONS)),
+            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESET_BACKUP)),
+            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_REGENERER)),
+
+            // Evenement globaux
+            // String::from(EVENEMENT_GLOBAL_CEDULE),
+            String::from(COMMANDE_GLOBAL_BACKUP_HORAIRE),
+            String::from(COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS),
+            String::from(COMMANDE_GLOBAL_RESET_BACKUP),
+            String::from(COMMANDE_GLOBAL_REGENERER),
+        );
+        for rk in routing_keys_protege {
+            let _ = channel.queue_bind(
+                nom_queue,
+                SECURITE_3_PROTEGE,
+                &rk,
+                QueueBindOptions::default(),
+                FieldTable::default()
+            ).await.expect("Binding routing key");
+        }
+    }
+
+    // RK au meme niveau de securite que le module
     let routing_keys_secure = vec!(
         // Ecouter les evenements internes pour le domaine
-        String::from(format!("evenement.{}.{}", nom_domaine, EVENEMENT_TRANSACTION_PERSISTEE)),
         String::from(EVENEMENT_GLOBAL_CEDULE),
     );
     for rk in routing_keys_secure {
         let _ = channel.queue_bind(
             nom_queue,
-            SECURITE_4_SECURE,
-            &rk,
-            QueueBindOptions::default(),
-            FieldTable::default()
-        ).await.expect("Binding routing key");
-    }
-
-    // Ajouter routing keys pour ecouter evenements certificats, requete cert local
-    let routing_keys_protege = vec!(
-        // Ecouter les evenements pour le domaine
-        String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_BACKUP_HORAIRE)),
-        String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESTAURER_TRANSACTIONS)),
-        String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESET_BACKUP)),
-        String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_REGENERER)),
-
-        // Evenement globaux
-        // String::from(EVENEMENT_GLOBAL_CEDULE),
-        String::from(COMMANDE_GLOBAL_BACKUP_HORAIRE),
-        String::from(COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS),
-        String::from(COMMANDE_GLOBAL_RESET_BACKUP),
-        String::from(COMMANDE_GLOBAL_REGENERER),
-    );
-    for rk in routing_keys_protege {
-        let _ = channel.queue_bind(
-            nom_queue,
-            SECURITE_3_PROTEGE,
+            securite.get_str(),
             &rk,
             QueueBindOptions::default(),
             FieldTable::default()
@@ -584,7 +608,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
             // Ajouter tous les routing keys a la Q
             for rk in &c.routing_keys {
                 let routing_key = rk.routing_key.as_str();
-                let exchange = securite_str(&rk.exchange);
+                let exchange = rk.exchange.get_str();
                 let _ = channel.queue_bind(
                     nom_queue,
                     exchange,
@@ -599,8 +623,8 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
         QueueType::ReplyQueue(rq) => {
             creer_reply_q(&channel, &rq).await
         },
-        QueueType::Triggers(nom_domaine) => {
-            creer_internal_q(nom_domaine.to_owned(), &channel).await
+        QueueType::Triggers(nom_domaine, securite) => {
+            creer_internal_q(nom_domaine.to_owned(), &channel, securite).await
         }
     };
     debug!("Declared queue {:?}", queue);
@@ -642,7 +666,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
                 };
                 MessageInterne::Delivery(delivery, nom_queue)
             },
-            QueueType::Triggers(_q) => MessageInterne::Trigger(delivery, nom_queue.to_owned()),
+            QueueType::Triggers(_q, _s) => MessageInterne::Trigger(delivery, nom_queue.to_owned()),
         };
 
         // Ajouter message sur Q interne
@@ -788,7 +812,7 @@ where
             Some(inner) => {
                 for exchange in inner {
                     let resultat = channel.basic_publish(
-                        securite_str(&exchange),
+                        exchange.get_str(),
                         &routing_key,
                         options,
                         payload.clone(),

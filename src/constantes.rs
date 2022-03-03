@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use crate::constantes::Securite::{L1Public, L2Prive, L3Protege, L4Secure};
 use std::collections::HashSet;
 use std::cmp::Eq;
@@ -12,6 +13,15 @@ pub enum Securite {
     L3Protege,
     L4Secure,
 }
+impl Securite {
+    pub fn get_rank(&self) -> i32 {
+        securite_rank(self)
+    }
+    pub fn get_str(&self) -> &'static str {
+        securite_str(self)
+    }
+}
+
 impl Into<&str> for Securite {
     fn into(self) -> &'static str {
         securite_str(&self)
@@ -54,18 +64,24 @@ pub const SECURITE_2_PRIVE: &str = "2.prive";
 pub const SECURITE_3_PROTEGE: &str = "3.protege";
 pub const SECURITE_4_SECURE: &str = "4.secure";
 
-pub fn securite_enum(securite: &str) -> Result<Securite, String> {
-    match securite {
+pub fn securite_enum<S>(securite: S) -> Result<Securite, String>
+    where S: AsRef<str>
+{
+    let s = securite.as_ref();
+    match s {
         SECURITE_1_PUBLIC => Ok(L1Public),
         SECURITE_2_PRIVE => Ok(L2Prive),
         SECURITE_3_PROTEGE => Ok(L3Protege),
         SECURITE_4_SECURE => Ok(L4Secure),
-        _ => Err(format!("Type non supporte {}", securite))
+        _ => Err(format!("Type non supporte {:?}", s))
     }
 }
 
-pub fn securite_rank(securite: Securite) -> i32 {
-    match securite {
+pub fn securite_rank<S>(securite: S) -> i32
+    where S: Borrow<Securite>
+{
+    let s = securite.borrow();
+    match s {
         Securite::L1Public => 1,
         Securite::L2Prive => 2,
         Securite::L3Protege => 3,
@@ -73,8 +89,11 @@ pub fn securite_rank(securite: Securite) -> i32 {
     }
 }
 
-pub fn securite_str(securite: &Securite) -> &'static str {
-    match securite {
+pub fn securite_str<S>(securite: S) -> &'static str
+    where S: Borrow<Securite>
+{
+    let s = securite.borrow();
+    match s {
         Securite::L1Public => SECURITE_1_PUBLIC,
         Securite::L2Prive => SECURITE_2_PRIVE,
         Securite::L3Protege => SECURITE_3_PROTEGE,
@@ -83,14 +102,19 @@ pub fn securite_str(securite: &Securite) -> &'static str {
 }
 
 /// Retourne une liste des niveaux de securite de 1.public jusqu'au niveau specifie
-pub fn securite_cascade_public(securite: &Securite) -> HashSet<Securite> {
+pub fn securite_cascade_public<S>(securite: S) -> HashSet<Securite>
+    where S: Borrow<Securite>
+{
     let mut set: HashSet<Securite> = HashSet::new();
-    match securite {
+
+    let s = securite.borrow();
+    match s {
         Securite::L1Public => {set.insert(Securite::L1Public);},
         Securite::L2Prive => {set.insert(Securite::L1Public); set.insert(Securite::L2Prive);},
         Securite::L3Protege => {set.insert(Securite::L1Public); set.insert(Securite::L2Prive); set.insert(Securite::L3Protege);},
         Securite::L4Secure => {set.insert(Securite::L1Public); set.insert(Securite::L2Prive); set.insert(Securite::L3Protege); set.insert(Securite::L4Secure);},
     }
+
     set
 }
 
