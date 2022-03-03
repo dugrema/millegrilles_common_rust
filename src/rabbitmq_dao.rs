@@ -520,7 +520,11 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 
     // Ajouter routing keys pour ecouter evenements triggers secure
     let rank_securite = securite.get_rank();
-    if rank_securite == 4 {
+    // Ajouter routing keys pour ecouter evenements certificats, requete cert local
+    if rank_securite >= 3 {
+
+        // Note : 4.secure, utilise sur module back-end
+        //        Trouver meilleure facon de representer
         let routing_keys_secure = vec!(
             // Ecouter les evenements internes pour le domaine
             String::from(format!("evenement.{}.{}", nom_domaine, EVENEMENT_TRANSACTION_PERSISTEE)),
@@ -535,10 +539,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
                 FieldTable::default()
             ).await.expect("Binding routing key");
         }
-    }
 
-    // Ajouter routing keys pour ecouter evenements certificats, requete cert local
-    if rank_securite >= 3 {
         let routing_keys_protege = vec!(
             // Ecouter les evenements pour le domaine
             String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_BACKUP_HORAIRE)),
