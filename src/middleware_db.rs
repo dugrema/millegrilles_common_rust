@@ -189,6 +189,10 @@ impl GenerateurMessages for MiddlewareDb {
     fn get_mode_regeneration(&self) -> bool {
         self.generateur_messages.as_ref().get_mode_regeneration()
     }
+
+    fn get_securite(&self) -> &Securite {
+        self.generateur_messages.get_securite()
+    }
 }
 
 impl IsConfigurationPki for MiddlewareDb {
@@ -347,7 +351,10 @@ impl EmetteurCertificat for MiddlewareDb {
         let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
         let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
         let message = formatter_message_certificat(enveloppe_certificat)?;
-        let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
+        let exchanges: Vec<Securite> = securite_cascade_public(
+            generateur_message.get_securite()).iter().map(|s| s.to_owned())
+            .collect();
+        // let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
 
         let routage = RoutageMessageAction::builder("certificat", "infoCertificat")
             .exchanges(exchanges)

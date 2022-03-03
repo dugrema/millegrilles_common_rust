@@ -240,7 +240,7 @@ pub fn executer_mq<'a>(
             tx_message_out.clone(),
             listeners,
             reply_q.clone(),
-            securite,
+            securite.clone(),
         )
     );
 
@@ -249,6 +249,7 @@ pub fn executer_mq<'a>(
         tx_out: tx_message_out.clone(),
         tx_reply: tx_traiter_reply.clone(),
         reply_q,
+        securite: securite.clone()
     };
     let rx_queues = RabbitMqExecutorRx {
         rx_messages: rx_traiter_message,
@@ -256,7 +257,7 @@ pub fn executer_mq<'a>(
         rx_triggers: rx_traiter_trigger,
     };
 
-    Ok(RabbitMqExecutorConfig { executor, rx_queues })
+    Ok(RabbitMqExecutorConfig { executor, rx_queues, securite: securite.clone() })
 }
 
 #[async_trait]
@@ -268,6 +269,7 @@ pub trait MqMessageSendInformation {
 pub struct RabbitMqExecutorConfig {
     pub executor: RabbitMqExecutor,
     pub rx_queues: RabbitMqExecutorRx,
+    pub securite: Securite,
 }
 
 pub struct RabbitMqExecutor {
@@ -275,6 +277,7 @@ pub struct RabbitMqExecutor {
     pub tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     pub tx_reply: Sender<MessageInterne>,
     pub reply_q: Arc<Mutex<Option<String>>>,
+    pub securite: Securite,
 }
 
 pub struct RabbitMqExecutorRx {
@@ -375,7 +378,7 @@ async fn boucle_execution(
 
         // Demarrer tasks de traitement de messages
         futures.push(task::spawn(
-            task_emettre_messages(configuration.clone(), channel_out, rx_out, reply_q.clone())
+            task_emettre_messages(configuration.clone(), channel_out, securite.clone(), rx_out, reply_q.clone())
         ));
 
         // Thread pour verifier etat connexion
@@ -720,7 +723,7 @@ fn concatener_rk(message: &MessageOut) -> Result<String, String> {
     Ok(routing_key)
 }
 
-async fn task_emettre_messages<C>(configuration: Arc<C>, channel: Channel, mut rx: Receiver<MessageOut>, reply_q: Arc<Mutex<Option<String>>>)
+async fn task_emettre_messages<C>(configuration: Arc<C>, channel: Channel, securite: Securite, mut rx: Receiver<MessageOut>, reply_q: Arc<Mutex<Option<String>>>)
 where
     C: ConfigMessages,
 {
@@ -730,12 +733,12 @@ where
     //     TypeConfiguration::ConfigurationMessages {mq, pki} => mq,
     //     TypeConfiguration::ConfigurationMessagesDb {mq, mongo, pki} => mq,
     // };
-    let exchange_defaut = mq.exchange_default.as_str();
-    debug!("rabbitmq_dao.emettre_message : Demarrage thread, exchange defaut {}", exchange_defaut);
+    let exchange_defaut = securite.get_str();  // mq.exchange_default.as_str();
+    debug!("task_emettre_messages : Demarrage thread, exchange defaut {}", exchange_defaut);
 
     while let Some(message) = rx.recv().await {
         compteur += 1;
-        debug!("Emettre_message {}, On a recu de quoi", compteur);
+        debug!("task_emettre_messages Emettre_message {}, On a recu de quoi", compteur);
         let contenu = &message.message;
 
         // Verifier etat du channel (doit etre connecte)
@@ -752,12 +755,22 @@ where
             None => entete.uuid_transaction.to_owned()
         };
 
+        let exchanges = match &message.exchanges {
+            Some(e) => Some(e.clone()),
+            None => {
+                match message.type_message {
+                    TypeMessageOut::Reponse => None,  // Aucun exchange pour une reponse
+                    _ => Some(vec![securite.clone()])  // Toutes les autre reponses, prendre exchange defaut
+                }
+            }
+        };
+
         let routing_key = match &message.domaine {
             Some(_) => {
                 let rk = match concatener_rk(&message) {
                     Ok(rk) => rk,
                     Err(e) => {
-                        error!("Erreur preparation routing key {:?}", e);
+                        error!("task_emettre_messages Erreur preparation routing key {:?}", e);
                         continue
                     }
                 };
@@ -776,7 +789,7 @@ where
         let message_serialise = match MessageSerialise::from_parsed(message.message) {
             Ok(m) => m,
             Err(e) => {
-                error!("Erreur traitement message, on drop : {:?}", e);
+                error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
                 continue;
             },
         };
@@ -790,12 +803,12 @@ where
 
             match &message.replying_to {
                 Some(r) => {
-                    debug!("Emission message, reply_q en parametre : {:?}", r);
+                    debug!("task_emettre_messages Emission message, reply_q en parametre : {:?}", r);
                     properties = properties.with_reply_to(r.as_str().into());
                 },
                 None => {
                     let lock_reply_q = reply_q.lock().expect("lock");
-                    debug!("Emission message, reply_q locale : {:?}", lock_reply_q);
+                    debug!("task_emettre_messages Emission message, reply_q locale : {:?}", lock_reply_q);
                     match lock_reply_q.as_ref() {
                         Some(qs) => {
                             properties = properties.with_reply_to(qs.as_str().into());
@@ -808,7 +821,7 @@ where
             properties
         };
 
-        match message.exchanges {
+        match exchanges {
             Some(inner) => {
                 for exchange in inner {
                     let resultat = channel.basic_publish(
@@ -819,15 +832,16 @@ where
                         properties.clone()
                     ).await;
                     if resultat.is_err() {
-                        error!("Erreur emission message {:?}", resultat)
+                        error!("task_emettre_messages Erreur emission message {:?}", resultat)
                     } else {
-                        debug!("Message {} emis sur {:?}", routing_key, exchange)
+                        debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange)
                     }
                 }
             },
             None => {
+                // Reply
                 let reply_to = message.replying_to.expect("reply_q");
-                debug!("Emission message vers reply_q {} avec correlation_id {}", reply_to, correlation_id);
+                debug!("task_emettre_messages Emission message vers reply_q {} avec correlation_id {}", reply_to, correlation_id);
 
                 // C'est une reponse (message direct)
                 let resultat = channel.basic_publish(
@@ -838,9 +852,9 @@ where
                     properties
                 ).await;
                 if resultat.is_err() {
-                    error!("Erreur emission message {:?}", resultat);
+                    error!("task_emettre_messages Erreur emission message {:?}", resultat);
                 } else {
-                    debug!("Message {} emis sur {:?}", routing_key, exchange_defaut);
+                    debug!("task_emettre_messages Reponse {} emise vers {:?}", correlation_id, reply_to);
                 }
             }
         }
@@ -907,8 +921,8 @@ impl MessageOut {
         };
 
         let exchange_effectif = match exchanges {
-            Some(e) => e,
-            None => vec!(Securite::L3Protege),
+            Some(e) => Some(e),
+            None => None,  // vec!(Securite::L3Protege),
         };
 
         let partition_owned = match partition {
@@ -922,7 +936,7 @@ impl MessageOut {
             domaine: Some(domaine.into()),
             action: Some(action.into()),
             partition: partition_owned,
-            exchanges: Some(exchange_effectif),
+            exchanges: exchange_effectif,
             correlation_id: Some(corr_id),
             replying_to: rep_to,
         }

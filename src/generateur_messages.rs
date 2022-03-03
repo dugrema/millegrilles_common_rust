@@ -185,6 +185,8 @@ pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
 
     /// Retourne l'etat du mode regeneration (true = actif)
     fn get_mode_regeneration(&self) -> bool;
+
+    fn get_securite(&self) -> &Securite;
 }
 
 pub struct GenerateurMessagesImpl {
@@ -192,6 +194,7 @@ pub struct GenerateurMessagesImpl {
     tx_reply: Sender<MessageInterne>,
     enveloppe_privee: Arc<EnveloppePrivee>,
     mode_regeneration: Mutex<bool>,
+    securite: Securite,
 }
 
 impl GenerateurMessagesImpl {
@@ -202,6 +205,7 @@ impl GenerateurMessagesImpl {
             tx_reply: mq.tx_reply.clone(),
             enveloppe_privee: config.get_enveloppe_privee(),
             mode_regeneration: Mutex::new(false),
+            securite: mq.securite.clone()
         }
     }
 
@@ -295,7 +299,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
         let exchanges_effectifs = match routage.exchanges {
             Some(e) => Some(e),
-            None => Some(vec!(Securite::L3Protege))
+            None => Some(vec!(self.securite.clone()))
         };
 
         let message_out = MessageOut::new(
@@ -472,6 +476,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         *mode.lock().expect("lock")
     }
 
+    fn get_securite(&self) -> &Securite {
+        &self.securite
+    }
 }
 
 impl FormatteurMessage for GenerateurMessagesImpl {
