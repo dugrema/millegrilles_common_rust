@@ -24,6 +24,7 @@ use crate::formatteur_messages::MessageMilleGrille;
 use crate::recepteur_messages::TypeMessage;
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
+const FLAG_TTL: &str = "x-message-ttl";
 
 pub struct RabbitMq {
     pub connexion: Connection,
@@ -457,7 +458,7 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
 
     let mut params = FieldTable::default();
     match rq.ttl {
-        Some(v) => params.insert("ttl".into(), v.into()),
+        Some(v) => params.insert(FLAG_TTL.into(), v.into()),
         None => ()
     }
 
@@ -505,7 +506,7 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
 /// Q interne utilisee pour recevoir les triggers et autre evenements sur exchange 4.secure
 async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Securite) -> Queue {
     let mut params = FieldTable::default();
-    params.insert("ttl".into(), 300000.into());  // 5 minutes max pour traitement events
+    params.insert(FLAG_TTL.into(), 300000.into());  // 5 minutes max pour traitement events
 
     let nom_queue = format!("{}/triggers", nom_domaine);
 
@@ -603,7 +604,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
 
             let mut params = FieldTable::default();
             match c.ttl {
-                Some(v) => params.insert("ttl".into(), v.into()),
+                Some(v) => params.insert(FLAG_TTL.into(), v.into()),
                 None => ()
             }
 
