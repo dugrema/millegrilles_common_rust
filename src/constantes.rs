@@ -121,6 +121,7 @@ pub fn securite_cascade_public<S>(securite: S) -> HashSet<Securite>
 // Roles (types de certificats serveur)
 pub const ROLE_NOEUD_PROTEGE: &str = "protege";
 pub const ROLE_NOEUD_PRIVE: &str = "prive";
+pub const ROLE_NOEUD_PUBLIC: &str = "public";
 pub const ROLE_WEB_PROTEGE: &str = "web_protege";
 pub const ROLE_WEB_PRIVE: &str = "web_prive";
 pub const ROLE_MONITOR: &str = "monitor";
@@ -132,6 +133,7 @@ pub const ROLE_CORE: &str = "core";
 pub enum RolesCertificats {
     NoeudProtege,
     NoeudPrive,
+    NoeudPublic,
     WebProtege,
     WebPrive,
     Monitor,
@@ -145,6 +147,7 @@ impl Into<&str> for RolesCertificats {
         match self {
             RolesCertificats::NoeudProtege => ROLE_NOEUD_PROTEGE,
             RolesCertificats::NoeudPrive => ROLE_NOEUD_PRIVE,
+            RolesCertificats::NoeudPublic => ROLE_NOEUD_PUBLIC,
             RolesCertificats::WebProtege => ROLE_WEB_PROTEGE,
             RolesCertificats::WebPrive => ROLE_WEB_PRIVE,
             RolesCertificats::Monitor => ROLE_MONITOR,
