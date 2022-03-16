@@ -122,8 +122,7 @@ pub fn securite_cascade_public<S>(securite: S) -> HashSet<Securite>
 pub const ROLE_NOEUD_PROTEGE: &str = "protege";
 pub const ROLE_NOEUD_PRIVE: &str = "prive";
 pub const ROLE_NOEUD_PUBLIC: &str = "public";
-pub const ROLE_WEB_PROTEGE: &str = "web_protege";
-pub const ROLE_WEB_PRIVE: &str = "web_prive";
+pub const ROLE_MAITRE_COMPTES: &str = "maitre_comptes";
 pub const ROLE_MONITOR: &str = "monitor";
 pub const ROLE_MAITRE_DES_CLES: &str = "maitrecles";
 pub const ROLE_FICHIERS: &str = "fichiers";
@@ -134,8 +133,7 @@ pub enum RolesCertificats {
     NoeudProtege,
     NoeudPrive,
     NoeudPublic,
-    WebProtege,
-    WebPrive,
+    MaitreComptes,
     Monitor,
     MaitreDesCles,
     Fichiers,  // ConsignationFichiers
@@ -148,8 +146,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::NoeudProtege => ROLE_NOEUD_PROTEGE,
             RolesCertificats::NoeudPrive => ROLE_NOEUD_PRIVE,
             RolesCertificats::NoeudPublic => ROLE_NOEUD_PUBLIC,
-            RolesCertificats::WebProtege => ROLE_WEB_PROTEGE,
-            RolesCertificats::WebPrive => ROLE_WEB_PRIVE,
+            RolesCertificats::MaitreComptes => ROLE_MAITRE_COMPTES,
             RolesCertificats::Monitor => ROLE_MONITOR,
             RolesCertificats::MaitreDesCles => ROLE_MAITRE_DES_CLES,
             RolesCertificats::Fichiers => ROLE_FICHIERS,
