@@ -122,7 +122,7 @@ pub fn securite_cascade_public<S>(securite: S) -> HashSet<Securite>
 pub const ROLE_NOEUD_PROTEGE: &str = "protege";
 pub const ROLE_NOEUD_PRIVE: &str = "prive";
 pub const ROLE_NOEUD_PUBLIC: &str = "public";
-pub const ROLE_MAITRE_COMPTES: &str = "maitre_comptes";
+pub const ROLE_MAITRE_COMPTES: &str = "maitrecomptes";
 pub const ROLE_MONITOR: &str = "monitor";
 pub const ROLE_MAITRE_DES_CLES: &str = "maitrecles";
 pub const ROLE_FICHIERS: &str = "fichiers";
