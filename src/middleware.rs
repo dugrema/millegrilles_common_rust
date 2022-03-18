@@ -601,7 +601,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
     };
 
     let message = json!({
-        "idmg": middleware.idmg(),
+        // "idmg": middleware.idmg(),
         "noeud_id": noeud_id,
         "domaine": nom_domaine,
         "sous_domaines": None::<String>,
@@ -614,9 +614,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         "primaire": true,
     });
 
-    let routage = RoutageMessageAction::builder("presence", "domaine")
-        // .exchanges(vec!(Securite::L3Protege))
-        .build();
+    let routage = RoutageMessageAction::builder(TOPOLOGIE_NOM_DOMAINE, EVENEMENT_PRESENCE_DOMAINE).build();
 
     Ok(middleware.emettre_evenement(routage, &message).await?)
 }

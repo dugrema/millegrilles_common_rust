@@ -173,11 +173,11 @@ pub const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 pub const DEFAULT_Q_TTL: u32 = 300000;
 
 // Domaines tiers
-pub const DOMAINE_SERVICE_MONITOR: &str = "servicemonitor";
+pub const DOMAINE_SERVICE_MONITOR: &str = "monitor";
 
 // Evenements/commandes globaux
 pub const DOMAINE_GLOBAL: &str = "evenement.global.cedule";
-pub const EVENEMENT_PRESENCE_DOMAINE: &str = "evenement.presence.domaine";
+pub const EVENEMENT_PRESENCE_DOMAINE: &str = "presenceDomaine";
 pub const EVENEMENT_GLOBAL_CEDULE: &str = "evenement.global.cedule";
 pub const COMMANDE_GLOBAL_BACKUP_HORAIRE: &str = "commande.global.declencherBackupHoraire";
 pub const COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS: &str = "commande.global.restaurerTransactions";
@@ -272,3 +272,7 @@ pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";
 pub const COMMANDE_REGENERER: &str = "regenerer";
 
 pub const BACKUP_EVENEMENT_MAJ: &str = "backupMaj";
+
+
+pub const TOPOLOGIE_NOM_DOMAINE: &str = "CoreTopologie";
+// pub const EVENEMENT_PRESENCE_DOMAINE: &str = "presenceDomaine";

@@ -326,7 +326,7 @@ async fn boucle_execution(
         None => Vec::new(),
     };
 
-    loop {
+    //loop {
         let mq: RabbitMq = initialiser(configuration.as_ref()).await.expect("Erreur connexion RabbitMq");
         let arc_mq = Arc::new(mq);
         let conn = &arc_mq.connexion;
@@ -420,10 +420,10 @@ async fn boucle_execution(
             }
         }
 
-        // Attendre et redemarrer la connexion MQ
-        sleep(ATTENTE_RECONNEXION);
-        continue;
-    }
+    //     // Attendre et redemarrer la connexion MQ
+    //     sleep(ATTENTE_RECONNEXION);
+    //     continue;
+    // }
 }
 
 /// Thread de verification de l'etat de connexion. Va se terminer si la connexion est fermee.
