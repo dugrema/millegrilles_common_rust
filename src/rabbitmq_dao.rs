@@ -482,6 +482,7 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
     let nom_queue = reply_queue.name().as_str();
     for rk in routing_keys {
         for exchange in &exchanges {
+            debug!("creer_reply_q Mapping rk {} sur reply-Q {} exchange {}", rk, nom_queue, exchange);
             let _ = channel.queue_bind(
                 nom_queue,
                 &exchange,
@@ -614,6 +615,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
             for rk in &c.routing_keys {
                 let routing_key = rk.routing_key.as_str();
                 let exchange = rk.exchange.get_str();
+                debug!("ecouter_consumer queue_bind rk {} sur queue {}, exchange {}", routing_key, nom_queue, exchange);
                 let _ = channel.queue_bind(
                     nom_queue,
                     exchange,
