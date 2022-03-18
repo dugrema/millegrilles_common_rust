@@ -509,7 +509,8 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
     let mut params = FieldTable::default();
     params.insert(FLAG_TTL.into(), 300000.into());  // 5 minutes max pour traitement events
 
-    let nom_queue = format!("{}/triggers", nom_domaine);
+    let domaine_split = nom_domaine.replace(".", "/");
+    let nom_queue = format!("{}/triggers", domaine_split);
 
     let trigger_queue = channel
         .queue_declare(
