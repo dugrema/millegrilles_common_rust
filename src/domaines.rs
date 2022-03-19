@@ -104,7 +104,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 
         // Thread entretien
         futures.push(spawn(self.entretien(middleware.clone())));
-        futures.push(spawn(thread_emettre_presence_domaine(middleware.clone(), self.get_nom_domaine())));
+        // futures.push(spawn(thread_emettre_presence_domaine(middleware.clone(), self.get_nom_domaine())));
 
         Ok((routing, futures))
     }
