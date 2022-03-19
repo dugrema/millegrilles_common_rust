@@ -40,6 +40,7 @@ pub use redis;
 pub use reqwest;
 pub use tokio;
 pub use tokio_stream;
+pub use tokio_util;
 pub use uuid;
 pub use serde;
 pub use serde_json;
