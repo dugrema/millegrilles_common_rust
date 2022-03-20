@@ -2,11 +2,29 @@ use std::error::Error;
 use {redis::Client};
 use log::{debug, info};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use url::Url;
 
 use crate::certificats::EnveloppeCertificat;
+use crate::configuration::ConfigurationNoeud;
 
 const TTL_CERTIFICAT: i32 = 48 * 60 * 60;  // 48 heures en secondes
 const CLE_CERTIFICAT: &str = "certificat_v1";
+
+pub struct RedisConfiguration {
+    url: Option<Url>,
+    username: Option<String>,
+    password: Option<String>,
+}
+
+impl From<ConfigurationNoeud> for RedisConfiguration {
+    fn from(config: ConfigurationNoeud) -> Self {
+        RedisConfiguration {
+            url: config.redis_url.clone(),
+            username: config.redis_username.clone(),
+            password: config.redis_password.clone(),
+        }
+    }
+}
 
 pub struct RedisDao {
     url_connexion: String,
@@ -14,12 +32,13 @@ pub struct RedisDao {
 }
 
 impl RedisDao {
-    pub fn new<T>(url_connexion: Option<T>) -> Result<Self, Box<dyn Error>>
-        where T: Into<String>
+    pub fn new<T>(configuration: T) -> Result<Self, Box<dyn Error>>
+        where T: Into<RedisConfiguration>
     {
-        let url = match url_connexion {
+        let config = configuration.into();
+        let url = match config.url {
             Some(u) => u.into(),
-            None => String::from("redis://redis:6379/")
+            None => String::from(format!("rediss://client_rust:{}@redis:6379#insecure", "Jlii2DBDAlsr1ViBE5a5V1jD9k3uZaM0"))
         };
         info!("Connexion redis client sur {}", url.as_str());
 

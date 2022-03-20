@@ -409,11 +409,11 @@ pub fn preparer_middleware_db(
         map
     };
 
-    let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
-        Some(u) => Some(u.as_str()),
-        None => None,
-    };
-    let redis_dao = RedisDao::new(redis_url).expect("connexion redis");
+    // let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
+    //     Some(u) => Some(u.as_str()),
+    //     None => None,
+    // };
+    let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
 
     let (tx_backup, rx_backup) = mpsc::channel::<CommandeBackup>(5);
 

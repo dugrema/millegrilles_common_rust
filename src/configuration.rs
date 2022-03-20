@@ -150,6 +150,10 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         Err(_) => None,
     };
 
+    let redis_username: String = std::env::var("MG_REDIS_USERNAME").unwrap_or_else(|_| "client_rust".into());
+    let redis_password_file = PathBuf::from(std::env::var("MG_REDIS_PASSWORD_FILE").expect("redis password file"));
+    let redis_password = read_to_string(redis_password_file).expect("read redis password file");
+
     let fichiers_url = charger_url("MG_FICHIERS_URL", "https://fichiers:443")?;
     let redis_url = charger_url("MG_REDIS_URL", "redis://redis:6379")?;
     let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
@@ -159,6 +163,8 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         noeud_id,
         fichiers_url: Some(fichiers_url),
         redis_url: Some(redis_url),
+        redis_username: Some(redis_username),
+        redis_password: Some(redis_password),
         elastic_search_url: Some(elastic_search_url),
         certissuer_url: Some(certissuer_url),
     })
@@ -206,6 +212,8 @@ pub struct ConfigurationNoeud {
     pub noeud_id: Option<String>,
     pub fichiers_url: Option<Url>,
     pub redis_url: Option<Url>,
+    pub redis_username: Option<String>,
+    pub redis_password: Option<String>,
     pub elastic_search_url: Option<Url>,
     pub certissuer_url: Option<Url>,
 }
