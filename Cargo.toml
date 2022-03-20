@@ -59,7 +59,7 @@ futures = "0.3.1"
 futures-util = "0.3.16"
 tokio-amqp = { version = "1.0.0" }
 
-redis = { version = "0.21.3", features = ["tokio-comp"] }
+redis = { version = "0.21.5", features = ["tokio-comp", "tokio-native-tls-comp"] }
 
 #[dev-dependencies]
 #aead = { version = "0.4", features = ["dev"], default-features = false }
