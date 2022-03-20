@@ -155,7 +155,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let redis_password = read_to_string(redis_password_file).expect("read redis password file");
 
     let fichiers_url = charger_url("MG_FICHIERS_URL", "https://fichiers:443")?;
-    let redis_url = charger_url("MG_REDIS_URL", "redis://redis:6379")?;
+    let redis_url = charger_url("MG_REDIS_URL", "rediss://client_rust@redis:6379#insecure")?;
     let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
     let certissuer_url = charger_url("MG_CERTISSUER_URL", "http://certissuer:80")?;
 
