@@ -36,18 +36,29 @@ impl RedisDao {
         where T: Into<RedisConfiguration>
     {
         let config = configuration.into();
-        let url = match config.url {
-            Some(u) => u.into(),
-            None => String::from(format!("rediss://client_rust:{}@redis:6379#insecure", "Jlii2DBDAlsr1ViBE5a5V1jD9k3uZaM0"))
+        let mut url = match config.url {
+            Some(u) => u.clone(),
+            None => Url::parse("rediss://client_rust@redis:6379#insecure")?,
         };
-        info!("Connexion redis client sur {}", url.as_str());
 
-        let client = Client::open(url.as_str())?;
+        if let Some(user) = config.username {
+            url.set_username(user.as_str());
+        }
+        info!("Connexion redis client sur {:?}", url);
+
+        if let Some(password) = config.password {
+            url.set_password(Some(password.as_str()));
+        }
+
+        let url_string: String = url.into();
+        debug!("Connexion redis client sur (INSECURE) {}", url_string);
+
+        let client = Client::open(url_string.as_str())?;
         let connexion_info = client.get_connection_info();
         info!("Connexion redis info : {:?}", connexion_info);
 
         Ok(RedisDao {
-            url_connexion: url,
+            url_connexion: url_string,
             client,
         })
     }
