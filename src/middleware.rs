@@ -615,7 +615,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
     });
 
     let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_PRESENCE_DOMAINE)
-        .exchanges(vec![Securite::L4Secure])
+        .exchanges(vec![Securite::L3Protege])
         .build();
 
     Ok(middleware.emettre_evenement(routage, &message).await?)
