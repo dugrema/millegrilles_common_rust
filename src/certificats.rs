@@ -21,7 +21,7 @@ use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private, Public};
 //use openssl::rsa::Rsa;
 use openssl::stack::{Stack, StackRef};
-use openssl::x509::{X509, X509Ref, X509StoreContext};
+use openssl::x509::{X509, X509Ref, X509Req, X509ReqRef, X509StoreContext};
 use openssl::x509::store::{X509Store, X509StoreBuilder};
 use openssl::x509::verify::X509VerifyFlags;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -47,6 +47,11 @@ const OID_DELEGATION_DOMAINES: &str = "1.2.3.4.5";
 pub fn charger_certificat(pem: &str) -> X509 {
     let cert_x509 = X509::from_pem(pem.as_bytes()).unwrap();
     cert_x509
+}
+
+pub fn charger_csr(pem: &str) -> X509Req {
+    let csr_x509 = X509Req::from_pem(pem.as_bytes()).unwrap();
+    csr_x509
 }
 
 pub fn charger_chaine(pem: &str) -> Result<Vec<X509>, ErrorStack> {
@@ -622,6 +627,21 @@ impl Debug for EnveloppePrivee {
 //         }
 //     }
 // }
+
+/// Parse et retourne une map avec le subject du CSR
+pub fn get_csr_subject(csr: &X509ReqRef) -> Result<HashMap<String, String>, String> {
+    let subject_name = csr.subject_name();
+
+    let mut resultat = HashMap::new();
+    for entry in subject_name.entries() {
+        let cle: String = entry.object().nid().long_name().expect("Erreur chargement Nid de subject").into();
+        let data = entry.data().as_slice().to_vec();
+        let valeur = String::from_utf8(data).expect("Erreur chargement IDMG");
+        resultat.insert(cle, valeur);
+    }
+
+    Ok(resultat)
+}
 
 #[async_trait]
 pub trait ValidateurX509: Send + Sync {
