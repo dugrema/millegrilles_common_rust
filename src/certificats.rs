@@ -197,9 +197,9 @@ pub fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
 //     Ok(encode(Base::Base58Btc, mh_bytes))
 // }
 
-fn calculer_fingerprint_pk(pk: &PKey<Public>) -> Result<String, String> {
+pub fn calculer_fingerprint_pk(pk: &PKey<Public>) -> Result<String, String> {
     let pk_der = pk.public_key_to_der().expect("Erreur conversion PK vers format DER");
-    Ok(hacher_bytes(pk_der.as_slice(), Some(Code::Sha2_256), Some(Base::Base64)))
+    Ok(hacher_bytes(pk_der.as_slice(), Some(Code::Blake2s256), Some(Base::Base58Btc)))
 }
 
 pub fn calculer_idmg(cert: &X509) -> Result<String, String> {
