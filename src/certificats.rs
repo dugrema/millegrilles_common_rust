@@ -49,9 +49,11 @@ pub fn charger_certificat(pem: &str) -> X509 {
     cert_x509
 }
 
-pub fn charger_csr(pem: &str) -> X509Req {
-    let csr_x509 = X509Req::from_pem(pem.as_bytes()).unwrap();
-    csr_x509
+pub fn charger_csr(pem: &str) -> Result<X509Req, String> {
+    match X509Req::from_pem(pem.as_bytes()) {
+        Ok(c) => Ok(c),
+        Err(e) => Err(format!("Erreur chargement CSR : {:?}", e))
+    }
 }
 
 pub fn charger_chaine(pem: &str) -> Result<Vec<X509>, ErrorStack> {
@@ -198,8 +200,12 @@ pub fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
 // }
 
 pub fn calculer_fingerprint_pk(pk: &PKey<Public>) -> Result<String, String> {
-    let pk_der = pk.public_key_to_der().expect("Erreur conversion PK vers format DER");
-    Ok(hacher_bytes(pk_der.as_slice(), Some(Code::Blake2s256), Some(Base::Base58Btc)))
+    // let pk_der = pk.public_key_to_der().expect("Erreur conversion PK vers format DER");
+    let pk_raw = match pk.raw_public_key() {
+        Ok(k) => k,
+        Err(e) => Err(format!("certificats.calculer_fingerprint_pk Erreur extraction raw public key : {:?}", e))?
+    };
+    Ok(hacher_bytes(&pk_raw[..], Some(Code::Blake2s256), Some(Base::Base58Btc)))
 }
 
 pub fn calculer_idmg(cert: &X509) -> Result<String, String> {
