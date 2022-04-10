@@ -56,6 +56,13 @@ pub fn charger_csr(pem: &str) -> Result<X509Req, String> {
     }
 }
 
+pub fn csr_calculer_fingerprintpk(pem: &str) -> Result<String, Box<dyn Error>> {
+    let csr_parsed = charger_csr(pem)?;
+    let cle_publique = csr_parsed.public_key()?;
+    let fingerprint = calculer_fingerprint_pk(&cle_publique)?;
+    Ok(fingerprint)
+}
+
 pub fn charger_chaine(pem: &str) -> Result<Vec<X509>, ErrorStack> {
     let stack = X509::stack_from_pem(pem.as_bytes());
     debug!("Stack certs : {:?}", stack);
