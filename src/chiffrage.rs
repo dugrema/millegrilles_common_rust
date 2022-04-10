@@ -86,7 +86,6 @@ pub struct FingerprintCleChiffree {
     pub fingerprint: String,
     pub cle_chiffree: String,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandeSauvegarderCle {
     #[serde(serialize_with = "ordered_map")]
