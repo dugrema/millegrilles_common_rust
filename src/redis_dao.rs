@@ -1,7 +1,7 @@
 use std::error::Error;
 use {redis::Client};
 use log::{debug, info};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::certificats::EnveloppeCertificat;
@@ -27,7 +27,7 @@ impl From<ConfigurationNoeud> for RedisConfiguration {
 }
 
 pub struct RedisDao {
-    url_connexion: String,
+    _url_connexion: String,
     client: Client,
 }
 
@@ -42,12 +42,14 @@ impl RedisDao {
         };
 
         if let Some(user) = config.username {
-            url.set_username(user.as_str());
+            let r = url.set_username(user.as_str());
+            if r.is_err() { Err(format!("erreur set username : {:?}", r))? }
         }
         info!("Connexion redis client sur {:?}", url);
 
         if let Some(password) = config.password {
-            url.set_password(Some(password.as_str()));
+            let r = url.set_password(Some(password.as_str()));
+            if r.is_err() { Err(format!("erreur set_password : {:?}", r))? }
         }
 
         let url_string: String = url.into();
@@ -58,7 +60,7 @@ impl RedisDao {
         info!("Connexion redis info : {:?}", connexion_info);
 
         Ok(RedisDao {
-            url_connexion: url_string,
+            _url_connexion: url_string,
             client,
         })
     }

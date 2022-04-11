@@ -27,7 +27,7 @@ pub struct FichierWriter<'a, K, M>
     where M: CipherMgs<K>,
           K: MgsCipherKeys
 {
-    path_fichier: &'a Path,
+    _path_fichier: &'a Path,
     fichier: Box<tokio::fs::File>,
     xz_encodeur: stream::Stream,
     hacheur: Hacheur,
@@ -56,7 +56,7 @@ impl<'a, K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<'a, K, M> {
         };
 
         Ok(FichierWriter {
-            path_fichier,
+            _path_fichier: path_fichier,
             fichier: Box::new(output_file),
             xz_encodeur,
             hacheur,

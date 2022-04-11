@@ -5,13 +5,12 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
-use mongodb::{bson::{doc, to_bson}, Collection};
-use mongodb::bson::{Bson, Document};
+use mongodb::{bson::{Bson, Document, doc, to_bson}, Collection};
 use mongodb::bson as bson;
 use mongodb::options::UpdateOptions;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
+use serde_json::json;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
 use openssl::x509::store::X509Store;
@@ -26,13 +25,13 @@ use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware_db::{MiddlewareHooks, MiddlewareMessagesHooks};
-use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
+use crate::middleware_db::MiddlewareMessagesHooks;
+use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl, verifier_erreur_duplication_mongo};
 use crate::rabbitmq_dao::{Callback, EventMq, executer_mq, QueueType, RabbitMqExecutorConfig, TypeMessageOut};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
-use crate::recepteur_messages::{MessageValideAction, recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
+use crate::recepteur_messages::{MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
 
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait MiddlewareMessages:
@@ -802,7 +801,15 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction,
         },
         Err(e) => {
             error!("Erreur sauvegarde transaction dans MongoDb : {:?}", e);
-            Err(format!("Erreur sauvegarde transaction dans MongoDb : {:?}", e))
+            //let kind = *e.kind.clone();
+            let erreur_duplication = verifier_erreur_duplication_mongo(&*e.kind);
+            if erreur_duplication {
+                // Ok, duplicate. On peut traiter la transaction (si ce n'est pas deja fait).
+                warn!("Transaction dupliquee (on va la traiter quand meme) : {:?}", uuid_transaction);
+                Ok(())
+            } else {
+                Err(format!("Erreur sauvegarde transaction dans MongoDb : {:?}", &e))
+            }
         }
     }?;
 

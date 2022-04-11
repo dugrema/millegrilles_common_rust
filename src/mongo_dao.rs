@@ -5,7 +5,7 @@ use log::debug;
 use mongodb::{bson::doc, Client, Collection, Database};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
-use mongodb::error::Result as ResultMongo;
+use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
 use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
 use serde::Serialize;
 use serde_json::Value;
@@ -158,4 +158,17 @@ pub fn convertir_to_bson<S>(valeur: S)
 {
     let bson_doc: Document = serde_json::from_value(serde_json::to_value(valeur)?)?;
     Ok(bson_doc)
+}
+
+/// Return true si l'erreur est une duplication sur insert
+pub fn verifier_erreur_duplication_mongo(kind: &ErrorKind) -> bool {
+    return match kind {
+        ErrorKind::Write(f) => {
+            match f {
+                WriteFailure::WriteError(we) => we.code == 11000,  // true si code de duplication
+                _ => false
+            }
+        },
+        _ => false
+    }
 }

@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,7 +17,6 @@ use tokio_stream::StreamExt;
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
-use crate::constantes::Securite::L4Secure;
 use crate::formatteur_messages::MessageSerialise;
 use crate::formatteur_messages::MessageMilleGrille;
 use crate::recepteur_messages::TypeMessage;
