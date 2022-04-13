@@ -518,7 +518,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     },
                     EVENEMENT_CEDULE => {
                         let trigger: MessageCedule = message.message.get_msg().map_contenu(None)?;
-                        self.verifier_backup_cedule(middleware.as_ref(), &trigger).await?;
+                        // self.verifier_backup_cedule(middleware.as_ref(), &trigger).await?;
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
                     },
