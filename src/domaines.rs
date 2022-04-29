@@ -9,6 +9,7 @@ use serde_json::Value;
 use tokio::spawn;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
+use tokio::time::{Duration as DurationTokio, sleep};
 
 use crate::backup::{regenerer_operation, reset_backup_flag, restaurer};
 use crate::certificats::ValidateurX509;
@@ -299,6 +300,10 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
         where M: Middleware + 'static
     {
+        // Attendre pour eviter echec immedia sur connexion (note to do : ajouter event wait sur MQ)
+        let duration = DurationTokio::from_millis(3000);
+        sleep(duration).await;
+
         // Preparer les index MongoDB
         self.preparer_index_mongodb(middleware.as_ref()).await?;
 

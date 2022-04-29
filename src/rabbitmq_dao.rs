@@ -187,12 +187,13 @@ async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn E
         match client.post(url).send().await {
             Ok(r) => {
                 if r.status().is_success() {
+                    debug!("emettre_certificat_compte Reponse OK : {:?}", r);
                     return Ok(())
                 }
-                warn!("Response creation compte MQ status error : {:?}", r);
+                warn!("emettre_certificat_compte Response creation compte MQ status error : {:?}", r);
             },
             Err(e) => {
-                warn!("Response creation compte MQ error : {:?}", e);
+                warn!("emettre_certificat_compte Response creation compte MQ error : {:?}", e);
             }
         };
     }
