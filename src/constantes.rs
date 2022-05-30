@@ -176,7 +176,8 @@ pub const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 pub const DEFAULT_Q_TTL: u32 = 300000;
 
 // Domaines tiers
-pub const DOMAINE_SERVICE_MONITOR: &str = "monitor";
+pub const DOMAINE_APPLICATION_INSTANCE: &str = "instance";
+pub const DOMAINE_SERVICE_MONITOR: &str = DOMAINE_APPLICATION_INSTANCE;
 
 // Evenements/commandes globaux
 pub const DOMAINE_GLOBAL: &str = "evenement.global.cedule";
