@@ -594,14 +594,14 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
 
 pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + GenerateurMessages + ConfigMessages), nom_domaine: &str) -> Result<(), Box<dyn Error>> {
 
-    let noeud_id = match &middleware.get_configuration_noeud().noeud_id {
+    let instance_id = match &middleware.get_configuration_noeud().instance_id {
         Some(n) => Some(n.clone()),
         None => None,
     };
 
     let message = json!({
         // "idmg": middleware.idmg(),
-        "noeud_id": noeud_id,
+        "instance_id": instance_id,
         "domaine": nom_domaine,
         "sous_domaines": None::<String>,
         "exchanges_routing": None::<String>,

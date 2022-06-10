@@ -145,7 +145,7 @@ fn charger_configuration_pki() -> Result<ConfigurationPki, String> {
 }
 
 fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
-    let noeud_id = match std::env::var("MG_NOEUD_ID") {
+    let instance_id = match std::env::var("INSTANCE_ID") {
         Ok(v) => Some(v),
         Err(_) => None,
     };
@@ -160,7 +160,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let certissuer_url = charger_url("MG_CERTISSUER_URL", "http://certissuer:80")?;
 
     Ok(ConfigurationNoeud{
-        noeud_id,
+        instance_id,
         fichiers_url: Some(fichiers_url),
         redis_url: Some(redis_url),
         redis_username: Some(redis_username),
@@ -209,7 +209,7 @@ pub struct ConfigurationMongo {
 
 #[derive(Clone, Debug)]
 pub struct ConfigurationNoeud {
-    pub noeud_id: Option<String>,
+    pub instance_id: Option<String>,
     pub fichiers_url: Option<Url>,
     pub redis_url: Option<Url>,
     pub redis_username: Option<String>,
