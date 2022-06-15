@@ -33,11 +33,15 @@ use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, Tra
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 use crate::recepteur_messages::{MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
 
+pub trait RedisTrait {
+    fn get_redis(&self) -> &RedisDao;
+}
+
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait MiddlewareMessages:
     ValidateurX509 + GenerateurMessages + ConfigMessages + IsConfigurationPki +
     IsConfigNoeud + FormatteurMessage + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData> + EmetteurCertificat +
-    VerificateurMessage
+    VerificateurMessage + RedisTrait
 {}
 
 pub trait Middleware:
@@ -114,6 +118,12 @@ pub struct MiddlewareMessage {
 }
 
 impl MiddlewareMessages for MiddlewareMessage {}
+
+impl RedisTrait for MiddlewareMessage {
+    fn get_redis(&self) -> &RedisDao {
+        &self.redis
+    }
+}
 
 #[async_trait]
 impl ValidateurX509 for MiddlewareMessage {

@@ -2,6 +2,7 @@ use std::error::Error;
 use {redis::Client};
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use url::Url;
 
 use crate::certificats::EnveloppeCertificat;
@@ -122,6 +123,47 @@ impl RedisDao {
         }
 
         Ok(())
+    }
+
+    pub async fn save_cle_maitredescles(&self, fingerprint: &str, hachage_bytes: &str, contenu: &Value) -> Result<(), Box<dyn Error>> {
+        let mut con = self.client.get_async_connection().await?;
+
+        // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
+        let cle_label = format!("cle:{}:{}", fingerprint, hachage_bytes);
+        // debug!("Verifier presence {}, reset TTL", cle_cert);
+        // let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
+        // debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
+
+        debug!("Conserver cle {} dans redis", cle_label.as_str());
+
+        let contenu_json = serde_json::to_string(contenu)?;
+
+        // Selectioner DB 3 pour cles
+        redis::cmd("SELECT").arg("3").query_async(&mut con).await?;
+
+        // Conserver certificat
+        let _: () = redis::cmd("SET")
+            .arg(cle_label).arg(contenu_json)
+            .arg("NX")
+            .query_async(&mut con).await?;
+
+        Ok(())
+    }
+
+    pub async fn get_cle<S,T>(&self, fingerprint: S, hachage_bytes: T) -> Result<Option<String>, Box<dyn Error>>
+        where S: AsRef<str>,
+              T: AsRef<str>
+    {
+        let cle = format!("cle:{}:{}", fingerprint.as_ref(), hachage_bytes.as_ref());
+
+        let mut con = self.client.get_async_connection().await?;
+
+        // Selectioner DB 3 pour cles
+        redis::cmd("SELECT").arg("3").query_async(&mut con).await?;
+
+        let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
+
+        Ok(resultat)
     }
 
 }

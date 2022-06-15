@@ -21,7 +21,7 @@ use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, Configuratio
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, ReponseDechiffrageCle};
+use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, ReponseDechiffrageCle, RedisTrait};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
@@ -46,6 +46,12 @@ impl MiddlewareMessages for MiddlewareDb {
 }
 
 impl Middleware for MiddlewareDb {
+}
+
+impl RedisTrait for MiddlewareDb {
+    fn get_redis(&self) -> &RedisDao {
+        &self.redis
+    }
 }
 
 #[async_trait]
