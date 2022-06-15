@@ -305,9 +305,12 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
             let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
             let mut guard = self.cles_chiffrage.lock().expect("lock");
             guard.clear();
-            for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-                guard.insert(f.fingerprint.clone(), f);
-            }
+
+            // Reinserer certificat de millegrille
+            let env_privee = self.get_enveloppe_privee();
+            let fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+            let fingerprint = fingerprint_cert[0].fingerprint.clone();
+            guard.insert(fingerprint, fingerprint_cert[0].clone());
         }
 
         emettre_commande_certificat_maitredescles(self).await?;
@@ -887,12 +890,17 @@ pub fn preparer_middleware_message(
     let cles_chiffrage = {
         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
         let cert_local = env_privee.enveloppe.as_ref();
-        let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+        let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+        let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+        fp_certs.extend(list_fp_ca);
 
         let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
+
         for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
             map.insert(f.fingerprint.clone(), f);
         }
+
+        debug!("Map cles chiffrage : {:?}", map);
 
         map
     };

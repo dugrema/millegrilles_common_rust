@@ -257,15 +257,21 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareDb {
             let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
             let mut guard = self.cles_chiffrage.lock().expect("lock");
             guard.clear();
-            for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-                guard.insert(f.fingerprint.clone(), f);
-            }
+
+            // Reinserer certificat de millegrille
+            let env_privee = self.get_enveloppe_privee();
+            let fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+            let fingerprint = fingerprint_cert[0].fingerprint.clone();
+            guard.insert(fingerprint, fingerprint_cert[0].clone());
         }
 
         emettre_commande_certificat_maitredescles(self).await?;
 
         // Donner une chance aux certificats de rentrer
         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+
+        let certs = self.cles_chiffrage.lock().expect("lock").clone();
+        debug!("charger_certificats_chiffrage Certificats de chiffrage recus : {:?}", certs);
 
         // Verifier si on a au moins un certificat
         let nb_certs = self.cles_chiffrage.lock().expect("lock").len();
@@ -405,12 +411,16 @@ pub fn preparer_middleware_db(
     let cles_chiffrage = {
         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
         let cert_local = env_privee.enveloppe.as_ref();
-        let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+        let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+        let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+        fp_certs.extend(list_fp_ca);
 
         let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
         for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
             map.insert(f.fingerprint.clone(), f);
         }
+
+        debug!("Map cles chiffrage : {:?}", map);
 
         map
     };
