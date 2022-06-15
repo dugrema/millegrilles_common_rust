@@ -155,14 +155,15 @@ impl RedisDao {
 
         if let Some(code) = resultat {
             if code == "OK" {
-                let ca_transfert_label = format!("cle_versCA:{}:{}", fingerprint, hachage_bytes);
-                debug!("Ajout cle_versCA : {}", ca_transfert_label);
+                let ca_transfert_label = format!("cle_versCA:{}", fingerprint);
+                debug!("Ajout {} dans {}", hachage_bytes, ca_transfert_label);
                 // La cle n'existait pad
                 // Conserver reference de confirmation vers CA
-                let _: () = redis::cmd("SET")
-                    .arg(ca_transfert_label).arg("")
-                    .arg("NX")
-                    .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
+                let _: () = redis::cmd("SADD")
+                    .arg(&ca_transfert_label).arg(hachage_bytes)
+                    .query_async(&mut con).await?;
+                let _: () = redis::cmd("EXPIREAT")
+                    .arg(&ca_transfert_label).arg(expiration)
                     .query_async(&mut con).await?;
             }
         }
@@ -188,6 +189,22 @@ impl RedisDao {
 
         Ok(resultat)
     }
+
+    // pub async fn get_cleversca_batch<S,T>(&self, fingerprint: S, taille_batch: Option<i32>) -> Result<Option<Vec<String>>, Box<dyn Error>>
+    //     where S: AsRef<str>,
+    //           T: AsRef<str>
+    // {
+    //     let cle = format!("cle_versCA:{}", fingerprint.as_ref());
+    //
+    //     let mut con = self.client.get_async_connection().await?;
+    //
+    //     // Selectioner DB 3 pour cles
+    //     redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+    //
+    //     let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
+    //
+    //     Ok(resultat)
+    // }
 
 }
 
