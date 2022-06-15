@@ -5,11 +5,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::certificats::EnveloppeCertificat;
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee};
 use crate::configuration::ConfigurationNoeud;
 
 const TTL_CERTIFICAT: i32 = 48 * 60 * 60;  // 48 heures en secondes
 const CLE_CERTIFICAT: &str = "certificat_v1";
+const REDIS_DB_ID: &str = "3";
 
 pub struct RedisConfiguration {
     url: Option<Url>,
@@ -125,11 +126,15 @@ impl RedisDao {
         Ok(())
     }
 
-    pub async fn save_cle_maitredescles(&self, fingerprint: &str, hachage_bytes: &str, contenu: &Value) -> Result<(), Box<dyn Error>> {
+    pub async fn save_cle_maitredescles(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: &str, contenu: &Value) -> Result<(), Box<dyn Error>> {
         let mut con = self.client.get_async_connection().await?;
+
+        let fingerprint = enveloppe_privee.fingerprint();
+        let expiration = enveloppe_privee.enveloppe.not_valid_after()?.timestamp();
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
         let cle_label = format!("cle:{}:{}", fingerprint, hachage_bytes);
+        let ca_transfert_label = format!("cle_versCA:{}:{}", fingerprint, hachage_bytes);
         // debug!("Verifier presence {}, reset TTL", cle_cert);
         // let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
         // debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
@@ -139,12 +144,20 @@ impl RedisDao {
         let contenu_json = serde_json::to_string(contenu)?;
 
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg("3").query_async(&mut con).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
 
         // Conserver certificat
         let _: () = redis::cmd("SET")
             .arg(cle_label).arg(contenu_json)
             .arg("NX")
+            .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
+            .query_async(&mut con).await?;
+
+        // Conserver reference de confirmation CA
+        let _: () = redis::cmd("SET")
+            .arg(ca_transfert_label).arg("")
+            .arg("NX")
+            .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
             .query_async(&mut con).await?;
 
         Ok(())
@@ -159,7 +172,7 @@ impl RedisDao {
         let mut con = self.client.get_async_connection().await?;
 
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg("3").query_async(&mut con).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
 
         let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
 
