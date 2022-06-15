@@ -190,21 +190,52 @@ impl RedisDao {
         Ok(resultat)
     }
 
-    // pub async fn get_cleversca_batch<S,T>(&self, fingerprint: S, taille_batch: Option<i32>) -> Result<Option<Vec<String>>, Box<dyn Error>>
-    //     where S: AsRef<str>,
-    //           T: AsRef<str>
-    // {
-    //     let cle = format!("cle_versCA:{}", fingerprint.as_ref());
-    //
-    //     let mut con = self.client.get_async_connection().await?;
-    //
-    //     // Selectioner DB 3 pour cles
-    //     redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
-    //
-    //     let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
-    //
-    //     Ok(resultat)
-    // }
+    pub async fn get_cleversca_batch<S>(&self, fingerprint: S, taille_batch: Option<usize>) -> Result<Vec<String>, Box<dyn Error>>
+        where S: AsRef<str>
+    {
+        let cle = format!("cle_versCA:{}", fingerprint.as_ref());
+        let taille_batch_effective = match taille_batch {
+            Some(t) => t,
+            None => 1000
+        };
+
+        let mut con = self.client.get_async_connection().await?;
+
+        // Selectioner DB 3 pour cles
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+
+        let mut iter_scan: redis::AsyncIter<String> = redis::cmd("SSCAN")
+            .arg(cle).cursor_arg(0).clone().iter_async(&mut con).await?;
+
+        let mut cles = Vec::new();
+        while let Some(hachage_bytes) = iter_scan.next_item().await {
+            cles.push(hachage_bytes);
+            if cles.len() >= taille_batch_effective {
+                break
+            }
+        }
+
+        Ok(cles)
+    }
+
+    pub async fn retirer_cleca_manquante<S,T>(&self, fingerprint: S, hachage_bytes: T) -> Result<(), Box<dyn Error>>
+        where S: AsRef<str>,
+              T: AsRef<str>
+    {
+        let cle = format!("cle_versCA:{}", fingerprint.as_ref());
+
+        let mut con = self.client.get_async_connection().await?;
+
+        // Selectioner DB 3 pour cles
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+
+        let _: () = redis::cmd("SREM")
+            .arg(cle)
+            .arg(hachage_bytes.as_ref())
+            .query_async(&mut con).await?;
+
+        Ok(())
+    }
 
 }
 
