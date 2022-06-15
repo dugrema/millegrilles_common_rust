@@ -134,7 +134,7 @@ impl RedisDao {
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
         let cle_label = format!("cle:{}:{}", fingerprint, hachage_bytes);
-        let ca_transfert_label = format!("cle_versCA:{}:{}", fingerprint, hachage_bytes);
+        let ca_cle_manquante = format!("cle_manquante:{}:{}", fingerprint, hachage_bytes);
         // debug!("Verifier presence {}, reset TTL", cle_cert);
         // let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
         // debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
@@ -147,18 +147,28 @@ impl RedisDao {
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
 
         // Conserver certificat
-        let _: () = redis::cmd("SET")
+        let resultat: Option<String> = redis::cmd("SET")
             .arg(cle_label).arg(contenu_json)
             .arg("NX")
             .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
             .query_async(&mut con).await?;
 
-        // Conserver reference de confirmation CA
-        let _: () = redis::cmd("SET")
-            .arg(ca_transfert_label).arg("")
-            .arg("NX")
-            .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
-            .query_async(&mut con).await?;
+        if let Some(code) = resultat {
+            if code == "OK" {
+                let ca_transfert_label = format!("cle_versCA:{}:{}", fingerprint, hachage_bytes);
+                debug!("Ajout cle_versCA : {}", ca_transfert_label);
+                // La cle n'existait pad
+                // Conserver reference de confirmation vers CA
+                let _: () = redis::cmd("SET")
+                    .arg(ca_transfert_label).arg("")
+                    .arg("NX")
+                    .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
+                    .query_async(&mut con).await?;
+            }
+        }
+
+        // Retirer flag de certificat manquant si applicable
+        let _: () = redis::cmd("DEL").arg(ca_cle_manquante).query_async(&mut con).await?;
 
         Ok(())
     }
