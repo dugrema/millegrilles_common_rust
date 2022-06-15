@@ -134,7 +134,7 @@ impl RedisDao {
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
         let cle_label = format!("cle:{}:{}", fingerprint, hachage_bytes);
-        let ca_cle_manquante = format!("cle_manquante:{}:{}", fingerprint, hachage_bytes);
+        let ca_cle_manquante = format!("cle_manquante:{}", fingerprint);
         // debug!("Verifier presence {}, reset TTL", cle_cert);
         // let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
         // debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
@@ -169,7 +169,11 @@ impl RedisDao {
         }
 
         // Retirer flag de certificat manquant si applicable
-        let _: () = redis::cmd("DEL").arg(ca_cle_manquante).query_async(&mut con).await?;
+        // let _: () = redis::cmd("DEL").arg(ca_cle_manquante).query_async(&mut con).await?;
+        let _: () = redis::cmd("SREM")
+            .arg(ca_cle_manquante)
+            .arg(hachage_bytes)
+            .query_async(&mut con).await?;
 
         Ok(())
     }
@@ -217,6 +221,29 @@ impl RedisDao {
 
         Ok(cles)
     }
+
+    pub async fn ajouter_cle_manquante<S>(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: S) -> Result<(), Box<dyn Error>>
+        where S: AsRef<str>
+    {
+        let expiration = enveloppe_privee.enveloppe.not_valid_after()?.timestamp();
+        let fingerprint = enveloppe_privee.fingerprint().as_str();
+        let label_cle = format!("cle_manquante:{}", fingerprint);
+
+        let mut con = self.client.get_async_connection().await?;
+
+        // Selectioner DB 3 pour cles
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+
+        let _: () = redis::cmd("SADD")
+            .arg(&label_cle).arg(hachage_bytes.as_ref())
+            .query_async(&mut con).await?;
+        let _: () = redis::cmd("EXPIREAT")
+            .arg(&label_cle).arg(expiration)
+            .query_async(&mut con).await?;
+
+        Ok(())
+    }
+
 
     pub async fn retirer_cleca_manquante<S,T>(&self, fingerprint: S, hachage_bytes: T) -> Result<(), Box<dyn Error>>
         where S: AsRef<str>,
