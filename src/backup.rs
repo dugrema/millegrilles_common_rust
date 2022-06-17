@@ -2178,486 +2178,486 @@ mod backup_tests {
     //
     // }
 
-    #[tokio::test]
-    async fn processeur_fichier_backup_catalogue() {
-        setup("processeur_fichier_backup_catalogue");
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
-
-        // let message_json = MessageJson::new(catalogue_value);
-        let message_serialise = {
-            let catalogue_builder = CatalogueHoraireBuilder::new(
-                heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
-            let catalogue = catalogue_builder.build();
-            let catalogue_value: Value = serde_json::to_value(catalogue).expect("value");
-            let catalogue_signe = middleware.formatter_message(
-                &catalogue_value,
-                Some("Backup"),
-                Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
-                None,
-                None
-            ).expect("signer");
-            MessageSerialise::from_parsed(catalogue_signe)
-        }.expect("build");
-
-        let mut compresseur = CompresseurBytes::new().expect("compresseur");
-        compresseur.write(message_serialise.get_str().as_bytes()).await;
-        let (catalogue_xz, _) = compresseur.fermer().expect("xz");
-
-        let mut buf_reader = BufReader::new(catalogue_xz.as_slice());
-        let nom_fichier = async_std::path::PathBuf::from("catalogue.xz");
-        let enveloppe_privee = middleware.get_enveloppe_privee();
-        let mut processeur = ProcesseurFichierBackup::new(enveloppe_privee, middleware.clone());
-
-        processeur.parse_catalogue(middleware.as_ref(), nom_fichier.as_path(), &mut buf_reader).await.expect("parsed");
-
-        assert_eq!(processeur.catalogue.is_none(), false);
-        debug!("Catalogue charge : {:?}", processeur.catalogue);
-    }
-
-}
-
-#[cfg(test)]
-mod test_integration {
-    use std::io::Bytes;
-    use std::sync::Arc;
-
-    use async_std::io::BufReader;
-    use futures_util::stream::IntoAsyncRead;
-    use tokio::sync::mpsc::{Receiver, Sender};
-
-    use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
-    use crate::certificats::FingerprintCertPublicKey;
-    use crate::middleware_db::preparer_middleware_db;
-    use crate::middleware::serialization_tests::build;
-    use crate::test_setup::setup;
-
-    use super::*;
-    use crate::transactions::TransactionImpl;
-
-    const NOM_DOMAINE: &str = "GrosFichiers";
-    const NOM_COLLECTION_TRANSACTIONS: &str = "GrosFichiers";
-    const NOM_COLLECTION_DOCUMENTS: [&str; 2] = ["GrosFichiers/fichiersRep", "GrosFichiers/versionsFichiers"];
-
-    #[tokio::test]
-    async fn grouper_transactions() {
-        setup("grouper_transactions");
-        // Connecter mongo
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        futures.push(tokio::spawn(async move {
-
-            // Test
-            let info = BackupInformation::new(
-                NOM_DOMAINE,
-                NOM_COLLECTION_TRANSACTIONS,
-                false,
-                None
-            ).expect("info");
-
-            let workdir = tempfile::tempdir().expect("tmpdir");
-            let groupes = grouper_backups(
-                middleware.as_ref(),
-                &info
-            ).await.expect("groupes");
-
-            debug!("Groupes : {:?}", groupes);
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn serialiser_transactions_compressees() {
-        setup("serialiser_transactions_compressees");
-
-        // let workdir = tempfile::tempdir().expect("tmpdir");
-        let workdir = PathBuf::from("/tmp");
-
-        // Connecter mongo
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        futures.push(tokio::spawn(async move {
-
-            // Test
-            let info = BackupInformation::new(
-                NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
-            let heure = DateEpochSeconds::from_heure(2021, 09, 12, 12);
-            let mut builder = CatalogueHoraire::builder(
-                heure, NOM_DOMAINE.into(), None, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
-
-            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
-
-            let mut path_transactions = workdir.clone();
-            path_transactions.push("extraire_transactions.jsonl.xz");
-            // debug!("Sauvegarde transactions sous : {:?}", path_transactions);
-            let resultat = serialiser_transactions(
-                middleware.as_ref(),
-                &mut transactions,
-                &mut builder,
-                path_transactions.as_path()
-            ).await.expect("serialiser");
-
-            // debug!("Resultat extraction transactions : {:?}", resultat);
-            assert_eq!(10, builder.uuid_transactions.len());
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn serialiser_transactions_chiffrage() {
-        setup("serialiser_transactions_chiffrage");
-
-        // let workdir = tempfile::tempdir().expect("tmpdir");
-        let workdir = PathBuf::from("/tmp");
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-
-        let certificats_chiffrage = vec! [
-            FingerprintCertPublicKey::new(
-                String::from("dummy"),
-                enveloppe.cle_publique().clone(),
-                true
-            )
-        ];
-
-        // Connecter mongo
-        let (
-            middleware,
-            mut rx_messages,
-            mut rx_triggers,
-            mut rx_messages_verif_reply,
-            mut futures
-        ) = preparer_middleware_db(Vec::new(), None);
-        futures.push(tokio::spawn(async move {
-
-            // Test
-            let info = BackupInformation::new(
-                NOM_DOMAINE,
-                NOM_COLLECTION_TRANSACTIONS,
-                true,
-                None
-            ).expect("info");
-            let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
-            let domaine = "Pki";
-            let mut builder = CatalogueHoraire::builder(
-                heure.clone(), domaine.into(), None, NOM_COLLECTION_TRANSACTIONS.into(), true, false);
-
-            // Path fichiers transactions et catalogue
-            let mut path_transactions = workdir.clone();
-            path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
-            let mut path_catalogue = workdir.clone();
-            path_catalogue.push("extraire_transactions_catalogue.json.xz");
-
-            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
-
-            serialiser_transactions(
-                middleware.as_ref(),
-                &mut transactions,
-                &mut builder,
-                path_transactions.as_path()
-            ).await.expect("serialiser");
-
-            // builder.set_cles(&cles);
-
-            // Signer et serialiser catalogue
-            let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
-                middleware.as_ref(),
-                builder,
-            ).await.expect("serialiser");
-
-            let message_serialise = MessageSerialise::from_parsed(catalogue_signe).expect("ser");
-
-            let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None::<&MiddlewareDb>)
-                .await.expect("write catalogue");
-            writer_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
-            let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer");
-
-            debug!("Multihash catalogue : {}", mh_catalogue);
-            debug!("Commande cles : {:?}", commande_cles);
-
-        }));
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn uploader_backup_horaire() {
-        setup("uploader_backup_horaire");
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-
-        let catalogue_heure = DateEpochSeconds::now();
-        let timestamp_backup = catalogue_heure.get_datetime().timestamp().to_string();
-
-        let workdir = PathBuf::from("/tmp");
-
-        let mut path_transactions: PathBuf = workdir.clone();
-        path_transactions.push("upload_transactions.jsonl.xz.mgs2");
-
-        let certificats_chiffrage = vec! [
-            FingerprintCertPublicKey::new(
-                String::from("dummy"),
-                enveloppe.cle_publique().clone(),
-                true
-            )
-        ];
-
-        // Generer transactions, catalogue, commande maitredescles
-        // Test
-        let info = BackupInformation::new(
-            NOM_DOMAINE,
-            NOM_COLLECTION_TRANSACTIONS,
-            true,
-            None
-        ).expect("info");
-        let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
-        let domaine = "Pki";
-        let mut builder = CatalogueHoraire::builder(
-            heure.clone(), domaine.into(), None, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
-
-        // Connecter mongo
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        futures.push(tokio::spawn(async move {
-
-            // Path fichiers transactions et catalogue
-            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
-
-            serialiser_transactions(
-                middleware.as_ref(),
-                &mut transactions,
-                &mut builder,
-                path_transactions.as_path()
-            ).await.expect("serialiser");
-
-            // builder.set_cles(&cles);
-
-            // Signer et serialiser catalogue
-            let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
-                middleware.as_ref(),
-                builder,
-            ).await.expect("serialiser");
-
-            let response = uploader_backup(
-                middleware.as_ref(),
-                path_transactions.as_path(),
-                &catalogue,
-                &catalogue_signe,
-                commande_cles
-            ).await.expect("upload");
-            debug!("Response upload catalogue : {:?}", response);
-
-        }));
-
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-
-    }
-
-    #[tokio::test]
-    async fn uploader_backup_horaire_partition() {
-        setup("uploader_backup_horaire_partition");
-
-        let partition = Some(String::from("MaPartition"));
-
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-
-        let catalogue_heure = DateEpochSeconds::now();
-        let timestamp_backup = catalogue_heure.get_datetime().timestamp().to_string();
-
-        let workdir = PathBuf::from("/tmp");
-
-        let mut path_transactions: PathBuf = workdir.clone();
-        path_transactions.push("upload_transactions.jsonl.xz.mgs2");
-
-        let certificats_chiffrage = vec! [
-            FingerprintCertPublicKey::new(
-                String::from("dummy"),
-                enveloppe.cle_publique().clone(),
-                true
-            )
-        ];
-
-        // Generer transactions, catalogue, commande maitredescles
-        // Test
-        let info = BackupInformation::new(
-            NOM_DOMAINE,
-            NOM_COLLECTION_TRANSACTIONS,
-            true,
-            None
-        ).expect("info");
-        let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
-        let domaine = "Pki";
-        let mut builder = CatalogueHoraire::builder(
-            heure.clone(), domaine.into(), partition, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
-
-        // Connecter mongo
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-        futures.push(tokio::spawn(async move {
-
-            // Path fichiers transactions et catalogue
-            let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
-
-            serialiser_transactions(
-                middleware.as_ref(),
-                &mut transactions,
-                &mut builder,
-                path_transactions.as_path()
-            ).await.expect("serialiser");
-
-            // builder.set_cles(&cles);
-
-            // Signer et serialiser catalogue
-            let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
-                middleware.as_ref(),
-                builder,
-            ).await.expect("serialiser");
-
-            let response = uploader_backup(
-                middleware.as_ref(),
-                path_transactions.as_path(),
-                &catalogue,
-                &catalogue_signe,
-                commande_cles
-            ).await.expect("upload");
-            debug!("Response upload catalogue : {:?}", response);
-
-        }));
-
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-
-    }
-
-    #[tokio::test]
-    async fn download_backup_test() {
-        setup("download_backup_test");
-
-        let workdir = PathBuf::from("/tmp");
-
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-
-        debug!("Attente MQ");
-        tokio::time::sleep(tokio::time::Duration::new(1, 0)).await;
-        debug!("Fin sleep");
-
-        futures.push(tokio::spawn(async move {
-            download_backup(
-                middleware.clone(),
-                NOM_DOMAINE,
-                None::<&str>,
-                NOM_COLLECTION_TRANSACTIONS,
-                workdir.as_path()
-            ).await.expect("download");
-        }));
-
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
-    #[tokio::test]
-    async fn download_backup_test_partition() {
-        setup("download_backup_test_partition");
-
-        let workdir = PathBuf::from("/tmp");
-
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-        let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
-
-        debug!("Attente MQ");
-        tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
-        debug!("Fin sleep");
-
-        futures.push(tokio::spawn(async move {
-            download_backup(
-                middleware.clone(),
-                "Pki".into(),
-                Some(String::from("MaPartition")),
-                NOM_COLLECTION_TRANSACTIONS,
-                workdir.as_path()
-            ).await.expect("download");
-        }));
-
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
-
     // #[tokio::test]
-    // async fn effectuer_backup() {
-    //     setup("effectuer_backup");
+    // async fn processeur_fichier_backup_catalogue() {
+    //     setup("processeur_fichier_backup_catalogue");
+    //     let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
     //
-    //     let (
-    //         middleware,
-    //         mut futures,
-    //         mut tx_messages,
-    //         mut tx_triggers
-    //     ) = build().await;
+    //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+    //     let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
     //
-    //     futures.push(tokio::spawn(async move {
+    //     // let message_json = MessageJson::new(catalogue_value);
+    //     let message_serialise = {
+    //         let catalogue_builder = CatalogueHoraireBuilder::new(
+    //             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
+    //         let catalogue = catalogue_builder.build();
+    //         let catalogue_value: Value = serde_json::to_value(catalogue).expect("value");
+    //         let catalogue_signe = middleware.formatter_message(
+    //             &catalogue_value,
+    //             Some("Backup"),
+    //             Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
+    //             None,
+    //             None
+    //         ).expect("signer");
+    //         MessageSerialise::from_parsed(catalogue_signe)
+    //     }.expect("build");
     //
-    //         debug!("Attente MQ");
-    //         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-    //         debug!("Fin sleep");
+    //     let mut compresseur = CompresseurBytes::new().expect("compresseur");
+    //     compresseur.write(message_serialise.get_str().as_bytes()).await;
+    //     let (catalogue_xz, _) = compresseur.fermer().expect("xz");
     //
-    //         debug!("S'assurer d'avoir les certificats de chiffrage");
-    //         middleware.charger_certificats_chiffrage().await;
-    //         debug!("Certificats de chiffrage recus : {:?}", middleware.get_publickeys_chiffrage());
-    //         assert_eq!(middleware.get_publickeys_chiffrage().len() > 1, true);
+    //     let mut buf_reader = BufReader::new(catalogue_xz.as_slice());
+    //     let nom_fichier = async_std::path::PathBuf::from("catalogue.xz");
+    //     let enveloppe_privee = middleware.get_enveloppe_privee();
+    //     let mut processeur = ProcesseurFichierBackup::new(enveloppe_privee, middleware.clone());
     //
-    //         backup(middleware.as_ref(), NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+    //     processeur.parse_catalogue(middleware.as_ref(), nom_fichier.as_path(), &mut buf_reader).await.expect("parsed");
     //
-    //     }));
-    //
-    //     // Execution async du test
-    //     futures.next().await.expect("resultat").expect("ok");
+    //     assert_eq!(processeur.catalogue.is_none(), false);
+    //     debug!("Catalogue charge : {:?}", processeur.catalogue);
     // }
 
-    struct TraiterTransactionsDummy {}
-
-    #[async_trait]
-    impl TraiterTransaction for TraiterTransactionsDummy {
-        async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String> where M: ValidateurX509 + GenerateurMessages + MongoDao {
-            debug!("Traiter transaction : {:?}", transaction);
-            Ok(None)
-        }
-    }
-
-    #[tokio::test]
-    async fn effectuer_restauration() {
-        setup("effectuer_backup");
-
-        let (
-            middleware,
-            mut futures,
-            mut tx_messages,
-            mut tx_triggers
-        ) = build().await;
-
-        futures.push(tokio::spawn(async move {
-
-            debug!("Attente MQ");
-            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-            debug!("Fin sleep");
-
-            let mut collections_documents = Vec::new();
-            for cd in NOM_COLLECTION_DOCUMENTS { collections_documents.push(String::from(cd)); }
-
-            let mut processeur = TraiterTransactionsDummy {};
-
-            restaurer(
-                middleware.clone(),
-                NOM_DOMAINE,
-                None::<&str>,
-                NOM_COLLECTION_TRANSACTIONS,
-                &collections_documents,
-                &processeur
-            ).await.expect("restaurer");
-
-        }));
-
-        // Execution async du test
-        futures.next().await.expect("resultat").expect("ok");
-    }
 }
+
+// #[cfg(test)]
+// mod test_integration {
+//     use std::io::Bytes;
+//     use std::sync::Arc;
+//
+//     use async_std::io::BufReader;
+//     use futures_util::stream::IntoAsyncRead;
+//     use tokio::sync::mpsc::{Receiver, Sender};
+//
+//     use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
+//     use crate::certificats::FingerprintCertPublicKey;
+//     use crate::middleware_db::preparer_middleware_db;
+//     use crate::middleware::serialization_tests::build;
+//     use crate::test_setup::setup;
+//
+//     use super::*;
+//     use crate::transactions::TransactionImpl;
+//
+//     const NOM_DOMAINE: &str = "GrosFichiers";
+//     const NOM_COLLECTION_TRANSACTIONS: &str = "GrosFichiers";
+//     const NOM_COLLECTION_DOCUMENTS: [&str; 2] = ["GrosFichiers/fichiersRep", "GrosFichiers/versionsFichiers"];
+//
+//     #[tokio::test]
+//     async fn grouper_transactions() {
+//         setup("grouper_transactions");
+//         // Connecter mongo
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         futures.push(tokio::spawn(async move {
+//
+//             // Test
+//             let info = BackupInformation::new(
+//                 NOM_DOMAINE,
+//                 NOM_COLLECTION_TRANSACTIONS,
+//                 false,
+//                 None
+//             ).expect("info");
+//
+//             let workdir = tempfile::tempdir().expect("tmpdir");
+//             let groupes = grouper_backups(
+//                 middleware.as_ref(),
+//                 &info
+//             ).await.expect("groupes");
+//
+//             debug!("Groupes : {:?}", groupes);
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn serialiser_transactions_compressees() {
+//         setup("serialiser_transactions_compressees");
+//
+//         // let workdir = tempfile::tempdir().expect("tmpdir");
+//         let workdir = PathBuf::from("/tmp");
+//
+//         // Connecter mongo
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         futures.push(tokio::spawn(async move {
+//
+//             // Test
+//             let info = BackupInformation::new(
+//                 NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, false, None).expect("info");
+//             let heure = DateEpochSeconds::from_heure(2021, 09, 12, 12);
+//             let mut builder = CatalogueHoraire::builder(
+//                 heure, NOM_DOMAINE.into(), None, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
+//
+//             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+//
+//             let mut path_transactions = workdir.clone();
+//             path_transactions.push("extraire_transactions.jsonl.xz");
+//             // debug!("Sauvegarde transactions sous : {:?}", path_transactions);
+//             let resultat = serialiser_transactions(
+//                 middleware.as_ref(),
+//                 &mut transactions,
+//                 &mut builder,
+//                 path_transactions.as_path()
+//             ).await.expect("serialiser");
+//
+//             // debug!("Resultat extraction transactions : {:?}", resultat);
+//             assert_eq!(10, builder.uuid_transactions.len());
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn serialiser_transactions_chiffrage() {
+//         setup("serialiser_transactions_chiffrage");
+//
+//         // let workdir = tempfile::tempdir().expect("tmpdir");
+//         let workdir = PathBuf::from("/tmp");
+//         let (validateur, enveloppe) = charger_enveloppe_privee_env();
+//
+//         let certificats_chiffrage = vec! [
+//             FingerprintCertPublicKey::new(
+//                 String::from("dummy"),
+//                 enveloppe.cle_publique().clone(),
+//                 true
+//             )
+//         ];
+//
+//         // Connecter mongo
+//         let (
+//             middleware,
+//             mut rx_messages,
+//             mut rx_triggers,
+//             mut rx_messages_verif_reply,
+//             mut futures
+//         ) = preparer_middleware_db(Vec::new(), None);
+//         futures.push(tokio::spawn(async move {
+//
+//             // Test
+//             let info = BackupInformation::new(
+//                 NOM_DOMAINE,
+//                 NOM_COLLECTION_TRANSACTIONS,
+//                 true,
+//                 None
+//             ).expect("info");
+//             let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
+//             let domaine = "Pki";
+//             let mut builder = CatalogueHoraire::builder(
+//                 heure.clone(), domaine.into(), None, NOM_COLLECTION_TRANSACTIONS.into(), true, false);
+//
+//             // Path fichiers transactions et catalogue
+//             let mut path_transactions = workdir.clone();
+//             path_transactions.push("extraire_transactions.jsonl.xz.mgs2");
+//             let mut path_catalogue = workdir.clone();
+//             path_catalogue.push("extraire_transactions_catalogue.json.xz");
+//
+//             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+//
+//             serialiser_transactions(
+//                 middleware.as_ref(),
+//                 &mut transactions,
+//                 &mut builder,
+//                 path_transactions.as_path()
+//             ).await.expect("serialiser");
+//
+//             // builder.set_cles(&cles);
+//
+//             // Signer et serialiser catalogue
+//             let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
+//                 middleware.as_ref(),
+//                 builder,
+//             ).await.expect("serialiser");
+//
+//             let message_serialise = MessageSerialise::from_parsed(catalogue_signe).expect("ser");
+//
+//             let mut writer_catalogue = FichierWriter::new(path_catalogue.as_path(), None::<&MiddlewareDb>)
+//                 .await.expect("write catalogue");
+//             writer_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
+//             let (mh_catalogue, _) = writer_catalogue.fermer().await.expect("fermer");
+//
+//             debug!("Multihash catalogue : {}", mh_catalogue);
+//             debug!("Commande cles : {:?}", commande_cles);
+//
+//         }));
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn uploader_backup_horaire() {
+//         setup("uploader_backup_horaire");
+//         let (validateur, enveloppe) = charger_enveloppe_privee_env();
+//
+//         let catalogue_heure = DateEpochSeconds::now();
+//         let timestamp_backup = catalogue_heure.get_datetime().timestamp().to_string();
+//
+//         let workdir = PathBuf::from("/tmp");
+//
+//         let mut path_transactions: PathBuf = workdir.clone();
+//         path_transactions.push("upload_transactions.jsonl.xz.mgs2");
+//
+//         let certificats_chiffrage = vec! [
+//             FingerprintCertPublicKey::new(
+//                 String::from("dummy"),
+//                 enveloppe.cle_publique().clone(),
+//                 true
+//             )
+//         ];
+//
+//         // Generer transactions, catalogue, commande maitredescles
+//         // Test
+//         let info = BackupInformation::new(
+//             NOM_DOMAINE,
+//             NOM_COLLECTION_TRANSACTIONS,
+//             true,
+//             None
+//         ).expect("info");
+//         let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
+//         let domaine = "Pki";
+//         let mut builder = CatalogueHoraire::builder(
+//             heure.clone(), domaine.into(), None, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
+//
+//         // Connecter mongo
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         futures.push(tokio::spawn(async move {
+//
+//             // Path fichiers transactions et catalogue
+//             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+//
+//             serialiser_transactions(
+//                 middleware.as_ref(),
+//                 &mut transactions,
+//                 &mut builder,
+//                 path_transactions.as_path()
+//             ).await.expect("serialiser");
+//
+//             // builder.set_cles(&cles);
+//
+//             // Signer et serialiser catalogue
+//             let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
+//                 middleware.as_ref(),
+//                 builder,
+//             ).await.expect("serialiser");
+//
+//             let response = uploader_backup(
+//                 middleware.as_ref(),
+//                 path_transactions.as_path(),
+//                 &catalogue,
+//                 &catalogue_signe,
+//                 commande_cles
+//             ).await.expect("upload");
+//             debug!("Response upload catalogue : {:?}", response);
+//
+//         }));
+//
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//
+//     }
+//
+//     #[tokio::test]
+//     async fn uploader_backup_horaire_partition() {
+//         setup("uploader_backup_horaire_partition");
+//
+//         let partition = Some(String::from("MaPartition"));
+//
+//         let (validateur, enveloppe) = charger_enveloppe_privee_env();
+//
+//         let catalogue_heure = DateEpochSeconds::now();
+//         let timestamp_backup = catalogue_heure.get_datetime().timestamp().to_string();
+//
+//         let workdir = PathBuf::from("/tmp");
+//
+//         let mut path_transactions: PathBuf = workdir.clone();
+//         path_transactions.push("upload_transactions.jsonl.xz.mgs2");
+//
+//         let certificats_chiffrage = vec! [
+//             FingerprintCertPublicKey::new(
+//                 String::from("dummy"),
+//                 enveloppe.cle_publique().clone(),
+//                 true
+//             )
+//         ];
+//
+//         // Generer transactions, catalogue, commande maitredescles
+//         // Test
+//         let info = BackupInformation::new(
+//             NOM_DOMAINE,
+//             NOM_COLLECTION_TRANSACTIONS,
+//             true,
+//             None
+//         ).expect("info");
+//         let heure = DateEpochSeconds::from_heure(2021, 09, 08, 19);
+//         let domaine = "Pki";
+//         let mut builder = CatalogueHoraire::builder(
+//             heure.clone(), domaine.into(), partition, NOM_COLLECTION_TRANSACTIONS.into(), false, false);
+//
+//         // Connecter mongo
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//         futures.push(tokio::spawn(async move {
+//
+//             // Path fichiers transactions et catalogue
+//             let mut transactions = requete_transactions(middleware.as_ref(), &info, &builder).await.expect("transactions");
+//
+//             serialiser_transactions(
+//                 middleware.as_ref(),
+//                 &mut transactions,
+//                 &mut builder,
+//                 path_transactions.as_path()
+//             ).await.expect("serialiser");
+//
+//             // builder.set_cles(&cles);
+//
+//             // Signer et serialiser catalogue
+//             let (catalogue, catalogue_signe, commande_cles) = serialiser_catalogue(
+//                 middleware.as_ref(),
+//                 builder,
+//             ).await.expect("serialiser");
+//
+//             let response = uploader_backup(
+//                 middleware.as_ref(),
+//                 path_transactions.as_path(),
+//                 &catalogue,
+//                 &catalogue_signe,
+//                 commande_cles
+//             ).await.expect("upload");
+//             debug!("Response upload catalogue : {:?}", response);
+//
+//         }));
+//
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//
+//     }
+//
+//     #[tokio::test]
+//     async fn download_backup_test() {
+//         setup("download_backup_test");
+//
+//         let workdir = PathBuf::from("/tmp");
+//
+//         let (validateur, enveloppe) = charger_enveloppe_privee_env();
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//
+//         debug!("Attente MQ");
+//         tokio::time::sleep(tokio::time::Duration::new(1, 0)).await;
+//         debug!("Fin sleep");
+//
+//         futures.push(tokio::spawn(async move {
+//             download_backup(
+//                 middleware.clone(),
+//                 NOM_DOMAINE,
+//                 None::<&str>,
+//                 NOM_COLLECTION_TRANSACTIONS,
+//                 workdir.as_path()
+//             ).await.expect("download");
+//         }));
+//
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     #[tokio::test]
+//     async fn download_backup_test_partition() {
+//         setup("download_backup_test_partition");
+//
+//         let workdir = PathBuf::from("/tmp");
+//
+//         let (validateur, enveloppe) = charger_enveloppe_privee_env();
+//         let (middleware, _, _, _, mut futures) = preparer_middleware_db(Vec::new(), None);
+//
+//         debug!("Attente MQ");
+//         tokio::time::sleep(tokio::time::Duration::new(2, 0)).await;
+//         debug!("Fin sleep");
+//
+//         futures.push(tokio::spawn(async move {
+//             download_backup(
+//                 middleware.clone(),
+//                 "Pki".into(),
+//                 Some(String::from("MaPartition")),
+//                 NOM_COLLECTION_TRANSACTIONS,
+//                 workdir.as_path()
+//             ).await.expect("download");
+//         }));
+//
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+//
+//     // #[tokio::test]
+//     // async fn effectuer_backup() {
+//     //     setup("effectuer_backup");
+//     //
+//     //     let (
+//     //         middleware,
+//     //         mut futures,
+//     //         mut tx_messages,
+//     //         mut tx_triggers
+//     //     ) = build().await;
+//     //
+//     //     futures.push(tokio::spawn(async move {
+//     //
+//     //         debug!("Attente MQ");
+//     //         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+//     //         debug!("Fin sleep");
+//     //
+//     //         debug!("S'assurer d'avoir les certificats de chiffrage");
+//     //         middleware.charger_certificats_chiffrage().await;
+//     //         debug!("Certificats de chiffrage recus : {:?}", middleware.get_publickeys_chiffrage());
+//     //         assert_eq!(middleware.get_publickeys_chiffrage().len() > 1, true);
+//     //
+//     //         backup(middleware.as_ref(), NOM_DOMAINE, NOM_COLLECTION_TRANSACTIONS, true).await.expect("backup");
+//     //
+//     //     }));
+//     //
+//     //     // Execution async du test
+//     //     futures.next().await.expect("resultat").expect("ok");
+//     // }
+//
+//     struct TraiterTransactionsDummy {}
+//
+//     #[async_trait]
+//     impl TraiterTransaction for TraiterTransactionsDummy {
+//         async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String> where M: ValidateurX509 + GenerateurMessages + MongoDao {
+//             debug!("Traiter transaction : {:?}", transaction);
+//             Ok(None)
+//         }
+//     }
+//
+//     #[tokio::test]
+//     async fn effectuer_restauration() {
+//         setup("effectuer_backup");
+//
+//         let (
+//             middleware,
+//             mut futures,
+//             mut tx_messages,
+//             mut tx_triggers
+//         ) = build().await;
+//
+//         futures.push(tokio::spawn(async move {
+//
+//             debug!("Attente MQ");
+//             tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+//             debug!("Fin sleep");
+//
+//             let mut collections_documents = Vec::new();
+//             for cd in NOM_COLLECTION_DOCUMENTS { collections_documents.push(String::from(cd)); }
+//
+//             let mut processeur = TraiterTransactionsDummy {};
+//
+//             restaurer(
+//                 middleware.clone(),
+//                 NOM_DOMAINE,
+//                 None::<&str>,
+//                 NOM_COLLECTION_TRANSACTIONS,
+//                 &collections_documents,
+//                 &processeur
+//             ).await.expect("restaurer");
+//
+//         }));
+//
+//         // Execution async du test
+//         futures.next().await.expect("resultat").expect("ok");
+//     }
+// }

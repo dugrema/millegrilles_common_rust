@@ -359,25 +359,25 @@ mod chiffrage_tests {
         (cle_publique, cle_privee)
     }
 
-    #[test]
-    fn chiffrage_asymetrique() {
-        setup("chiffrage_asymetrique");
-
-        // Cles
-        let (cle_publique, cle_privee) = charger_cles();
-
-        let mut buffer_random = [0u8; 32];
-        openssl::rand::rand_bytes(&mut buffer_random).expect("rand");
-        debug!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
-
-        let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random).expect("chiffrer");
-        debug!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
-
-        let buffer_dechiffre = dechiffrer_asymetrique(&cle_privee, &ciphertext).expect("dechiffrer");
-        debug!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
-
-        assert_eq!(buffer_random, buffer_dechiffre.as_slice());
-    }
+    // #[test]
+    // fn chiffrage_asymetrique() {
+    //     setup("chiffrage_asymetrique");
+    //
+    //     // Cles
+    //     let (cle_publique, cle_privee) = charger_cles();
+    //
+    //     let mut buffer_random = [0u8; 32];
+    //     openssl::rand::rand_bytes(&mut buffer_random).expect("rand");
+    //     debug!("Buffer random : {:?}", encode(Base::Base64, &buffer_random));
+    //
+    //     let ciphertext = chiffrer_asymetrique(&cle_publique, &buffer_random).expect("chiffrer");
+    //     debug!("Ciphertext asymetrique : {:?}", encode(Base::Base64, &ciphertext));
+    //
+    //     let buffer_dechiffre = dechiffrer_asymetrique(&cle_privee, &ciphertext).expect("dechiffrer");
+    //     debug!("Buffer dechiffre : {:?}", encode(Base::Base64, &buffer_dechiffre));
+    //
+    //     assert_eq!(buffer_random, buffer_dechiffre.as_slice());
+    // }
 
     #[test]
     fn roundtrip_chiffrage() {

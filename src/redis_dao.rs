@@ -272,39 +272,39 @@ pub struct RediCertificatV1 {
     pub ca: Option<String>,
 }
 
-#[cfg(test)]
-mod test_integration_redis_dao {
-    use super::*;
-    use crate::test_setup::setup;
-    use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
-
-    const URL_REDIS: &str = "redis://localhost:6379";
-
-    #[tokio::test]
-    async fn connecter_redis() {
-        setup("connecter_redis");
-        let client = RedisDao::new(Some(URL_REDIS)).expect("client");
-        // let mut con = client.get_async_connection().await?;
-        let resultat = client.liste_certificats_fingerprints().await.expect("resultat");
-        info!("Resultat : {:?}", resultat);
-    }
-
-    #[tokio::test]
-    async fn get_certificat() {
-        setup("get_certificat");
-        let client = RedisDao::new(Some(URL_REDIS)).expect("client");
-        let resultat = client.get_certificat("zQmdmwoc9cync8afXBXvnBar2yHyZihVnHvYrt3zSG4wHoX").await.expect("resultat");
-        info!("Resultat : {:?}", resultat);
-    }
-
-    #[tokio::test]
-    async fn set_certificat() {
-        setup("set_certificat");
-        let (_, enveloppe) = charger_enveloppe_privee_env();
-        let cert = enveloppe.enveloppe;
-
-        let client = RedisDao::new(Some(URL_REDIS)).expect("client");
-
-        let _ = client.save_certificat(cert.as_ref()).await.expect("resultat");
-    }
-}
+// #[cfg(test)]
+// mod test_integration_redis_dao {
+//     use super::*;
+//     use crate::test_setup::setup;
+//     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
+//
+//     const URL_REDIS: &str = "redis://localhost:6379";
+//
+//     #[tokio::test]
+//     async fn connecter_redis() {
+//         setup("connecter_redis");
+//         let client = RedisDao::new(Some(URL_REDIS)).expect("client");
+//         // let mut con = client.get_async_connection().await?;
+//         let resultat = client.liste_certificats_fingerprints().await.expect("resultat");
+//         info!("Resultat : {:?}", resultat);
+//     }
+//
+//     #[tokio::test]
+//     async fn get_certificat() {
+//         setup("get_certificat");
+//         let client = RedisDao::new(Some(URL_REDIS)).expect("client");
+//         let resultat = client.get_certificat("zQmdmwoc9cync8afXBXvnBar2yHyZihVnHvYrt3zSG4wHoX").await.expect("resultat");
+//         info!("Resultat : {:?}", resultat);
+//     }
+//
+//     #[tokio::test]
+//     async fn set_certificat() {
+//         setup("set_certificat");
+//         let (_, enveloppe) = charger_enveloppe_privee_env();
+//         let cert = enveloppe.enveloppe;
+//
+//         let client = RedisDao::new(Some(URL_REDIS)).expect("client");
+//
+//         let _ = client.save_certificat(cert.as_ref()).await.expect("resultat");
+//     }
+// }
