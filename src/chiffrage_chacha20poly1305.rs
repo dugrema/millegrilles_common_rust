@@ -90,10 +90,10 @@ impl CipherMgs<Mgs3CipherKeys> for CipherMgs3 {
 
         // Deplacer source dans buffer out. Chiffrage fait "in place".
         let out_len = if data.is_empty() {
-            debug!("!!!1 Data Empty!");
+            debug!("Data Empty!");
             out.len()
         } else {
-            debug!("!!!1 Data pas empty!, taille {}", data.len());
+            debug!("Data pas empty!, taille {}", data.len());
             out.copy_from_slice(data);
             data.len()
         };

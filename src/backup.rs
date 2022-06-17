@@ -1629,7 +1629,7 @@ impl ProcesseurFichierBackup {
                     Ok(d) => d,
                     Err(e) => {
                         debug!{"Erreur reception cle pour catalogue ({}), on emet une commande de sauvegarde de la cle", transactions_hachage_bytes};
-                        emettre_cle_catalogue(middleware, &catalogue).await?;
+                        //emettre_cle_catalogue(middleware, &catalogue).await?;
                         Err(e)?  // Emettre erreur originale
                     }
                 };
@@ -2119,7 +2119,7 @@ mod backup_tests {
             "date": Utc.timestamp(1629464026, 0),
         };
 
-        (String::from("z8VwDbtozVtX5m6Bh11QvveYwHswft516JqBd8QYRWjVgpXak2MDXDqFV4ugSbVZ4yCQ64SqdPVZiGLbRdHpNqU7csY"), doc_bson)
+        (String::from("z8VwF3dEpgBm31rY1ocA9Hdk74q61ukLybuVSv83ie2hZ9wFQ9oMQKtKDAqYxPemu1hYYHJw6i5NrRvULMNBowPD5YX"), doc_bson)
     }
 
     #[tokio::test]

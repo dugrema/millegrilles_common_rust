@@ -132,30 +132,31 @@ impl<'a, K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<'a, K, M> {
         }
 
         // Flusher chiffrage (si applicable)
-        Err(String::from("Fix me"))?
-        // match &mut self.chiffreur {
-        //     Some(c) => {
-        //         let len = c.finalize(&mut buffer_chiffre)?;
-        //         if len > 0 {
-        //             // Finaliser output
-        //             let slice_buffer = &buffer_chiffre[..len];
-        //             self.hacheur.update(slice_buffer);
-        //             self.fichier.write_all(slice_buffer).await?;
-        //         }
-        //     },
-        //     None => ()
-        // }
-        //
-        // // Passer dans le hachage et finir l'ecriture du fichier
-        // let hachage = self.hacheur.finalize();
-        // self.fichier.flush().await?;
-        //
-        // let cipher_data = match &self.chiffreur {
+        let cipher_data = match self.chiffreur {
+            Some(c) => {
+                let (len, cipher_data) = c.finalize(&mut buffer_chiffre)?;
+                if len > 0 {
+                    // Finaliser output
+                    let slice_buffer = &buffer_chiffre[..len];
+                    self.hacheur.update(slice_buffer);
+                    self.fichier.write_all(slice_buffer).await?;
+                }
+
+                Some(cipher_data)
+            },
+            None => None
+        };
+
+        // Passer dans le hachage et finir l'ecriture du fichier
+        let hachage = self.hacheur.finalize();
+        self.fichier.flush().await?;
+
+        // let cipher_data = match self.chiffreur {
         //     Some(c) => Some(c.get_cipher_keys()?),
         //     None => None,
         // };
-        //
-        // Ok((hachage, cipher_data))
+
+        Ok((hachage, cipher_data))
     }
 
 }
