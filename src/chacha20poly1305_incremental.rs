@@ -10,6 +10,7 @@ use aead::{
     consts::{U0, U12, U16, U24, U32},
     generic_array::{ArrayLength, GenericArray},
     AeadCore, AeadInPlace, Error, NewAead,
+    AeadMut,
 };
 
 use ::cipher::{NewCipher, StreamCipher, StreamCipherSeek};
@@ -145,9 +146,10 @@ where
             // self.mac.update_padded(&[0u8]);
         }
 
-        // Encrypt data
+        // Encrypt all data
         self.cipher.apply_keystream(buffer);
 
+        // Split encrypted data in chunks
         let chunks = if self.partial_block.is_empty() {
             buffer.chunks(BLOCKSIZE_POLY1305)
         } else {
@@ -181,6 +183,7 @@ where
         }
 
         if ! self.partial_block.is_empty() {
+            // Encrypted data is leftover, padd and run through MAC
             self.mac.update_padded(&self.partial_block[..]);
             self.partial_block.as_mut_slice().zeroize();
             self.partial_block.clear();

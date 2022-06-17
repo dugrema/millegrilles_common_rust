@@ -90,17 +90,15 @@ impl CipherMgs<Mgs3CipherKeys> for CipherMgs3 {
 
         // Deplacer source dans buffer out. Chiffrage fait "in place".
         let out_len = if data.is_empty() {
-            debug!("Data Empty!");
-            out.len()
+            0
         } else {
-            debug!("Data pas empty!, taille {}", data.len());
-            out.copy_from_slice(data);
+            out[0..data.len()].copy_from_slice(data);
             data.len()
         };
 
-        match self.encrypter.encrypt_update(out) {
+        match self.encrypter.encrypt_update(&mut out[0..data.len()]) {
             Ok(()) => {
-                self.hacheur.update(&out[..]);  // Calculer hachage output
+                self.hacheur.update(&out[0..data.len()]);  // Calculer hachage output
 
                 // Stream encryption, le nombre de bytes chiffres est le meme que bytes en entree
                 Ok(out_len)
@@ -146,20 +144,7 @@ pub struct DecipherMgs3 {
 }
 
 impl DecipherMgs3 {
-
-    // pub fn new(private_key: &PKey<Private>, cle_chiffree: &str, iv: &str, tag: &str) -> Result<Self, String> {
     pub fn new(decipher_data: &Mgs3CipherData) -> Result<Self, String> {
-
-        // let (_, tag_bytes) = decode(tag).expect("tag");
-        // let (_, iv_bytes) = decode(iv).expect("tag");
-        // let (_, cle_chiffree_bytes) = decode(cle_chiffree).expect("cle_chiffree");
-        // println!("tag {:?}\niv {:?}\ncle chiffree bytes {:?}", tag_bytes, iv_bytes, cle_chiffree_bytes);
-
-        // Dechiffrer la cle avec cle privee
-        // let cle_dechiffree = dechiffrer_asymetrique(private_key, &cle_chiffree_bytes)?;
-
-        // println!("cle dechiffree bytes base64: {}, bytes: {:?}", encode(Base::Base64, &cle_dechiffree), cle_dechiffree);
-
         let cle_dechiffree = match &decipher_data.cle_dechiffree {
             Some(c) => c,
             None => Err("Cle n'est pas dechiffree")?,
@@ -168,29 +153,11 @@ impl DecipherMgs3 {
         let mut decrypter = ChaCha20Poly1305::new(&cle_dechiffree.0.into());
         decrypter.set_nonce(decipher_data.iv[..].into());
 
-        // let hacheur = Hacheur::builder()
-        //     .digester(Code::Blake2b512)
-        //     .base(Base::Base58Btc)
-        //     .build();
-
-        // let mut decrypter = Crypter::new(
-        //     Cipher::aes_256_gcm(),
-        //     Mode::Decrypt,
-        //     cle_dechiffree,
-        //     Some(&decipher_data.iv)
-        // ).unwrap();
-
-        // match decrypter.set_tag(decipher_data.tag.as_slice()) {
-        //     Ok(()) => (),
-        //     Err(e) => Err(format!("Erreur set tag : {:?}", e))?
-        // }
-
         let mut tag = [0u8; 16];
         tag.copy_from_slice(&decipher_data.tag[0..16]);
 
         Ok(DecipherMgs3 { decrypter, tag })
     }
-
 }
 
 impl DecipherMgs<Mgs3CipherData> for DecipherMgs3 {
@@ -200,14 +167,14 @@ impl DecipherMgs<Mgs3CipherData> for DecipherMgs3 {
         let out_len = if data.is_empty() {
             // Input data vide, on assume que le data a dechiffrer
             // est deja dans out (dechiffrage "in place")
-            out.len()
+            0
         } else {
             // Copier data vers out, dechiffrage se fait "in place"
-            out.copy_from_slice(data);
+            out[0..data.len()].copy_from_slice(data);
             data.len()
         };
 
-        match self.decrypter.decrypt_update(out) {
+        match self.decrypter.decrypt_update(&mut out[0..out_len]) {
             Ok(()) => Ok(out_len),
             Err(e) => Err(format!("Erreur update : {:?}", e))
         }
@@ -227,11 +194,6 @@ impl Debug for DecipherMgs3 {
         f.write_str("DecipherMgs3")
     }
 }
-
-
-
-
-
 
 #[derive(Clone, Debug)]
 pub struct Mgs3CipherKeys {
@@ -262,7 +224,7 @@ impl Mgs3CipherKeys {
     }
 
     pub fn get_format(&self) -> String {
-        String::from("mgs2")
+        String::from("mgs3")
     }
 
     pub fn cles_to_map(&self) -> HashMap<String, String> {
@@ -366,7 +328,7 @@ impl MgsCipherData for Mgs3CipherData {
 
 impl Debug for Mgs3CipherData {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(format!("Mgs2CipherData iv: {:?}, tag: {:?}", self.iv, self.tag).as_str())
+        f.write_str(format!("Mgs3CipherData iv: {:?}, tag: {:?}", self.iv, self.tag).as_str())
     }
 }
 
@@ -487,6 +449,90 @@ mod test {
     }
 
     #[test]
+    fn test_cipher3_message_split() -> Result<(), Box<dyn Error>> {
+        setup("test_cipher3_message_court");
+
+        // Generer cle
+        let cle_millegrille = PKey::generate_ed25519()?;
+        let cle_millegrille_public = PKey::public_key_from_raw_bytes(
+            &cle_millegrille.raw_public_key()?, Id::ED25519)?;
+
+        let mut fpkeys = Vec::new();
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "CleMillegrille".into(),
+            public_key: cle_millegrille_public,
+            est_cle_millegrille: true,
+        });
+
+        // Chiffrer contenu "vide"
+        const MESSAGE_COURT_1: &[u8] = b"Ceci est un msg avec des donnees interessantes";  // Message 15 bytes
+        const MESSAGE_COURT_2: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        const MESSAGE_COURT_3: &[u8] = b". Finir avec un autre message lisible.";
+        let taille_totale: usize = MESSAGE_COURT_1.len() + MESSAGE_COURT_2.len() + MESSAGE_COURT_3.len();
+        let messages = vec![MESSAGE_COURT_1, MESSAGE_COURT_2, MESSAGE_COURT_3];
+
+        let mut cipher = CipherMgs3::new(&fpkeys)?;
+        let mut output_chiffre: Vec<u8> = Vec::new();
+        let mut output_buffer = [0u8; 65535];
+        let mut message_complet = Vec::new();
+        for message in messages {
+            let taille_chiffree = cipher.update(message, &mut output_buffer)?;
+            debug!("Valeur chiffree (taille: {}): {:?}", taille_chiffree, &output_buffer[0..taille_chiffree]);
+            output_chiffre.extend(&output_buffer[0..taille_chiffree]);
+            message_complet.extend(message.iter());
+        }
+        let message_complet_string = String::from_utf8(message_complet.clone())?;
+
+        // let taille_chiffree = cipher.update(&message_complet[..], &mut output_buffer)?;
+        // debug!("Valeur chiffree (taille: {}): {:?}", taille_chiffree, &output_buffer[0..taille_chiffree]);
+        // output_chiffre.extend(&output_buffer[0..taille_chiffree]);
+
+        // for chunk in message_complet.chunks(1) {
+        //     let taille_chiffree = cipher.update(chunk, &mut output_buffer)?;
+        //     debug!("Valeur chiffree (taille: {}): {:?}", taille_chiffree, &output_buffer[0..taille_chiffree]);
+        //     output_chiffre.extend(&output_buffer[0..taille_chiffree]);
+        // }
+
+        let (out_len, info_keys) = cipher.finalize(&mut [0u8])?;
+        debug!("Finalize chiffrage, out_len {}, info_keys: {:?}", out_len, info_keys);
+        let taille_chiffree = output_chiffre.len();
+        let mut output_buffer = &output_chiffre[..];
+        debug!("Output chiffrage (confirmation taille: {}): {:?}.", taille_chiffree, output_buffer);
+
+        // Dechiffrer contenu "vide"
+        for key in &info_keys.cles_chiffrees {
+
+            let mut output_dechiffrage = [0u8; 65535];
+
+            if key.fingerprint.as_str() == "CleMillegrille" {
+                // Test dechiffrage avec cle de millegrille (cle chiffree est 32 bytes)
+                debug!("Test dechiffrage avec CleMillegrille");
+                let mut decipher_data = Mgs3CipherData::new(
+                    key.cle_chiffree.as_str(), info_keys.iv.as_str(), info_keys.tag.as_str()).expect("Mgs3CipherData::new");
+                decipher_data.dechiffrer_cle(&cle_millegrille).expect("dechiffrer_cle");
+                let mut decipher = DecipherMgs3::new(&decipher_data).expect("DecipherMgs3::new");
+                debug!("Info decipher : tag {:?}", decipher.tag);
+
+                // Dechiffrer message
+                let taille_dechiffrage = decipher.update(&output_buffer[..], &mut output_dechiffrage).expect("decipher.update");
+
+                let output_dechiffre_msg = &output_dechiffrage[0..taille_dechiffrage];
+                let output_dechiffre_string = String::from_utf8_lossy(output_dechiffre_msg);
+                debug!("Output dechiffrage bytes : {:?}.", output_dechiffre_msg);
+                debug!("Output dechiffrage CleMillegrille : {:?}.", output_dechiffre_string);
+
+                let final_out_len = decipher.finalize(&mut [0u8]).expect("decipher.finalize");
+                debug!("Output finalize len : {}.", final_out_len);
+                assert_eq!(message_complet_string.as_str(), output_dechiffre_string);
+                // assert_eq!(MESSAGE_COURT, output_buffer);
+            }
+
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_cipher3_message_1mb() -> Result<(), Box<dyn Error>> {
         setup("test_cipher3_message_1mb");
 
@@ -505,7 +551,7 @@ mod test {
         // Message 10MB, valeur 5 partout
         let mut message_long = Vec::new();
         message_long.reserve(1024*1024);
-        message_long.resize(1024*1024, 0x5);  // 1 MB
+        //message_long.resize(1024*1024, 0x5);  // 1 MB
         let mut output_buffer = message_long.as_mut_slice();
 
         let mut cipher = CipherMgs3::new(&fpkeys)?;

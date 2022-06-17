@@ -14,7 +14,7 @@ num-traits = "0.2.14"
 rand = "0.7"
 reqwest = { version = "0.11.6", features = ["default-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream"] }
 tempfile = { version = "3.2.0" }
-xz2 = { version = "0.1.6", features = ["tokio"] }
+xz2 = { version = "0.1.7", features = ["tokio"] }
 
 # Tokio, async
 async-recursion = "*"
