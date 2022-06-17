@@ -163,21 +163,22 @@ where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + For
     info!("backup.backup_horaire: Backup horaire collection {} : {:?}", nom_coll_str, builders);
 
     // Tenter de charger entete du dernier backup de ce domaine/partition
-    let mut entete_precedente: Option<Entete> = requete_entete_dernier(middleware, nom_coll_str).await?;
+    // let mut entete_precedente: Option<Entete> = requete_entete_dernier(middleware, nom_coll_str).await?;
 
     for mut builder in builders {
 
-        // Calculer hachage entete precedente
-        match entete_precedente {
-            Some(e) => {
-                builder.set_backup_precedent(&e)?
-            },
-            None => (),
-        }
+        // // Calculer hachage entete precedente
+        // match entete_precedente {
+        //     Some(e) => {
+        //         builder.set_backup_precedent(&e)?
+        //     },
+        //     None => (),
+        // }
 
         // Creer fichier de transactions
         let mut path_fichier_transactions = workdir.path().to_owned();
-        path_fichier_transactions.push(PathBuf::from(builder.get_nomfichier_transactions()));
+        // path_fichier_transactions.push(PathBuf::from(builder.get_nomfichier_transactions()));
+        path_fichier_transactions.push(PathBuf::from("transactions_tmp.mgs"));
 
         let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
         serialiser_transactions(
@@ -188,7 +189,7 @@ where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + For
         ).await?;
 
         // Signer et serialiser catalogue
-        let (catalogue_horaire, catalogue_signe, commande_cles) = serialiser_catalogue(
+        let (catalogue_horaire, catalogue_signe, commande_cles, uuid_transactions) = serialiser_catalogue(
             middleware, builder).await?;
         info!("backup_horaire: Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
         let reponse = uploader_backup(
@@ -203,23 +204,22 @@ where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + For
             Err(format!("Erreur upload fichier : {:?}", reponse))?;
         }
 
-        entete_precedente = Some(catalogue_signe.entete.clone());
-        if !catalogue_horaire.snapshot {
-            // Marquer transactions du backup comme completees
-            marquer_transaction_backup_complete(
-                middleware,
-                info_backup.nom_collection_transactions.as_str(),
-                &catalogue_horaire
-            ).await?;
+        // entete_precedente = Some(catalogue_signe.entete.clone());
+        // Marquer transactions du backup comme completees
+        marquer_transaction_backup_complete(
+            middleware,
+            info_backup.nom_collection_transactions.as_str(),
+            &catalogue_horaire,
+            &uuid_transactions
+        ).await?;
 
-            // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
-            let routage = RoutageMessageAction::new(BACKUP_NOM_DOMAINE, BACKUP_TRANSACTION_CATALOGUE_HORAIRE);
-            // Avertissement : blocking FALSE, sinon sur le meme module que CoreBackup va capturer la transaction comme la reponse sans la traiter
-            let reponse_catalogue = middleware.emettre_message_millegrille(
-                routage,false, TypeMessageOut::Transaction, catalogue_signe
-            ).await?;
-            debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
-        }
+        // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
+        let routage = RoutageMessageAction::new(BACKUP_NOM_DOMAINE, BACKUP_TRANSACTION_CATALOGUE_HORAIRE);
+        // Avertissement : blocking FALSE, sinon sur le meme module que CoreBackup va capturer la transaction comme la reponse sans la traiter
+        let reponse_catalogue = middleware.emettre_message_millegrille(
+            routage,false, TypeMessageOut::Transaction, catalogue_signe
+        ).await?;
+        debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
     }
 
     if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireTermine", &timestamp_backup).await {
@@ -403,24 +403,22 @@ async fn grouper_backups(middleware: &impl MongoDao, backup_information: &Backup
             date,
             domaine.to_owned(),
             backup_information.partition.clone(),
-            backup_information.uuid_backup.clone(),
-            backup_information.chiffrer,
-            false,
+            backup_information.uuid_backup.clone()
         );
         builders.push(builder);
     }
 
-    // Ajouter builder pour snapshot
-    let date_snapshot = DateEpochSeconds::from(limite_snapshot.clone());
-    let builder_snapshot = CatalogueHoraireBuilder::new(
-        date_snapshot,
-        backup_information.domaine.clone(),
-        backup_information.partition.clone(),
-        backup_information.uuid_backup.clone(),
-        backup_information.chiffrer,
-        true,
-    );
-    builders.push(builder_snapshot);
+    // // Ajouter builder pour snapshot
+    // let date_snapshot = DateEpochSeconds::from(limite_snapshot.clone());
+    // let builder_snapshot = CatalogueHoraireBuilder::new(
+    //     date_snapshot,
+    //     backup_information.domaine.clone(),
+    //     backup_information.partition.clone(),
+    //     backup_information.uuid_backup.clone(),
+    //     backup_information.chiffrer,
+    //     true,
+    // );
+    // builders.push(builder_snapshot);
 
     Ok(builders)
 }
@@ -456,13 +454,16 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     let nom_collection = &info.nom_collection_transactions;
     let collection = middleware.get_collection(nom_collection)?;
 
-    let debut_heure = builder.heure.get_datetime();
+    let debut_heure = builder.date_backup.get_datetime();
     let fin_heure = debut_heure.clone() + chrono::Duration::hours(1);
 
-    let doc_transaction_traitee = match builder.snapshot {
-        true => doc! {"$exists": true}, // Snapshot, on prend toutes les transactions traitees
-        false => doc! {"$gte": debut_heure, "$lt": &fin_heure},  // Backup heure specifique
-    };
+    // let doc_transaction_traitee = match builder.snapshot {
+    //     true => doc! {"$exists": true}, // Snapshot, on prend toutes les transactions traitees
+    //     false => doc! {"$gte": debut_heure, "$lt": &fin_heure},  // Backup heure specifique
+    // };
+
+    // Backup heure specifique
+    let doc_transaction_traitee = doc! {"$gte": debut_heure, "$lt": &fin_heure};
 
     let filtre = doc! {
         TRANSACTION_CHAMP_BACKUP_FLAG: false,
@@ -493,10 +494,12 @@ where
 {
 
     // Creer i/o stream lzma pour les transactions (avec chiffrage au besoin)
-    let mut transaction_writer = match builder.chiffrer {
-        true => TransactionWriter::new(path_transactions, Some(middleware)).await?,
-        false => TransactionWriter::new(path_transactions, None::<&MiddlewareDb>).await?,
-    };
+    // let mut transaction_writer = match builder.chiffrer {
+    //     true => TransactionWriter::new(path_transactions, Some(middleware)).await?,
+    //     false => TransactionWriter::new(path_transactions, None::<&MiddlewareDb>).await?,
+    // };
+
+    let mut transaction_writer = TransactionWriter::new(path_transactions, Some(middleware)).await?;
 
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
@@ -534,13 +537,13 @@ where
         // Serialiser transaction
         transaction_writer.write_bson_line(&d).await?;
 
-        // Ajouter uuid_transaction dans catalogue
+        // Ajouter uuid_transaction dans buidler - utilise pour marquer transactions completees
         builder.ajouter_transaction(uuid_transaction);
     }
 
     let (hachage, cipher_keys) = transaction_writer.fermer().await?;
 
-    builder.transactions_hachage = hachage;
+    builder.data_hachage_bytes = hachage;
     match &cipher_keys {
         Some(k) => builder.set_cles(k),
         None => (),
@@ -552,7 +555,7 @@ where
 async fn serialiser_catalogue(
     middleware: &impl FormatteurMessage,
     builder: CatalogueHoraireBuilder
-) -> Result<(CatalogueHoraire, MessageMilleGrille, Option<MessageMilleGrille>), Box<dyn Error>> {
+) -> Result<(CatalogueHoraire, MessageMilleGrille, Option<MessageMilleGrille>, Vec<String>), Box<dyn Error>> {
 
     let commande_signee = match &builder.cles {
         Some(cles) => {
@@ -560,10 +563,10 @@ async fn serialiser_catalogue(
             // Signer commande de maitre des cles
             let mut identificateurs_document: HashMap<String, String> = HashMap::new();
             identificateurs_document.insert("domaine".into(), builder.nom_domaine.clone());
-            identificateurs_document.insert("heure".into(), format!("{}00", builder.heure.format_ymdh()));
-            if builder.snapshot {
-                identificateurs_document.insert("snapshot".into(), format!("true"));
-            }
+            identificateurs_document.insert("heure".into(), format!("{}00", builder.date_backup.format_ymdh()));
+            // if builder.snapshot {
+            //     identificateurs_document.insert("snapshot".into(), format!("true"));
+            // }
 
             let commande_maitredescles = cles.get_commande_sauvegarder_cles(
                 BACKUP_NOM_DOMAINE,
@@ -591,6 +594,7 @@ async fn serialiser_catalogue(
     };
 
     // Signer et serialiser catalogue
+    let uuid_transactions = builder.uuid_transactions.clone();
     let catalogue = builder.build();
     let catalogue_value = serde_json::to_value(&catalogue)?;
     let catalogue_signe = middleware.formatter_message(
@@ -602,7 +606,7 @@ async fn serialiser_catalogue(
         false
     )?;
 
-    Ok((catalogue, catalogue_signe, commande_signee))
+    Ok((catalogue, catalogue_signe, commande_signee, uuid_transactions))
 }
 
 async fn uploader_backup<M>(
@@ -652,8 +656,8 @@ where
     // Uploader fichiers et contenu backup
     let form = {
         let mut form = reqwest::multipart::Form::new()
-            .text("timestamp_backup", catalogue.heure.format_ymdh())
-            .part("transactions", file_to_part(catalogue.transactions_nomfichier.as_str(), fichier_transactions_read).await)
+            .text("timestamp_backup", catalogue.date_backup.format_ymdh())
+            //.part("transactions", file_to_part(catalogue.transactions_nomfichier.as_str(), fichier_transactions_read).await)
             .part("catalogue", bytes_to_part(catalogue.catalogue_nomfichier.as_str(), catalogue_bytes, Some("application/xz")));
 
         if let Some(b) = commande_bytes {
@@ -692,12 +696,17 @@ where
     Ok(response)
 }
 
-async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_collection: &str, catalogue_horaire: &CatalogueHoraire) -> Result<(), Box<dyn Error>> {
-    debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, catalogue_horaire.uuid_transactions);
+async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_collection: &str,
+                                             catalogue_horaire: &CatalogueHoraire,
+                                             uuid_transactions: &Vec<String>)
+    -> Result<(), Box<dyn Error>>
+{
+    // debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, catalogue_horaire.uuid_transactions);
+    debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, uuid_transactions);
 
     let collection = middleware.get_collection(nom_collection)?;
     let filtre = doc! {
-        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: {"$in": &catalogue_horaire.uuid_transactions}
+        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: {"$in": uuid_transactions}
     };
     let ops = doc! {
         "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: true},
@@ -705,10 +714,10 @@ async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_coll
     };
 
     let r= collection.update_many(filtre, ops, None).await?;
-    if r.matched_count as usize != catalogue_horaire.uuid_transactions.len() {
+    if r.matched_count as usize != uuid_transactions.len() {
         Err(format!(
             "Erreur mismatch nombre de transactions maj apres backup : {:?} dans le backup != {:?} mises a jour",
-            catalogue_horaire.uuid_transactions.len(),
+            uuid_transactions.len(),
             r.matched_count
         ))?;
     }
@@ -815,7 +824,7 @@ async fn download_backup<M, P>(middleware: Arc<M>, nom_domaine: &str, partition:
                 String::from("catalogue.json.xz")
             } else {
                 // Fichier horaire
-                let nom_fichier = nom_fichier.replace(".jsonl.xz.mgs2", ".json.xz");
+                let nom_fichier = nom_fichier.replace(".jsonl.xz.mgs3", ".json.xz");
                 nom_fichier.replace(".jsonl.xz", ".json.xz")
             };
 
@@ -913,10 +922,12 @@ pub struct BackupInformation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CatalogueHoraire {
-    /// Heure du backup (minutes = 0, secs = 0)
-    pub heure: DateEpochSeconds,
+    /// Heure de la premiere transaction du backup (traitement interne initial)
+    pub date_backup: DateEpochSeconds,
+    /// Heure de la derniere tranaction du backup
+    pub date_fin_backup: DateEpochSeconds,
     /// True si c'est un snapshot
-    pub snapshot: bool,
+    // pub snapshot: bool,
     /// Nom du domaine
     pub domaine: String,
     /// Partition (optionnel)
@@ -928,16 +939,16 @@ pub struct CatalogueHoraire {
     certificats: CollectionCertificatsPem,
 
     pub catalogue_nomfichier: String,
-    pub transactions_nomfichier: String,
+    // pub transactions_nomfichier: String,
     pub transactions_hachage: String,
-    pub uuid_transactions: Vec<String>,
+    // pub uuid_transactions: Vec<String>,
 
     /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
     #[serde(rename = "en-tete", skip_serializing)]
     pub entete: Option<Entete>,
 
     /// Enchainement backup precedent
-    backup_precedent: Option<EnteteBackupPrecedent>,
+    //backup_precedent: Option<EnteteBackupPrecedent>,
 
     /// Cle chiffree avec la cle de MilleGrille (si backup chiffre)
     cle: Option<String>,
@@ -954,8 +965,8 @@ pub struct CatalogueHoraire {
 
 impl CatalogueHoraire {
 
-    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String, chiffrer: bool, snapshot: bool) -> CatalogueHoraireBuilder {
-        CatalogueHoraireBuilder::new(heure, nom_domaine, partition, uuid_backup, chiffrer, snapshot)
+    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueHoraireBuilder {
+        CatalogueHoraireBuilder::new(heure, nom_domaine, partition, uuid_backup)
     }
 
     pub fn get_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
@@ -976,18 +987,19 @@ impl CatalogueHoraire {
 
 #[derive(Clone, Debug)]
 pub struct CatalogueHoraireBuilder {
-    heure: DateEpochSeconds,
+    date_backup: DateEpochSeconds,      // Date de traitement de la premiere transaction
+    date_fin_backup: DateEpochSeconds,  // Date de traitement de la derniere transaction
     nom_domaine: String,
     partition: Option<String>,
-    uuid_backup: String,
-    chiffrer: bool,
-    snapshot: bool,
+    uuid_backup: String,                // Identificateur unique de ce backup
+    // chiffrer: bool,
+    // snapshot: bool,
 
     certificats: CollectionCertificatsPem,
-    uuid_transactions: Vec<String>,
-    transactions_hachage: String,
-    cles: Option<Mgs3CipherKeys>,
-    backup_precedent: Option<EnteteBackupPrecedent>,
+    uuid_transactions: Vec<String>,     // Liste des transactions inclues (pas mis dans catalogue)
+    data_hachage_bytes: String,         // Hachage du contenu chiffre
+    cles: Option<Mgs3CipherKeys>,       // Cles pour dechiffrer le contenu
+    // backup_precedent: Option<EnteteBackupPrecedent>,
 }
 
 impl BackupInformation {
@@ -1035,14 +1047,16 @@ impl BackupHandler for BackupInformation {
 
 impl CatalogueHoraireBuilder {
 
-    fn new(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String, chiffrer: bool, snapshot: bool) -> Self {
+    fn new(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> Self {
         CatalogueHoraireBuilder {
-            heure, nom_domaine, partition, uuid_backup, chiffrer, snapshot,
+            date_backup: heure.clone(),
+            date_fin_backup: heure,  // Temporaire, va etre la date de la derniere transaction
+            nom_domaine, partition, uuid_backup, // chiffrer, snapshot,
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
-            transactions_hachage: "".to_owned(),
+            data_hachage_bytes: "".to_owned(),
             cles: None,
-            backup_precedent: None,
+            // backup_precedent: None,
         }
     }
 
@@ -1071,47 +1085,47 @@ impl CatalogueHoraireBuilder {
     //     PathBuf::from(format!("{}_{}.json.xz", &self.nom_domaine, date_str))
     // }
 
-    fn get_nomfichier_transactions(&self) -> PathBuf {
-        let mut date_str = self.heure.format_ymdh();
-        match self.snapshot {
-            true => date_str = format!("{}-SNAPSHOT", date_str),
-            false => (),
-        }
+    // fn get_nomfichier_transactions(&self) -> PathBuf {
+    //     let mut date_str = self.date_backup.format_ymdh();
+    //     // match self.snapshot {
+    //     //     true => date_str = format!("{}-SNAPSHOT", date_str),
+    //     //     false => (),
+    //     // }
+    //
+    //     let nom_domaine_partition = match &self.partition {
+    //         Some(p) => format!("{}.{}", self.nom_domaine, p),
+    //         None => self.nom_domaine.clone()
+    //     };
+    //
+    //     let nom_fichier = match self.chiffrer {
+    //         true => format!("{}_{}.jsonl.xz.mgs2", &nom_domaine_partition, date_str),
+    //         false => format!("{}_{}.jsonl.xz", &nom_domaine_partition, date_str),
+    //     };
+    //     PathBuf::from(nom_fichier)
+    // }
 
-        let nom_domaine_partition = match &self.partition {
-            Some(p) => format!("{}.{}", self.nom_domaine, p),
-            None => self.nom_domaine.clone()
-        };
-
-        let nom_fichier = match self.chiffrer {
-            true => format!("{}_{}.jsonl.xz.mgs2", &nom_domaine_partition, date_str),
-            false => format!("{}_{}.jsonl.xz", &nom_domaine_partition, date_str),
-        };
-        PathBuf::from(nom_fichier)
-    }
-
-    /// Set backup_precedent en calculant le hachage de l'en-tete.
-    fn set_backup_precedent(&mut self, entete: &Entete) -> Result<(), Box<dyn Error>> {
-
-        let hachage_entete = hacher_serializable(entete)?;
-
-        let entete_calculee = EnteteBackupPrecedent {
-            hachage_entete,
-            uuid_transaction: entete.uuid_transaction.clone(),
-        };
-
-        self.backup_precedent = Some(entete_calculee);
-
-        Ok(())
-    }
+    // /// Set backup_precedent en calculant le hachage de l'en-tete.
+    // fn set_backup_precedent(&mut self, entete: &Entete) -> Result<(), Box<dyn Error>> {
+    //
+    //     let hachage_entete = hacher_serializable(entete)?;
+    //
+    //     let entete_calculee = EnteteBackupPrecedent {
+    //         hachage_entete,
+    //         uuid_transaction: entete.uuid_transaction.clone(),
+    //     };
+    //
+    //     self.backup_precedent = Some(entete_calculee);
+    //
+    //     Ok(())
+    // }
 
     pub fn build(self) -> CatalogueHoraire {
 
-        let date_str = self.heure.format_ymdh();
+        let date_str = self.date_backup.format_ymdh();
 
         // Build collections de certificats
-        let transactions_hachage = self.transactions_hachage.clone();
-        let transactions_nomfichier = self.get_nomfichier_transactions().to_str().expect("str").to_owned();
+        let transactions_hachage = self.data_hachage_bytes.clone();
+        // let transactions_nomfichier = self.get_nomfichier_transactions().to_str().expect("str").to_owned();
         let catalogue_nomfichier = match &self.partition {
             Some(p) => {
                 format!("{}.{}_{}.json.xz", &self.nom_domaine, p, date_str)
@@ -1127,8 +1141,9 @@ impl CatalogueHoraireBuilder {
         };
 
         CatalogueHoraire {
-            heure: self.heure,
-            snapshot: self.snapshot,
+            date_backup: self.date_backup,
+            date_fin_backup: self.date_fin_backup,
+            // snapshot: self.snapshot,
             domaine: self.nom_domaine,
             partition: self.partition,
             uuid_backup: self.uuid_backup,
@@ -1137,12 +1152,12 @@ impl CatalogueHoraireBuilder {
             certificats: self.certificats,
 
             transactions_hachage,
-            transactions_nomfichier,
-            uuid_transactions: self.uuid_transactions,
+            // transactions_nomfichier,
+            // uuid_transactions: self.uuid_transactions,
 
             entete: None,  // En-tete chargee lors de la deserialization
 
-            backup_precedent: self.backup_precedent,
+            // backup_precedent: self.backup_precedent,
             cle, iv, tag, format,
         }
     }
@@ -1238,25 +1253,29 @@ impl<'a> TransactionReader<'a> {
         let mut dechiffrage_output = [0u8; TransactionReader::BUFFER_SIZE];
 
         let mut output_complet = Vec::new();
+        // let mut output_file = File::create(PathBuf::from("/tmp/output_dechiffrage.data")).await?;
 
         loop {
             let reader = &mut self.data;
             let len = reader.read(&mut buffer).await.expect("lecture");
             if len == 0 {break}
 
-            // let traiter_bytes = &buffer[..len];
+            // let traiter_bytes = &buffer[0..len];
+            debug!("Lecture data chiffre {:?}", &buffer[0..len]);
 
             let traiter_bytes = match &mut self.dechiffreur {
                 Some(d) => {
-                    d.update(&buffer[..len], &mut dechiffrage_output).expect("update");
-                    &dechiffrage_output[..len]
+                    d.update(&buffer, &mut dechiffrage_output).expect("update");
+                    &dechiffrage_output[0..len]
                 },
-                None => &buffer[..len],
+                None => &buffer[0..len],
             };
 
-            // debug!("Lu {}\n{:?}", len, traiter_bytes);
-            let _ = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
-            // debug!("Status xz : {:?}\n{:?}", status, xz_output);
+            // output_file.write(traiter_bytes).await?;  // debug
+
+            debug!("Lu {}\n{:?}", len, traiter_bytes);
+            let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run)?;
+            debug!("Status xz : {:?}\n{:?}", status, xz_output);
 
             output_complet.append(&mut xz_output);
         }
@@ -1585,33 +1604,33 @@ impl ProcesseurFichierBackup {
 
         debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Traiter catalogue horaire {:?}/{}", filepath, &uuid_catalogue_courant);
 
-        if let Some(ep) = &catalogue.backup_precedent {
-            if let Some(ec) = &self.entete_precedente {
-                debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Entete precedente {:?}\nInfo catalogue predecent {:?}", ec, ep);
-
-                // Verifier chaine avec en-tete du catalogue
-                let uuid_precedent = ep.uuid_transaction.as_str();
-                let uuid_courant = ec.uuid_transaction.as_str();
-
-                if uuid_precedent == uuid_courant {
-                    match hacher_serializable(ec) {
-                        Ok(hc) => {
-                            // Calculer hachage en-tete precedente
-                            let hp = ep.hachage_entete.as_str();
-                            if hc.as_str() != hp {
-                                warn!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (hachage mismatch)", filepath, catalogue.domaine, uuid_catalogue_courant);
-                            }
-                        },
-                        Err(e) => {
-                            error!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage) : Err {:?}", filepath, catalogue.domaine, uuid_catalogue_courant, e);
-                        }
-                    };
-                } else {
-                    warn!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (uuid mismatch catalogue precedent {} avec info courante {})",
-                        filepath, catalogue.domaine, uuid_catalogue_courant, uuid_precedent, uuid_courant);
-                }
-            }
-        }
+        // if let Some(ep) = &catalogue.backup_precedent {
+        //     if let Some(ec) = &self.entete_precedente {
+        //         debug!("ProcesseurFichierBackup.traiter_catalogue_horaire Entete precedente {:?}\nInfo catalogue predecent {:?}", ec, ep);
+        //
+        //         // Verifier chaine avec en-tete du catalogue
+        //         let uuid_precedent = ep.uuid_transaction.as_str();
+        //         let uuid_courant = ec.uuid_transaction.as_str();
+        //
+        //         if uuid_precedent == uuid_courant {
+        //             match hacher_serializable(ec) {
+        //                 Ok(hc) => {
+        //                     // Calculer hachage en-tete precedente
+        //                     let hp = ep.hachage_entete.as_str();
+        //                     if hc.as_str() != hp {
+        //                         warn!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (hachage mismatch)", filepath, catalogue.domaine, uuid_catalogue_courant);
+        //                     }
+        //                 },
+        //                 Err(e) => {
+        //                     error!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (erreur calcul hachage) : Err {:?}", filepath, catalogue.domaine, uuid_catalogue_courant, e);
+        //                 }
+        //             };
+        //         } else {
+        //             warn!("ProcesseurFichierBackup.traiter_catalogue_horaire Chainage au catalogue {:?}: {}/{} est brise (uuid mismatch catalogue precedent {} avec info courante {})",
+        //                 filepath, catalogue.domaine, uuid_catalogue_courant, uuid_precedent, uuid_courant);
+        //         }
+        //     }
+        // }
 
         // Recuperer cle et creer decipher au besoin
         self.decipher = match catalogue.cle {
@@ -1663,11 +1682,11 @@ impl ProcesseurFichierBackup {
 
             let buf = match self.decipher.as_mut() {
                 Some(d) => {
-                    d.update(&output[..len], &mut output_decipher)?;
-                    &output_decipher[..len]
+                    d.update(&output[0..len], &mut output_decipher)?;
+                    &output_decipher[0..len]
                 },
                 None => {
-                    &output[..len]
+                    &output[0..len]
                 }
             };
             // vec_total.extend_from_slice(buf);
@@ -1964,14 +1983,44 @@ mod backup_tests {
     use futures::io::BufReader;
     use crate::certificats::FingerprintCertPublicKey;
     use crate::middleware_db::preparer_middleware_db;
+    use crate::chiffrage::MgsCipherData;
 
     use super::*;
 
     const NOM_DOMAINE_BACKUP: &str = "Domaine.test";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
 
+    trait TestChiffreurMgs3Trait: Chiffreur<CipherMgs3, Mgs3CipherKeys> {}
+
+    struct TestChiffreurMgs3 {
+        cles_chiffrage: Vec<FingerprintCertPublicKey>,
+    }
+
+    #[async_trait]
+    impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for TestChiffreurMgs3 {
+
+        fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+            self.cles_chiffrage.clone()
+        }
+
+        fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
+            let fp_public_keys = self.get_publickeys_chiffrage();
+            Ok(CipherMgs3::new(&fp_public_keys)?)
+        }
+
+        async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
+            Ok(())  // Rien a faire
+        }
+
+        async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>> {
+            Ok(())  // Rien a faire
+        }
+    }
+
     #[test]
     fn init_backup_information() {
+        setup("init_backup_information");
+
         let info = BackupInformation::new(
             NOM_DOMAINE_BACKUP,
             NOM_COLLECTION_BACKUP,
@@ -1989,13 +2038,15 @@ mod backup_tests {
 
     #[test]
     fn init_backup_horaire_builder() {
+        setup("init_backup_horaire_builder");
+
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 0);
         let uuid_backup = Uuid::new_v4().to_string();
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup, false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup);
 
-        assert_eq!(catalogue_builder.heure.get_datetime().timestamp(), heure.get_datetime().timestamp());
+        assert_eq!(catalogue_builder.date_backup.get_datetime().timestamp(), heure.get_datetime().timestamp());
         assert_eq!(&catalogue_builder.nom_domaine, NOM_DOMAINE_BACKUP);
     }
 
@@ -2005,14 +2056,14 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let catalogue = catalogue_builder.build();
 
-        assert_eq!(catalogue.heure, heure);
+        assert_eq!(catalogue.date_backup, heure);
         assert_eq!(&catalogue.uuid_backup, uuid_backup);
         assert_eq!(&catalogue.catalogue_nomfichier, "Domaine.test_2021080105.json.xz");
-        assert_eq!(&catalogue.transactions_nomfichier, "Domaine.test_2021080105.jsonl.xz");
+        // assert_eq!(&catalogue.transactions_nomfichier, "Domaine.test_2021080105.jsonl.xz");
     }
 
     #[test]
@@ -2023,9 +2074,9 @@ mod backup_tests {
         let transactions_hachage = "zABCD1234";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
-        catalogue_builder.transactions_hachage = transactions_hachage.to_owned();
+        catalogue_builder.data_hachage_bytes = transactions_hachage.to_owned();
 
         let catalogue = catalogue_builder.build();
 
@@ -2038,7 +2089,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let catalogue = catalogue_builder.build();
 
@@ -2053,7 +2104,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let catalogue = catalogue_builder.build();
 
@@ -2072,7 +2123,7 @@ mod backup_tests {
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned(), false, false);
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let certificat = prep_enveloppe(CERT_CORE);
         // debug!("!!! Enveloppe : {:?}", certificat);
@@ -2099,13 +2150,14 @@ mod backup_tests {
         writer.write_json_line(&doc_json).await.expect("write");
 
         let _ = writer.fermer().await.expect("fermer");
-        // debug!("File du writer : {:?}", file);
+        debug!("File du writer : {:?}", path_fichier);
 
         let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
         let mut reader = TransactionReader::new(fichier_cs, None).expect("reader");
+        debug!("Extraction transactions du xz");
         let transactions = reader.read_transactions().await.expect("transactions");
         for t in transactions {
-            // debug!("Transaction : {:?}", t);
+            debug!("Transaction : {:?}", t);
             assert_eq!(&doc_json, &t);
         }
 
@@ -2136,47 +2188,61 @@ mod backup_tests {
         assert_eq!(mh.as_str(), &mh_reference);
     }
 
-    // #[tokio::test]
-    // async fn chiffrer_roundtrip_backup() {
-    //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
-    //
-    //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz.mgs2");
-    //     let fp_certs = vec!(FingerprintCertPublicKey::new(
-    //         String::from("dummy"),
-    //         enveloppe.certificat().public_key().clone().expect("cle"),
-    //         true
-    //     ));
-    //
-    //     let chiffreur_dummy = ChiffreurDummy {public_keys: fp_certs};
-    //
-    //     let mut writer = TransactionWriter::new(
-    //         path_fichier.as_path(),
-    //         Some(&chiffreur_dummy)
-    //     ).await.expect("writer");
-    //
-    //     let (mh_reference, doc_bson) = get_doc_reference();
-    //     writer.write_bson_line(&doc_bson).await.expect("write chiffre");
-    //     let (mh, mut decipher_data_option) = writer.fermer().await.expect("fermer");
-    //
-    //     let decipher_keys = decipher_data_option.expect("decipher data");
-    //     let mut decipher_key = decipher_keys.get_cipher_data("dummy").expect("cle");
-    //
-    //     // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
-    //     assert_ne!(mh.as_str(), &mh_reference);
-    //
-    //     decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
-    //
-    //     let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
-    //     let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
-    //     let transactions = reader.read_transactions().await.expect("transactions");
-    //
-    //     for t in transactions {
-    //         // debug!("Transaction dechiffree : {:?}", t);
-    //         let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
-    //         assert_eq!(valeur_chiffre, 5678);
-    //     }
-    //
-    // }
+    #[tokio::test]
+    async fn chiffrer_roundtrip_backup() {
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+
+        let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.mgs");
+        let fp_certs = vec!(FingerprintCertPublicKey::new(
+            String::from("dummy"),
+            enveloppe.certificat().public_key().clone().expect("cle"),
+            true
+        ));
+
+        let mut fp_public_keys = Vec::new();
+        let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
+        let cle_publique = &enveloppe.enveloppe.cle_publique;
+        fp_public_keys.push(FingerprintCertPublicKey {
+            fingerprint: fingerprint_cert.clone(),
+            public_key: cle_publique.to_owned(),
+            est_cle_millegrille: false,
+        });
+        let cle_publique_ca = &enveloppe.enveloppe_ca.cle_publique;
+        fp_public_keys.push(FingerprintCertPublicKey {
+            fingerprint: enveloppe.enveloppe_ca.fingerprint.clone(),
+            public_key: cle_publique_ca.to_owned(),
+            est_cle_millegrille: true,
+        });
+        let chiffreur = TestChiffreurMgs3 { cles_chiffrage: fp_public_keys };
+
+        let mut writer = TransactionWriter::new(
+            path_fichier.as_path(),
+            Some(&chiffreur)
+        ).await.expect("writer");
+
+        let (mh_reference, doc_bson) = get_doc_reference();
+        writer.write_bson_line(&doc_bson).await.expect("write chiffre");
+        let (mh, mut decipher_data_option) = writer.fermer().await.expect("fermer");
+
+        // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
+        assert_ne!(mh.as_str(), &mh_reference);
+
+        let decipher_keys = decipher_data_option.expect("decipher data");
+        let mut decipher_key = decipher_keys.get_cipher_data(fingerprint_cert.as_str()).expect("cle");
+        decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
+        debug!("Cle dechiffree : {:?}", decipher_key);
+
+        let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
+        let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
+        let transactions = reader.read_transactions().await.expect("transactions");
+
+        for t in transactions {
+            debug!("Transaction dechiffree : {:?}", t);
+            let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
+            assert_eq!(valeur_chiffre, 5678);
+        }
+
+    }
 
     // #[tokio::test]
     // async fn processeur_fichier_backup_catalogue() {

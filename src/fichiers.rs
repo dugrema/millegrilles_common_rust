@@ -83,10 +83,13 @@ impl<'a, K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<'a, K, M> {
                 Err(format!("Erreur compression transaction, status {:?}", status))?;
             }
 
+            // debug!("Ecriture transaction bytes : {:?}", buffer);
+
             let buffer_output = match &mut self.chiffreur {
                 Some(c) => {
                     let len = c.update(buffer.as_slice(), &mut buffer_chiffre)?;
-                    &buffer_chiffre[..len]
+                    // debug!("Ecriture data chiffre {:?}", &buffer_chiffre[0..len]);
+                    &buffer_chiffre[0..len]
                 },
                 None => buffer.as_slice()
             };
@@ -111,17 +114,21 @@ impl<'a, K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<'a, K, M> {
         // Flush xz
         loop {
             let status = self.xz_encodeur.process_vec(&EMPTY_ARRAY, &mut buffer, stream::Action::Finish)?;
+            // debug!("Ecriture finale transaction bytes status {:?} : {:?}", status, buffer);
 
             let buffer_output = match &mut self.chiffreur {
                 Some(c) => {
                     let len = c.update(buffer.as_slice(), &mut buffer_chiffre)?;
-                    &buffer_chiffre[..len]
+                    // debug!("Ecriture finale data chiffre {:?}", &buffer_chiffre[0..len]);
+                    &buffer_chiffre[0..len]
                 },
                 None => buffer.as_slice()
             };
 
             self.hacheur.update(buffer_output);
             self.fichier.write_all(buffer_output).await?;
+
+            debug!("Status ecriture : {:?}", status);
 
             if status != stream::Status::Ok {
                 if status == stream::Status::MemNeeded {
@@ -135,9 +142,10 @@ impl<'a, K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<'a, K, M> {
         let cipher_data = match self.chiffreur {
             Some(c) => {
                 let (len, cipher_data) = c.finalize(&mut buffer_chiffre)?;
+                debug!("Finalization fichier chiffre, taille restante {}", len);
                 if len > 0 {
                     // Finaliser output
-                    let slice_buffer = &buffer_chiffre[..len];
+                    let slice_buffer = &buffer_chiffre[0..len];
                     self.hacheur.update(slice_buffer);
                     self.fichier.write_all(slice_buffer).await?;
                 }
@@ -278,7 +286,7 @@ impl DecompresseurBytes {
             let len = data.read(&mut buffer).await.expect("lecture");
             if len == 0 {break}
 
-            let traiter_bytes = &buffer[..len];
+            let traiter_bytes = &buffer[0..len];
 
             let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
             if status != stream::Status::Ok && status != stream::Status::StreamEnd {
@@ -300,7 +308,7 @@ impl DecompresseurBytes {
             let len = data.read(&mut buffer).await.expect("lecture");
             if len == 0 {break}
 
-            let traiter_bytes = &buffer[..len];
+            let traiter_bytes = &buffer[0..len];
 
             let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run).expect("xz-output");
             if status != stream::Status::Ok && status != stream::Status::StreamEnd {
