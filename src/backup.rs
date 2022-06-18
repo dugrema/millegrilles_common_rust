@@ -213,18 +213,30 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 
         let entete = transaction.get_entete();
         let uuid_transaction = entete.uuid_transaction.as_str();
-        let date_traitement_transaction = match transaction.get_msg().map_contenu::<Value>(Some("_evenements")) {
-            Ok(d) => match d.as_object() {
-                Some(e) => {
-                    entete.estampille.clone()
+        let date_traitement_transaction = match doc_transaction.get("_evenements") {
+            Some(d) => match d.as_document() {
+                Some(e) => match e.get("transaction_traitee") {
+                    Some(d) => match d.as_datetime() {
+                        Some(d) => {
+                            DateEpochSeconds::from_i64(d.timestamp_millis()/1000)
+                        },
+                        None => {
+                            debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
+                            entete.estampille.clone()
+                        }
+                    },
+                    None => {
+                        debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
+                        entete.estampille.clone()
+                    }
                 },
                 None => {
-                    info!("Mauvais type d'element _evenements pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
+                    debug!("Mauvais type d'element _evenements pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
                     entete.estampille.clone()
                 }
             },
-            Err(e) => {
-                info!("Aucune information d'evenements (_evenements) pour une transaction. Utiliser estampille.");
+            None => {
+                debug!("Aucune information d'evenements (_eveneemnts) pour une transaction. Utiliser estampille.");
                 entete.estampille.clone()
             }
         };
@@ -1529,11 +1541,20 @@ mod backup_tests {
 
         // Generer transactions dummy
         let mut transactions_vec = Vec::new();
+        let mut date_debut = Utc::now();
+        date_debut = date_debut - chrono::Duration::minutes(10);
+
         for i in 0..3 {
             let message = m.formatter_message(
                 &json!({}), Some("Test"), None, None, None, false)
                 .expect("formatter_message");
-            let m_bson = message.map_to_bson().expect("bson");
+            let mut m_bson = message.map_to_bson().expect("bson");
+
+            let date_transaction = date_debut + Duration::minutes(i);
+
+            let evenements = doc! { "transaction_traitee": date_transaction };
+            m_bson.insert("_evenements", evenements);
+
             transactions_vec.push( m_bson );
         }
         let mut transactions = CurseurIntoIter { data: transactions_vec.into_iter() };
