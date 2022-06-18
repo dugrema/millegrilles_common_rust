@@ -26,7 +26,7 @@ use reqwest::{Body, Response};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tempfile::{TempDir, tempdir};
+use tempfile::{TempDir, tempdir, tempfile};
 use tokio::fs::File as File_tokio;
 use tokio::sync::mpsc::Sender;
 use tokio_stream::{Iter, StreamExt};
@@ -168,7 +168,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 async fn generer_fichiers_backup<M, S>(middleware: &M, mut transactions: S, workdir: TempDir, info_backup: &BackupInformation)
     -> Result<Vec<PathBuf>, Box<dyn Error>>
     where
-        M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage,
+        M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + VerificateurMessage,
         S: CurseurStream
 {
     let timestamp_backup = Utc::now();
@@ -176,8 +176,41 @@ async fn generer_fichiers_backup<M, S>(middleware: &M, mut transactions: S, work
 
     let fichiers_generes: Vec<PathBuf> = Vec::new();
 
-    while let Some(transaction) = transactions.try_next().await? {
-        debug!("Traitement transaction {:?}", transaction);
+    let date_transaction = DateEpochSeconds::now();
+    let mut builder = CatalogueBackupBuilder::new(
+        date_transaction,
+        info_backup.domaine.clone(),
+        info_backup.partition.clone(),
+        info_backup.uuid_backup.clone()
+    );
+    let mut path_fichier = PathBuf::new();
+    path_fichier.push(workdir.path());
+    path_fichier.push(PathBuf::from(format!("backup_{}.dat", 1)));
+    debug!("Creation fichier backup : {:?}", path_fichier);
+    let mut writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
+    let mut len_written: usize = 0;
+
+    let options_validation = ValidationOptions::new(false, true, true);
+    while let Some(doc_transaction) = transactions.try_next().await? {
+        debug!("Traitement transaction {:?}", doc_transaction);
+
+        // Verifier la transaction - doit etre completement valide, certificat connu
+        let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
+        let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
+        debug!("Resultat verification transaction : {:?}", resultat_verification);
+
+        let entete = transaction.get_entete();
+        let uuid_transaction = entete.uuid_transaction.as_str();
+        if resultat_verification.valide() {
+            let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+            let estampille = &entete.estampille;
+
+            let len_message = writer.write_bson_line(&doc_transaction).await?;
+            len_written += len_message;
+        } else {
+            error!("Transaction {} invalide ({:?}), ** SKIPPED **", uuid_transaction, resultat_verification);
+            continue;
+        }
     }
 
     Ok(fichiers_generes)
@@ -953,19 +986,23 @@ mod backup_tests {
     use openssl::x509::store::X509Store;
     use openssl::x509::X509;
     use crate::backup_restoration::TransactionReader;
-    use crate::certificats::FingerprintCertPublicKey;
+    use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
     use crate::middleware_db::preparer_middleware_db;
     use crate::chiffrage::MgsCipherData;
+    use crate::mongo_dao::convertir_to_bson;
 
     use super::*;
 
     const NOM_DOMAINE_BACKUP: &str = "DomaineTest";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
 
-    trait TestChiffreurMgs3Trait: Chiffreur<CipherMgs3, Mgs3CipherKeys> + ValidateurX509 + FormatteurMessage {}
+    trait TestChiffreurMgs3Trait: Chiffreur<CipherMgs3, Mgs3CipherKeys> + ValidateurX509 +
+        FormatteurMessage + VerificateurMessage {}
 
     struct TestChiffreurMgs3 {
         cles_chiffrage: Vec<FingerprintCertPublicKey>,
+        validateur: Arc<ValidateurX509Impl>,
+        enveloppe_privee: Arc<EnveloppePrivee>,
     }
 
     #[async_trait]
@@ -1030,7 +1067,18 @@ mod backup_tests {
 
     impl IsConfigurationPki for TestChiffreurMgs3 {
         fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-            todo!()
+            self.enveloppe_privee.clone()
+        }
+    }
+
+    impl VerificateurMessage for TestChiffreurMgs3 {
+        fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
+            Ok(ResultatValidation {
+                signature_valide: true,
+                hachage_valide: Some(true),
+                certificat_valide: true,
+                regles_valides: true
+            })
         }
     }
 
@@ -1235,6 +1283,7 @@ mod backup_tests {
     #[tokio::test]
     async fn chiffrer_roundtrip_backup() {
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
+        let enveloppe = Arc::new(enveloppe);
 
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.mgs");
         let fp_certs = vec!(FingerprintCertPublicKey::new(
@@ -1243,21 +1292,7 @@ mod backup_tests {
             true
         ));
 
-        let mut fp_public_keys = Vec::new();
-        let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
-        let cle_publique = &enveloppe.enveloppe.cle_publique;
-        fp_public_keys.push(FingerprintCertPublicKey {
-            fingerprint: fingerprint_cert.clone(),
-            public_key: cle_publique.to_owned(),
-            est_cle_millegrille: false,
-        });
-        let cle_publique_ca = &enveloppe.enveloppe_ca.cle_publique;
-        fp_public_keys.push(FingerprintCertPublicKey {
-            fingerprint: enveloppe.enveloppe_ca.fingerprint.clone(),
-            public_key: cle_publique_ca.to_owned(),
-            est_cle_millegrille: true,
-        });
-        let chiffreur = TestChiffreurMgs3 { cles_chiffrage: fp_public_keys };
+        let (fingerprint_cert, chiffreur) = creer_test_middleware(enveloppe.clone(), validateur);
 
         let mut writer = TransactionWriter::new(
             path_fichier.as_path(),
@@ -1288,14 +1323,33 @@ mod backup_tests {
 
     }
 
+    fn creer_test_middleware(enveloppe: Arc<EnveloppePrivee>, validateur: Arc<ValidateurX509Impl>) -> (String, TestChiffreurMgs3) {
+        let mut fp_public_keys = Vec::new();
+        let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
+        let cle_publique = &enveloppe.enveloppe.cle_publique;
+        fp_public_keys.push(FingerprintCertPublicKey {
+            fingerprint: fingerprint_cert.clone(),
+            public_key: cle_publique.to_owned(),
+            est_cle_millegrille: false,
+        });
+        let cle_publique_ca = &enveloppe.enveloppe_ca.cle_publique;
+        fp_public_keys.push(FingerprintCertPublicKey {
+            fingerprint: enveloppe.enveloppe_ca.fingerprint.clone(),
+            public_key: cle_publique_ca.to_owned(),
+            est_cle_millegrille: true,
+        });
+        let chiffreur = TestChiffreurMgs3 { cles_chiffrage: fp_public_keys, validateur, enveloppe_privee: enveloppe };
+        (fingerprint_cert, chiffreur)
+    }
+
     #[tokio::test]
     async fn test_generer_fichiers_backup() {
 
-        let mut transactions = CurseurIntoIter { data: vec![
-            doc!{"t": "allo"},
-            doc!{"i": 1},
-            doc!{"t": "dada"},
-        ].into_iter()};
+        // let mut transactions = CurseurIntoIter { data: vec![
+        //     doc!{"en-tete": {"estampille": 1655415440}, "_evenements": {"transaction_traitee": DateEpochSeconds::from_i64(1655415441).get_datetime()}},
+        //     doc!{"en-tete": {"estampille": 1655415450}, "_evenements": {"transaction_traitee": DateEpochSeconds::from_i64(1655415451).get_datetime()}},
+        //     doc!{"en-tete": {"estampille": 1655415460}, "_evenements": {"transaction_traitee": DateEpochSeconds::from_i64(1655415461).get_datetime()}},
+        // ].into_iter()};
 
         let temp_dir = tempdir().expect("tempdir");
 
@@ -1305,7 +1359,20 @@ mod backup_tests {
             Some(temp_dir.path().to_path_buf())
         ).expect("BackupInformation::new");
 
-        let m = TestChiffreurMgs3 { cles_chiffrage: Vec::new() };
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+        let enveloppe = Arc::new(enveloppe);
+        let (fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
+
+        // Generer transactions dummy
+        let mut transactions_vec = Vec::new();
+        for i in 0..1 {
+            let message = m.formatter_message(
+                &json!({}), Some("Test"), None, None, None, false)
+                .expect("formatter_message");
+            let m_bson = message.map_to_bson().expect("bson");
+            transactions_vec.push( m_bson );
+        }
+        let mut transactions = CurseurIntoIter { data: transactions_vec.into_iter() };
 
         let resultat = generer_fichiers_backup(&m, transactions, temp_dir, &info_backup)
             .await.expect("generer_fichiers_backup");
