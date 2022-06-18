@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use log::debug;
-use mongodb::{bson::doc, Client, Collection, Database};
+use mongodb::{bson::doc, Client, Collection, Cursor, Database};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
 use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
 use serde::Serialize;
 use serde_json::Value;
+use tokio_stream::StreamExt;
 
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
@@ -170,5 +171,33 @@ pub fn verifier_erreur_duplication_mongo(kind: &ErrorKind) -> bool {
             }
         },
         _ => false
+    }
+}
+
+#[async_trait]
+pub trait TransactionsStream {
+    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>>;
+}
+
+pub struct TransactionsVec { pub transactions: Vec<Document> }
+
+#[async_trait]
+impl TransactionsStream for TransactionsVec {
+    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
+        if self.transactions.is_empty() {
+            Ok(None)
+        } else {
+            let document = self.transactions.remove(0);
+            Ok(Some(document))
+        }
+    }
+}
+
+pub struct TransactionsCurseur { curseur: Cursor<Document> }
+
+#[async_trait]
+impl TransactionsStream for TransactionsCurseur {
+    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
+        Ok(self.curseur.try_next().await?)
     }
 }

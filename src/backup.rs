@@ -46,7 +46,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_bytes, hacher_serializable};
 use crate::middleware::IsConfigurationPki;
 use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{MongoDao, TransactionsVec, TransactionsStream};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
@@ -182,26 +182,6 @@ async fn generer_fichiers_backup<M, S>(middleware: &M, mut transactions: S, work
 
     Ok(fichiers_generes)
 }
-
-#[async_trait]
-trait TransactionsStream {
-    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>>;
-}
-
-struct TransactionsTest { transactions: Vec<Document> }
-
-#[async_trait]
-impl TransactionsStream for TransactionsTest {
-    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
-        if self.transactions.is_empty() {
-            Ok(None)
-        } else {
-            let document = self.transactions.remove(0);
-            Ok(Some(document))
-        }
-    }
-}
-
 
 /// Effectue un backup horaire
 async fn backup_horaire<M>(middleware: &M, workdir: TempDir, nom_coll_str: &str, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
@@ -1311,7 +1291,7 @@ mod backup_tests {
     #[tokio::test]
     async fn test_generer_fichiers_backup() {
 
-        let mut transactions = TransactionsTest{ transactions: vec![
+        let mut transactions = TransactionsVec { transactions: vec![
             doc!{"t": "allo"},
             doc!{"i": 1},
             doc!{"t": "dada"},
