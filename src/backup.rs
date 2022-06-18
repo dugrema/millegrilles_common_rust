@@ -48,7 +48,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_bytes, hacher_serializable};
 use crate::middleware::IsConfigurationPki;
 use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream};
+use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream, convertir_bson_deserializable};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
@@ -213,6 +213,22 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 
         let entete = transaction.get_entete();
         let uuid_transaction = entete.uuid_transaction.as_str();
+        let date_traitement_transaction = match transaction.get_msg().map_contenu::<Value>(Some("_evenements")) {
+            Ok(d) => match d.as_object() {
+                Some(e) => {
+                    entete.estampille.clone()
+                },
+                None => {
+                    info!("Mauvais type d'element _evenements pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
+                    entete.estampille.clone()
+                }
+            },
+            Err(e) => {
+                info!("Aucune information d'evenements (_evenements) pour une transaction. Utiliser estampille.");
+                entete.estampille.clone()
+            }
+        };
+
         if resultat_verification.valide() {
             let fingerprint_certificat = entete.fingerprint_certificat.as_str();
             let estampille = &entete.estampille;
@@ -224,6 +240,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
                 }
             };
             builder.ajouter_certificat(certificat.as_ref());
+            builder.ajouter_transaction(uuid_transaction, &date_traitement_transaction);
 
             let len_message = writer.write_bson_line(&doc_transaction).await?;
             len_written += len_message;
@@ -406,9 +423,41 @@ where
 
     // Obtenir curseur sur transactions en ordre chronologique de flag complete
     while let Some(Ok(d)) = curseur.next().await {
-        let entete = d.get("en-tete").expect("en-tete").as_document().expect("document");
-        let uuid_transaction = entete.get(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("uuid-transaction").as_str().expect("str");
-        let fingerprint_certificat = entete.get(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint certificat").as_str().expect("str");
+
+        let entete = match d.get("en-tete") {
+            Some(e) => {
+                match e.as_document() {
+                    Some(d) => convertir_bson_deserializable::<Entete>(d.clone())?,
+                    None => {
+                        error!("Erreur lecture en-tete transaction (mauvais type) - ** SKIP **");
+                        continue;
+                    }
+                }
+            },
+            None => {
+                error!("Transaction invalide (en-tete manquante) - ** SKIP **");
+                continue;
+            }
+        };
+
+        let date_traitement_transaction = match d.get("_evenement") {
+            Some(d) => match d.as_document() {
+                Some(e) => {
+                    entete.estampille.clone()
+                },
+                None => {
+                    info!("Mauvais type d'element _eveneemnts pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
+                    entete.estampille.clone()
+                }
+            },
+            None => {
+                info!("Aucune information d'evenements (_eveneemnts) pour une transaction. Utiliser estampille.");
+                continue;
+            }
+        };
+
+        let uuid_transaction = entete.uuid_transaction.as_str();
+        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
 
         info!("Backup transaction {}", uuid_transaction);
 
@@ -441,7 +490,7 @@ where
         transaction_writer.write_bson_line(&d).await?;
 
         // Ajouter uuid_transaction dans buidler - utilise pour marquer transactions completees
-        builder.ajouter_transaction(uuid_transaction);
+        builder.ajouter_transaction(uuid_transaction, &date_traitement_transaction);
     }
 
     let (hachage, cipher_keys) = transaction_writer.fermer().await?;
@@ -650,8 +699,10 @@ pub struct BackupInformation {
 pub struct CatalogueBackup {
     /// Heure de la premiere transaction du backup (traitement interne initial)
     pub date_backup: DateEpochSeconds,
+    /// Heure de la premiere transaction du backup
+    pub date_transactions_debut: DateEpochSeconds,
     /// Heure de la derniere tranaction du backup
-    pub date_fin_backup: DateEpochSeconds,
+    pub date_transactions_fin: DateEpochSeconds,
     /// True si c'est un snapshot
     // pub snapshot: bool,
     /// Nom du domaine
@@ -669,6 +720,7 @@ pub struct CatalogueBackup {
     pub data_hachage_bytes: String,
     pub data_transactions: String,
     // pub uuid_transactions: Vec<String>,
+    pub nombre_transactions: usize,
 
     /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
     #[serde(rename = "en-tete", skip_serializing)]
@@ -714,8 +766,9 @@ impl CatalogueBackup {
 
 #[derive(Clone, Debug)]
 pub struct CatalogueBackupBuilder {
-    date_backup: DateEpochSeconds,      // Date de traitement de la premiere transaction
-    date_fin_backup: DateEpochSeconds,  // Date de traitement de la derniere transaction
+    date_backup: DateEpochSeconds,      // Date de creation du backup (now)
+    date_debut_backup: Option<DateEpochSeconds>,  // Date de traitement de la premiere transaction
+    date_fin_backup: Option<DateEpochSeconds>,  // Date de traitement de la derniere transaction
     nom_domaine: String,
     partition: Option<String>,
     uuid_backup: String,                // Identificateur unique de ce backup
@@ -735,7 +788,8 @@ impl CatalogueBackupBuilder {
     fn new(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> Self {
         CatalogueBackupBuilder {
             date_backup: heure.clone(),
-            date_fin_backup: heure,  // Temporaire, va etre la date de la derniere transaction
+            date_debut_backup: None,  // Va etre la date de la derniere transaction
+            date_fin_backup: None,  // Va etre la date de la derniere transaction
             nom_domaine, partition, uuid_backup, // chiffrer, snapshot,
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
@@ -750,8 +804,26 @@ impl CatalogueBackupBuilder {
         self.certificats.ajouter_certificat(certificat).expect("certificat");
     }
 
-    fn ajouter_transaction(&mut self, uuid_transaction: &str) {
+    fn ajouter_transaction(&mut self, uuid_transaction: &str, date_estampille: &DateEpochSeconds) {
         self.uuid_transactions.push(String::from(uuid_transaction));
+
+        // Ajuste date debut et fin des transactions du backup
+        match &self.date_debut_backup {
+            Some(d) => {
+                if d.get_datetime() > date_estampille.get_datetime() {
+                    self.date_debut_backup = Some(date_estampille.to_owned());
+                }
+            },
+            None => self.date_debut_backup = Some(date_estampille.to_owned())
+        }
+        match &self.date_fin_backup {
+            Some(d) => {
+                if d.get_datetime() < date_estampille.get_datetime() {
+                    self.date_fin_backup = Some(date_estampille.to_owned());
+                }
+            },
+            None => self.date_fin_backup = Some(date_estampille.to_owned())
+        }
     }
 
     fn set_cles(&mut self, cles: &Mgs3CipherKeys) {
@@ -812,9 +884,19 @@ impl CatalogueBackupBuilder {
             None => (None, None, None, None)
         };
 
+        let date_transactions_debut = match self.date_debut_backup {
+            Some(d) => d,
+            None => self.date_backup.clone()
+        };
+        let date_transactions_fin = match self.date_fin_backup {
+            Some(d) => d,
+            None => self.date_backup.clone()
+        };
+
         CatalogueBackup {
             date_backup: self.date_backup,
-            date_fin_backup: self.date_fin_backup,
+            date_transactions_debut,
+            date_transactions_fin,
             domaine: self.nom_domaine,
             partition: self.partition,
             uuid_backup: self.uuid_backup,
@@ -824,6 +906,7 @@ impl CatalogueBackupBuilder {
 
             data_hachage_bytes: self.data_hachage_bytes,
             data_transactions: self.data_transactions,
+            nombre_transactions: self.uuid_transactions.len(),
 
             entete: None,  // En-tete chargee lors de la deserialization
 
