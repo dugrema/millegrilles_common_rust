@@ -350,60 +350,6 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     Ok(curseur)
 }
 
-async fn serialiser_catalogue(
-    middleware: &impl FormatteurMessage,
-    builder: CatalogueBackupBuilder
-) -> Result<(CatalogueBackup, MessageMilleGrille, Option<MessageMilleGrille>, Vec<String>), Box<dyn Error>> {
-
-    let commande_signee = match &builder.cles {
-        Some(cles) => {
-
-            // Signer commande de maitre des cles
-            let mut identificateurs_document: HashMap<String, String> = HashMap::new();
-            identificateurs_document.insert("domaine".into(), builder.nom_domaine.clone());
-            identificateurs_document.insert("heure".into(), format!("{}00", builder.date_backup.format_ymdh()));
-
-            let commande_maitredescles = cles.get_commande_sauvegarder_cles(
-                BACKUP_NOM_DOMAINE,
-                None,
-                identificateurs_document,
-            );
-
-            let fingerprint_partitions = cles.get_fingerprint_partitions();
-            let partition = fingerprint_partitions[0].as_str();  // Prendre une partition au hazard
-
-            let value_commande: Value = serde_json::to_value(commande_maitredescles).expect("commande");
-            // let msg_commande = MessageJson::new(value_commande);
-            let commande_signee = middleware.formatter_message(
-                &value_commande,
-                Some(DOMAINE_NOM_MAITREDESCLES),
-                Some(MAITREDESCLES_COMMANDE_NOUVELLE_CLE),
-                Some(partition),
-                None,
-                false
-            )?;
-
-            Some(commande_signee)
-        },
-        None => None,
-    };
-
-    // Signer et serialiser catalogue
-    let uuid_transactions = builder.uuid_transactions.clone();
-    let catalogue = builder.build();
-    let catalogue_value = serde_json::to_value(&catalogue)?;
-    let catalogue_signe = middleware.formatter_message(
-        &catalogue_value,
-        Some(BACKUP_NOM_DOMAINE),
-        Some(BACKUP_TRANSACTION_CATALOGUE_HORAIRE),
-        None,
-        None,
-        false
-    )?;
-
-    Ok((catalogue, catalogue_signe, commande_signee, uuid_transactions))
-}
-
 async fn uploader_backup<M>(
     middleware: &M,
     path_transactions: &Path,
