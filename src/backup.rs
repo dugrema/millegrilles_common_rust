@@ -3,20 +3,25 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
-use std::usize::MAX;
+use std::task::{Context, Poll};
 
 use async_std::fs::File;
 use async_std::io::BufReader;
+use async_std::prelude::Stream;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Timelike, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use futures::TryStream;
+use futures_util::TryStreamExt;
 use log::{debug, error, info, warn};
 use mongodb::bson::{doc, Document};
 use mongodb::Cursor;
 use mongodb::options::{AggregateOptions, FindOptions, Hint};
 use multibase::{Base, decode, encode};
 use multihash::Code;
+use redis::transaction;
 use reqwest::{Body, Response};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
@@ -24,7 +29,7 @@ use serde_json::{json, Value};
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
 use tokio::sync::mpsc::Sender;
-use tokio_stream::StreamExt;
+use tokio_stream::{Iter, StreamExt};
 use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
 use xz2::stream;
@@ -47,6 +52,11 @@ use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
 use crate::transactions::{regenerer, sauvegarder_batch, TraiterTransaction};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
+
+// Max size des transactions, on tente de limiter la taille finale du message
+// decompresse a 5MB (bytes vers base64 augmente taille de 50%)
+const TRANSACTIONS_MAX_SIZE: usize = 3 * 1024 * 1024;
+const TRANSACTIONS_MAX_NB: usize = 1000;  // Limite du nombre de transactions par fichier
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
@@ -115,7 +125,6 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
     let info_backup = BackupInformation::new(
         nom_domaine_str,
         nom_coll_str,
-        chiffrer,
         Some(workdir.path().to_owned())
     )?;
 
@@ -153,6 +162,46 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 
     Ok(Some(reponse))
 }
+
+/// Generer les fichiers de backup localement
+/// returns: Liste de fichiers generes
+async fn generer_fichiers_backup<M, S>(middleware: &M, mut transactions: S, workdir: TempDir, info_backup: &BackupInformation)
+    -> Result<Vec<PathBuf>, Box<dyn Error>>
+    where
+        M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage,
+        S: TransactionsStream
+{
+    let timestamp_backup = Utc::now();
+    debug!("Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
+
+    let fichiers_generes: Vec<PathBuf> = Vec::new();
+
+    while let Some(transaction) = transactions.try_next().await? {
+        debug!("Traitement transaction {:?}", transaction);
+    }
+
+    Ok(fichiers_generes)
+}
+
+#[async_trait]
+trait TransactionsStream {
+    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>>;
+}
+
+struct TransactionsTest { transactions: Vec<Document> }
+
+#[async_trait]
+impl TransactionsStream for TransactionsTest {
+    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
+        if self.transactions.is_empty() {
+            Ok(None)
+        } else {
+            let document = self.transactions.remove(0);
+            Ok(Some(document))
+        }
+    }
+}
+
 
 /// Effectue un backup horaire
 async fn backup_horaire<M>(middleware: &M, workdir: TempDir, nom_coll_str: &str, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
@@ -228,7 +277,7 @@ where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + For
     // Ok(())
 }
 
-async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueHoraireBuilder) -> Result<Cursor<Document>, Box<dyn Error>> {
+async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueBackupBuilder) -> Result<Cursor<Document>, Box<dyn Error>> {
     let nom_collection = &info.nom_collection_transactions;
     let collection = middleware.get_collection(nom_collection)?;
 
@@ -259,7 +308,7 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
 async fn serialiser_transactions<M>(
     middleware: &M,
     curseur: &mut Cursor<Document>,
-    builder: &mut CatalogueHoraireBuilder,
+    builder: &mut CatalogueBackupBuilder,
     path_transactions: &Path,
 ) -> Result<(), Box<dyn Error>>
 where
@@ -321,7 +370,7 @@ where
 
 async fn serialiser_catalogue(
     middleware: &impl FormatteurMessage,
-    builder: CatalogueHoraireBuilder
+    builder: CatalogueBackupBuilder
 ) -> Result<(CatalogueBackup, MessageMilleGrille, Option<MessageMilleGrille>, Vec<String>), Box<dyn Error>> {
 
     let commande_signee = match &builder.cles {
@@ -506,8 +555,6 @@ pub struct BackupInformation {
     workpath: PathBuf,
     /// Identificateur unique du backup (collateur)
     uuid_backup: String,
-    /// Flag de chiffrage
-    chiffrer: bool,
     /// Repertoire temporaire qui est supprime automatiquement apres le backup.
     tmp_workdir: Option<TempDir>,
 }
@@ -558,8 +605,8 @@ pub struct CatalogueBackup {
 
 impl CatalogueBackup {
 
-    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueHoraireBuilder {
-        CatalogueHoraireBuilder::new(heure, nom_domaine, partition, uuid_backup)
+    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueBackupBuilder {
+        CatalogueBackupBuilder::new(heure, nom_domaine, partition, uuid_backup)
     }
 
     pub fn get_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
@@ -579,7 +626,7 @@ impl CatalogueBackup {
 }
 
 #[derive(Clone, Debug)]
-pub struct CatalogueHoraireBuilder {
+pub struct CatalogueBackupBuilder {
     date_backup: DateEpochSeconds,      // Date de traitement de la premiere transaction
     date_fin_backup: DateEpochSeconds,  // Date de traitement de la derniere transaction
     nom_domaine: String,
@@ -596,10 +643,10 @@ pub struct CatalogueHoraireBuilder {
     // backup_precedent: Option<EnteteBackupPrecedent>,
 }
 
-impl CatalogueHoraireBuilder {
+impl CatalogueBackupBuilder {
 
     fn new(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> Self {
-        CatalogueHoraireBuilder {
+        CatalogueBackupBuilder {
             date_backup: heure.clone(),
             date_fin_backup: heure,  // Temporaire, va etre la date de la derniere transaction
             nom_domaine, partition, uuid_backup, // chiffrer, snapshot,
@@ -620,10 +667,6 @@ impl CatalogueHoraireBuilder {
         self.uuid_transactions.push(String::from(uuid_transaction));
     }
 
-    // fn transactions_hachage(&mut self, hachage: String) {
-    //     self.transactions_hachage = hachage;
-    // }
-
     fn set_cles(&mut self, cles: &Mgs3CipherKeys) {
         self.cles = Some(cles.clone());
     }
@@ -637,43 +680,7 @@ impl CatalogueHoraireBuilder {
     //     PathBuf::from(format!("{}_{}.json.xz", &self.nom_domaine, date_str))
     // }
 
-    // fn get_nomfichier_transactions(&self) -> PathBuf {
-    //     let mut date_str = self.date_backup.format_ymdh();
-    //     // match self.snapshot {
-    //     //     true => date_str = format!("{}-SNAPSHOT", date_str),
-    //     //     false => (),
-    //     // }
-    //
-    //     let nom_domaine_partition = match &self.partition {
-    //         Some(p) => format!("{}.{}", self.nom_domaine, p),
-    //         None => self.nom_domaine.clone()
-    //     };
-    //
-    //     let nom_fichier = match self.chiffrer {
-    //         true => format!("{}_{}.jsonl.xz.mgs2", &nom_domaine_partition, date_str),
-    //         false => format!("{}_{}.jsonl.xz", &nom_domaine_partition, date_str),
-    //     };
-    //     PathBuf::from(nom_fichier)
-    // }
-
-    // /// Set backup_precedent en calculant le hachage de l'en-tete.
-    // fn set_backup_precedent(&mut self, entete: &Entete) -> Result<(), Box<dyn Error>> {
-    //
-    //     let hachage_entete = hacher_serializable(entete)?;
-    //
-    //     let entete_calculee = EnteteBackupPrecedent {
-    //         hachage_entete,
-    //         uuid_transaction: entete.uuid_transaction.clone(),
-    //     };
-    //
-    //     self.backup_precedent = Some(entete_calculee);
-    //
-    //     Ok(())
-    // }
-
     async fn charger_transactions_chiffrees(&mut self, path_fichier: &Path) -> Result<(), Box<dyn Error>> {
-        const MAX_SIZE: usize = 5 * 1024 * 1024;
-
         let mut data = Vec::new();
 
         {
@@ -683,8 +690,8 @@ impl CatalogueHoraireBuilder {
             while let read_len = reader.read(&mut buffer).await? {
                 if read_len == 0 { break; }
                 data.extend(&buffer[..read_len]);
-                if data.len() > MAX_SIZE {
-                    Err(format!("La taille du fichier est plus grande que la limite de {} bytes", MAX_SIZE))?;
+                if data.len() > TRANSACTIONS_MAX_SIZE {
+                    Err(format!("La taille du fichier est plus grande que la limite de {} bytes", TRANSACTIONS_MAX_SIZE))?;
                 }
             }
         }
@@ -704,8 +711,6 @@ impl CatalogueHoraireBuilder {
         let date_str = self.date_backup.format_ymdh();
 
         // Build collections de certificats
-        // let transactions_hachage = self.data_hachage_bytes.clone();
-        // let transactions_nomfichier = self.get_nomfichier_transactions().to_str().expect("str").to_owned();
         let catalogue_nomfichier = match &self.partition {
             Some(p) => {
                 format!("{}.{}_{}.json.xz", &self.nom_domaine, p, date_str)
@@ -732,12 +737,9 @@ impl CatalogueHoraireBuilder {
 
             data_hachage_bytes: self.data_hachage_bytes,
             data_transactions: self.data_transactions,
-            // transactions_nomfichier,
-            // uuid_transactions: self.uuid_transactions,
 
             entete: None,  // En-tete chargee lors de la deserialization
 
-            // backup_precedent: self.backup_precedent,
             cle, iv, tag, format,
         }
     }
@@ -750,7 +752,6 @@ impl BackupInformation {
     pub fn new<S>(
         domaine: S,
         nom_collection_transactions: S,
-        chiffrer: bool,
         workpath: Option<PathBuf>
     ) -> Result<BackupInformation, Box<dyn Error>>
     where S: Into<String>
@@ -773,7 +774,6 @@ impl BackupInformation {
             partition: None,
             workpath: workpath_inner,
             uuid_backup,
-            chiffrer,
             tmp_workdir,
         })
     }
@@ -970,6 +970,8 @@ mod backup_tests {
     use crate::test_setup::setup;
     use chrono::TimeZone;
     use futures::io::BufReader;
+    use openssl::x509::store::X509Store;
+    use openssl::x509::X509;
     use crate::backup_restoration::TransactionReader;
     use crate::certificats::FingerprintCertPublicKey;
     use crate::middleware_db::preparer_middleware_db;
@@ -980,7 +982,7 @@ mod backup_tests {
     const NOM_DOMAINE_BACKUP: &str = "DomaineTest";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
 
-    trait TestChiffreurMgs3Trait: Chiffreur<CipherMgs3, Mgs3CipherKeys> {}
+    trait TestChiffreurMgs3Trait: Chiffreur<CipherMgs3, Mgs3CipherKeys> + ValidateurX509 + FormatteurMessage {}
 
     struct TestChiffreurMgs3 {
         cles_chiffrage: Vec<FingerprintCertPublicKey>,
@@ -1007,6 +1009,53 @@ mod backup_tests {
         }
     }
 
+    #[async_trait]
+    impl ValidateurX509 for TestChiffreurMgs3 {
+        async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+            todo!()
+        }
+
+        async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat> {
+            todo!()
+        }
+
+        async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
+            todo!()
+        }
+
+        fn idmg(&self) -> &str {
+            todo!()
+        }
+
+        fn ca_pem(&self) -> &str {
+            todo!()
+        }
+
+        fn ca_cert(&self) -> &X509 {
+            todo!()
+        }
+
+        fn store(&self) -> &X509Store {
+            todo!()
+        }
+
+        fn store_notime(&self) -> &X509Store {
+            todo!()
+        }
+
+        async fn entretien_validateur(&self) {
+            todo!()
+        }
+    }
+
+    impl IsConfigurationPki for TestChiffreurMgs3 {
+        fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
+            todo!()
+        }
+    }
+
+    impl FormatteurMessage for TestChiffreurMgs3 {}
+
     #[test]
     fn init_backup_information() {
         setup("init_backup_information");
@@ -1014,7 +1063,6 @@ mod backup_tests {
         let info = BackupInformation::new(
             NOM_DOMAINE_BACKUP,
             NOM_COLLECTION_BACKUP,
-            false,
             None
         ).expect("init");
 
@@ -1022,7 +1070,7 @@ mod backup_tests {
 
         assert_eq!(&info.nom_collection_transactions, NOM_COLLECTION_BACKUP);
         // assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
-        assert_eq!(info.chiffrer, false);
+        // assert_eq!(info.chiffrer, false);
         assert_eq!(workpath.starts_with("/tmp/."), true);
     }
 
@@ -1033,7 +1081,7 @@ mod backup_tests {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 0);
         let uuid_backup = Uuid::new_v4().to_string();
 
-        let catalogue_builder = CatalogueHoraireBuilder::new(
+        let catalogue_builder = CatalogueBackupBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup);
 
         assert_eq!(catalogue_builder.date_backup.get_datetime().timestamp(), heure.get_datetime().timestamp());
@@ -1045,7 +1093,7 @@ mod backup_tests {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
-        let catalogue_builder = CatalogueHoraireBuilder::new(
+        let catalogue_builder = CatalogueBackupBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let catalogue = catalogue_builder.build();
@@ -1064,7 +1112,7 @@ mod backup_tests {
 
         let transactions_hachage = "zABCD1234";
 
-        let mut catalogue_builder = CatalogueHoraireBuilder::new(
+        let mut catalogue_builder = CatalogueBackupBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         catalogue_builder.data_hachage_bytes = transactions_hachage.to_owned();
@@ -1079,7 +1127,7 @@ mod backup_tests {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
-        let catalogue_builder = CatalogueHoraireBuilder::new(
+        let catalogue_builder = CatalogueBackupBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let catalogue = catalogue_builder.build();
@@ -1094,7 +1142,7 @@ mod backup_tests {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
-        let catalogue_builder = CatalogueHoraireBuilder::new(
+        let catalogue_builder = CatalogueBackupBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let catalogue = catalogue_builder.build();
@@ -1113,7 +1161,7 @@ mod backup_tests {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
 
-        let mut catalogue_builder = CatalogueHoraireBuilder::new(
+        let mut catalogue_builder = CatalogueBackupBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let certificat = prep_enveloppe(CERT_CORE);
@@ -1191,7 +1239,7 @@ mod backup_tests {
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
         let uuid_backup = "DUMMY-11d8-4ff2-aa6f-1a605bd17336";
 
-        let mut catalogue_builder = CatalogueHoraireBuilder::new(
+        let mut catalogue_builder = CatalogueBackupBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         catalogue_builder.charger_transactions_chiffrees(&path_fichier).await.expect("transactions");
@@ -1257,6 +1305,31 @@ mod backup_tests {
             let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
             assert_eq!(valeur_chiffre, 5678);
         }
+
+    }
+
+    #[tokio::test]
+    async fn test_generer_fichiers_backup() {
+
+        let mut transactions = TransactionsTest{ transactions: vec![
+            doc!{"t": "allo"},
+            doc!{"i": 1},
+            doc!{"t": "dada"},
+        ]};
+
+        let temp_dir = tempdir().expect("tempdir");
+
+        let info_backup = BackupInformation::new(
+            "DUMMY",
+            "dummy_collection",
+            Some(temp_dir.path().to_path_buf())
+        ).expect("BackupInformation::new");
+
+        let m = TestChiffreurMgs3 { cles_chiffrage: Vec::new() };
+
+        let resultat = generer_fichiers_backup(&m, transactions, temp_dir, &info_backup)
+            .await.expect("generer_fichiers_backup");
+        debug!("Fichiers generes : {:?}", resultat);
 
     }
 
