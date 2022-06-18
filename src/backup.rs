@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::error::Error;
+use std::io::{BufWriter, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -11,6 +12,7 @@ use async_std::fs::File;
 use async_std::io::BufReader;
 use async_std::prelude::Stream;
 use async_trait::async_trait;
+use bytes::buf::Writer;
 use chrono::{DateTime, Duration, Timelike, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use futures::TryStream;
@@ -165,34 +167,59 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 
 /// Generer les fichiers de backup localement
 /// returns: Liste de fichiers generes
-async fn generer_fichiers_backup<M, S>(middleware: &M, mut transactions: S, workdir: TempDir, info_backup: &BackupInformation)
+async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, workdir: P, info_backup: &BackupInformation)
     -> Result<Vec<PathBuf>, Box<dyn Error>>
     where
         M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + VerificateurMessage,
-        S: CurseurStream
+        S: CurseurStream,
+        P: AsRef<Path>
 {
+    let workir_path = workdir.as_ref();
     let timestamp_backup = Utc::now();
     debug!("Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
 
-    let fichiers_generes: Vec<PathBuf> = Vec::new();
-
-    let date_transaction = DateEpochSeconds::now();
-    let mut builder = CatalogueBackupBuilder::new(
-        date_transaction,
-        info_backup.domaine.clone(),
-        info_backup.partition.clone(),
-        info_backup.uuid_backup.clone()
-    );
-    let mut path_fichier = PathBuf::new();
-    path_fichier.push(workdir.path());
-    path_fichier.push(PathBuf::from(format!("backup_{}.dat", 1)));
+    let mut fichiers_generes: Vec<PathBuf> = Vec::new();
+    let mut len_written: usize = 0;
+    let mut nb_transactions_written: usize = 0;
+    let (mut builder, mut path_fichier) = rotation_catalogue(workir_path, info_backup, fichiers_generes.len())?;
     debug!("Creation fichier backup : {:?}", path_fichier);
     let mut writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
-    let mut len_written: usize = 0;
 
     let options_validation = ValidationOptions::new(false, true, true);
     while let Some(doc_transaction) = transactions.try_next().await? {
         debug!("Traitement transaction {:?}", doc_transaction);
+
+        if len_written > TRANSACTIONS_MAX_SIZE || nb_transactions_written > TRANSACTIONS_MAX_NB {
+            debug!("Limite transaction par fichier atteinte, on fait une rotation");
+            let (hachage, keys) = writer.fermer().await?;
+            todo!("Fix me");
+            // builder.charger_transactions_chiffrees(&path_fichier).await?;  // Charger, hacher transactions
+            // // Comparer hachages ecrits et lus
+            // if hachage != builder.data_hachage_bytes {
+            //     Err(format!("Erreur creation backup - hachage transactions memoire et disque mismatch, abandon"))?;
+            // }
+            // let catalogue = builder.build();
+            // let mut path_catalogue = PathBuf::new();
+            // path_catalogue.push(workir_path);
+            // path_catalogue.push(format!("catalogue_{}.json", fichiers_generes.len()));
+            // let mut fichier_catalogue = File::create(&path_catalogue).await?;
+            //
+            // let catalogue_signe = middleware.formatter_message(
+            //     &catalogue, Some("Backup"), None, None, None, false)?;
+            // serde_json::to_writer(fichier_catalogue, &catalogue_signe).await?;
+            // fichier_catalogue.flush().await?;
+            //
+            // fichiers_generes.push(path_catalogue.clone());
+
+            // Reset compteur de catalogue
+            len_written = 0;
+            nb_transactions_written = 0;
+
+            // Ouvrir nouveau fichier
+            let (builder, path_fichier) = rotation_catalogue(workir_path, info_backup, fichiers_generes.len())?;
+            writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
+            fichiers_generes.push(path_fichier.clone());
+        }
 
         // Verifier la transaction - doit etre completement valide, certificat connu
         let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
@@ -213,7 +240,47 @@ async fn generer_fichiers_backup<M, S>(middleware: &M, mut transactions: S, work
         }
     }
 
+    let (hachage, keys) = writer.fermer().await?;
+    builder.charger_transactions_chiffrees(&path_fichier).await?;  // Charger, hacher transactions
+    // Comparer hachages ecrits et lus
+    if hachage != builder.data_hachage_bytes {
+        Err(format!("Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon", hachage, builder.data_hachage_bytes))?;
+    }
+    let catalogue = builder.build();
+    let mut path_catalogue = PathBuf::new();
+    path_catalogue.push(workir_path);
+    path_catalogue.push(format!("catalogue_{}.json", fichiers_generes.len()));
+    let mut fichier_catalogue = std::fs::File::create(&path_catalogue)?;
+
+    let catalogue_signe = middleware.formatter_message(
+        &catalogue, Some("Backup"), None, None, None, false)?;
+    serde_json::to_writer(fichier_catalogue, &catalogue_signe)?;
+    // fichier_catalogue.flush()?;
+
+    fichiers_generes.push(path_catalogue.clone());
+
     Ok(fichiers_generes)
+}
+
+fn rotation_catalogue<P>(workdir: P, info_backup: &BackupInformation, compteur: usize)
+    -> Result<(CatalogueBackupBuilder, PathBuf), Box<dyn Error>>
+    where P: AsRef<Path>
+{
+    let workdir_path = workdir.as_ref();
+
+    let date_transaction = DateEpochSeconds::now();
+    let mut builder = CatalogueBackupBuilder::new(
+        date_transaction,
+        info_backup.domaine.clone(),
+        info_backup.partition.clone(),
+        info_backup.uuid_backup.clone()
+    );
+
+    let mut path_fichier: PathBuf = PathBuf::new();
+    path_fichier.push(workdir_path);
+    path_fichier.push(PathBuf::from(format!("backup_{}.dat", compteur)));
+
+    Ok((builder, path_fichier))
 }
 
 /// Effectue un backup horaire
@@ -800,15 +867,16 @@ impl BackupHandler for BackupInformation {
     }
 }
 
-struct TransactionWriter<'a> {
-    fichier_writer: FichierWriter<'a, Mgs3CipherKeys, CipherMgs3>,
+struct TransactionWriter {
+    fichier_writer: FichierWriter<Mgs3CipherKeys, CipherMgs3>,
 }
 
-impl<'a> TransactionWriter<'a> {
+impl TransactionWriter {
 
-    pub async fn new<C>(path_fichier: &'a Path, middleware: Option<&C>) -> Result<TransactionWriter<'a>, Box<dyn Error>>
+    pub async fn new<C,P>(path_fichier: P, middleware: Option<&C>) -> Result<TransactionWriter, Box<dyn Error>>
     where
         C: Chiffreur<CipherMgs3, Mgs3CipherKeys>,
+        P: Into<PathBuf>
     {
         let fichier_writer = FichierWriter::new(path_fichier, middleware).await?;
         Ok(TransactionWriter{fichier_writer})
@@ -975,6 +1043,8 @@ pub async fn emettre_evenement_regeneration<M>(
 
 #[cfg(test)]
 mod backup_tests {
+    use std::io::ErrorKind;
+    use async_std::fs;
     use serde_json::json;
 
     use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
@@ -1238,7 +1308,7 @@ mod backup_tests {
             "date": Utc.timestamp(1629464026, 0),
         };
 
-        (String::from("z8VwF3dEpgBm31rY1ocA9Hdk74q61ukLybuVSv83ie2hZ9wFQ9oMQKtKDAqYxPemu1hYYHJw6i5NrRvULMNBowPD5YX"), doc_bson)
+        (String::from("zSEfXUAj2MrtorrFTqvt38Je8XrW78425oDMseC3QMiX29xXi1SPu4xhzjDoNTizh7eXHgpbsc5UY9aasHoy2tXCpURFjt"), doc_bson)
     }
 
     #[tokio::test]
@@ -1351,12 +1421,22 @@ mod backup_tests {
         //     doc!{"en-tete": {"estampille": 1655415460}, "_evenements": {"transaction_traitee": DateEpochSeconds::from_i64(1655415461).get_datetime()}},
         // ].into_iter()};
 
-        let temp_dir = tempdir().expect("tempdir");
+        //let temp_dir = tempdir().expect("tempdir");
+        let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
+        match fs::create_dir(&temp_dir).await {
+            Ok(()) => (),
+            Err(e) => {
+                match e.kind() {
+                    ErrorKind::AlreadyExists => (),
+                    _ => panic!("Erreur createdir: {:?}", e)
+                }
+            }
+        }
 
         let info_backup = BackupInformation::new(
             "DUMMY",
             "dummy_collection",
-            Some(temp_dir.path().to_path_buf())
+            Some(temp_dir.clone())
         ).expect("BackupInformation::new");
 
         let (validateur, enveloppe) = charger_enveloppe_privee_env();

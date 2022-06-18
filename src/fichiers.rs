@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::marker::PhantomData;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_std::io::ReadExt;
 use async_tar::Archive;
@@ -23,11 +23,11 @@ use crate::verificateur::VerificateurMessage;
 const PRESET_COMPRESSION_XZ: u32 = 6;
 const BUFFER_SIZE: usize = 64 * 1024;
 
-pub struct FichierWriter<'a, K, M>
+pub struct FichierWriter<K, M>
     where M: CipherMgs<K>,
           K: MgsCipherKeys
 {
-    _path_fichier: &'a Path,
+    _path_fichier: PathBuf,
     fichier: Box<tokio::fs::File>,
     xz_encodeur: stream::Stream,
     hacheur: Hacheur,
@@ -35,28 +35,31 @@ pub struct FichierWriter<'a, K, M>
     _keys: PhantomData<K>,
 }
 
-impl<'a, K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<'a, K, M> {
+impl<K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<K, M> {
 
-    pub async fn new<C>(path_fichier: &'a Path, chiffreur: Option<&C>) -> Result<FichierWriter<'a, K, M>, Box<dyn Error>>
+    pub async fn new<C,P>(path_fichier: P, chiffreur: Option<&C>) -> Result<FichierWriter<K, M>, Box<dyn Error>>
     where
         C: Chiffreur<M, K>,
+        P: Into<PathBuf>
     {
-        let output_file = tokio::fs::File::create(path_fichier).await?;
+        let path_fichier_buf = path_fichier.into();
+
+        let output_file = tokio::fs::File::create(&path_fichier_buf).await?;
         // let xz_encodeur = XzEncoder::new(output_file, 9);
         // Utilisation preset 6 (<20MB RAM) - avec 9, utilise plus de 40MB de RAM.
         let xz_encodeur = stream::Stream::new_easy_encoder(PRESET_COMPRESSION_XZ, stream::Check::Crc64).expect("stream");
-        let hacheur = Hacheur::builder().digester(Code::Sha2_512).base(Base::Base58Btc).build();
+        let hacheur = Hacheur::builder().digester(Code::Blake2b512).base(Base::Base58Btc).build();
 
         let chiffreur = match chiffreur {
             Some(c) => {
-                debug!("Activer chiffrage pour fichier  : {:?}", path_fichier);
+                debug!("Activer chiffrage pour fichier  : {:?}", path_fichier_buf);
                 Some(c.get_cipher()?)
             },
             None => None,
         };
 
         Ok(FichierWriter {
-            _path_fichier: path_fichier,
+            _path_fichier: path_fichier_buf,
             fichier: Box::new(output_file),
             xz_encodeur,
             hacheur,
