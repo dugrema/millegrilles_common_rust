@@ -1,10 +1,13 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::error::Error;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::usize::MAX;
 
 use async_std::fs::File;
+use async_std::io::BufReader;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Timelike, Utc};
 use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -12,6 +15,8 @@ use log::{debug, error, info, warn};
 use mongodb::bson::{doc, Document};
 use mongodb::Cursor;
 use mongodb::options::{AggregateOptions, FindOptions, Hint};
+use multibase::{Base, decode, encode};
+use multihash::Code;
 use reqwest::{Body, Response};
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
@@ -33,7 +38,7 @@ use crate::constantes::Securite::L3Protege;
 use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse_tar, TraiterFichier};
 use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::hachages::hacher_serializable;
+use crate::hachages::{hacher_bytes, hacher_serializable};
 use crate::middleware::IsConfigurationPki;
 use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::MongoDao;
@@ -585,6 +590,7 @@ pub struct CatalogueHoraireBuilder {
     certificats: CollectionCertificatsPem,
     uuid_transactions: Vec<String>,     // Liste des transactions inclues (pas mis dans catalogue)
     data_hachage_bytes: String,         // Hachage du contenu chiffre
+    data_transactions: String,          // Contenu des transactions en base64 (chiffre)
     cles: Option<Mgs3CipherKeys>,       // Cles pour dechiffrer le contenu
     // backup_precedent: Option<EnteteBackupPrecedent>,
 }
@@ -599,6 +605,7 @@ impl CatalogueHoraireBuilder {
             certificats: CollectionCertificatsPem::new(),
             uuid_transactions: Vec::new(),
             data_hachage_bytes: "".to_owned(),
+            data_transactions: "".to_owned(),
             cles: None,
             // backup_precedent: None,
         }
@@ -662,6 +669,34 @@ impl CatalogueHoraireBuilder {
     //
     //     Ok(())
     // }
+
+    async fn charger_transactions_chiffrees(&mut self, path_fichier: &Path) -> Result<(), Box<dyn Error>> {
+        const MAX_SIZE: usize = 5 * 1024 * 1024;
+
+        let mut data = Vec::new();
+
+        {
+            let file = File::open(path_fichier).await?;
+            let mut reader = BufReader::new(file);
+            let mut buffer = [0u8; 64 * 1024];
+            while let read_len = reader.read(&mut buffer).await? {
+                if read_len == 0 { break; }
+                data.extend(&buffer[..read_len]);
+                if data.len() > MAX_SIZE {
+                    Err(format!("La taille du fichier est plus grande que la limite de {} bytes", MAX_SIZE))?;
+                }
+            }
+        }
+
+        // Hacher le contenu (pour verification)
+        self.data_hachage_bytes = hacher_bytes(data.as_slice(), Some(Code::Blake2b512), Some(Base::Base58Btc));
+
+        // Convertir le contenu en base64
+        debug!("Convertir data en base64 : {:?}", data);
+        self.data_transactions = encode(Base::Base64, data.as_slice());
+
+        Ok(())
+    }
 
     pub fn build(self) -> CatalogueHoraire {
 
@@ -1141,6 +1176,29 @@ mod backup_tests {
         assert_eq!(mh.as_str(), &mh_reference);
     }
 
+    #[tokio::test]
+    async fn charger_transactions() {
+        let path_fichier = PathBuf::from("/tmp/test_charger_fichier.json");
+        {
+            let mut fichier = File::create(&path_fichier).await.expect("create");
+            fichier.write("Allo".as_bytes()).await.expect("write");
+            fichier.close().await.expect("close");
+        }
+
+        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+
+        let mut catalogue_builder = CatalogueHoraireBuilder::new(
+            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
+
+        catalogue_builder.charger_transactions_chiffrees(&path_fichier).await.expect("transactions");
+
+        debug!("Transactions hachage : {}", catalogue_builder.data_hachage_bytes);
+        debug!("Transactions data : {}", catalogue_builder.data_transactions);
+
+    }
+
+    /// Test de chiffrage du backup - round trip
     #[tokio::test]
     async fn chiffrer_roundtrip_backup() {
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
