@@ -322,7 +322,7 @@ where
 async fn serialiser_catalogue(
     middleware: &impl FormatteurMessage,
     builder: CatalogueHoraireBuilder
-) -> Result<(CatalogueHoraire, MessageMilleGrille, Option<MessageMilleGrille>, Vec<String>), Box<dyn Error>> {
+) -> Result<(CatalogueBackup, MessageMilleGrille, Option<MessageMilleGrille>, Vec<String>), Box<dyn Error>> {
 
     let commande_signee = match &builder.cles {
         Some(cles) => {
@@ -376,7 +376,7 @@ async fn serialiser_catalogue(
 async fn uploader_backup<M>(
     middleware: &M,
     path_transactions: &Path,
-    catalogue: &CatalogueHoraire,
+    catalogue: &CatalogueBackup,
     catalogue_signe: &MessageMilleGrille,
     commande_cles: Option<MessageMilleGrille>
 ) -> Result<Response, Box<dyn Error>>
@@ -461,9 +461,9 @@ where
 }
 
 async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_collection: &str,
-                                             catalogue_horaire: &CatalogueHoraire,
+                                             catalogue_horaire: &CatalogueBackup,
                                              uuid_transactions: &Vec<String>)
-    -> Result<(), Box<dyn Error>>
+                                             -> Result<(), Box<dyn Error>>
 {
     // debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, catalogue_horaire.uuid_transactions);
     debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, uuid_transactions);
@@ -513,7 +513,7 @@ pub struct BackupInformation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CatalogueHoraire {
+pub struct CatalogueBackup {
     /// Heure de la premiere transaction du backup (traitement interne initial)
     pub date_backup: DateEpochSeconds,
     /// Heure de la derniere tranaction du backup
@@ -532,7 +532,8 @@ pub struct CatalogueHoraire {
 
     pub catalogue_nomfichier: String,
     // pub transactions_nomfichier: String,
-    pub transactions_hachage: String,
+    pub data_hachage_bytes: String,
+    pub data_transactions: String,
     // pub uuid_transactions: Vec<String>,
 
     /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
@@ -555,7 +556,7 @@ pub struct CatalogueHoraire {
     format: Option<String>,
 }
 
-impl CatalogueHoraire {
+impl CatalogueBackup {
 
     pub fn builder(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueHoraireBuilder {
         CatalogueHoraireBuilder::new(heure, nom_domaine, partition, uuid_backup)
@@ -698,12 +699,12 @@ impl CatalogueHoraireBuilder {
         Ok(())
     }
 
-    pub fn build(self) -> CatalogueHoraire {
+    pub fn build(self) -> CatalogueBackup {
 
         let date_str = self.date_backup.format_ymdh();
 
         // Build collections de certificats
-        let transactions_hachage = self.data_hachage_bytes.clone();
+        // let transactions_hachage = self.data_hachage_bytes.clone();
         // let transactions_nomfichier = self.get_nomfichier_transactions().to_str().expect("str").to_owned();
         let catalogue_nomfichier = match &self.partition {
             Some(p) => {
@@ -719,7 +720,7 @@ impl CatalogueHoraireBuilder {
             None => (None, None, None, None)
         };
 
-        CatalogueHoraire {
+        CatalogueBackup {
             date_backup: self.date_backup,
             date_fin_backup: self.date_fin_backup,
             domaine: self.nom_domaine,
@@ -729,7 +730,8 @@ impl CatalogueHoraireBuilder {
 
             certificats: self.certificats,
 
-            transactions_hachage,
+            data_hachage_bytes: self.data_hachage_bytes,
+            data_transactions: self.data_transactions,
             // transactions_nomfichier,
             // uuid_transactions: self.uuid_transactions,
 
@@ -1047,6 +1049,7 @@ mod backup_tests {
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
 
         let catalogue = catalogue_builder.build();
+        debug!("Catalogue : {:?}", catalogue);
 
         assert_eq!(catalogue.date_backup, heure);
         assert_eq!(&catalogue.uuid_backup, uuid_backup);
@@ -1068,7 +1071,7 @@ mod backup_tests {
 
         let catalogue = catalogue_builder.build();
 
-        assert_eq!(&catalogue.transactions_hachage, transactions_hachage);
+        assert_eq!(&catalogue.data_hachage_bytes, transactions_hachage);
     }
 
     #[test]
@@ -1119,7 +1122,7 @@ mod backup_tests {
         catalogue_builder.ajouter_certificat(&certificat);
 
         let catalogue = catalogue_builder.build();
-        // debug!("!!! Catalogue : {:?}", catalogue);
+        debug!("!!! Catalogue : {:?}", catalogue);
         assert_eq!(catalogue.certificats.len(), 1);
     }
 
@@ -1186,7 +1189,7 @@ mod backup_tests {
         }
 
         let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+        let uuid_backup = "DUMMY-11d8-4ff2-aa6f-1a605bd17336";
 
         let mut catalogue_builder = CatalogueHoraireBuilder::new(
             heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
@@ -1196,6 +1199,8 @@ mod backup_tests {
         debug!("Transactions hachage : {}", catalogue_builder.data_hachage_bytes);
         debug!("Transactions data : {}", catalogue_builder.data_transactions);
 
+        assert_eq!("zSEfXUBUUM6YRxhgeJraN95eUyibKjQUg9oxHtnsKSix7GNPjxZHvhQVwTweuwySe9fdeHtFpg6kQtNgDNp6GQw1uj9Qff", catalogue_builder.data_hachage_bytes);
+        assert_eq!("mQWxsbw", catalogue_builder.data_transactions);
     }
 
     /// Test de chiffrage du backup - round trip
