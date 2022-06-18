@@ -130,39 +130,40 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
         Some(workdir.path().to_owned())
     )?;
 
-    let (reponse, flag_erreur) = match backup_horaire(middleware, workdir, nom_coll_str, &info_backup).await {
-        Ok(()) => {
-            // Emettre trigger pour declencher backup du jour precedent
-            let reponse = middleware.formatter_reponse(json!({"ok": true}), None)?;
-            (reponse, false)
-        },
-        Err(e) => {
-            error!("Erreur traitement backup : {:?}", e);
-            // let timestamp_backup = Utc::now();
-            // if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
-            //     error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
-            // }
-
-            let reponse = middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?;
-
-            (reponse, true)
-        },
-    };
-
-    // Utiliser flag pour emettre evenement erreur (note : faire hors du match a cause Err not Send)
-    if flag_erreur {
-        let timestamp_backup = Utc::now();
-        if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
-            error!("Erreur emission evenement erreur de backup : {:?}", e);
-        }
-        Err("Erreur backup horaire, voir logs")?
-    }
-    // else {
-    //     debug!("backup Emettre trigger pour backup quotidien : {:?}", &info_backup);
-    //     trigger_backup_quotidien(middleware, &info_backup).await?;
+    todo!("Fix me")
+    // let (reponse, flag_erreur) = match backup_horaire(middleware, workdir, nom_coll_str, &info_backup).await {
+    //     Ok(()) => {
+    //         // Emettre trigger pour declencher backup du jour precedent
+    //         let reponse = middleware.formatter_reponse(json!({"ok": true}), None)?;
+    //         (reponse, false)
+    //     },
+    //     Err(e) => {
+    //         error!("Erreur traitement backup : {:?}", e);
+    //         // let timestamp_backup = Utc::now();
+    //         // if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
+    //         //     error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
+    //         // }
+    //
+    //         let reponse = middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?;
+    //
+    //         (reponse, true)
+    //     },
+    // };
+    //
+    // // Utiliser flag pour emettre evenement erreur (note : faire hors du match a cause Err not Send)
+    // if flag_erreur {
+    //     let timestamp_backup = Utc::now();
+    //     if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
+    //         error!("Erreur emission evenement erreur de backup : {:?}", e);
+    //     }
+    //     Err("Erreur backup horaire, voir logs")?
     // }
-
-    Ok(Some(reponse))
+    // // else {
+    // //     debug!("backup Emettre trigger pour backup quotidien : {:?}", &info_backup);
+    // //     trigger_backup_quotidien(middleware, &info_backup).await?;
+    // // }
+    //
+    // Ok(Some(reponse))
 }
 
 /// Generer les fichiers de backup localement
@@ -319,81 +320,9 @@ fn nouveau_catalogue<P>(workdir: P, info_backup: &BackupInformation, compteur: u
     Ok((builder, path_fichier))
 }
 
-/// Effectue un backup horaire
-async fn backup_horaire<M>(middleware: &M, workdir: TempDir, nom_coll_str: &str, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
-where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + GenerateurMessages + ConfigMessages,
+async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueBackupBuilder)
+    -> Result<Cursor<Document>, Box<dyn Error>>
 {
-    let timestamp_backup = Utc::now();
-    if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireDebut", &timestamp_backup).await {
-        error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
-    }
-
-    todo!("Fix me")
-    // Generer liste builders domaine/heures
-    // let builders = grouper_backups(middleware, &info_backup).await?;
-    //
-    // info!("backup.backup_horaire: Backup horaire collection {} : {:?}", nom_coll_str, builders);
-    //
-    // // Tenter de charger entete du dernier backup de ce domaine/partition
-    // // let mut entete_precedente: Option<Entete> = requete_entete_dernier(middleware, nom_coll_str).await?;
-    //
-    // for mut builder in builders {
-    //
-    //     // Creer fichier de transactions
-    //     let mut path_fichier_transactions = workdir.path().to_owned();
-    //     // path_fichier_transactions.push(PathBuf::from(builder.get_nomfichier_transactions()));
-    //     path_fichier_transactions.push(PathBuf::from("transactions_tmp.mgs"));
-    //
-    //     let mut curseur = requete_transactions(middleware, &info_backup, &builder).await?;
-    //     serialiser_transactions(
-    //         middleware,
-    //         &mut curseur,
-    //         &mut builder,
-    //         path_fichier_transactions.as_path()
-    //     ).await?;
-    //
-    //     // Signer et serialiser catalogue
-    //     let (catalogue_horaire, catalogue_signe, commande_cles, uuid_transactions) = serialiser_catalogue(
-    //         middleware, builder).await?;
-    //     info!("backup_horaire: Nouveau catalogue horaire : {:?}\nCommande maitredescles : {:?}", catalogue_horaire, commande_cles);
-    //     let reponse = uploader_backup(
-    //         middleware,
-    //         path_fichier_transactions.as_path(),
-    //         &catalogue_horaire,
-    //         &catalogue_signe,
-    //         commande_cles
-    //     ).await?;
-    //
-    //     if !reponse.status().is_success() {
-    //         Err(format!("Erreur upload fichier : {:?}", reponse))?;
-    //     }
-    //
-    //     // entete_precedente = Some(catalogue_signe.entete.clone());
-    //     // Marquer transactions du backup comme completees
-    //     marquer_transaction_backup_complete(
-    //         middleware,
-    //         info_backup.nom_collection_transactions.as_str(),
-    //         &catalogue_horaire,
-    //         &uuid_transactions
-    //     ).await?;
-    //
-    //     // Soumettre catalogue horaire sous forme de transaction (domaine Backup)
-    //     let routage = RoutageMessageAction::new(BACKUP_NOM_DOMAINE, BACKUP_TRANSACTION_CATALOGUE_HORAIRE);
-    //     // Avertissement : blocking FALSE, sinon sur le meme module que CoreBackup va capturer la transaction comme la reponse sans la traiter
-    //     let reponse_catalogue = middleware.emettre_message_millegrille(
-    //         routage,false, TypeMessageOut::Transaction, catalogue_signe
-    //     ).await?;
-    //     debug!("Reponse soumission catalogue : {:?}", reponse_catalogue);
-    // }
-    //
-    // if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireTermine", &timestamp_backup).await {
-    //     error!("Erreur emission evenement fin backup : {:?}", e);
-    // }
-    //
-    // Ok(())
-}
-
-async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueBackupBuilder) -> Result<Cursor<Document>, Box<dyn Error>> {
     let nom_collection = &info.nom_collection_transactions;
     let collection = middleware.get_collection(nom_collection)?;
 
@@ -419,101 +348,6 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     let curseur = collection.find(filtre, find_options).await?;
 
     Ok(curseur)
-}
-
-async fn serialiser_transactions<M>(
-    middleware: &M,
-    curseur: &mut Cursor<Document>,
-    builder: &mut CatalogueBackupBuilder,
-    path_transactions: &Path,
-) -> Result<(), Box<dyn Error>>
-where
-    M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys>,
-{
-    // Creer i/o stream lzma pour les transactions avec chiffrage
-    let mut transaction_writer = TransactionWriter::new(path_transactions, Some(middleware)).await?;
-
-    // Obtenir curseur sur transactions en ordre chronologique de flag complete
-    while let Some(Ok(d)) = curseur.next().await {
-
-        let entete = match d.get("en-tete") {
-            Some(e) => {
-                match e.as_document() {
-                    Some(d) => convertir_bson_deserializable::<Entete>(d.clone())?,
-                    None => {
-                        error!("Erreur lecture en-tete transaction (mauvais type) - ** SKIP **");
-                        continue;
-                    }
-                }
-            },
-            None => {
-                error!("Transaction invalide (en-tete manquante) - ** SKIP **");
-                continue;
-            }
-        };
-
-        let date_traitement_transaction = match d.get("_evenement") {
-            Some(d) => match d.as_document() {
-                Some(e) => {
-                    entete.estampille.clone()
-                },
-                None => {
-                    info!("Mauvais type d'element _eveneemnts pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
-                    entete.estampille.clone()
-                }
-            },
-            None => {
-                info!("Aucune information d'evenements (_eveneemnts) pour une transaction. Utiliser estampille.");
-                continue;
-            }
-        };
-
-        let uuid_transaction = entete.uuid_transaction.as_str();
-        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
-
-        info!("Backup transaction {}", uuid_transaction);
-
-        // Trouver certificat et ajouter au catalogue
-        match middleware.get_certificat(fingerprint_certificat).await {
-            Some(c) => {
-                // debug!("OK Certificat ajoute : {}", fingerprint_certificat);
-                builder.ajouter_certificat(c.as_ref());
-
-                // Valider la transaction avec le certificat
-                let mut transaction = MessageSerialise::from_serializable(&d)?;
-                debug!("Transaction serialisee pour validation :\n{:?}", transaction);
-                let options = ValidationOptions::new(true, true, true);
-                let resultat = transaction.valider(middleware, Some(&options)).await?;
-
-                if ! ( resultat.signature_valide && resultat.certificat_valide && resultat.hachage_valide.expect("hachage") ) {
-                    warn!("Resultat validation invalide pour {}: {:?}", uuid_transaction, resultat);
-                    debug!("Resultat validation invalide pour transaction :\n{}", transaction.get_str());
-                    continue;
-                }
-
-            },
-            None => {
-                warn!("Certificat {} inconnu, transaction {} ne peut pas etre mise dans le backup", fingerprint_certificat, uuid_transaction);
-                continue;
-            },
-        }
-
-        // Serialiser transaction
-        transaction_writer.write_bson_line(&d).await?;
-
-        // Ajouter uuid_transaction dans buidler - utilise pour marquer transactions completees
-        builder.ajouter_transaction(uuid_transaction, &date_traitement_transaction);
-    }
-
-    let (hachage, cipher_keys) = transaction_writer.fermer().await?;
-
-    builder.data_hachage_bytes = hachage;
-    match &cipher_keys {
-        Some(k) => builder.set_cles(k),
-        None => (),
-    }
-
-    Ok(())
 }
 
 async fn serialiser_catalogue(
