@@ -46,7 +46,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_bytes, hacher_serializable};
 use crate::middleware::IsConfigurationPki;
 use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::{MongoDao, TransactionsVec, TransactionsStream};
+use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
@@ -169,7 +169,7 @@ async fn generer_fichiers_backup<M, S>(middleware: &M, mut transactions: S, work
     -> Result<Vec<PathBuf>, Box<dyn Error>>
     where
         M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage,
-        S: TransactionsStream
+        S: CurseurStream
 {
     let timestamp_backup = Utc::now();
     debug!("Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
@@ -1291,11 +1291,11 @@ mod backup_tests {
     #[tokio::test]
     async fn test_generer_fichiers_backup() {
 
-        let mut transactions = TransactionsVec { transactions: vec![
+        let mut transactions = CurseurIntoIter { data: vec![
             doc!{"t": "allo"},
             doc!{"i": 1},
             doc!{"t": "dada"},
-        ]};
+        ].into_iter()};
 
         let temp_dir = tempdir().expect("tempdir");
 

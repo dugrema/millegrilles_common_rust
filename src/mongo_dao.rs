@@ -17,6 +17,7 @@ use crate::constantes::*;
 use serde::de::DeserializeOwned;
 use std::error::Error;
 use std::time::Duration;
+use std::vec::IntoIter;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
@@ -175,28 +176,23 @@ pub fn verifier_erreur_duplication_mongo(kind: &ErrorKind) -> bool {
 }
 
 #[async_trait]
-pub trait TransactionsStream {
+pub trait CurseurStream {
     async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>>;
 }
 
-pub struct TransactionsVec { pub transactions: Vec<Document> }
+pub struct CurseurIntoIter { pub data: IntoIter<Document> }
 
 #[async_trait]
-impl TransactionsStream for TransactionsVec {
+impl CurseurStream for CurseurIntoIter {
     async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
-        if self.transactions.is_empty() {
-            Ok(None)
-        } else {
-            let document = self.transactions.remove(0);
-            Ok(Some(document))
-        }
+        Ok(self.data.next())
     }
 }
 
-pub struct TransactionsCurseur { curseur: Cursor<Document> }
+pub struct CurseurMongo { curseur: Cursor<Document> }
 
 #[async_trait]
-impl TransactionsStream for TransactionsCurseur {
+impl CurseurStream for CurseurMongo {
     async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
         Ok(self.curseur.try_next().await?)
     }
