@@ -181,7 +181,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
     let mut fichiers_generes: Vec<PathBuf> = Vec::new();
     let mut len_written: usize = 0;
     let mut nb_transactions_written: usize = 0;
-    let (mut builder, mut path_fichier) = rotation_catalogue(workir_path, info_backup, fichiers_generes.len())?;
+    let (mut builder, mut path_fichier) = nouveau_catalogue(workir_path, info_backup, fichiers_generes.len())?;
     debug!("Creation fichier backup : {:?}", path_fichier);
     let mut writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
 
@@ -189,36 +189,21 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
     while let Some(doc_transaction) = transactions.try_next().await? {
         debug!("Traitement transaction {:?}", doc_transaction);
 
-        if len_written > TRANSACTIONS_MAX_SIZE || nb_transactions_written > TRANSACTIONS_MAX_NB {
+        if len_written >= TRANSACTIONS_MAX_SIZE || nb_transactions_written >= TRANSACTIONS_MAX_NB {
             debug!("Limite transaction par fichier atteinte, on fait une rotation");
-            let (hachage, keys) = writer.fermer().await?;
-            todo!("Fix me");
-            // builder.charger_transactions_chiffrees(&path_fichier).await?;  // Charger, hacher transactions
-            // // Comparer hachages ecrits et lus
-            // if hachage != builder.data_hachage_bytes {
-            //     Err(format!("Erreur creation backup - hachage transactions memoire et disque mismatch, abandon"))?;
-            // }
-            // let catalogue = builder.build();
-            // let mut path_catalogue = PathBuf::new();
-            // path_catalogue.push(workir_path);
-            // path_catalogue.push(format!("catalogue_{}.json", fichiers_generes.len()));
-            // let mut fichier_catalogue = File::create(&path_catalogue).await?;
-            //
-            // let catalogue_signe = middleware.formatter_message(
-            //     &catalogue, Some("Backup"), None, None, None, false)?;
-            // serde_json::to_writer(fichier_catalogue, &catalogue_signe).await?;
-            // fichier_catalogue.flush().await?;
-            //
-            // fichiers_generes.push(path_catalogue.clone());
+            let path_catalogue = sauvegarder_catalogue(
+                middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
+            fichiers_generes.push(path_catalogue.clone());
 
             // Reset compteur de catalogue
             len_written = 0;
             nb_transactions_written = 0;
 
             // Ouvrir nouveau fichier
-            let (builder, path_fichier) = rotation_catalogue(workir_path, info_backup, fichiers_generes.len())?;
+            let (builder_1, path_fichier_1) = nouveau_catalogue(workir_path, info_backup, fichiers_generes.len())?;
+            builder = builder_1;
+            path_fichier = path_fichier_1;
             writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
-            fichiers_generes.push(path_fichier.clone());
         }
 
         // Verifier la transaction - doit etre completement valide, certificat connu
@@ -231,16 +216,41 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
         if resultat_verification.valide() {
             let fingerprint_certificat = entete.fingerprint_certificat.as_str();
             let estampille = &entete.estampille;
+            let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+                Some(c) => c,
+                None => {
+                    error!("Certificat introuvable pour transaction {}, ** SKIP TRANSACTION **", uuid_transaction);
+                    continue;
+                }
+            };
+            builder.ajouter_certificat(certificat.as_ref());
 
             let len_message = writer.write_bson_line(&doc_transaction).await?;
             len_written += len_message;
+            nb_transactions_written += 1;
         } else {
             error!("Transaction {} invalide ({:?}), ** SKIPPED **", uuid_transaction, resultat_verification);
             continue;
         }
     }
 
+    let path_catalogue = sauvegarder_catalogue(middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
+    fichiers_generes.push(path_catalogue.clone());
+
+    Ok(fichiers_generes)
+}
+
+async fn sauvegarder_catalogue<M>(
+    middleware: &M, workir_path: &Path, mut fichiers_generes: &mut Vec<PathBuf>, mut builder: CatalogueBackupBuilder, path_fichier: &mut PathBuf, writer: TransactionWriter)
+    -> Result<PathBuf, Box<dyn Error>>
+    where M: FormatteurMessage
+{
     let (hachage, keys) = writer.fermer().await?;
+
+    if let Some(c) = &keys {
+        builder.set_cles(c);
+    }
+
     builder.charger_transactions_chiffrees(&path_fichier).await?;  // Charger, hacher transactions
     // Comparer hachages ecrits et lus
     if hachage != builder.data_hachage_bytes {
@@ -255,15 +265,12 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
     let catalogue_signe = middleware.formatter_message(
         &catalogue, Some("Backup"), None, None, None, false)?;
     serde_json::to_writer(fichier_catalogue, &catalogue_signe)?;
-    // fichier_catalogue.flush()?;
 
-    fichiers_generes.push(path_catalogue.clone());
-
-    Ok(fichiers_generes)
+    Ok(path_catalogue)
 }
 
-fn rotation_catalogue<P>(workdir: P, info_backup: &BackupInformation, compteur: usize)
-    -> Result<(CatalogueBackupBuilder, PathBuf), Box<dyn Error>>
+fn nouveau_catalogue<P>(workdir: P, info_backup: &BackupInformation, compteur: usize)
+                        -> Result<(CatalogueBackupBuilder, PathBuf), Box<dyn Error>>
     where P: AsRef<Path>
 {
     let workdir_path = workdir.as_ref();
@@ -1107,7 +1114,7 @@ mod backup_tests {
         }
 
         async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-            todo!()
+            Some(self.enveloppe_privee.enveloppe.clone())
         }
 
         fn idmg(&self) -> &str {
@@ -1415,12 +1422,6 @@ mod backup_tests {
     #[tokio::test]
     async fn test_generer_fichiers_backup() {
 
-        // let mut transactions = CurseurIntoIter { data: vec![
-        //     doc!{"en-tete": {"estampille": 1655415440}, "_evenements": {"transaction_traitee": DateEpochSeconds::from_i64(1655415441).get_datetime()}},
-        //     doc!{"en-tete": {"estampille": 1655415450}, "_evenements": {"transaction_traitee": DateEpochSeconds::from_i64(1655415451).get_datetime()}},
-        //     doc!{"en-tete": {"estampille": 1655415460}, "_evenements": {"transaction_traitee": DateEpochSeconds::from_i64(1655415461).get_datetime()}},
-        // ].into_iter()};
-
         //let temp_dir = tempdir().expect("tempdir");
         let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
         match fs::create_dir(&temp_dir).await {
@@ -1445,7 +1446,7 @@ mod backup_tests {
 
         // Generer transactions dummy
         let mut transactions_vec = Vec::new();
-        for i in 0..1 {
+        for i in 0..3 {
             let message = m.formatter_message(
                 &json!({}), Some("Test"), None, None, None, false)
                 .expect("formatter_message");
