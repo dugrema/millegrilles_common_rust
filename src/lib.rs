@@ -24,6 +24,7 @@ pub mod chiffrage_chacha20poly1305;
 pub mod chiffrage_rsa;
 pub mod chiffrage_aesgcm;
 pub mod chiffrage_cle;
+pub mod backup_restoration;
 
 // Re-exports
 pub use async_trait;

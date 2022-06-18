@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration as DurationTokio, sleep};
 
-use crate::backup::{regenerer_operation, reset_backup_flag, restaurer};
+use crate::backup::reset_backup_flag;
 use crate::certificats::ValidateurX509;
 use crate::certificats::VerificateurPermissions;
 use crate::constantes::*;
@@ -578,7 +578,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 match m.action.as_str() {
                     // Commandes standard
                     COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref()).await,
-                    COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
+                    // COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
                     COMMANDE_RESET_BACKUP => reset_backup_flag(
                         middleware.as_ref(), self.get_collection_transactions().as_str()).await,
@@ -591,23 +591,23 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
     }
 
-    async fn restaurer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-        where M: Middleware + 'static
-    {
-        let noms_collections_docs = self.get_collections_documents();
-        //let processor = self.get_processeur_transactions();
-
-        restaurer(
-            middleware.clone(),
-            self.get_nom_domaine().as_str(),
-            self.get_partition(),
-            self.get_collection_transactions().as_str(),
-            &noms_collections_docs,
-            self
-        ).await?;
-
-        Ok(None)
-    }
+    // async fn restaurer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    //     where M: Middleware + 'static
+    // {
+    //     let noms_collections_docs = self.get_collections_documents();
+    //     //let processor = self.get_processeur_transactions();
+    //
+    //     restaurer(
+    //         middleware.clone(),
+    //         self.get_nom_domaine().as_str(),
+    //         self.get_partition(),
+    //         self.get_collection_transactions().as_str(),
+    //         &noms_collections_docs,
+    //         self
+    //     ).await?;
+    //
+    //     Ok(None)
+    // }
 
     async fn regenerer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
@@ -615,14 +615,15 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let noms_collections_docs = self.get_collections_documents();
         //let processor = self.get_processeur_transactions();
 
-        regenerer_operation(
-            middleware.clone(),
-            self.get_nom_domaine().as_str(),
-            self.get_partition(),
-            self.get_collection_transactions().as_str(),
-            &noms_collections_docs,
-            self
-        ).await?;
+        todo!("Fix me");
+        // regenerer_operation(
+        //     middleware.clone(),
+        //     self.get_nom_domaine().as_str(),
+        //     self.get_partition(),
+        //     self.get_collection_transactions().as_str(),
+        //     &noms_collections_docs,
+        //     self
+        // ).await?;
 
         Ok(None)
     }
