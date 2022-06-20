@@ -293,7 +293,7 @@ async fn sauvegarder_catalogue<M>(
     let mut fichier_catalogue = std::fs::File::create(&path_catalogue)?;
 
     let catalogue_signe = middleware.formatter_message(
-        &catalogue, Some("Backup"), None, None, None, false)?;
+        &catalogue, Some("Backup"), Some("backupTransactions"), None, None, false)?;
     serde_json::to_writer(fichier_catalogue, &catalogue_signe)?;
 
     Ok(path_catalogue)
