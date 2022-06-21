@@ -268,11 +268,10 @@ async fn sauvegarder_catalogue<M>(
     path_catalogue.push(format!("catalogue_{}.json", fichiers_generes.len()));
     let fichier_catalogue = std::fs::File::create(&path_catalogue)?;
 
-
     let mut catalogue_signe = middleware.formatter_message(
         &catalogue, Some("Backup"), Some("backupTransactions"), None, None, false)?;
 
-    // Conserver les uuid_transactions separement (pas inclure dans la signature)
+    // Conserver les uuid_transactions separement (ne sont pas inclues dans la signature)
     match catalogue.uuid_transactions {
         Some(u) => {
             catalogue_signe.contenu.insert("_uuid_transactions".into(), serde_json::to_value(&u)?);
@@ -822,6 +821,7 @@ async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
 
         let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
             .exchanges(vec![Securite::L2Prive])
+            .correlation_id(uuid_message_backup.clone())
             .build();
         let reponse = middleware.emettre_message_millegrille(
             routage, true, TypeMessageOut::Commande, message_backup).await?;
