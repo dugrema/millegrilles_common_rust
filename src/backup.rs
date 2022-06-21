@@ -126,7 +126,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
     )?;
 
     let transactions = requete_transactions(middleware, &info_backup).await?;
-    let fichiers_backup = generer_fichiers_backup(middleware, transactions, workdir, &info_backup).await?;
+    let fichiers_backup = generer_fichiers_backup(middleware, transactions, &workdir, &info_backup).await?;
 
     emettre_backup_transactions(middleware, &fichiers_backup).await?;
 
@@ -260,7 +260,7 @@ async fn sauvegarder_catalogue<M>(
     builder.charger_transactions_chiffrees(&path_fichier).await?;  // Charger, hacher transactions
     // Comparer hachages ecrits et lus
     if hachage != builder.data_hachage_bytes {
-        Err(format!("Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon", hachage, builder.data_hachage_bytes))?;
+        Err(format!("sauvegarder_catalogue Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon", hachage, builder.data_hachage_bytes))?;
     }
     let catalogue = builder.build();
     let mut path_catalogue = PathBuf::new();
@@ -271,6 +271,8 @@ async fn sauvegarder_catalogue<M>(
     let catalogue_signe = middleware.formatter_message(
         &catalogue, Some("Backup"), Some("backupTransactions"), None, None, false)?;
     serde_json::to_writer(fichier_catalogue, &catalogue_signe)?;
+
+    debug!("sauvegarder_catalogue Catalogue sauvegarde : {:?}", path_fichier);
 
     Ok(path_catalogue)
 }
@@ -430,7 +432,7 @@ async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collecti
         "$currentDate": {TRANSACTION_CHAMP_BACKUP_HORAIRE: true},
     };
 
-    let r= collection.update_many(filtre, ops, None).await?;
+    let r = collection.update_many(filtre, ops, None).await?;
     if r.matched_count as usize != uuid_transactions.len() {
         Err(format!(
             "Erreur mismatch nombre de transactions maj apres backup : {:?} dans le backup != {:?} mises a jour",

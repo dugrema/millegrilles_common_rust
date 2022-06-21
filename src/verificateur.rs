@@ -81,7 +81,7 @@ where
     let uuid_transaction = &entete.uuid_transaction;
     let certificat = match &message.certificat {
         Some(c) => c.as_ref(),
-        None => Err("Certificat manquant")?,
+        None => Err("Verificateur.verifier_message Certificat manquant")?,
     };
     // let signature = match &message.get_msg().signature {
     //     Some(s) => s.as_str(),
