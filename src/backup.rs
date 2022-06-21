@@ -262,14 +262,24 @@ async fn sauvegarder_catalogue<M>(
     if hachage != builder.data_hachage_bytes {
         Err(format!("sauvegarder_catalogue Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon", hachage, builder.data_hachage_bytes))?;
     }
-    let catalogue = builder.build();
+    let mut catalogue = builder.build();
     let mut path_catalogue = PathBuf::new();
     path_catalogue.push(workir_path);
     path_catalogue.push(format!("catalogue_{}.json", fichiers_generes.len()));
-    let mut fichier_catalogue = std::fs::File::create(&path_catalogue)?;
+    let fichier_catalogue = std::fs::File::create(&path_catalogue)?;
 
-    let catalogue_signe = middleware.formatter_message(
+
+    let mut catalogue_signe = middleware.formatter_message(
         &catalogue, Some("Backup"), Some("backupTransactions"), None, None, false)?;
+
+    // Conserver les uuid_transactions separement (pas inclure dans la signature)
+    match catalogue.uuid_transactions {
+        Some(u) => {
+            catalogue_signe.contenu.insert("_uuid_transactions".into(), serde_json::to_value(&u)?);
+        },
+        None => ()
+    }
+
     serde_json::to_writer(fichier_catalogue, &catalogue_signe)?;
 
     debug!("sauvegarder_catalogue Catalogue sauvegarde : {:?}", path_fichier);
@@ -496,8 +506,8 @@ pub struct CatalogueBackup {
     pub entete: Option<Entete>,
 
     /// Liste des transactions - resultat intermediaire, va etre retiree du fichier final
-    #[serde(rename = "_uuid_transactions")]
-    pub uuid_transactions: Vec<String>,
+    #[serde(skip_serializing)]
+    pub uuid_transactions: Option<Vec<String>>,
 
     /// Enchainement backup precedent
     //backup_precedent: Option<EnteteBackupPrecedent>,
@@ -680,7 +690,7 @@ impl CatalogueBackupBuilder {
             data_hachage_bytes: self.data_hachage_bytes,
             data_transactions: self.data_transactions,
             nombre_transactions: self.uuid_transactions.len(),
-            uuid_transactions: self.uuid_transactions,
+            uuid_transactions: Some(self.uuid_transactions),
 
             entete: None,  // En-tete chargee lors de la deserialization
 
