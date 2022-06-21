@@ -191,6 +191,7 @@ pub const COMMANDE_GLOBAL_BACKUP_HORAIRE: &str = "commande.global.declencherBack
 pub const COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS: &str = "commande.global.restaurerTransactions";
 pub const COMMANDE_GLOBAL_RESET_BACKUP: &str = "commande.global.resetBackup";
 pub const COMMANDE_GLOBAL_REGENERER: &str = "commande.global.regenerer";
+pub const COMMANDE_BACKUP_ROTATION: &str = "rotationBackupTransactions";
 
 // Evenements
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";

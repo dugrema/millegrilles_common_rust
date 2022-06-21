@@ -69,7 +69,7 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
     while let Some(commande) = rx.recv().await {
         let nom_domaine = commande.nom_domaine;
         info!("Debug backup {}", nom_domaine);
-        match backup(middleware.as_ref(), &nom_domaine, commande.nom_collection_transactions).await {
+        match backup(middleware.as_ref(), &nom_domaine, commande.nom_collection_transactions, commande.complet).await {
             Ok(_) => info!("Backup {} OK", nom_domaine),
             Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", nom_domaine, e)
         };
@@ -106,7 +106,7 @@ pub trait BackupStarter {
 }
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T)
+pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T, complet: bool)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
         M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + GenerateurMessages + ConfigMessages + VerificateurMessage,
@@ -114,6 +114,19 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 {
     let nom_coll_str = nom_collection_transactions.as_ref();
     let nom_domaine_str = nom_domaine.as_ref();
+
+    if complet {
+        debug!("Backup complet, on emet commande de rotation des fichiers");
+        let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, COMMANDE_BACKUP_ROTATION)
+            .exchanges(vec![Securite::L2Prive])
+            .build();
+        let commande = json!({});
+        let reponse_rotation = middleware.transmettre_commande(routage, &commande, true).await?;
+        debug!("Reponse rotation : {:?}", reponse_rotation);
+
+        // Reset le flag de backup de toutes les transactions dans mongodb
+        reset_backup_flag(middleware, nom_coll_str).await?;
+    }
 
     // Creer repertoire temporaire de travail pour le backup
     let workdir = tempdir()?;
