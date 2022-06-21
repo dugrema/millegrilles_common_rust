@@ -144,21 +144,21 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 {
     let workir_path = workdir.as_ref();
     let timestamp_backup = Utc::now();
-    debug!("Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
+    debug!("generer_fichiers_backup Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
 
     let mut fichiers_generes: Vec<PathBuf> = Vec::new();
     let mut len_written: usize = 0;
     let mut nb_transactions_written: usize = 0;
     let (mut builder, mut path_fichier) = nouveau_catalogue(workir_path, info_backup, fichiers_generes.len())?;
-    debug!("Creation fichier backup : {:?}", path_fichier);
+    debug!("generer_fichiers_backup Creation fichier backup : {:?}", path_fichier);
     let mut writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
 
     let options_validation = ValidationOptions::new(false, true, true);
     while let Some(doc_transaction) = transactions.try_next().await? {
-        debug!("Traitement transaction {:?}", doc_transaction);
+        debug!("generer_fichiers_backup Traitement transaction {:?}", doc_transaction);
 
         if len_written >= TRANSACTIONS_MAX_SIZE || nb_transactions_written >= TRANSACTIONS_MAX_NB {
-            debug!("Limite transaction par fichier atteinte, on fait une rotation");
+            debug!("generer_fichiers_backup Limite transaction par fichier atteinte, on fait une rotation");
             let path_catalogue = sauvegarder_catalogue(
                 middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
             fichiers_generes.push(path_catalogue.clone());
@@ -176,8 +176,17 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 
         // Verifier la transaction - doit etre completement valide, certificat connu
         let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
+        match middleware.get_certificat(transaction.get_entete().fingerprint_certificat.as_str()).await {
+            Some(c) => transaction.set_certificat(c),
+            None => {
+                let entete = transaction.get_entete();
+                error!("generer_fichiers_backup Certificat inconnu {}, transaction {} *** SKIPPED ***",
+                    entete.fingerprint_certificat, entete.uuid_transaction);
+                continue;
+            }
+        };
         let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
-        debug!("Resultat verification transaction : {:?}", resultat_verification);
+        debug!("generer_fichiers_backup Resultat verification transaction : {:?}", resultat_verification);
 
         let entete = transaction.get_entete();
         let uuid_transaction = entete.uuid_transaction.as_str();
