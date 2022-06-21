@@ -821,7 +821,7 @@ async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
 
         let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
             .exchanges(vec![Securite::L2Prive])
-            .correlation_id(uuid_message_backup.clone())
+            // .correlation_id(uuid_message_backup.clone())
             .build();
         let reponse = middleware.emettre_message_millegrille(
             routage, true, TypeMessageOut::Commande, message_backup).await?;
