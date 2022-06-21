@@ -192,10 +192,12 @@ pub const COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS: &str = "commande.global.restau
 pub const COMMANDE_GLOBAL_RESET_BACKUP: &str = "commande.global.resetBackup";
 pub const COMMANDE_GLOBAL_REGENERER: &str = "commande.global.regenerer";
 
-// Transactions
+// Evenements
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
 pub const EVENEMENT_CEDULE: &str = "cedule";
+pub const EVENEMENT_BACKUP_DECLENCHER: &str = "declencherBackup";
 
+// Transactions
 pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";
 pub const TRANSACTION_CHAMP_UUID_TRANSACTION: &str = "uuid_transaction";
 pub const TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: &str = "en-tete.uuid_transaction";

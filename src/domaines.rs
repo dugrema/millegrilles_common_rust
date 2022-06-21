@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::spawn;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
@@ -512,7 +513,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         where M: Middleware + 'static
     {
         debug!("Consommer evenement trait : {:?}", &message.message);
-        // Autorisation : les evenements (triggers) globaux sont de niveau 4
+        // Autorisation : les evenements triggers globaux sont de niveau 4,
+        //                sauf pour le backup (domaine fichiers, niveau 2)
         // Fallback sur les evenements specifiques au domaine
         match message.verifier_exchanges(vec!(Securite::L4Secure)) {
             true => {
@@ -530,30 +532,45 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     _ => self.consommer_evenement(middleware.as_ref(), message).await
                 }
             },
-            false => self.consommer_evenement(middleware.as_ref(), message).await
+            false => match message.verifier_exchanges(vec!(Securite::L2Prive)) {
+                true => {
+                    match message.domaine.as_str() {
+                        DOMAINE_FICHIERS => match message.action.as_str() {
+                            EVENEMENT_BACKUP_DECLENCHER => self.demarrer_backup(middleware.as_ref(), message).await,
+                            _ => self.consommer_evenement(middleware.as_ref(), message).await
+                        },
+                        _ => self.consommer_evenement(middleware.as_ref(), message).await
+                    }
+                }
+                false => self.consommer_evenement(middleware.as_ref(), message).await
+            }
         }
     }
 
-    async fn verifier_backup_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
-        -> Result<(), Box<dyn Error>>
-        where M: Middleware + 'static
-    {
-        if trigger.flag_heure {
-            info!("verifier_backup_cedule Demarre backup horaire : {:?}", trigger);
-            self.demarrer_backup(middleware).await?;
-        }
+    // async fn verifier_backup_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
+    //     -> Result<(), Box<dyn Error>>
+    //     where M: Middleware + 'static
+    // {
+    //     if trigger.flag_heure {
+    //         info!("verifier_backup_cedule Demarre backup horaire : {:?}", trigger);
+    //         self.demarrer_backup(middleware).await?;
+    //     }
+    //
+    //     Ok(())
+    // }
 
-        Ok(())
-    }
-
-    async fn demarrer_backup<M>(&self, middleware: &M)
+    async fn demarrer_backup<M>(&self, middleware: &M, message: MessageValideAction)
         -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
     {
+
+        let message_backup: MessageBackupTransactions = message.message.parsed.map_contenu(None)?;
+        let complet = match message_backup.complet.as_ref() { Some(v) => v.to_owned(), None => false };
+
         middleware.demarrer_backup(
             self.get_nom_domaine().as_str(),
             self.get_collection_transactions().as_str(),
-            self.chiffrer_backup()
+            complet
         ).await?;
 
         Ok(None)
@@ -577,7 +594,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             true => {
                 match m.action.as_str() {
                     // Commandes standard
-                    COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref()).await,
+                    COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref(), m).await,
                     // COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
                     COMMANDE_RESET_BACKUP => reset_backup_flag(
@@ -627,4 +644,9 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
         Ok(None)
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct MessageBackupTransactions {
+    complet: Option<bool>,
 }

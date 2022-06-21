@@ -68,7 +68,7 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
     while let Some(commande) = rx.recv().await {
         let nom_domaine = commande.nom_domaine;
         info!("Debug backup {}", nom_domaine);
-        match backup(middleware.as_ref(), &nom_domaine, commande.nom_collection_transactions, commande.chiffrer).await {
+        match backup(middleware.as_ref(), &nom_domaine, commande.nom_collection_transactions).await {
             Ok(_) => info!("Backup {} OK", nom_domaine),
             Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", nom_domaine, e)
         };
@@ -79,21 +79,21 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
 pub struct CommandeBackup {
     pub nom_domaine: String,
     pub nom_collection_transactions: String,
-    pub chiffrer: bool,
+    pub complet: bool,
 }
 
 #[async_trait]
 pub trait BackupStarter {
     fn get_tx_backup(&self) -> Sender<CommandeBackup>;
 
-    async fn demarrer_backup<S,T>(&self, nom_domaine: S, nom_collection_transactions: T, chiffrer: bool)
+    async fn demarrer_backup<S,T>(&self, nom_domaine: S, nom_collection_transactions: T, complet: bool)
         -> Result<(), Box<dyn Error>>
         where S: Into<String> + Send, T: Into<String> + Send
     {
         let commande = CommandeBackup {
             nom_domaine: nom_domaine.into(),
             nom_collection_transactions: nom_collection_transactions.into(),
-            chiffrer,
+            complet,
         };
 
         let tx_backup = self.get_tx_backup();
@@ -105,7 +105,7 @@ pub trait BackupStarter {
 }
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T, chiffrer: bool)
+pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
         M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + GenerateurMessages + ConfigMessages,
