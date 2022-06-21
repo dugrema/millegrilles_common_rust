@@ -63,7 +63,7 @@ const TRANSACTIONS_MAX_NB: usize = 1000;  // Limite du nombre de transactions pa
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + GenerateurMessages + ConfigMessages
+    where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + GenerateurMessages + ConfigMessages + VerificateurMessage
 {
     while let Some(commande) = rx.recv().await {
         let nom_domaine = commande.nom_domaine;
@@ -108,7 +108,7 @@ pub trait BackupStarter {
 pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + GenerateurMessages + ConfigMessages,
+        M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + GenerateurMessages + ConfigMessages + VerificateurMessage,
         S: AsRef<str>, T: AsRef<str>,
 {
     let nom_coll_str = nom_collection_transactions.as_ref();
@@ -118,53 +118,18 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
     let workdir = tempdir()?;
     info!("backup.backup Backup horaire de {} vers tmp : {:?}", nom_domaine_str, workdir);
 
-    // S'assurer d'avoir des certificats de maitredescles presentement valide
-    if middleware.get_publickeys_chiffrage().len() < 2 {
-        Err(format!("Certificats de chiffrage non disponibles"))?
-    }
-
-    //middleware.charger_certificats_chiffrage(middleware.get_enveloppe_privee().enveloppe.as_ref()).await?;
-
     let info_backup = BackupInformation::new(
         nom_domaine_str,
         nom_coll_str,
         Some(workdir.path().to_owned())
     )?;
 
-    todo!("Fix me")
-    // let (reponse, flag_erreur) = match backup_horaire(middleware, workdir, nom_coll_str, &info_backup).await {
-    //     Ok(()) => {
-    //         // Emettre trigger pour declencher backup du jour precedent
-    //         let reponse = middleware.formatter_reponse(json!({"ok": true}), None)?;
-    //         (reponse, false)
-    //     },
-    //     Err(e) => {
-    //         error!("Erreur traitement backup : {:?}", e);
-    //         // let timestamp_backup = Utc::now();
-    //         // if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
-    //         //     error!("backup_horaire: Erreur emission evenement debut backup : {:?}", e);
-    //         // }
-    //
-    //         let reponse = middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?;
-    //
-    //         (reponse, true)
-    //     },
-    // };
-    //
-    // // Utiliser flag pour emettre evenement erreur (note : faire hors du match a cause Err not Send)
-    // if flag_erreur {
-    //     let timestamp_backup = Utc::now();
-    //     if let Err(e) = emettre_evenement_backup(middleware, &info_backup, "backupHoraireErreur", &timestamp_backup).await {
-    //         error!("Erreur emission evenement erreur de backup : {:?}", e);
-    //     }
-    //     Err("Erreur backup horaire, voir logs")?
-    // }
-    // // else {
-    // //     debug!("backup Emettre trigger pour backup quotidien : {:?}", &info_backup);
-    // //     trigger_backup_quotidien(middleware, &info_backup).await?;
-    // // }
-    //
-    // Ok(Some(reponse))
+    let transactions = requete_transactions(middleware, &info_backup).await?;
+    let fichiers_backup = generer_fichiers_backup(middleware, transactions, workdir, &info_backup).await?;
+
+    emettre_backup_transactions(middleware, &fichiers_backup).await?;
+
+    Ok(None)
 }
 
 /// Generer les fichiers de backup localement
@@ -809,12 +774,12 @@ async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
     -> Result<(), Box<dyn Error>>
     where
         M: GenerateurMessages,
-        S: AsRef<str>
+        S: TryInto<PathBuf>
 {
     for fichier_ref in fichiers {
-        let fichier = PathBuf::from_str(fichier_ref.as_ref())?;
+        let fichier = fichier_ref.try_into()?;
         debug!("emettre_backup_transactions Traitement fichier {:?}", fichier);
-        let fichier_fp = std::fs::File::open(&fichier)?;
+        let fichier_fp = std::fs::File::open(fichier.as_path())?;
         let mut fichier_reader = std::io::BufReader::new(fichier_fp);
 
         // Charger fichier de backup

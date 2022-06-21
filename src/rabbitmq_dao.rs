@@ -565,6 +565,20 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
                 FieldTable::default()
             ).await.expect("Binding routing key");
         }
+
+        let routing_keys_prive = vec!(
+            // Ecouter les evenements pour le domaine
+            String::from(format!("evenement.{}.{}", DOMAINE_FICHIERS, EVENEMENT_BACKUP_DECLENCHER)),
+        );
+        for rk in routing_keys_prive {
+            let _ = channel.queue_bind(
+                nom_queue,
+                SECURITE_2_PRIVE,
+                &rk,
+                QueueBindOptions::default(),
+                FieldTable::default()
+            ).await.expect("Binding routing key");
+        }
     }
 
     // RK au meme niveau de securite que le module
