@@ -624,6 +624,7 @@ where
             if v.valide() == true {
                 Ok(())
             } else if v.signature_valide == false {
+                error!("verifier_message Signature invalide : {:?}", message);
                 Err(ErreurVerification::SignatureInvalide)
             } else if v.certificat_valide == false {
                 Err(ErreurVerification::CertificatInvalide)
