@@ -189,7 +189,7 @@ impl CurseurStream for CurseurIntoIter {
     }
 }
 
-pub struct CurseurMongo { curseur: Cursor<Document> }
+pub struct CurseurMongo { pub curseur: Cursor<Document> }
 
 #[async_trait]
 impl CurseurStream for CurseurMongo {

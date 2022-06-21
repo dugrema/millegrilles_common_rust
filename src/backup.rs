@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use core::str::FromStr;
 
 use async_std::fs::File;
 use async_std::io::BufReader;
@@ -48,7 +49,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_bytes, hacher_serializable};
 use crate::middleware::IsConfigurationPki;
 use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream, convertir_bson_deserializable};
+use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream, convertir_bson_deserializable, CurseurMongo};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
@@ -114,7 +115,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
     let nom_domaine_str = nom_domaine.as_ref();
 
     // Creer repertoire temporaire de travail pour le backup
-    let workdir = tempfile::tempdir()?;
+    let workdir = tempdir()?;
     info!("backup.backup Backup horaire de {} vers tmp : {:?}", nom_domaine_str, workdir);
 
     // S'assurer d'avoir des certificats de maitredescles presentement valide
@@ -320,22 +321,15 @@ fn nouveau_catalogue<P>(workdir: P, info_backup: &BackupInformation, compteur: u
     Ok((builder, path_fichier))
 }
 
-async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation, builder: &CatalogueBackupBuilder)
-    -> Result<Cursor<Document>, Box<dyn Error>>
+async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation)
+    -> Result<CurseurMongo, Box<dyn Error>>
 {
     let nom_collection = &info.nom_collection_transactions;
     let collection = middleware.get_collection(nom_collection)?;
 
-    let debut_heure = builder.date_backup.get_datetime();
-    let fin_heure = debut_heure.clone() + chrono::Duration::hours(1);
-
-    // Backup heure specifique
-    let doc_transaction_traitee = doc! {"$gte": debut_heure, "$lt": &fin_heure};
-
     let filtre = doc! {
         TRANSACTION_CHAMP_BACKUP_FLAG: false,
         TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
-        TRANSACTION_CHAMP_TRANSACTION_TRAITEE: doc_transaction_traitee,
     };
 
     let sort = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
@@ -346,6 +340,9 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
         .build();
 
     let curseur = collection.find(filtre, find_options).await?;
+
+    // Wrapper dans CurseurMongo
+    let curseur = CurseurMongo { curseur };
 
     Ok(curseur)
 }
@@ -511,12 +508,15 @@ pub struct CatalogueBackup {
     // pub transactions_nomfichier: String,
     pub data_hachage_bytes: String,
     pub data_transactions: String,
-    // pub uuid_transactions: Vec<String>,
     pub nombre_transactions: usize,
 
     /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
     #[serde(rename = "en-tete", skip_serializing)]
     pub entete: Option<Entete>,
+
+    /// Liste des transactions - resultat intermediaire, va etre retiree du fichier final
+    #[serde(rename = "_uuid_transactions")]
+    pub uuid_transactions: Vec<String>,
 
     /// Enchainement backup precedent
     //backup_precedent: Option<EnteteBackupPrecedent>,
@@ -699,6 +699,7 @@ impl CatalogueBackupBuilder {
             data_hachage_bytes: self.data_hachage_bytes,
             data_transactions: self.data_transactions,
             nombre_transactions: self.uuid_transactions.len(),
+            uuid_transactions: self.uuid_transactions,
 
             entete: None,  // En-tete chargee lors de la deserialization
 
@@ -798,6 +799,63 @@ impl TransactionWriter {
     }
 
 }
+
+async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
+    -> Result<(), Box<dyn Error>>
+    where
+        M: GenerateurMessages,
+        S: AsRef<str>
+{
+    for fichier_ref in fichiers {
+        let fichier = PathBuf::from_str(fichier_ref.as_ref())?;
+        debug!("emettre_backup_transactions Traitement fichier {:?}", fichier);
+        let fichier_fp = std::fs::File::open(&fichier)?;
+        let mut fichier_reader = std::io::BufReader::new(fichier_fp);
+
+        // Charger fichier de backup
+        let (message_backup, uuid_transactions) = {
+            let mut message_backup: MessageMilleGrille = serde_json::from_reader(fichier_reader)?;
+            debug!("emettre_backup_transactions Message backup a emettre : {:?}", message_backup);
+
+            // Conserver liste de transactions, retirer du message a emettre
+            let uuid_transactions: Vec<String> = message_backup.map_contenu(Some("_uuid_transactions"))?;
+            message_backup.contenu.remove("_uuid_transactions");
+
+            (message_backup, uuid_transactions)
+        };
+
+        let uuid_message_backup = message_backup.entete.uuid_transaction.clone();
+        debug!("emettre_backup_transactions Emettre transactions dans le backup {} : {:?}", uuid_message_backup, uuid_transactions);
+
+        let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
+            .exchanges(vec![Securite::L2Prive])
+            .build();
+        let reponse = middleware.emettre_message_millegrille(
+            routage, true, TypeMessageOut::Commande, message_backup).await?;
+
+        let reponse = match reponse {
+            Some(r) => match r {
+                TypeMessage::Valide(r) => r,
+                _ => {
+                    error!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup);
+                    continue;
+                }
+            },
+            None => {
+                error!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
+                continue
+            }
+        };
+
+        debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse);
+
+        // Marquer transactions comme etant completees
+        todo!("marques transactions completees")
+    }
+
+    Ok(())
+}
+
 
 /// Genere une nouvelle Part pour un fichier a uploader dans un form multipart
 async fn file_to_part(filename: &str, file: File_tokio) -> Part {
@@ -941,6 +999,7 @@ mod backup_tests {
     use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
     use crate::middleware_db::preparer_middleware_db;
     use crate::chiffrage::MgsCipherData;
+    use crate::generateur_messages::RoutageMessageReponse;
     use crate::mongo_dao::convertir_to_bson;
 
     use super::*;
@@ -1035,6 +1094,62 @@ mod backup_tests {
     }
 
     impl FormatteurMessage for TestChiffreurMgs3 {}
+
+    #[async_trait]
+    impl GenerateurMessages for TestChiffreurMgs3 {
+        async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<(), String> where M: Serialize + Send + Sync {
+            todo!()
+        }
+
+        async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<TypeMessage, String> where M: Serialize + Send + Sync {
+            todo!()
+        }
+
+        async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
+            todo!()
+        }
+
+        async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
+            todo!()
+        }
+
+        async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
+            todo!()
+        }
+
+        async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool) -> Result<Option<TypeMessage>, String> {
+            todo!()
+        }
+
+        async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
+            let json_message = match serde_json::to_string(&message) {
+                Ok(j) => j,
+                Err(e) => Err(format!("emettre_message_millegrille Erreur conversion json : {:?}", e))?
+            };
+            debug!("emettre_message_millegrille(stub) {:?}", json_message);
+            Ok(None)
+        }
+
+        fn mq_disponible(&self) -> bool {
+            todo!()
+        }
+
+        fn set_regeneration(&self) {
+            todo!()
+        }
+
+        fn reset_regeneration(&self) {
+            todo!()
+        }
+
+        fn get_mode_regeneration(&self) -> bool {
+            todo!()
+        }
+
+        fn get_securite(&self) -> &Securite {
+            todo!()
+        }
+    }
 
     #[test]
     fn init_backup_information() {
@@ -1342,6 +1457,32 @@ mod backup_tests {
         let resultat = generer_fichiers_backup(&m, transactions, temp_dir, &info_backup)
             .await.expect("generer_fichiers_backup");
         debug!("Fichiers generes : {:?}", resultat);
+
+    }
+
+    #[tokio::test]
+    async fn test_emettre_fichiers_backup() {
+
+        // Setup
+        let (validateur, enveloppe) = charger_enveloppe_privee_env();
+        let enveloppe = Arc::new(enveloppe);
+        let (fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
+
+        //let temp_dir = tempdir().expect("tempdir");
+        let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
+        match fs::create_dir(&temp_dir).await {
+            Ok(()) => (),
+            Err(e) => {
+                match e.kind() {
+                    ErrorKind::AlreadyExists => (),
+                    _ => panic!("Erreur createdir: {:?}", e)
+                }
+            }
+        }
+
+        let fichiers_backup = vec!["/tmp/test_generer_fichiers_backup/catalogue_0.json"];
+
+        emettre_backup_transactions(&m, &fichiers_backup).await.expect("emettre_backup_transactions");
 
     }
 

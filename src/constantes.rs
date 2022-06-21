@@ -181,6 +181,7 @@ pub const DEFAULT_Q_TTL: u32 = 300000;
 // Domaines tiers
 pub const DOMAINE_APPLICATION_INSTANCE: &str = "instance";
 pub const DOMAINE_SERVICE_MONITOR: &str = DOMAINE_APPLICATION_INSTANCE;
+pub const DOMAINE_FICHIERS: &str = "fichiers";
 
 // Evenements/commandes globaux
 pub const DOMAINE_GLOBAL: &str = "evenement.global.cedule";
