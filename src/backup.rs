@@ -347,104 +347,108 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     Ok(curseur)
 }
 
-async fn uploader_backup<M>(
-    middleware: &M,
-    path_transactions: &Path,
-    catalogue: &CatalogueBackup,
-    catalogue_signe: &MessageMilleGrille,
-    commande_cles: Option<MessageMilleGrille>
-) -> Result<Response, Box<dyn Error>>
-where
-    M: ConfigMessages + IsConfigurationPki,
-{
-    let message_serialise = MessageSerialise::from_parsed(catalogue_signe.clone()).expect("ser");
+// async fn uploader_backup<M>(
+//     middleware: &M,
+//     path_transactions: &Path,
+//     catalogue: &CatalogueBackup,
+//     catalogue_signe: &MessageMilleGrille,
+//     commande_cles: Option<MessageMilleGrille>
+// ) -> Result<Response, Box<dyn Error>>
+// where
+//     M: ConfigMessages + IsConfigurationPki,
+// {
+//     let message_serialise = MessageSerialise::from_parsed(catalogue_signe.clone()).expect("ser");
+//
+//     // Compresser catalogue et commande maitre des cles en XZ
+//     let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
+//     compresseur_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
+//     let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
+//
+//     let commande_bytes = match commande_cles {
+//         Some(c) => {
+//             let message_serialise = MessageSerialise::from_parsed(c).expect("ser");
+//             let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
+//             debug!("Commande maitre cles : {}", message_serialise.get_str());
+//             compresseur_commande.write(message_serialise.get_str().as_bytes()).await.expect("write");
+//             let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
+//
+//             Some(commande_bytes)
+//         },
+//         None => None
+//     };
+//
+//     // let mut path_transactions = workdir.to_owned();
+//     // path_transactions.push(PathBuf::from(catalogue.transactions_nomfichier.as_str()));
+//
+//     if ! path_transactions.exists() {
+//         Err(format!("Fichier {:?} n'existe pas", path_transactions))?;
+//     }
+//
+//     let enveloppe = middleware.get_enveloppe_privee().clone();
+//     let ca_cert_pem = enveloppe.chaine_pem().last().expect("last cert").as_str();
+//     let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+//     let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes())?;
+//
+//     let fichier_transactions_read = File_tokio::open(path_transactions).await?;
+//
+//     // Uploader fichiers et contenu backup
+//     let form = {
+//         let mut form = reqwest::multipart::Form::new()
+//             .text("timestamp_backup", catalogue.date_backup.format_ymdh())
+//             //.part("transactions", file_to_part(catalogue.transactions_nomfichier.as_str(), fichier_transactions_read).await)
+//             .part("catalogue", bytes_to_part(catalogue.catalogue_nomfichier.as_str(), catalogue_bytes, Some("application/xz")));
+//
+//         if let Some(b) = commande_bytes {
+//             form = form.part("cles", bytes_to_part(
+//                 "commande_maitredescles.json", b, Some("text/json")));
+//         }
+//
+//         form
+//     };
+//
+//     let client = reqwest::Client::builder()
+//         .add_root_certificate(root_ca)
+//         .identity(identity)
+//         .https_only(true)
+//         .use_rustls_tls()
+//         .timeout(core::time::Duration::new(20, 0))
+//         .build()?;
+//
+//     let mut url = match middleware.get_configuration_noeud().fichiers_url.as_ref() {
+//         Some(url) => url.to_owned(),
+//         None => {
+//             Err("URL fichiers n'est pas configure pour les backups")?
+//         }
+//     };
+//
+//     let path_commande = format!("backup/domaine/{}", catalogue.catalogue_nomfichier);
+//     url.set_path(path_commande.as_str());
+//
+//     debug!("Url backup : {:?}", url);
+//
+//     let request = client.put(url).multipart(form);
+//
+//     let response = request.send().await?;
+//     debug!("Resultat {} : {:?}", response.status(), response);
+//
+//     Ok(response)
+// }
 
-    // Compresser catalogue et commande maitre des cles en XZ
-    let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
-    compresseur_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
-    let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
-
-    let commande_bytes = match commande_cles {
-        Some(c) => {
-            let message_serialise = MessageSerialise::from_parsed(c).expect("ser");
-            let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
-            debug!("Commande maitre cles : {}", message_serialise.get_str());
-            compresseur_commande.write(message_serialise.get_str().as_bytes()).await.expect("write");
-            let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
-
-            Some(commande_bytes)
-        },
-        None => None
-    };
-
-    // let mut path_transactions = workdir.to_owned();
-    // path_transactions.push(PathBuf::from(catalogue.transactions_nomfichier.as_str()));
-
-    if ! path_transactions.exists() {
-        Err(format!("Fichier {:?} n'existe pas", path_transactions))?;
-    }
-
-    let enveloppe = middleware.get_enveloppe_privee().clone();
-    let ca_cert_pem = enveloppe.chaine_pem().last().expect("last cert").as_str();
-    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
-    let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes())?;
-
-    let fichier_transactions_read = File_tokio::open(path_transactions).await?;
-
-    // Uploader fichiers et contenu backup
-    let form = {
-        let mut form = reqwest::multipart::Form::new()
-            .text("timestamp_backup", catalogue.date_backup.format_ymdh())
-            //.part("transactions", file_to_part(catalogue.transactions_nomfichier.as_str(), fichier_transactions_read).await)
-            .part("catalogue", bytes_to_part(catalogue.catalogue_nomfichier.as_str(), catalogue_bytes, Some("application/xz")));
-
-        if let Some(b) = commande_bytes {
-            form = form.part("cles", bytes_to_part(
-                "commande_maitredescles.json", b, Some("text/json")));
-        }
-
-        form
-    };
-
-    let client = reqwest::Client::builder()
-        .add_root_certificate(root_ca)
-        .identity(identity)
-        .https_only(true)
-        .use_rustls_tls()
-        .timeout(core::time::Duration::new(20, 0))
-        .build()?;
-
-    let mut url = match middleware.get_configuration_noeud().fichiers_url.as_ref() {
-        Some(url) => url.to_owned(),
-        None => {
-            Err("URL fichiers n'est pas configure pour les backups")?
-        }
-    };
-
-    let path_commande = format!("backup/domaine/{}", catalogue.catalogue_nomfichier);
-    url.set_path(path_commande.as_str());
-
-    debug!("Url backup : {:?}", url);
-
-    let request = client.put(url).multipart(form);
-
-    let response = request.send().await?;
-    debug!("Resultat {} : {:?}", response.status(), response);
-
-    Ok(response)
-}
-
-async fn marquer_transaction_backup_complete(middleware: &dyn MongoDao, nom_collection: &str,
-                                             catalogue_horaire: &CatalogueBackup,
-                                             uuid_transactions: &Vec<String>)
-                                             -> Result<(), Box<dyn Error>>
+async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collection_ref: S, uuid_transactions_ref: &Vec<T>)
+    -> Result<(), Box<dyn Error>>
+    where
+        M: MongoDao,
+        S: AsRef<str>,
+        T: AsRef<str>
 {
     // debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, catalogue_horaire.uuid_transactions);
+    let uuid_transactions: Vec<&str> = uuid_transactions_ref.iter().map(|s| s.as_ref()).collect();
+    let nom_collection = nom_collection_ref.as_ref();
     debug!("Set flag backup pour transactions de {} : {:?}", nom_collection, uuid_transactions);
 
     let collection = middleware.get_collection(nom_collection)?;
     let filtre = doc! {
-        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: {"$in": uuid_transactions}
+        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: {"$in": &uuid_transactions}
     };
     let ops = doc! {
         "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: true},
@@ -800,6 +804,7 @@ impl TransactionWriter {
 
 }
 
+/// Emet une liste de backup de transactions.
 async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
     -> Result<(), Box<dyn Error>>
     where
