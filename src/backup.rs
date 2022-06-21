@@ -128,7 +128,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
     let transactions = requete_transactions(middleware, &info_backup).await?;
     let fichiers_backup = generer_fichiers_backup(middleware, transactions, &workdir, &info_backup).await?;
 
-    emettre_backup_transactions(middleware, &fichiers_backup).await?;
+    emettre_backup_transactions(middleware, nom_coll_str, &fichiers_backup).await?;
 
     Ok(None)
 }
@@ -791,11 +791,12 @@ impl TransactionWriter {
 }
 
 /// Emet une liste de backup de transactions.
-async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
+async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_transactions: T, fichiers: &Vec<S>)
     -> Result<(), Box<dyn Error>>
     where
-        M: GenerateurMessages,
-        S: AsRef<Path>
+        M: GenerateurMessages + MongoDao,
+        S: AsRef<Path>,
+        T: AsRef<str>
 {
     for fichier_ref in fichiers {
         let fichier = fichier_ref.as_ref();
@@ -843,7 +844,10 @@ async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
         debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse);
 
         // Marquer transactions comme etant completees
-        todo!("marques transactions completees")
+        marquer_transaction_backup_complete(
+            middleware,
+            nom_collection_transactions.as_ref(),
+            &uuid_transactions).await?;
     }
 
     Ok(())
@@ -986,6 +990,7 @@ mod backup_tests {
     use crate::test_setup::setup;
     use chrono::TimeZone;
     use futures::io::BufReader;
+    use mongodb::Database;
     use openssl::x509::store::X509Store;
     use openssl::x509::X509;
     use crate::backup_restoration::TransactionReader;
@@ -1087,6 +1092,12 @@ mod backup_tests {
     }
 
     impl FormatteurMessage for TestChiffreurMgs3 {}
+
+    impl MongoDao for TestChiffreurMgs3 {
+        fn get_database(&self) -> Result<Database, String> {
+            todo!()
+        }
+    }
 
     #[async_trait]
     impl GenerateurMessages for TestChiffreurMgs3 {
@@ -1475,7 +1486,8 @@ mod backup_tests {
 
         let fichiers_backup = vec!["/tmp/test_generer_fichiers_backup/catalogue_0.json"];
 
-        emettre_backup_transactions(&m, &fichiers_backup).await.expect("emettre_backup_transactions");
+        emettre_backup_transactions(&m, "DUMMY_COLLECTION", &fichiers_backup)
+            .await.expect("emettre_backup_transactions");
 
     }
 
