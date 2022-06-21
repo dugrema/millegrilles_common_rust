@@ -240,8 +240,12 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
         }
     }
 
-    let path_catalogue = sauvegarder_catalogue(middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
-    fichiers_generes.push(path_catalogue.clone());
+    if builder.uuid_transactions.len() > 0 {
+        let path_catalogue = sauvegarder_catalogue(middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
+        fichiers_generes.push(path_catalogue.clone());
+    } else {
+        debug!("generer_fichiers_backup Fichier de backup vide, on skip");
+    }
 
     Ok(fichiers_generes)
 }
