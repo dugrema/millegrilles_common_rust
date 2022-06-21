@@ -177,15 +177,22 @@ pub fn verifier_erreur_duplication_mongo(kind: &ErrorKind) -> bool {
 
 #[async_trait]
 pub trait CurseurStream {
-    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>>;
+    async fn try_next(&mut self) -> Result<Option<Document>, String>;
+    async fn next(&mut self) -> Option<Result<Document, String>>;
 }
 
 pub struct CurseurIntoIter { pub data: IntoIter<Document> }
 
 #[async_trait]
 impl CurseurStream for CurseurIntoIter {
-    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
+    async fn try_next(&mut self) -> Result<Option<Document>, String> {
         Ok(self.data.next())
+    }
+    async fn next(&mut self) -> Option<Result<Document, String>> {
+        match self.data.next() {
+            Some(v) => Some(Ok(v)),
+            None => None
+        }
     }
 }
 
@@ -193,7 +200,19 @@ pub struct CurseurMongo { pub curseur: Cursor<Document> }
 
 #[async_trait]
 impl CurseurStream for CurseurMongo {
-    async fn try_next(&mut self) -> Result<Option<Document>, Box<dyn Error>> {
-        Ok(self.curseur.try_next().await?)
+    async fn try_next(&mut self) -> Result<Option<Document>, String> {
+        match self.curseur.try_next().await {
+            Ok(r) => Ok(r),
+            Err(e) => Err(format!("CurseurStream.try_next erreur {:?}", e))
+        }
+    }
+    async fn next(&mut self) -> Option<Result<Document, String>> {
+        match self.curseur.next().await {
+            Some(d) => match d {
+                Ok(r) => Some(Ok(r)),
+                Err(e) => Some(Err(format!("CurseurStream.next erreur {:?}", e)))
+            },
+            None => None
+        }
     }
 }

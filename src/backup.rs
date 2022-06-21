@@ -8,6 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use core::str::FromStr;
+use std::ffi::OsStr;
 
 use async_std::fs::File;
 use async_std::io::BufReader;
@@ -774,16 +775,17 @@ async fn emettre_backup_transactions<M,S>(middleware: &M, fichiers: &Vec<S>)
     -> Result<(), Box<dyn Error>>
     where
         M: GenerateurMessages,
-        S: TryInto<PathBuf>
+        S: AsRef<Path>
 {
     for fichier_ref in fichiers {
-        let fichier = fichier_ref.try_into()?;
+        let fichier = fichier_ref.as_ref();
         debug!("emettre_backup_transactions Traitement fichier {:?}", fichier);
-        let fichier_fp = std::fs::File::open(fichier.as_path())?;
-        let mut fichier_reader = std::io::BufReader::new(fichier_fp);
 
         // Charger fichier de backup
         let (message_backup, uuid_transactions) = {
+            let fichier_fp = std::fs::File::open(fichier)?;
+            let mut fichier_reader = std::io::BufReader::new(fichier_fp);
+
             let mut message_backup: MessageMilleGrille = serde_json::from_reader(fichier_reader)?;
             debug!("emettre_backup_transactions Message backup a emettre : {:?}", message_backup);
 
