@@ -120,7 +120,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
         let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, COMMANDE_BACKUP_ROTATION)
             .exchanges(vec![Securite::L2Prive])
             .build();
-        let commande = json!({});
+        let commande = json!({"domaine": nom_domaine_str});
         let reponse_rotation = middleware.transmettre_commande(routage, &commande, true).await?;
         debug!("Reponse rotation : {:?}", reponse_rotation);
 
