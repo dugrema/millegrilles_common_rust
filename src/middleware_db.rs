@@ -310,6 +310,16 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareDb {
             for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
                 guard.insert(fp.fingerprint.clone(), fp.clone());
             }
+
+            // S'assurer d'avoir le certificat de millegrille local
+            let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+            let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
+            let public_keys_ca = enveloppe_ca.fingerprint_cert_publickeys()?.pop();
+            if let Some(pk_ca) = public_keys_ca {
+                guard.insert(pk_ca.fingerprint.clone(), pk_ca);
+            }
+
+            debug!("Certificats chiffrage maj {:?}", guard);
         }
 
         Ok(())
