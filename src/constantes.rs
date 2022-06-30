@@ -197,6 +197,7 @@ pub const COMMANDE_BACKUP_ROTATION: &str = "rotationBackupTransactions";
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
 pub const EVENEMENT_CEDULE: &str = "cedule";
 pub const EVENEMENT_BACKUP_DECLENCHER: &str = "declencherBackup";
+pub const EVENEMENT_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
 
 // Transactions
 pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";
@@ -278,6 +279,7 @@ pub const BACKUP_CHAMP_BACKUP_TRANSACTIONS: &str = "backup_transactions";
 
 pub const COMMANDE_BACKUP_HORAIRE: &str = "declencherBackupHoraire";
 pub const COMMANDE_BACKUP_QUOTIDIEN: &str = "declencherBackupQuotidien";
+pub const COMMANDE_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
 pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";
 pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";
 pub const COMMANDE_REGENERER: &str = "regenerer";

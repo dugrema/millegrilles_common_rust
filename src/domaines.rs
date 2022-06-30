@@ -16,14 +16,15 @@ use crate::backup::reset_backup_flag;
 use crate::certificats::ValidateurX509;
 use crate::certificats::VerificateurPermissions;
 use crate::constantes::*;
-use crate::formatteur_messages::{MessageMilleGrille};
+use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
 use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction};
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch};
+use crate::verificateur::ValidationOptions;
 
 #[async_trait]
 pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
@@ -529,6 +530,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
                     },
+                    EVENEMENT_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), message).await,
                     _ => self.consommer_evenement(middleware.as_ref(), message).await
                 }
             },
@@ -541,8 +543,16 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         },
                         _ => self.consommer_evenement(middleware.as_ref(), message).await
                     }
+                },
+                false => match message.verifier_exchanges(vec!(Securite::L3Protege)) {
+                    true => {
+                        match message.domaine.as_str() {
+                            EVENEMENT_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), message).await,
+                            _ => self.consommer_evenement(middleware.as_ref(), message).await
+                        }
+                    },
+                    false => self.consommer_evenement(middleware.as_ref(), message).await
                 }
-                false => self.consommer_evenement(middleware.as_ref(), message).await
             }
         }
     }
@@ -576,8 +586,44 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         Ok(None)
     }
 
+    /// Sauvegarde une transaction restauree dans la collection du domaine.
+    /// Si la transaction existe deja (par en-tete.uuid_transaction), aucun effet.
+    async fn restaurer_transaction<M>(&self, middleware: &M, message: MessageValideAction)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        debug!("restaurer_transaction {:?}", message);
+        let message_restauration: MessageRestaurerTransaction = message.message.parsed.map_contenu(None)?;
+        let transaction = message_restauration.transaction;
+        let mut message_serialise = MessageSerialise::from_parsed(transaction)?;
+
+        let fingerprint_certificat = message_serialise.get_entete().fingerprint_certificat.as_str();
+        let certificat: &Vec<String> = match &message_serialise.parsed.certificat {
+            Some(c) => c,
+            None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?
+        };
+        debug!("Certificat message : {:?}", certificat);
+        let enveloppe = middleware.charger_enveloppe(certificat, Some(fingerprint_certificat), None).await?;
+        message_serialise.set_certificat(enveloppe);
+
+        let validation_options = ValidationOptions::new(true, true, true);
+        let resultat_verification = middleware.verifier_message(&mut message_serialise, Some(&validation_options))?;
+        debug!("restaurer_transaction Resultat verification : {:?}", resultat_verification);
+
+        if ! resultat_verification.valide() {
+            Err(format!("domaines.restaurer_transaction Transaction invalide - ** SKIP **"))?;
+        }
+
+        // Conserver la transaction
+        // let transaction_doc = TransactionImpl::try_from(message_serialise)?;
+        let resultat_batch = sauvegarder_batch(middleware, self.get_collection_transactions().as_str(), vec![message_serialise.parsed]).await?;
+        debug!("domaines.restaurer_transaction Resultat batch sauvegarde : {:?}", resultat_batch);
+
+        Ok(None)
+    }
+
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
-    async fn consommer_commande_trait<M>(&self, middleware: Arc<M>, m: MessageValideAction)
+    async fn consommer_commande_trait<M>(self: &'static Self, middleware: Arc<M>, m: MessageValideAction)
         -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
     {
@@ -604,7 +650,15 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     _ => self.consommer_commande(middleware.as_ref(), m).await
                 }
             },
-            false => self.consommer_commande(middleware.as_ref(), m).await
+            false => match m.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure)) {
+                true => {
+                    match m.action.as_str() {
+                        COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), m).await,
+                        _ => self.consommer_evenement(middleware.as_ref(), m).await
+                    }
+                },
+                false => self.consommer_commande(middleware.as_ref(), m).await
+            }
         }
     }
 
@@ -649,4 +703,9 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 #[derive(Clone, Debug, Deserialize)]
 struct MessageBackupTransactions {
     complet: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct MessageRestaurerTransaction {
+    transaction: MessageMilleGrille,
 }
