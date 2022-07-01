@@ -54,7 +54,7 @@ use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream, convertir_bson_
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
-use crate::transactions::{regenerer, sauvegarder_batch, TraiterTransaction};
+use crate::transactions::{regenerer, sauvegarder_batch};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 // Max size des transactions, on tente de limiter la taille finale du message
@@ -350,93 +350,6 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     Ok(curseur)
 }
 
-// async fn uploader_backup<M>(
-//     middleware: &M,
-//     path_transactions: &Path,
-//     catalogue: &CatalogueBackup,
-//     catalogue_signe: &MessageMilleGrille,
-//     commande_cles: Option<MessageMilleGrille>
-// ) -> Result<Response, Box<dyn Error>>
-// where
-//     M: ConfigMessages + IsConfigurationPki,
-// {
-//     let message_serialise = MessageSerialise::from_parsed(catalogue_signe.clone()).expect("ser");
-//
-//     // Compresser catalogue et commande maitre des cles en XZ
-//     let mut compresseur_catalogue = CompresseurBytes::new().expect("compresseur");
-//     compresseur_catalogue.write(message_serialise.get_str().as_bytes()).await.expect("write");
-//     let (catalogue_bytes, _) = compresseur_catalogue.fermer().expect("finish");
-//
-//     let commande_bytes = match commande_cles {
-//         Some(c) => {
-//             let message_serialise = MessageSerialise::from_parsed(c).expect("ser");
-//             let mut compresseur_commande = CompresseurBytes::new().expect("compresseur");
-//             debug!("Commande maitre cles : {}", message_serialise.get_str());
-//             compresseur_commande.write(message_serialise.get_str().as_bytes()).await.expect("write");
-//             let (commande_bytes, _) = compresseur_commande.fermer().expect("finish");
-//
-//             Some(commande_bytes)
-//         },
-//         None => None
-//     };
-//
-//     // let mut path_transactions = workdir.to_owned();
-//     // path_transactions.push(PathBuf::from(catalogue.transactions_nomfichier.as_str()));
-//
-//     if ! path_transactions.exists() {
-//         Err(format!("Fichier {:?} n'existe pas", path_transactions))?;
-//     }
-//
-//     let enveloppe = middleware.get_enveloppe_privee().clone();
-//     let ca_cert_pem = enveloppe.chaine_pem().last().expect("last cert").as_str();
-//     let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
-//     let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes())?;
-//
-//     let fichier_transactions_read = File_tokio::open(path_transactions).await?;
-//
-//     // Uploader fichiers et contenu backup
-//     let form = {
-//         let mut form = reqwest::multipart::Form::new()
-//             .text("timestamp_backup", catalogue.date_backup.format_ymdh())
-//             //.part("transactions", file_to_part(catalogue.transactions_nomfichier.as_str(), fichier_transactions_read).await)
-//             .part("catalogue", bytes_to_part(catalogue.catalogue_nomfichier.as_str(), catalogue_bytes, Some("application/xz")));
-//
-//         if let Some(b) = commande_bytes {
-//             form = form.part("cles", bytes_to_part(
-//                 "commande_maitredescles.json", b, Some("text/json")));
-//         }
-//
-//         form
-//     };
-//
-//     let client = reqwest::Client::builder()
-//         .add_root_certificate(root_ca)
-//         .identity(identity)
-//         .https_only(true)
-//         .use_rustls_tls()
-//         .timeout(core::time::Duration::new(20, 0))
-//         .build()?;
-//
-//     let mut url = match middleware.get_configuration_noeud().fichiers_url.as_ref() {
-//         Some(url) => url.to_owned(),
-//         None => {
-//             Err("URL fichiers n'est pas configure pour les backups")?
-//         }
-//     };
-//
-//     let path_commande = format!("backup/domaine/{}", catalogue.catalogue_nomfichier);
-//     url.set_path(path_commande.as_str());
-//
-//     debug!("Url backup : {:?}", url);
-//
-//     let request = client.put(url).multipart(form);
-//
-//     let response = request.send().await?;
-//     debug!("Resultat {} : {:?}", response.status(), response);
-//
-//     Ok(response)
-// }
-
 async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collection_ref: S, uuid_transactions_ref: &Vec<T>)
     -> Result<(), Box<dyn Error>>
     where
@@ -628,15 +541,6 @@ impl CatalogueBackupBuilder {
     fn set_cles(&mut self, cles: &Mgs3CipherKeys) {
         self.cles = Some(cles.clone());
     }
-
-    // fn get_nomfichier_catalogue(&self) -> PathBuf {
-    //     let mut date_str = self.heure.format_ymdh();
-    //     match self.snapshot {
-    //         true => date_str = format!("{}-SNAPSHOT", date_str),
-    //         false => (),
-    //     }
-    //     PathBuf::from(format!("{}_{}.json.xz", &self.nom_domaine, date_str))
-    // }
 
     async fn charger_transactions_chiffrees(&mut self, path_fichier: &Path) -> Result<(), Box<dyn Error>> {
         let mut data = Vec::new();
@@ -973,27 +877,6 @@ pub async fn emettre_evenement_regeneration<M>(
 
     Ok(middleware.emettre_evenement(routage, &value).await?)
 }
-
-// def transmettre_evenement_backup(self, uuid_rapport: str, evenement: str, heure: datetime.datetime, info: dict = None, sousdomaine: str = None):
-//     if sousdomaine is None:
-//         sousdomaine = self._nom_domaine
-//
-//     evenement_contenu = {
-//         ConstantesBackup.CHAMP_UUID_RAPPORT: uuid_rapport,
-//         Constantes.EVENEMENT_MESSAGE_EVENEMENT: evenement,
-//         ConstantesBackup.LIBELLE_DOMAINE: sousdomaine,
-//         Constantes.EVENEMENT_MESSAGE_EVENEMENT_TIMESTAMP: int(heure.timestamp()),
-//         ConstantesBackup.LIBELLE_SECURITE: self.__niveau_securite,
-//     }
-//     if info:
-//         evenement_contenu['info'] = info
-//
-//     domaine = 'evenement.Backup.' + ConstantesBackup.EVENEMENT_BACKUP_MAJ
-//
-//     self._contexte.generateur_transactions.emettre_message(
-//         evenement_contenu, domaine, exchanges=[Constantes.SECURITE_PROTEGE]
-//     )
-
 
 #[cfg(test)]
 mod backup_tests {

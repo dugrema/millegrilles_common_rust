@@ -23,7 +23,7 @@ use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch};
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation};
 use crate::verificateur::ValidationOptions;
 
 #[async_trait]
@@ -331,9 +331,6 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 QueueType::ReplyQueue(_) => (),
             }
         }
-        // routing.insert(String::from(self.get_q_transactions()), tx_messages.clone());
-        // routing.insert(String::from(self.get_q_volatils()), tx_messages.clone());
-        // routing.insert(String::from(self.get_q_triggers()), tx_triggers.clone());
 
         // Mapping par domaine (routing key)
         routing.insert(String::from(self.get_nom_domaine()), tx_messages.clone());
@@ -548,18 +545,6 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
     }
 
-    // async fn verifier_backup_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
-    //     -> Result<(), Box<dyn Error>>
-    //     where M: Middleware + 'static
-    // {
-    //     if trigger.flag_heure {
-    //         info!("verifier_backup_cedule Demarre backup horaire : {:?}", trigger);
-    //         self.demarrer_backup(middleware).await?;
-    //     }
-    //
-    //     Ok(())
-    // }
-
     async fn demarrer_backup<M>(&self, middleware: &M, message: MessageValideAction)
         -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
@@ -654,39 +639,17 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
     }
 
-    // async fn restaurer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-    //     where M: Middleware + 'static
-    // {
-    //     let noms_collections_docs = self.get_collections_documents();
-    //     //let processor = self.get_processeur_transactions();
-    //
-    //     restaurer(
-    //         middleware.clone(),
-    //         self.get_nom_domaine().as_str(),
-    //         self.get_partition(),
-    //         self.get_collection_transactions().as_str(),
-    //         &noms_collections_docs,
-    //         self
-    //     ).await?;
-    //
-    //     Ok(None)
-    // }
-
     async fn regenerer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
     {
         let noms_collections_docs = self.get_collections_documents();
-        //let processor = self.get_processeur_transactions();
 
-        todo!("Fix me");
-        // regenerer_operation(
-        //     middleware.clone(),
-        //     self.get_nom_domaine().as_str(),
-        //     self.get_partition(),
-        //     self.get_collection_transactions().as_str(),
-        //     &noms_collections_docs,
-        //     self
-        // ).await?;
+        regenerer_operation(
+            middleware.as_ref(),
+            self.get_collection_transactions().as_str(),
+            &noms_collections_docs,
+            self
+        ).await?;
 
         Ok(None)
     }

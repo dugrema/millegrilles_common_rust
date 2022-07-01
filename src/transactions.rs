@@ -618,58 +618,20 @@ where
 {
     while let Some(result) = curseur.next().await {
         let transaction = result?;
-        // let message = MessageSerialise::from_serializable(transaction)?;
 
         let entete = match get_entete_from_doc(&transaction) {
             Ok(t) => t,
             Err(_e) => {
-                error!("Erreur transaction chargement en-tete");
+                error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
                 continue  // Skip
             }
         };
-        let uuid_transaction = entete.uuid_transaction.as_str();
 
-        // let entete = message.get_entete();
-        debug!("Message serialise charge : {:?}", uuid_transaction);
+        let uuid_transaction = entete.uuid_transaction.as_str();
+        debug!("regenerer_transactions Traiter transaction : {:?}", uuid_transaction);
 
         let certificat = middleware.get_certificat(entete.fingerprint_certificat.as_str()).await;
-
-        //
-        // let (uuid_transaction, domaine, action) = match entete.domaine.as_ref() {
-        //     Some(inner_domaine) => {
-        //         let uuid_transaction = entete.uuid_transaction.to_owned();
-        //         let action = match &entete.action {
-        //             Some(a) => a.to_owned(),
-        //             None => {
-        //                 error!("Erreur chargement transaction, entete sans action : {:?}", entete);
-        //                 continue;  // Skip
-        //             },
-        //         };
-        //         (uuid_transaction, inner_domaine.to_owned(), action)
-        //     },
-        //     None => {
-        //         warn!("Transaction sans domaine - invalide: {:?}", message);
-        //         continue  // Skip
-        //     }
-        // };
-        //
-        // debug!("Preparer MessageValideAction");
-        //
-        // let transaction_prep = MessageValideAction {
-        //     message,
-        //     reply_q: None,
-        //     correlation_id: Some(uuid_transaction.to_owned()),
-        //     routing_key: String::from("regeneration"),
-        //     domaine,
-        //     action,
-        //     exchange: None,
-        //     type_message: TypeMessageOut::Transaction,
-        // };
-
         let transaction_impl = TransactionImpl::new(transaction, certificat);
-
-        debug!("Traiter transaction");
-
         processor.appliquer_transaction(middleware, transaction_impl).await?;
     }
 
