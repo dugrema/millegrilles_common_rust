@@ -530,7 +530,6 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
                     },
-                    EVENEMENT_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), message).await,
                     _ => self.consommer_evenement(middleware.as_ref(), message).await
                 }
             },
@@ -544,15 +543,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         _ => self.consommer_evenement(middleware.as_ref(), message).await
                     }
                 },
-                false => match message.verifier_exchanges(vec!(Securite::L3Protege)) {
-                    true => {
-                        match message.domaine.as_str() {
-                            EVENEMENT_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), message).await,
-                            _ => self.consommer_evenement(middleware.as_ref(), message).await
-                        }
-                    },
-                    false => self.consommer_evenement(middleware.as_ref(), message).await
-                }
+                false => self.consommer_evenement(middleware.as_ref(), message).await
             }
         }
     }
@@ -654,6 +645,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 true => {
                     match m.action.as_str() {
                         COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), m).await,
+                        COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
                         _ => self.consommer_evenement(middleware.as_ref(), m).await
                     }
                 },
