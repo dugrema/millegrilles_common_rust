@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, error, warn};
+use log::{debug, info, error, warn};
 use mongodb::{bson::doc, Collection, Cursor};
 use mongodb::bson as bson;
 use mongodb::bson::{Bson, Document};
@@ -569,6 +569,8 @@ where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
     T: TraiterTransaction,
 {
+    debug!("transactions.regenerer Regenerer {:?}", nom_collection_transactions);
+
     // Supprimer contenu des collections
     for nom_collection in noms_collections_docs {
         let collection = middleware.get_collection(nom_collection.as_str())?;
@@ -598,6 +600,7 @@ where
 
     // Executer toutes les transactions du curseur en ordre
     let resultat = regenerer_transactions(middleware, &mut resultat_transactions, processor).await;
+    info!("transactions.regenerer Resultat regenerer {:?} = {:?}", nom_collection_transactions, resultat);
 
     middleware.reset_regeneration(); // Reactiver emission de messages
 
@@ -632,7 +635,10 @@ where
 
         let certificat = middleware.get_certificat(entete.fingerprint_certificat.as_str()).await;
         let transaction_impl = TransactionImpl::new(transaction, certificat);
-        processor.appliquer_transaction(middleware, transaction_impl).await?;
+        match processor.appliquer_transaction(middleware, transaction_impl).await {
+            Ok(_resultat) => (),
+            Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", uuid_transaction, e)
+        }
     }
 
     Ok(())

@@ -631,7 +631,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     match m.action.as_str() {
                         COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), m).await,
                         COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
-                        _ => self.consommer_evenement(middleware.as_ref(), m).await
+                        _ => self.consommer_commande(middleware.as_ref(), m).await
                     }
                 },
                 false => self.consommer_commande(middleware.as_ref(), m).await
