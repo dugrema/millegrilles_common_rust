@@ -151,7 +151,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, workdir: P, info_backup: &BackupInformation)
     -> Result<Vec<PathBuf>, Box<dyn Error>>
     where
-        M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + VerificateurMessage,
+        M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + VerificateurMessage + GenerateurMessages,
         S: CurseurStream,
         P: AsRef<Path>
 {
@@ -189,13 +189,74 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 
         // Verifier la transaction - doit etre completement valide, certificat connu
         let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
-        match middleware.get_certificat(transaction.get_entete().fingerprint_certificat.as_str()).await {
+        let fingerprint_certificat = transaction.get_entete().fingerprint_certificat.as_str();
+        match middleware.get_certificat(fingerprint_certificat).await {
             Some(c) => transaction.set_certificat(c),
             None => {
+                info!("Certificat {} n'est pas dans le cache. On fait une requete vers CorePki", fingerprint_certificat);
+                let requete = json!({"fingerprint": fingerprint_certificat});
+                let routage = RoutageMessageAction::builder(PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT)
+                    .exchanges(vec![Securite::L3Protege])
+                    .build();
+
                 let entete = transaction.get_entete();
-                error!("generer_fichiers_backup Certificat inconnu {}, transaction {} *** SKIPPED ***",
-                    entete.fingerprint_certificat, entete.uuid_transaction);
-                continue;
+
+                let reponse = match middleware.transmettre_requete(routage, &requete).await {
+                    Ok(c) => match c {
+                        TypeMessage::Valide(c) => {
+                            match c.message.get_msg().map_contenu::<ReponseCertificat>(None) {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: {:?}) *** SKIPPED ***",
+                                        entete.fingerprint_certificat, entete.uuid_transaction, e);
+                                    continue;
+                                }
+                            }
+                        },
+                        _ => {
+                            error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: Mauvais type reponse) *** SKIPPED ***",
+                                    entete.fingerprint_certificat, entete.uuid_transaction);
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: {:?}) *** SKIPPED ***",
+                                            entete.fingerprint_certificat, entete.uuid_transaction, e);
+                        continue;
+                    }
+                };
+
+                if let Some(ok) = reponse.ok {
+                    if ok == false {
+                        error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: Reponse CorePki: Certificat inconnu) *** SKIPPED ***",
+                            entete.fingerprint_certificat, entete.uuid_transaction);
+                        continue;
+                    }
+                }
+
+                match reponse.chaine_pem {
+                    Some(c) => {
+                        // Charger le certificat
+                        match middleware.charger_enveloppe(&c, Some(fingerprint_certificat), None).await {
+                            Ok(e) => transaction.set_certificat(e),  // OK, certificat recu
+                            Err(e) => {
+                                error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: {:?}) *** SKIPPED ***",
+                                    entete.fingerprint_certificat, entete.uuid_transaction, e);
+                                continue;
+                            }
+                        }
+                    },
+                    None => {
+                        error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: Reponse CorePki: chaine_pem vide) *** SKIPPED ***",
+                            entete.fingerprint_certificat, entete.uuid_transaction);
+                        continue;
+                    }
+                }
+
+                // let entete = transaction.get_entete();
+                // error!("generer_fichiers_backup Certificat inconnu {}, transaction {} *** SKIPPED ***",
+                //     entete.fingerprint_certificat, entete.uuid_transaction);
+                // continue;
             }
         };
         let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
@@ -880,6 +941,12 @@ pub async fn emettre_evenement_regeneration<M>(
         .build();
 
     Ok(middleware.emettre_evenement(routage, &value).await?)
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ReponseCertificat {
+    ok: Option<bool>,
+    chaine_pem: Option<Vec<String>>,
 }
 
 #[cfg(test)]

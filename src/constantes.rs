@@ -233,14 +233,14 @@ pub const CHAMP_SECURITE: &str = "securite";
 
 // Certificats, PKI
 // pub const PKI_DOMAINE_LEGACY_NOM: &str = "Pki";
-// pub const PKI_DOMAINE_NOM: &str = "CorePki";
+pub const PKI_DOMAINE_NOM: &str = "CorePki";
 // // pub const PKI_DOMAINE_CERTIFICAT_NOM: &str = "certificat";
 // pub const PKI_COLLECTION_TRANSACTIONS_NOM: &str = PKI_DOMAINE_NOM;
 // pub const PKI_COLLECTION_CERTIFICAT_NOM: &str = "CorePki/certificat";
 //
 // pub const PKI_EVENEMENT_CERTIFICAT: &str = "certificat.infoCertificat";
 //
-// pub const PKI_REQUETE_CERTIFICAT: &str = "infoCertificat";
+pub const PKI_REQUETE_CERTIFICAT: &str = "infoCertificat";
 // pub const PKI_REQUETE_CERTIFICAT_PAR_PK: &str = "certificatParPk";
 //
 // pub const PKI_COMMANDE_SAUVEGARDER_CERTIFICAT: &str = "certificat";
