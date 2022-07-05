@@ -27,6 +27,7 @@ pub struct RoutageMessageAction {
     ajouter_reply_q: bool,
     blocking: Option<bool>,
     ajouter_ca: bool,
+    timeout_blocking: Option<u64>,
 }
 impl RoutageMessageAction {
 
@@ -36,7 +37,8 @@ impl RoutageMessageAction {
         RoutageMessageAction {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None, ajouter_ca: false,
+            partition: None, exchanges: None, reply_to: None, correlation_id: None,
+            ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
         }
     }
 
@@ -58,6 +60,7 @@ pub struct RoutageMessageActionBuilder {
     ajouter_reply_q: bool,
     blocking: Option<bool>,
     ajouter_ca: bool,
+    timeout_blocking: Option<u64>,
 }
 impl RoutageMessageActionBuilder {
     pub fn new<S>(domaine: S, action: S) -> Self
@@ -66,7 +69,8 @@ impl RoutageMessageActionBuilder {
         RoutageMessageActionBuilder {
             domaine: domaine.into(),
             action: action.into(),
-            partition: None, exchanges: None, reply_to: None, correlation_id: None, ajouter_reply_q: false, blocking: None, ajouter_ca: false,
+            partition: None, exchanges: None, reply_to: None, correlation_id: None,
+            ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
         }
     }
 
@@ -116,6 +120,11 @@ impl RoutageMessageActionBuilder {
         self
     }
 
+    pub fn timeout_blocking(mut self, timeout_blocking: u64) -> Self {
+        self.timeout_blocking = Some(timeout_blocking);
+        self
+    }
+
     pub fn build(self) -> RoutageMessageAction {
         RoutageMessageAction {
             domaine: self.domaine,
@@ -127,6 +136,7 @@ impl RoutageMessageActionBuilder {
             ajouter_reply_q: self.ajouter_reply_q,
             blocking: self.blocking,
             ajouter_ca: self.ajouter_ca,
+            timeout_blocking: self.timeout_blocking,
         }
     }
 }
@@ -333,7 +343,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             None => true,
         };
 
-        match self.emettre_message_serializable(routage, message,blocking, TypeMessageOut::Requete).await {
+        match self.emettre_message_serializable(routage, message, blocking, TypeMessageOut::Requete).await {
             Ok(r) => match r {
                 Some(m) => Ok(m),
                 None => Err(String::from("Aucune reponse")),
@@ -414,6 +424,11 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             routage.correlation_id
         );
 
+        let timeout_messages = match routage.timeout_blocking {
+            Some(t) => t,
+            None => 15_000
+        };
+
         let (tx_delivery, rx_delivery) = oneshot::channel();
 
         let correlation_id = message_out.correlation_id.as_ref().expect("correlation_id").to_owned();
@@ -433,7 +448,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
         // Retourner le channel pour attendre la reponse
         if blocking {
-            let reponse = timeout(Duration::from_millis(15_000), rx_delivery).await;
+            let reponse = timeout(Duration::from_millis(timeout_messages), rx_delivery).await;
             match reponse {
                 Ok(inner) => {
                     match inner {
