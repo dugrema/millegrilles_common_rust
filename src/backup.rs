@@ -335,9 +335,13 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
         TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
     };
 
-    let sort = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
+    // Sort cause erreur :
+    // code: 292
+    // code_name: "QueryExceededMemoryLimitNoDiskUseAllowed"
+    // Executor error during find command :: caused by :: Sort exceeded memory limit of 104857600 bytes, but did not opt in to external sorting.
+    //let sort = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
     let find_options = FindOptions::builder()
-        .sort(sort)
+        //.sort(sort)
         .hint(Hint::Name(String::from("backup_transactions")))
         .batch_size(50)
         .build();
