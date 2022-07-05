@@ -59,8 +59,9 @@ use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMes
 
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
-const TRANSACTIONS_MAX_SIZE: usize = 3 * 1024 * 1024;
-const TRANSACTIONS_MAX_NB: usize = 1000;  // Limite du nombre de transactions par fichier
+const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 3 * 1024 * 1024;
+const TRANSACTIONS_MAX_SIZE: usize = 5 * 1024 * 1024;
+const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions par fichier
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
@@ -170,7 +171,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
     while let Some(doc_transaction) = transactions.try_next().await? {
         debug!("generer_fichiers_backup Traitement transaction {:?}", doc_transaction);
 
-        if len_written >= TRANSACTIONS_MAX_SIZE || nb_transactions_written >= TRANSACTIONS_MAX_NB {
+        if len_written >= TRANSACTIONS_DECOMPRESSED_MAX_SIZE || nb_transactions_written >= TRANSACTIONS_MAX_NB {
             debug!("generer_fichiers_backup Limite transaction par fichier atteinte, on fait une rotation");
             let path_catalogue = sauvegarder_catalogue(
                 middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
@@ -809,6 +810,7 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
         let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
             .exchanges(vec![Securite::L2Prive])
             // .correlation_id(uuid_message_backup.clone())
+            .timeout_blocking(90_000)
             .build();
         let reponse = middleware.emettre_message_millegrille(
             routage, true, TypeMessageOut::Commande, message_backup).await;
