@@ -811,19 +811,25 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
             // .correlation_id(uuid_message_backup.clone())
             .build();
         let reponse = middleware.emettre_message_millegrille(
-            routage, true, TypeMessageOut::Commande, message_backup).await?;
+            routage, true, TypeMessageOut::Commande, message_backup).await;
 
         let reponse = match reponse {
-            Some(r) => match r {
-                TypeMessage::Valide(r) => r,
-                _ => {
-                    error!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup);
+            Ok(result) => match result {
+                Some(r) => match r {
+                    TypeMessage::Valide(r) => r,
+                    _ => {
+                        error!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup);
+                        continue;
+                    }
+                },
+                None => {
+                    error!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
                     continue;
                 }
             },
-            None => {
-                error!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
-                continue
+            Err(e) => {
+                error!("emettre_backup_transactions Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
+                continue;
             }
         };
 
