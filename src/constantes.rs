@@ -182,6 +182,8 @@ pub const DEFAULT_Q_TTL: u32 = 300000;
 pub const DOMAINE_APPLICATION_INSTANCE: &str = "instance";
 pub const DOMAINE_SERVICE_MONITOR: &str = DOMAINE_APPLICATION_INSTANCE;
 pub const DOMAINE_FICHIERS: &str = "fichiers";
+pub const DOMAINE_RELAIWEB: &str = "relaiweb";
+pub const DOMAINE_TOPOLOGIE: &str = "CoreTopologie";
 
 // Evenements/commandes globaux
 pub const DOMAINE_GLOBAL: &str = "evenement.global.cedule";
@@ -284,8 +286,11 @@ pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";
 pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";
 pub const COMMANDE_REGENERER: &str = "regenerer";
 
+// Commande RelaiWeb
+pub const COMMANDE_RELAIWEB_GET: &str = "get";
+pub const COMMANDE_RELAIWEB_POST: &str = "post";
+
 pub const BACKUP_EVENEMENT_MAJ: &str = "backupMaj";
 
-
-pub const TOPOLOGIE_NOM_DOMAINE: &str = "CoreTopologie";
+pub const TOPOLOGIE_NOM_DOMAINE: &str = DOMAINE_TOPOLOGIE;
 // pub const EVENEMENT_PRESENCE_DOMAINE: &str = "presenceDomaine";
