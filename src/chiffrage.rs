@@ -155,7 +155,7 @@ pub trait Chiffreur<C: CipherMgs<K>, K: MgsCipherKeys> {
     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>>;
 
     /// Recoit un certificat de chiffrage
-    async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>>;
+    async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String>;
 }
 
 /// Permet de recuperer un Decipher deja initialise pour une cle

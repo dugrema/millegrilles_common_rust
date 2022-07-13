@@ -329,7 +329,7 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
         Ok(())
     }
 
-    async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>> {
+    async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
         let cert_chiffrage = match &message.certificat {
             Some(c) => c.clone(),
             None => {
@@ -350,11 +350,30 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
 
         // Stocker cles chiffrage du maitre des cles
         {
-            let fps = cert_chiffrage.fingerprint_cert_publickeys()?;
-            let mut guard = self.cles_chiffrage.lock()?;
+            let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
+                Ok(f) => f,
+                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
+            };
+            let mut guard = match self.cles_chiffrage.lock() {
+                Ok(g) => g,
+                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
+            };
             for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
                 guard.insert(fp.fingerprint.clone(), fp.clone());
             }
+
+            // S'assurer d'avoir le certificat de millegrille local
+            let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+            let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
+            let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
+                Ok(p) => p,
+                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
+            }.pop();
+            if let Some(pk_ca) = public_keys_ca {
+                guard.insert(pk_ca.fingerprint.clone(), pk_ca);
+            }
+
+            debug!("Certificats chiffrage maj {:?}", guard);
         }
 
         Ok(())

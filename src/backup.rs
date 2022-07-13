@@ -1009,7 +1009,7 @@ mod backup_tests {
             Ok(())  // Rien a faire
         }
 
-        async fn recevoir_certificat_chiffrage<'a>(&'a self, message: &MessageSerialise) -> Result<(), Box<dyn Error + 'a>> {
+        async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
             Ok(())  // Rien a faire
         }
     }
