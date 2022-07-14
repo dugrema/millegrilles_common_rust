@@ -1,6 +1,8 @@
 use std::error::Error;
 use {redis::Client};
 use log::{debug, info};
+use redis::aio::Connection;
+use redis::RedisResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
@@ -194,33 +196,45 @@ impl RedisDao {
         Ok(resultat)
     }
 
-    pub async fn get_cleversca_batch<S>(&self, fingerprint: S, taille_batch: Option<usize>) -> Result<Vec<String>, Box<dyn Error>>
-        where S: AsRef<str>
-    {
-        let cle = format!("cle_versCA:{}", fingerprint.as_ref());
-        let taille_batch_effective = match taille_batch {
-            Some(t) => t,
-            None => 1000
-        };
-
+    /// Wrapper pour get_async_connection (expose la connexion async)
+    pub async fn get_async_connection(&self) -> Result<Connection, Box<dyn Error>> {
         let mut con = self.client.get_async_connection().await?;
-
         // Selectioner DB 3 pour cles
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
-
-        let mut iter_scan: redis::AsyncIter<String> = redis::cmd("SSCAN")
-            .arg(cle).cursor_arg(0).clone().iter_async(&mut con).await?;
-
-        let mut cles = Vec::new();
-        while let Some(hachage_bytes) = iter_scan.next_item().await {
-            cles.push(hachage_bytes);
-            if cles.len() >= taille_batch_effective {
-                break
-            }
-        }
-
-        Ok(cles)
+        Ok(con)
     }
+
+    // pub async fn get_cleversca_batch<S>(&self, fingerprint: S, taille_batch: Option<usize>) -> Result<CurseurRedis<'static>, Box<dyn Error>>
+    //     where S: AsRef<str>
+    // {
+    //     let cle = format!("cle_versCA:{}", fingerprint.as_ref());
+    //     let taille_batch_effective = match taille_batch {
+    //         Some(t) => t,
+    //         None => 1000
+    //     };
+    //
+    //     let mut con = self.client.get_async_connection().await?;
+    //
+    //     // Selectioner DB 3 pour cles
+    //     redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+    //
+    //     CurseurRedis::try_new(con, cle).await
+    //
+    //     // let mut iter_scan: redis::AsyncIter<String> = redis::cmd("SSCAN")
+    //     //     .arg(cle).cursor_arg(0).clone().iter_async(&mut con).await?;
+    //     //
+    //     // Ok(iter_scan)
+    //
+    //     // let mut cles = Vec::new();
+    //     // while let Some(hachage_bytes) = iter_scan.next_item().await {
+    //     //     cles.push(hachage_bytes);
+    //     //     if cles.len() >= taille_batch_effective {
+    //     //         break
+    //     //     }
+    //     // }
+    //     //
+    //     // Ok(cles)
+    // }
 
     pub async fn ajouter_cle_manquante<S>(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: S) -> Result<(), Box<dyn Error>>
         where S: AsRef<str>
@@ -271,6 +285,28 @@ pub struct RediCertificatV1 {
     pub pems: Vec<String>,
     pub ca: Option<String>,
 }
+
+// pub struct CurseurRedis<'a> {
+//     con: Connection,
+//     pub iter: Option<redis::AsyncIter<'a, String>>,
+// }
+//
+// impl<'a> CurseurRedis<'a> {
+//
+//     pub async fn try_new<S>(mut con: Connection, cle_param: S) -> Result<CurseurRedis<'a>, Box<dyn Error>>
+//         where S: Into<String>
+//     {
+//         let cle = cle_param.into();
+//
+//         let mut curseur = CurseurRedis { con, iter: None };
+//
+//         let iter_scan: redis::AsyncIter<String> = redis::cmd("SSCAN")
+//             .arg(cle).cursor_arg(0).clone().iter_async::<'a>(&mut curseur.con).await?;
+//         curseur.iter = Some(iter_scan);
+//
+//         Ok(curseur)
+//     }
+// }
 
 // #[cfg(test)]
 // mod test_integration_redis_dao {
