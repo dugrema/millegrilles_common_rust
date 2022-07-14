@@ -332,6 +332,10 @@ async fn boucle_execution(
     // Setup channels MQ
     let channel_reponses = conn.create_channel().await.unwrap();
     let channel_out = conn.create_channel().await.unwrap();
+    let qos_options_reponses = BasicQosOptions { global: false };
+    channel_reponses.basic_qos(20, qos_options_reponses).await.expect("channel_reponses basic_qos");
+    let qos_options_out = BasicQosOptions { global: false };
+    channel_out.basic_qos(20, qos_options_out).await.expect("channel_out basic_qos");
 
     // Setup mpsc
     // let (tx_delivery, rx_delivery) = mpsc::channel(5);
