@@ -180,13 +180,16 @@ impl RedisDao {
         Ok(())
     }
 
-    pub async fn get_cle<S,T>(&self, fingerprint: S, hachage_bytes: T) -> Result<Option<String>, Box<dyn Error>>
+    pub async fn get_cle<S,T>(&self, fingerprint: S, hachage_bytes: T, connection: Option<Connection>) -> Result<Option<String>, Box<dyn Error>>
         where S: AsRef<str>,
               T: AsRef<str>
     {
         let cle = format!("cle:{}:{}", fingerprint.as_ref(), hachage_bytes.as_ref());
 
-        let mut con = self.client.get_async_connection().await?;
+        let mut con = match connection {
+            Some(c) => c,
+            None => self.client.get_async_connection().await?
+        };
 
         // Selectioner DB 3 pour cles
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
