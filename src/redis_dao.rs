@@ -128,8 +128,8 @@ impl RedisDao {
         Ok(())
     }
 
-    pub async fn save_cle_maitredescles(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: &str, contenu: &Value) -> Result<(), Box<dyn Error>> {
-        let mut con = self.client.get_async_connection().await?;
+    pub async fn save_cle_maitredescles(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: &str, contenu: &Value, connexion: &mut Connection) -> Result<(), Box<dyn Error>> {
+        // let mut con = self.client.get_async_connection().await?;
 
         let fingerprint = enveloppe_privee.fingerprint();
         let expiration = enveloppe_privee.enveloppe.not_valid_after()?.timestamp();
@@ -146,14 +146,14 @@ impl RedisDao {
         let contenu_json = serde_json::to_string(contenu)?;
 
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(connexion).await?;
 
         // Conserver certificat
         let resultat: Option<String> = redis::cmd("SET")
             .arg(cle_label).arg(contenu_json)
             .arg("NX")
             .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
-            .query_async(&mut con).await?;
+            .query_async(connexion).await?;
 
         if let Some(code) = resultat {
             if code == "OK" {
@@ -163,10 +163,10 @@ impl RedisDao {
                 // Conserver reference de confirmation vers CA
                 let _: () = redis::cmd("SADD")
                     .arg(&ca_transfert_label).arg(hachage_bytes)
-                    .query_async(&mut con).await?;
+                    .query_async(connexion).await?;
                 let _: () = redis::cmd("EXPIREAT")
                     .arg(&ca_transfert_label).arg(expiration)
-                    .query_async(&mut con).await?;
+                    .query_async(connexion).await?;
             }
         }
 
@@ -175,7 +175,7 @@ impl RedisDao {
         let _: () = redis::cmd("SREM")
             .arg(ca_cle_manquante)
             .arg(hachage_bytes)
-            .query_async(&mut con).await?;
+            .query_async(connexion).await?;
 
         Ok(())
     }
