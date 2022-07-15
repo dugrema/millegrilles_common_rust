@@ -259,8 +259,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     fn chiffrer_backup(&self) -> bool { true }
 
     /// Genere les index du domaine dans MongoDB
-    async fn preparer_index_mongodb_custom<M>(&self, middleware: &M) -> Result<(), String>
-        where M: MongoDao;
+    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), String>
+        where M: Middleware + 'static;
 
     async fn consommer_requete<M>(&self, middleware: &M, message: MessageValideAction) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static;
@@ -456,7 +456,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     async fn preparer_index_mongodb<M>(&self, middleware: &M) -> Result<(), String>
-        where M: MongoDao
+        where M: Middleware + 'static
     {
         // Index transactions par uuid-transaction
         let options_unique_transactions = IndexOptions {
@@ -503,7 +503,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         ).await?;
 
         // Hook pour index custom du domaine
-        self.preparer_index_mongodb_custom(middleware).await
+        self.preparer_database(middleware).await
     }
 
     async fn consommer_evenement_trait<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction)
