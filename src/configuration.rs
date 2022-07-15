@@ -153,6 +153,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let redis_username: String = std::env::var("MG_REDIS_USERNAME").unwrap_or_else(|_| "client_rust".into());
     let redis_password_file = PathBuf::from(std::env::var("MG_REDIS_PASSWORD_FILE").expect("redis password file"));
     let redis_password = read_to_string(redis_password_file).expect("read redis password file");
+    let sqlite_path: String = std::env::var("MG_SQLITE_PATH").unwrap_or_else(|_| "/var/opt/millegrilles/sqlite".into());
 
     let fichiers_url = charger_url("MG_FICHIERS_URL", "https://fichiers:443")?;
     let redis_url = charger_url("MG_REDIS_URL", "rediss://client_rust@redis:6379#insecure")?;
@@ -167,6 +168,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         redis_password: Some(redis_password),
         elastic_search_url: Some(elastic_search_url),
         certissuer_url: Some(certissuer_url),
+        sqlite_path: Some(sqlite_path),
     })
 }
 
@@ -216,6 +218,7 @@ pub struct ConfigurationNoeud {
     pub redis_password: Option<String>,
     pub elastic_search_url: Option<Url>,
     pub certissuer_url: Option<Url>,
+    pub sqlite_path: Option<String>,
 }
 
 #[derive(Debug)]
