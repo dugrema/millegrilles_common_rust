@@ -595,7 +595,13 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let resultat_batch = sauvegarder_batch(middleware, self.get_collection_transactions().as_str(), vec![message_serialise.parsed]).await?;
         debug!("domaines.restaurer_transaction Resultat batch sauvegarde : {:?}", resultat_batch);
 
-        Ok(None)
+        match message_restauration.ack {
+            Some(a) => match a {
+                true => Ok(middleware.reponse_ok()?),
+                false => Ok(None)
+            },
+            None => Ok(None)
+        }
     }
 
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
@@ -663,4 +669,5 @@ struct MessageBackupTransactions {
 #[derive(Clone, Debug, Deserialize)]
 struct MessageRestaurerTransaction {
     transaction: MessageMilleGrille,
+    ack: Option<bool>,
 }

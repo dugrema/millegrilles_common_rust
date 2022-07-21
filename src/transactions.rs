@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX
 use crate::constantes::*;
 use crate::formatteur_messages::{Entete, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use std::convert::TryFrom;
 use std::fmt::Debug;
 
@@ -466,24 +467,63 @@ impl ErreurResoumission {
     }
 }
 
-pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageMilleGrille>) -> Result<ResultatBatchInsert, String>
-where
-    M: MongoDao,
+pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageMilleGrille>)
+    -> Result<ResultatBatchInsert, String>
+    where M: MongoDao
 {
-    // Serialiser les transactions vers le format bson
-    let mut transactions_bson = Vec::new();
-    transactions_bson.reserve(transactions.len());
-    while let Some(t) = transactions.pop() {
-        debug!("Message a serialiser en bson : {:?}", t);
-        let bson_doc = bson::to_document(&t).expect("serialiser bson");
-        transactions_bson.push(bson_doc);
-    }
-
-    debug!("Soumettre batch transactions dans collection {} : {:?}", nom_collection, transactions_bson);
     let collection = match middleware.get_collection(nom_collection) {
         Ok(c) => c,
         Err(_e) => Err(format!("Erreur ouverture collection {}", nom_collection))?
     };
+
+    // Determiner les transactions qui existent deja (dedupe)
+    let mut transactions_bson = Vec::new();
+    transactions_bson.reserve(transactions.len());
+    {
+        let mut uuid_transactions = HashSet::new();
+        let mut curseur = {
+            for t in &transactions {
+                uuid_transactions.insert(t.entete.uuid_transaction.clone());
+            }
+            let projection = doc! {"en-tete.uuid_transaction": 1};
+            let vec_uuid_transactions = uuid_transactions.iter().collect::<Vec<&String>>();
+            let filtre = doc! {"en-tete.uuid_transaction": {"$in": vec_uuid_transactions}};
+            let options = FindOptions::builder().projection(projection).build();
+            match collection.find(filtre, options).await {
+                Ok(c) => c,
+                Err(e) => Err(format!("sauvegarder_batch Erreur collection.find : {:?}",e ))?
+            }
+        };
+
+        // Retirer tous les uuid_transactions connus, on va les ignorer
+        while let Some(result_uuid_transactions) = curseur.next().await {
+            let doc_uuid_transactions = match result_uuid_transactions {
+                Ok(d) => d,
+                Err(e) => Err(format!("sauvegarder_batch Erreur curseur.next() : {:?}", e))?
+            };
+            let row_uuid_transaction: RowResultatUuidTransaction = match convertir_bson_deserializable(doc_uuid_transactions) {
+                Ok(r) => r,
+                Err(e) => Err(format!("sauvegarder_batch Erreur convertir_bson_deserializable RowResultatUuidTransaction : {:?}", e))?
+            };
+            // Retirer les transactions qui existent deja (connues)
+            let uuid_transaction = row_uuid_transaction.entete.uuid_transaction;
+            uuid_transactions.remove(uuid_transaction.as_str());
+        }
+
+        // Serialiser les transactions vers le format bson
+        while let Some(t) = transactions.pop() {
+            debug!("sauvegarder_batch Message a serialiser en bson : {:?}", t);
+            if uuid_transactions.contains(&t.entete.uuid_transaction) {
+                let bson_doc = bson::to_document(&t).expect("serialiser bson");
+                transactions_bson.push(bson_doc);
+            } else {
+                debug!("sauvegarder_batch Skip transaction existante : {}", t.entete.uuid_transaction.as_str());
+            }
+        }
+
+    }
+
+    debug!("Soumettre batch transactions dans collection {} : {:?}", nom_collection, transactions_bson);
 
     let options = InsertManyOptions::builder()
         .ordered(false)
@@ -543,6 +583,16 @@ where
     // debug!("Resultat insertion transactions sous {} : {:?}", nom_collection, resultat);
 
     Ok(resultat)
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RowResultatUuidTransaction {
+    entete: RowEnteteUuidTransaction
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct RowEnteteUuidTransaction {
+    uuid_transaction: String
 }
 
 #[derive(Clone, Debug)]
