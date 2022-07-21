@@ -587,6 +587,7 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RowResultatUuidTransaction {
+    #[serde(rename="en-tete")]
     entete: RowEnteteUuidTransaction
 }
 
