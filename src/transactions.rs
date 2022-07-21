@@ -524,6 +524,12 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
     }
 
     debug!("Soumettre batch transactions dans collection {} : {:?}", nom_collection, transactions_bson);
+    if transactions_bson.is_empty() {
+        debug!("sauvegarder_batch Aucune transaction a soumettre, abort");
+        let mut res_insert = ResultatBatchInsert::new();
+        res_insert.inserted = 0;
+        return Ok(res_insert)
+    }
 
     let options = InsertManyOptions::builder()
         .ordered(false)
