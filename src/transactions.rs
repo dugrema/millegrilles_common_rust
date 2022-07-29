@@ -651,13 +651,16 @@ where
             .build();
 
         let collection_transactions = middleware.get_collection(nom_collection_transactions)?;
+        let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
+        regenerer_charger_certificats(middleware, curseur_certs).await?;
+
         collection_transactions.find(filtre, options).await
     }?;
 
     middleware.set_regeneration(); // Desactiver emission de messages
 
     // Executer toutes les transactions du curseur en ordre
-    let resultat = regenerer_transactions(middleware, &mut resultat_transactions, processor).await;
+    let resultat = regenerer_transactions(middleware, resultat_transactions, processor).await;
     info!("transactions.regenerer Resultat regenerer {:?} = {:?}", nom_collection_transactions, resultat);
 
     middleware.reset_regeneration(); // Reactiver emission de messages
@@ -672,7 +675,41 @@ fn get_entete_from_doc(doc: &Document) -> Result<Entete, Box<dyn Error>> {
     Ok(serde_json::from_value(entete_value)?)
 }
 
-async fn regenerer_transactions<M, T>(middleware: &M, curseur: &mut Cursor<Document>, processor: &T) -> Result<(), Box<dyn Error>>
+// S'assurer d'avoir tous les certificats dans redis ou cache
+async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Document>) -> Result<(), Box<dyn Error>>
+    where M: ValidateurX509 + GenerateurMessages + MongoDao
+{
+    while let Some(result) = curseur.next().await {
+        let transaction = result?;
+
+        let entete = match get_entete_from_doc(&transaction) {
+            Ok(t) => t,
+            Err(_e) => {
+                error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
+                continue  // Skip
+            }
+        };
+
+        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+        let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+            Some(c) => c,
+            None => {
+                debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
+                match requete_certificat(middleware, fingerprint_certificat).await? {
+                    Some(c) => c,
+                    None => {
+                        warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
+                        continue;
+                    }
+                }
+            }
+        };
+    }
+
+    Ok(())
+}
+
+async fn regenerer_transactions<M, T>(middleware: &M, mut curseur: Cursor<Document>, processor: &T) -> Result<(), Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
     T: TraiterTransaction,
@@ -695,14 +732,14 @@ where
         let certificat = match middleware.get_certificat(fingerprint_certificat).await {
             Some(c) => c,
             None => {
-                debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
-                match requete_certificat(middleware, fingerprint_certificat).await? {
-                    Some(c) => c,
-                    None => {
+                // debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
+                // match requete_certificat(middleware, fingerprint_certificat).await? {
+                //     Some(c) => c,
+                //     None => {
                         warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
                         continue;
-                    }
-                }
+                //     }
+                // }
             }
         };
         let transaction_impl = TransactionImpl::new(transaction, Some(certificat));
