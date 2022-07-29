@@ -997,7 +997,9 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
 
     let requete = json!({"fingerprint": fingerprint_str});
     let routage = RoutageMessageAction::builder(PKI_DOMAINE_NOM, "infoCertificat").build();
-    let reponse: ReponseEnveloppe = match middleware.transmettre_requete(routage, &requete).await? {
+    let reponse_requete = middleware.transmettre_requete(routage, &requete).await?;
+    debug!("requete_certificat Reponse : {:?}", reponse_requete);
+    let reponse: ReponseEnveloppe = match reponse_requete {
         TypeMessage::Valide(m) => {
             match m.message.parsed.map_contenu(None) {
                 Ok(m) => m,
@@ -1006,6 +1008,12 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
                     return Ok(None)
                 }
             }
+        },
+        TypeMessage::Certificat(m) => {
+            let enveloppe = m.enveloppe_certificat;
+            let pem_ca = enveloppe.get_pem_ca()?;
+            let pems: Vec<String> = enveloppe.get_pem_vec().into_iter().map(|f| f.pem).collect();
+            ReponseEnveloppe { chaine_pem: pems, fingerprint: enveloppe.fingerprint, ca_pem: pem_ca }
         },
         _ => Err(format!("requete_certificat Erreur requete certificat {} : mauvais type reponse", fingerprint_str))?
     };

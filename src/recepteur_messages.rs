@@ -529,7 +529,7 @@ pub struct MessageTrigger {
 
 #[derive(Clone, Debug)]
 pub struct MessageCertificat {
-    enveloppe_certificat: EnveloppeCertificat,
+    pub enveloppe_certificat: EnveloppeCertificat,
 }
 
 #[derive(Clone, Debug)]
