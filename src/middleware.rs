@@ -17,7 +17,7 @@ use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 
 use crate::backup::BackupStarter;
-use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
+use crate::certificats::{charger_enveloppe, emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
 use crate::chiffrage::{Chiffreur, Dechiffreur, MgsCipherData};
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::configuration::{charger_configuration, charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
@@ -984,6 +984,38 @@ pub fn preparer_middleware_message(
         rx_messages_verifies, rx_messages_verif_reply, rx_triggers, tx_certificats_manquants,
         futures
     }
+}
+
+/// Requete pour obtenir un certificat a partir du domaine PKI
+pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<Option<Arc<EnveloppeCertificat>>, Box<dyn Error>>
+    where
+        M: ValidateurX509 + GenerateurMessages,
+        S: AsRef<str>
+{
+    let fingerprint_str = fingerprint.as_ref();
+    debug!("requete_certificat {}", fingerprint_str);
+
+    let requete = json!({"fingerprint": fingerprint_str});
+    let routage = RoutageMessageAction::builder(PKI_DOMAINE_NOM, "infoCertificat").build();
+    let reponse: ReponseEnveloppe = match middleware.transmettre_requete(routage, &requete).await? {
+        TypeMessage::Valide(m) => {
+            match m.message.parsed.map_contenu(None) {
+                Ok(m) => m,
+                Err(e) => {
+                    error!("requete_certificat Erreur requete certificat {} : mauvais type reponse ou inconnu : {:?}", fingerprint_str, e);
+                    return Ok(None)
+                }
+            }
+        },
+        _ => Err(format!("requete_certificat Erreur requete certificat {} : mauvais type reponse", fingerprint_str))?
+    };
+
+    let ca_pem = match &reponse.ca_pem {
+        Some(c) => Some(c.as_str()),
+        None => None
+    };
+
+    Ok(Some(middleware.charger_enveloppe(&reponse.chaine_pem, Some(reponse.fingerprint.as_str()), ca_pem).await?))
 }
 
 // #[cfg(test)]

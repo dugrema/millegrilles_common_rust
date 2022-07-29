@@ -22,6 +22,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, Routa
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use std::convert::TryFrom;
 use std::fmt::Debug;
+use crate::middleware::requete_certificat;
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
@@ -690,8 +691,21 @@ where
         let uuid_transaction = entete.uuid_transaction.as_str();
         debug!("regenerer_transactions Traiter transaction : {:?}", uuid_transaction);
 
-        let certificat = middleware.get_certificat(entete.fingerprint_certificat.as_str()).await;
-        let transaction_impl = TransactionImpl::new(transaction, certificat);
+        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+        let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+            Some(c) => c,
+            None => {
+                debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
+                match requete_certificat(middleware, fingerprint_certificat).await? {
+                    Some(c) => c,
+                    None => {
+                        warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
+                        continue;
+                    }
+                }
+            }
+        };
+        let transaction_impl = TransactionImpl::new(transaction, Some(certificat));
         match processor.appliquer_transaction(middleware, transaction_impl).await {
             Ok(_resultat) => (),
             Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", uuid_transaction, e)
