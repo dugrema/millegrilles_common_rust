@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{Chiffreur, Dechiffreur, MgsCipherData};
+use crate::chiffrage::{Chiffreur, CleChiffrageHandler, Dechiffreur, MgsCipherData};
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
@@ -233,7 +233,7 @@ impl IsConfigNoeud for MiddlewareDb {
 }
 
 #[async_trait]
-impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareDb {
+impl CleChiffrageHandler for MiddlewareDb {
 
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
         let guard = self.cles_chiffrage.lock().expect("lock");
@@ -242,11 +242,6 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareDb {
         let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
 
         vals
-    }
-
-    fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
-        let fp_public_keys = self.get_publickeys_chiffrage();
-        Ok(CipherMgs3::new(&fp_public_keys)?)
     }
 
     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
@@ -333,6 +328,17 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareDb {
 
         Ok(())
     }
+
+}
+
+#[async_trait]
+impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareDb {
+
+    fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
+        let fp_public_keys = self.get_publickeys_chiffrage();
+        Ok(CipherMgs3::new(&fp_public_keys)?)
+    }
+
 }
 
 #[async_trait]

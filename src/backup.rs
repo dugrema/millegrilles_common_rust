@@ -975,7 +975,7 @@ mod backup_tests {
     use crate::backup_restoration::TransactionReader;
     use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
     use crate::middleware_db::preparer_middleware_db;
-    use crate::chiffrage::MgsCipherData;
+    use crate::chiffrage::{CleChiffrageHandler, MgsCipherData};
     use crate::generateur_messages::RoutageMessageReponse;
     use crate::mongo_dao::convertir_to_bson;
 
@@ -994,23 +994,24 @@ mod backup_tests {
     }
 
     #[async_trait]
-    impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for TestChiffreurMgs3 {
-
+    impl CleChiffrageHandler for TestChiffreurMgs3 {
         fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
             self.cles_chiffrage.clone()
         }
-
-        fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
-            let fp_public_keys = self.get_publickeys_chiffrage();
-            Ok(CipherMgs3::new(&fp_public_keys)?)
-        }
-
         async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
             Ok(())  // Rien a faire
         }
 
         async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
             Ok(())  // Rien a faire
+        }
+    }
+
+    #[async_trait]
+    impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for TestChiffreurMgs3 {
+        fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
+            let fp_public_keys = self.get_publickeys_chiffrage();
+            Ok(CipherMgs3::new(&fp_public_keys)?)
         }
     }
 

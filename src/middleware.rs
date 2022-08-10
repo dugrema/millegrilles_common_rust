@@ -18,7 +18,7 @@ use openssl::x509::X509;
 
 use crate::backup::BackupStarter;
 use crate::certificats::{charger_enveloppe, emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{Chiffreur, Dechiffreur, MgsCipherData};
+use crate::chiffrage::{Chiffreur, CleChiffrageHandler, Dechiffreur, MgsCipherData};
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::configuration::{charger_configuration, charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
@@ -281,7 +281,7 @@ impl GenerateurMessages for MiddlewareMessage {
 }
 
 #[async_trait]
-impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
+impl CleChiffrageHandler for MiddlewareMessage {
 
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
         let guard = self.cles_chiffrage.lock().expect("lock");
@@ -290,11 +290,6 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
         let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
 
         vals
-    }
-
-    fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
-        let fp_public_keys = self.get_publickeys_chiffrage();
-        Ok(CipherMgs3::new(&fp_public_keys)?)
     }
 
     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
@@ -378,6 +373,16 @@ impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
 
         Ok(())
     }
+}
+
+#[async_trait]
+impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
+
+    fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
+        let fp_public_keys = self.get_publickeys_chiffrage();
+        Ok(CipherMgs3::new(&fp_public_keys)?)
+    }
+
 }
 
 #[async_trait]

@@ -143,21 +143,24 @@ pub trait DecipherMgs<M: MgsCipherData> {
     fn finalize(self, out: &mut [u8]) -> Result<usize, String>;
 }
 
-/// Permet de recuperer un Cipher deja initalise avec les certificats de MaitreDesCles.
 #[async_trait]
-pub trait Chiffreur<C: CipherMgs<K>, K: MgsCipherKeys> {
+pub trait CleChiffrageHandler {
     /// Retourne les certificats qui peuvent etre utilises pour chiffrer une cle secrete.
     /// Devrait inclure le certificat de MilleGrille avec flag est_cle_millegrille==true.
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey>;
-
-    /// Recupere un cipher initialise avec les cles publiques
-    fn get_cipher(&self) -> Result<C, Box<dyn Error>>;
 
     /// Recycle les certificats de chiffrage - fait une requete pour obtenir les certs courants
     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>>;
 
     /// Recoit un certificat de chiffrage
     async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String>;
+}
+
+/// Permet de recuperer un Cipher deja initalise avec les certificats de MaitreDesCles.
+#[async_trait]
+pub trait Chiffreur<C: CipherMgs<K>, K: MgsCipherKeys>: CleChiffrageHandler {
+    /// Recupere un cipher initialise avec les cles publiques
+    fn get_cipher(&self) -> Result<C, Box<dyn Error>>;
 }
 
 /// Permet de recuperer un Decipher deja initialise pour une cle
