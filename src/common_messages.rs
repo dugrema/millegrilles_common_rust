@@ -13,8 +13,9 @@ pub struct TransactionCle {
     pub format: FormatChiffrage,
     pub hachage_bytes: String,
     pub identificateurs_document: HashMap<String, String>,
-    pub iv: String,
-    pub tag: String,
+    pub iv: Option<String>,
+    pub tag: Option<String>,
+    pub header: Option<String>,
 }
 
 impl TransactionCle {
@@ -37,6 +38,7 @@ impl TransactionCle {
             identificateurs_document: commande.identificateurs_document.clone(),
             iv: commande.iv.clone(),
             tag: commande.tag.clone(),
+            header: commande.header.clone(),
         })
     }
 
@@ -55,6 +57,7 @@ impl TransactionCle {
             identificateurs_document: self.identificateurs_document,
             iv: self.iv,
             tag: self.tag,
+            header: self.header,
             fingerprint_partitions: None
         }
     }
