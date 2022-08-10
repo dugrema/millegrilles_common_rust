@@ -1,6 +1,7 @@
 pub mod certificats;
 pub mod configuration;
 pub mod constantes;
+pub mod common_messages;
 pub mod formatteur_messages;
 pub mod generateur_messages;
 pub mod hachages;
