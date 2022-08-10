@@ -15,11 +15,12 @@ use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherKeys};
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::chiffrage_rsa::{chiffrer_asymetrique as chiffrer_asymetrique_aesgcm, dechiffrer_asymetrique as dechiffrer_asymetrique_aesgcm};
+use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherKeys};
 use crate::formatteur_messages::MessageSerialise;
 use crate::middleware::IsConfigurationPki;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum FormatChiffrage { mgs2, mgs3 }
+pub enum FormatChiffrage { mgs2, mgs3, mgs4 }
 
 /// Struct qui efface la cle secrete en memoire sur drop
 #[derive(Zeroize)]
@@ -97,8 +98,9 @@ pub struct CommandeSauvegarderCle {
     pub hachage_bytes: String,
     #[serde(serialize_with = "ordered_map")]
     pub identificateurs_document: HashMap<String, String>,
-    pub iv: String,
-    pub tag: String,
+    pub iv: Option<String>,
+    pub tag: Option<String>,
+    pub header: Option<String>,
 
     /// Partitions de maitre des cles (fingerprint certs). Utilise pour routage de la commande.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -199,3 +201,4 @@ pub fn random_vec(nb_bytes: usize) -> Vec<u8> {
 
 pub type ChiffreurMgs2 = dyn Chiffreur<CipherMgs2, Mgs2CipherKeys>;
 pub type ChiffreurMgs3 = dyn Chiffreur<CipherMgs3, Mgs3CipherKeys>;
+pub type ChiffreurMgs4 = dyn Chiffreur<CipherMgs4, Mgs4CipherKeys>;

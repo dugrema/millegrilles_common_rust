@@ -1,3 +1,4 @@
+/// Implementation mgs3
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
@@ -267,8 +268,9 @@ impl MgsCipherKeys for Mgs3CipherKeys {
         CommandeSauvegarderCle {
             hachage_bytes: self.hachage_bytes.clone(),
             cles: self.cles_to_map(),
-            iv: self.iv.clone(),
-            tag: self.tag.clone(),
+            iv: Some(self.iv.clone()),
+            tag: Some(self.tag.clone()),
+            header: None,
             format: FormatChiffrage::mgs3,
             domaine: domaine.to_owned(),
             partition,
