@@ -44,7 +44,10 @@ pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key:
         match private_key.id() {
             Id::ED25519 => {
                 // Err(String::from("Fix me"))?
-                let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes[..], private_key)?;
+                let cle_secrete = match dechiffrer_asymmetrique_ed25519(&cle_bytes[..], private_key) {
+                    Ok(c) => c,
+                    Err(e) => Err(format!("Erreur dechiffrage cle asymmetrique ed25519 : {:?}", e))?
+                };
                 let cle_rechiffree = chiffrer_asymmetrique_ed25519(&cle_secrete.0[..], public_key)?;
                 Ok(cle_rechiffree.to_vec())
             },
