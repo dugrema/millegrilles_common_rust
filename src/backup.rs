@@ -39,8 +39,9 @@ use uuid::Uuid;
 use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{Chiffreur, Dechiffreur, DecipherMgs, MgsCipherKeys};
+use crate::chiffrage::{ChiffrageFactory, Chiffreur, CipherMgsCurrent, Dechiffreur, DecipherMgs, MgsCipherKeys, MgsCipherKeysCurrent};
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
+use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
@@ -48,7 +49,7 @@ use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse
 use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_bytes, hacher_serializable};
-use crate::middleware::IsConfigurationPki;
+use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream, convertir_bson_deserializable, CurseurMongo};
 use crate::rabbitmq_dao::TypeMessageOut;
@@ -65,7 +66,7 @@ const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions p
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + GenerateurMessages + ConfigMessages + VerificateurMessage
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     while let Some(commande) = rx.recv().await {
         let nom_domaine = commande.nom_domaine;
@@ -110,7 +111,7 @@ pub trait BackupStarter {
 pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T, complet: bool)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + GenerateurMessages + ConfigMessages + VerificateurMessage,
+        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait,  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
         S: AsRef<str>, T: AsRef<str>,
 {
     let nom_coll_str = nom_collection_transactions.as_ref();
@@ -152,7 +153,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, workdir: P, info_backup: &BackupInformation)
     -> Result<Vec<PathBuf>, Box<dyn Error>>
     where
-        M: ValidateurX509 + Chiffreur<CipherMgs3, Mgs3CipherKeys> + FormatteurMessage + VerificateurMessage + GenerateurMessages,
+        M: ValidateurX509 + FormatteurMessage + VerificateurMessage + GenerateurMessages + ChiffrageFactoryTrait,  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
         S: CurseurStream,
         P: AsRef<Path>
 {
@@ -512,9 +513,8 @@ pub struct CatalogueBackup {
 
     /// IV du contenu chiffre
     iv: Option<String>,
-
-    /// Compute tag du contenu chiffre
     tag: Option<String>,
+    header: Option<String>,
 
     /// Format du chiffrage
     format: Option<String>,
@@ -557,7 +557,7 @@ pub struct CatalogueBackupBuilder {
     uuid_transactions: Vec<String>,     // Liste des transactions inclues (pas mis dans catalogue)
     data_hachage_bytes: String,         // Hachage du contenu chiffre
     data_transactions: String,          // Contenu des transactions en base64 (chiffre)
-    cles: Option<Mgs3CipherKeys>,       // Cles pour dechiffrer le contenu
+    cles: Option<MgsCipherKeysCurrent>,       // Cles pour dechiffrer le contenu
     // backup_precedent: Option<EnteteBackupPrecedent>,
 }
 
@@ -604,7 +604,7 @@ impl CatalogueBackupBuilder {
         }
     }
 
-    fn set_cles(&mut self, cles: &Mgs3CipherKeys) {
+    fn set_cles(&mut self, cles: &MgsCipherKeysCurrent) {
         self.cles = Some(cles.clone());
     }
 
@@ -646,11 +646,11 @@ impl CatalogueBackupBuilder {
             None => format!("{}_{}.json.xz", &self.nom_domaine, date_str)
         };
 
-        let (format, cle, iv, tag) = match self.cles {
+        let (format, cle, header) = match self.cles {
             Some(cles) => {
-                (Some(cles.get_format()), cles.get_cle_millegrille(), Some(cles.iv), Some(cles.tag))
+                (Some(cles.get_format()), cles.get_cle_millegrille(), Some(cles.header))
             },
-            None => (None, None, None, None)
+            None => (None, None, None)
         };
 
         let date_transactions_debut = match self.date_debut_backup {
@@ -680,7 +680,7 @@ impl CatalogueBackupBuilder {
 
             entete: None,  // En-tete chargee lors de la deserialization
 
-            cle, iv, tag, format,
+            cle, iv: None, tag: None, header, format,
         }
     }
 
@@ -728,17 +728,25 @@ impl BackupHandler for BackupInformation {
 }
 
 struct TransactionWriter {
-    fichier_writer: FichierWriter<Mgs3CipherKeys, CipherMgs3>,
+    fichier_writer: FichierWriter<MgsCipherKeysCurrent, CipherMgsCurrent>,
 }
 
 impl TransactionWriter {
 
     pub async fn new<C,P>(path_fichier: P, middleware: Option<&C>) -> Result<TransactionWriter, Box<dyn Error>>
     where
-        C: Chiffreur<CipherMgs3, Mgs3CipherKeys>,
+        C: ChiffrageFactoryTrait,
         P: Into<PathBuf>
     {
-        let fichier_writer = FichierWriter::new(path_fichier, middleware).await?;
+        // let chiffreur = match middleware {
+        //     Some(m) => Some(m.get_chiffreur()?),
+        //     None => None
+        // };
+        let chiffrage_factory = match middleware {
+            Some(m) => Some(m.get_chiffrage_factory()),
+            None => None
+        };
+        let fichier_writer = FichierWriter::new(path_fichier, chiffrage_factory).await?;
         Ok(TransactionWriter{fichier_writer})
     }
 
@@ -771,7 +779,7 @@ impl TransactionWriter {
         }
     }
 
-    pub async fn fermer(self) -> Result<(String, Option<Mgs3CipherKeys>), Box<dyn Error>> {
+    pub async fn fermer(self) -> Result<(String, Option<MgsCipherKeysCurrent>), Box<dyn Error>> {
         self.fichier_writer.fermer().await
     }
 
@@ -975,7 +983,7 @@ mod backup_tests {
     use crate::backup_restoration::TransactionReader;
     use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
     use crate::middleware_db::preparer_middleware_db;
-    use crate::chiffrage::{CleChiffrageHandler, MgsCipherData};
+    use crate::chiffrage::{ChiffrageFactoryImpl, CipherMgsCurrent, CleChiffrageHandler, MgsCipherData, MgsCipherKeysCurrent};
     use crate::generateur_messages::RoutageMessageReponse;
     use crate::mongo_dao::convertir_to_bson;
 
@@ -984,39 +992,51 @@ mod backup_tests {
     const NOM_DOMAINE_BACKUP: &str = "DomaineTest";
     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
 
-    trait TestChiffreurMgs3Trait: Chiffreur<CipherMgs3, Mgs3CipherKeys> + ValidateurX509 +
+    trait TestChiffreurMgs4Trait: Chiffreur<CipherMgsCurrent, MgsCipherKeysCurrent> + ValidateurX509 +
         FormatteurMessage + VerificateurMessage {}
 
-    struct TestChiffreurMgs3 {
+    struct TestChiffreurMgs4 {
         cles_chiffrage: Vec<FingerprintCertPublicKey>,
         validateur: Arc<ValidateurX509Impl>,
         enveloppe_privee: Arc<EnveloppePrivee>,
     }
 
+    impl ChiffrageFactoryTrait for TestChiffreurMgs4 {
+        fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
+            todo!("fix me")
+        }
+    }
+
     #[async_trait]
-    impl CleChiffrageHandler for TestChiffreurMgs3 {
+    impl CleChiffrageHandler for TestChiffreurMgs4 {
         fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
             self.cles_chiffrage.clone()
         }
-        async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
+
+        async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>)
+            -> Result<(), Box<dyn Error>>
+            where M: GenerateurMessages
+        {
             Ok(())  // Rien a faire
         }
 
-        async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
+        async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+            where M: ConfigMessages
+        {
             Ok(())  // Rien a faire
         }
     }
 
     #[async_trait]
-    impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for TestChiffreurMgs3 {
-        fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
+    impl Chiffreur<CipherMgsCurrent, MgsCipherKeysCurrent> for TestChiffreurMgs4 {
+        fn get_cipher(&self) -> Result<CipherMgsCurrent, Box<dyn Error>> {
             let fp_public_keys = self.get_publickeys_chiffrage();
-            Ok(CipherMgs3::new(&fp_public_keys)?)
+            Ok(CipherMgs4::new(&fp_public_keys)?)
         }
     }
 
     #[async_trait]
-    impl ValidateurX509 for TestChiffreurMgs3 {
+    impl ValidateurX509 for TestChiffreurMgs4 {
         async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
             todo!()
         }
@@ -1054,13 +1074,13 @@ mod backup_tests {
         }
     }
 
-    impl IsConfigurationPki for TestChiffreurMgs3 {
+    impl IsConfigurationPki for TestChiffreurMgs4 {
         fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
             self.enveloppe_privee.clone()
         }
     }
 
-    impl VerificateurMessage for TestChiffreurMgs3 {
+    impl VerificateurMessage for TestChiffreurMgs4 {
         fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
             Ok(ResultatValidation {
                 signature_valide: true,
@@ -1071,16 +1091,16 @@ mod backup_tests {
         }
     }
 
-    impl FormatteurMessage for TestChiffreurMgs3 {}
+    impl FormatteurMessage for TestChiffreurMgs4 {}
 
-    impl MongoDao for TestChiffreurMgs3 {
+    impl MongoDao for TestChiffreurMgs4 {
         fn get_database(&self) -> Result<Database, String> {
             todo!()
         }
     }
 
     #[async_trait]
-    impl GenerateurMessages for TestChiffreurMgs3 {
+    impl GenerateurMessages for TestChiffreurMgs4 {
         async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<(), String> where M: Serialize + Send + Sync {
             todo!()
         }
@@ -1362,19 +1382,21 @@ mod backup_tests {
         decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
         debug!("Cle dechiffree : {:?}", decipher_key);
 
-        let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
-        let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
-        let transactions = reader.read_transactions().await.expect("transactions");
+        todo!("Fix decipher keys mgs4");
 
-        for t in transactions {
-            debug!("Transaction dechiffree : {:?}", t);
-            let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
-            assert_eq!(valeur_chiffre, 5678);
-        }
+        // let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
+        // let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
+        // let transactions = reader.read_transactions().await.expect("transactions");
+        //
+        // for t in transactions {
+        //     debug!("Transaction dechiffree : {:?}", t);
+        //     let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
+        //     assert_eq!(valeur_chiffre, 5678);
+        // }
 
     }
 
-    fn creer_test_middleware(enveloppe: Arc<EnveloppePrivee>, validateur: Arc<ValidateurX509Impl>) -> (String, TestChiffreurMgs3) {
+    fn creer_test_middleware(enveloppe: Arc<EnveloppePrivee>, validateur: Arc<ValidateurX509Impl>) -> (String, TestChiffreurMgs4) {
         let mut fp_public_keys = Vec::new();
         let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
         let cle_publique = &enveloppe.enveloppe.cle_publique;
@@ -1389,7 +1411,7 @@ mod backup_tests {
             public_key: cle_publique_ca.to_owned(),
             est_cle_millegrille: true,
         });
-        let chiffreur = TestChiffreurMgs3 { cles_chiffrage: fp_public_keys, validateur, enveloppe_privee: enveloppe };
+        let chiffreur = TestChiffreurMgs4 { cles_chiffrage: fp_public_keys, validateur, enveloppe_privee: enveloppe };
         (fingerprint_cert, chiffreur)
     }
 

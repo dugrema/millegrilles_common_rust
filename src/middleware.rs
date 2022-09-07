@@ -18,8 +18,10 @@ use openssl::x509::X509;
 
 use crate::backup::BackupStarter;
 use crate::certificats::{charger_enveloppe, emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{Chiffreur, CleChiffrageHandler, Dechiffreur, MgsCipherData};
+use crate::chiffrage::{ChiffrageFactoryImpl, Chiffreur, ChiffrageFactory, CleChiffrageHandler, Dechiffreur, MgsCipherData, ChiffreurMgs4, ChiffreurMgs2, ChiffreurMgs3};
+use crate::chiffrage_aesgcm::CipherMgs2;
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
+use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{charger_configuration, charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
@@ -37,11 +39,16 @@ pub trait RedisTrait {
     fn get_redis(&self) -> &RedisDao;
 }
 
+pub trait ChiffrageFactoryTrait: CleChiffrageHandler {
+    fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl;
+}
+
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait MiddlewareMessages:
     ValidateurX509 + GenerateurMessages + ConfigMessages + IsConfigurationPki +
-    IsConfigNoeud + FormatteurMessage + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData> + EmetteurCertificat +
-    VerificateurMessage + RedisTrait
+    IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
+    VerificateurMessage + RedisTrait + ChiffrageFactoryTrait
+    // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
 
 pub trait Middleware:
@@ -113,8 +120,9 @@ pub struct MiddlewareMessage {
     configuration: Arc<ConfigurationMessages>,
     validateur: Arc<ValidateurX509Impl>,
     generateur_messages: Arc<GenerateurMessagesImpl>,
-    pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
+    // pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
     redis: RedisDao,
+    chiffrage_factory: Arc<ChiffrageFactoryImpl>,
 }
 
 impl MiddlewareMessages for MiddlewareMessage {}
@@ -280,145 +288,145 @@ impl GenerateurMessages for MiddlewareMessage {
     }
 }
 
-#[async_trait]
-impl CleChiffrageHandler for MiddlewareMessage {
+// #[async_trait]
+// impl CleChiffrageHandler for MiddlewareMessage {
+//
+//     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+//         let guard = self.cles_chiffrage.lock().expect("lock");
+//
+//         // Copier les cles (extraire du mutex), retourner dans un vecteur
+//         let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
+//
+//         vals
+//     }
+//
+//     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
+//         debug!("Charger les certificats de maitre des cles pour chiffrage");
+//
+//         // Reset certificats maitredescles. Reinserer cert millegrille immediatement.
+//         {
+//             let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+//             let mut guard = self.cles_chiffrage.lock().expect("lock");
+//             guard.clear();
+//
+//             // Reinserer certificat de millegrille
+//             let env_privee = self.get_enveloppe_privee();
+//             let fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+//             let fingerprint = fingerprint_cert[0].fingerprint.clone();
+//             guard.insert(fingerprint, fingerprint_cert[0].clone());
+//         }
+//
+//         emettre_commande_certificat_maitredescles(self).await?;
+//
+//         // Donner une chance aux certificats de rentrer
+//         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+//
+//         // Verifier si on a au moins un certificat
+//         let nb_certs = self.cles_chiffrage.lock().expect("lock").len();
+//         if nb_certs <= 1 {  // 1 => le cert millegrille est deja charge
+//             Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
+//         } else {
+//             debug!("On a {} certificats de maitre des cles valides", nb_certs);
+//         }
+//
+//         Ok(())
+//     }
+//
+//     async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
+//         let cert_chiffrage = match &message.certificat {
+//             Some(c) => c.clone(),
+//             None => {
+//                 Err(format!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait"))?
+//             }
+//         };
+//
+//         // Valider le certificat
+//         if ! cert_chiffrage.presentement_valide {
+//             Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
+//         }
+//
+//         if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
+//             Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
+//         }
+//
+//         info!("Certificat maitre des cles accepte {}", cert_chiffrage.fingerprint());
+//
+//         // Stocker cles chiffrage du maitre des cles
+//         {
+//             let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
+//                 Ok(f) => f,
+//                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
+//             };
+//             let mut guard = match self.cles_chiffrage.lock() {
+//                 Ok(g) => g,
+//                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
+//             };
+//             for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
+//                 guard.insert(fp.fingerprint.clone(), fp.clone());
+//             }
+//
+//             // S'assurer d'avoir le certificat de millegrille local
+//             let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+//             let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
+//             let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
+//                 Ok(p) => p,
+//                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
+//             }.pop();
+//             if let Some(pk_ca) = public_keys_ca {
+//                 guard.insert(pk_ca.fingerprint.clone(), pk_ca);
+//             }
+//
+//             debug!("Certificats chiffrage maj {:?}", guard);
+//         }
+//
+//         Ok(())
+//     }
+// }
 
-    fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-        let guard = self.cles_chiffrage.lock().expect("lock");
-
-        // Copier les cles (extraire du mutex), retourner dans un vecteur
-        let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
-
-        vals
-    }
-
-    async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
-        debug!("Charger les certificats de maitre des cles pour chiffrage");
-
-        // Reset certificats maitredescles. Reinserer cert millegrille immediatement.
-        {
-            let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-            let mut guard = self.cles_chiffrage.lock().expect("lock");
-            guard.clear();
-
-            // Reinserer certificat de millegrille
-            let env_privee = self.get_enveloppe_privee();
-            let fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-            let fingerprint = fingerprint_cert[0].fingerprint.clone();
-            guard.insert(fingerprint, fingerprint_cert[0].clone());
-        }
-
-        emettre_commande_certificat_maitredescles(self).await?;
-
-        // Donner une chance aux certificats de rentrer
-        tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-
-        // Verifier si on a au moins un certificat
-        let nb_certs = self.cles_chiffrage.lock().expect("lock").len();
-        if nb_certs <= 1 {  // 1 => le cert millegrille est deja charge
-            Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
-        } else {
-            debug!("On a {} certificats de maitre des cles valides", nb_certs);
-        }
-
-        Ok(())
-    }
-
-    async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
-        let cert_chiffrage = match &message.certificat {
-            Some(c) => c.clone(),
-            None => {
-                Err(format!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait"))?
-            }
-        };
-
-        // Valider le certificat
-        if ! cert_chiffrage.presentement_valide {
-            Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
-        }
-
-        if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
-            Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
-        }
-
-        info!("Certificat maitre des cles accepte {}", cert_chiffrage.fingerprint());
-
-        // Stocker cles chiffrage du maitre des cles
-        {
-            let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
-                Ok(f) => f,
-                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
-            };
-            let mut guard = match self.cles_chiffrage.lock() {
-                Ok(g) => g,
-                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
-            };
-            for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
-                guard.insert(fp.fingerprint.clone(), fp.clone());
-            }
-
-            // S'assurer d'avoir le certificat de millegrille local
-            let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
-            let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
-            let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
-                Ok(p) => p,
-                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
-            }.pop();
-            if let Some(pk_ca) = public_keys_ca {
-                guard.insert(pk_ca.fingerprint.clone(), pk_ca);
-            }
-
-            debug!("Certificats chiffrage maj {:?}", guard);
-        }
-
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
-
-    fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
-        let fp_public_keys = self.get_publickeys_chiffrage();
-        Ok(CipherMgs3::new(&fp_public_keys)?)
-    }
-
-}
-
-#[async_trait]
-impl Dechiffreur<DecipherMgs3, Mgs3CipherData> for MiddlewareMessage {
-
-    async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs3CipherData, Box<dyn Error>> {
-        let requete = {
-            let mut liste_hachage_bytes = Vec::new();
-            liste_hachage_bytes.push(hachage_bytes);
-            json!({
-                "liste_hachage_bytes": liste_hachage_bytes,
-            })
-        };
-        let routage = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
-        let reponse_cle_rechiffree = self.transmettre_requete(routage, &requete).await?;
-
-        error!("Reponse reechiffrage cle : {:?}", reponse_cle_rechiffree);
-
-        let contenu_dechiffrage = match reponse_cle_rechiffree {
-            TypeMessage::Valide(m) => m.message.get_msg().map_contenu::<ReponseDechiffrageCle>(None)?,
-            _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
-        };
-
-        contenu_dechiffrage.to_cipher_data()
-    }
-
-    async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs3, Box<dyn Error>> {
-        let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
-        let env_privee = self.get_enveloppe_privee();
-        let cle_privee = env_privee.cle_privee();
-        info_cle.dechiffrer_cle(cle_privee)?;
-
-        Ok(DecipherMgs3::new(&info_cle)?)
-    }
-
-}
+// #[async_trait]
+// impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
+//
+//     fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
+//         let fp_public_keys = self.get_publickeys_chiffrage();
+//         Ok(CipherMgs3::new(&fp_public_keys)?)
+//     }
+//
+// }
+//
+// #[async_trait]
+// impl Dechiffreur<DecipherMgs3, Mgs3CipherData> for MiddlewareMessage {
+//
+//     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs3CipherData, Box<dyn Error>> {
+//         let requete = {
+//             let mut liste_hachage_bytes = Vec::new();
+//             liste_hachage_bytes.push(hachage_bytes);
+//             json!({
+//                 "liste_hachage_bytes": liste_hachage_bytes,
+//             })
+//         };
+//         let routage = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
+//         let reponse_cle_rechiffree = self.transmettre_requete(routage, &requete).await?;
+//
+//         error!("Reponse reechiffrage cle : {:?}", reponse_cle_rechiffree);
+//
+//         let contenu_dechiffrage = match reponse_cle_rechiffree {
+//             TypeMessage::Valide(m) => m.message.get_msg().map_contenu::<ReponseDechiffrageCle>(None)?,
+//             _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
+//         };
+//
+//         contenu_dechiffrage.to_cipher_data()
+//     }
+//
+//     async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs3, Box<dyn Error>> {
+//         let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
+//         let env_privee = self.get_enveloppe_privee();
+//         let cle_privee = env_privee.cle_privee();
+//         info_cle.dechiffrer_cle(cle_privee)?;
+//
+//         Ok(DecipherMgs3::new(&info_cle)?)
+//     }
+//
+// }
 
 impl ConfigMessages for MiddlewareMessage {
     fn get_configuration_mq(&self) -> &ConfigurationMq {
@@ -466,6 +474,50 @@ impl EmetteurCertificat for MiddlewareMessage {
 impl VerificateurMessage for MiddlewareMessage {
     fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
         verifier_message(message, self, options)
+    }
+}
+
+impl ChiffrageFactoryTrait for MiddlewareMessage {
+    fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
+        self.chiffrage_factory.as_ref()
+    }
+}
+
+#[async_trait]
+impl CleChiffrageHandler for MiddlewareMessage {
+    fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+        self.chiffrage_factory.get_publickeys_chiffrage()
+    }
+
+    async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>)
+        -> Result<(), Box<dyn Error>>
+        where M: GenerateurMessages
+    {
+        self.chiffrage_factory.charger_certificats_chiffrage(middleware, cert_local, env_privee).await
+    }
+
+    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+        where M: ConfigMessages
+    {
+        self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
+    }
+}
+
+impl ChiffrageFactory for MiddlewareMessage {
+    fn get_chiffreur(&self) -> Result<CipherMgs4, String> {
+        self.chiffrage_factory.get_chiffreur()
+    }
+
+    fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
+        self.chiffrage_factory.get_chiffreur_mgs2()
+    }
+
+    fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
+        self.chiffrage_factory.get_chiffreur_mgs3()
+    }
+
+    fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String> {
+        self.chiffrage_factory.get_chiffreur_mgs4()
     }
 }
 
@@ -911,7 +963,7 @@ pub fn preparer_middleware_message(
     let generateur_messages_arc = Arc::new(generateur_messages);
 
     // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-    let cles_chiffrage = {
+    let chiffrage_factory = {
         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
         let cert_local = env_privee.enveloppe.as_ref();
         let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
@@ -926,7 +978,7 @@ pub fn preparer_middleware_message(
 
         debug!("Map cles chiffrage : {:?}", map);
 
-        map
+        Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
     };
 
     // let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
@@ -940,8 +992,9 @@ pub fn preparer_middleware_message(
         configuration,
         validateur: validateur.clone(),
         generateur_messages: generateur_messages_arc.clone(),
-        cles_chiffrage: Mutex::new(cles_chiffrage),
+        // cles_chiffrage: Mutex::new(cles_chiffrage),
         redis: redis_dao,
+        chiffrage_factory,
     });
 
     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);

@@ -13,11 +13,13 @@ use tokio_stream::StreamExt;
 use xz2::stream;
 
 use crate::certificats::ValidateurX509;
-use crate::chiffrage::{Chiffreur, CipherMgs, Dechiffreur, MgsCipherKeys};
+use crate::chiffrage::{ChiffrageFactory, Chiffreur, CipherMgs, Dechiffreur, MgsCipherKeys};
 use crate::chiffrage_chacha20poly1305::{DecipherMgs3, Mgs3CipherData};
+use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherKeys};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::Hacheur;
+use crate::middleware::ChiffrageFactoryTrait;
 use crate::verificateur::VerificateurMessage;
 
 const PRESET_COMPRESSION_XZ: u32 = 6;
@@ -35,11 +37,11 @@ pub struct FichierWriter<K, M>
     _keys: PhantomData<K>,
 }
 
-impl<K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<K, M> {
+impl FichierWriter<Mgs4CipherKeys, CipherMgs4> {
 
-    pub async fn new<C,P>(path_fichier: P, chiffreur: Option<&C>) -> Result<FichierWriter<K, M>, Box<dyn Error>>
+    pub async fn new<C,P>(path_fichier: P, chiffrage_factory: Option<&C>) -> Result<FichierWriter<Mgs4CipherKeys, CipherMgs4>, Box<dyn Error>>
     where
-        C: Chiffreur<M, K>,
+        C: ChiffrageFactory,
         P: Into<PathBuf>
     {
         let path_fichier_buf = path_fichier.into();
@@ -50,10 +52,10 @@ impl<K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<K, M> {
         let xz_encodeur = stream::Stream::new_easy_encoder(PRESET_COMPRESSION_XZ, stream::Check::Crc64).expect("stream");
         let hacheur = Hacheur::builder().digester(Code::Blake2b512).base(Base::Base58Btc).build();
 
-        let chiffreur = match chiffreur {
+        let chiffreur = match chiffrage_factory {
             Some(c) => {
                 debug!("Activer chiffrage pour fichier  : {:?}", path_fichier_buf);
-                Some(c.get_cipher()?)
+                Some(c.get_chiffreur()?)
             },
             None => None,
         };
@@ -109,7 +111,7 @@ impl<K: MgsCipherKeys, M: CipherMgs<K>> FichierWriter<K, M> {
         Ok(count_bytes)
     }
 
-    pub async fn fermer(mut self) -> Result<(String, Option<K>), Box<dyn Error>> {
+    pub async fn fermer(mut self) -> Result<(String, Option<Mgs4CipherKeys>), Box<dyn Error>> {
         let mut buffer_chiffre = [0u8; BUFFER_SIZE];
         let mut buffer : Vec<u8> = Vec::new();
         buffer.reserve(BUFFER_SIZE);

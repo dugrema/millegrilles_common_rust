@@ -260,23 +260,28 @@ impl MgsCipherKeys for Mgs3CipherKeys {
         &self,
         domaine: &str,
         partition: Option<String>,
-        identificateurs_document: HashMap<String, String>
+        identificateurs_document: HashMap<String, String>,
+        user_id: Option<String>
     ) -> CommandeSauvegarderCle {
 
         let fingerprint_partitions = self.get_fingerprint_partitions();
 
-        CommandeSauvegarderCle {
-            hachage_bytes: self.hachage_bytes.clone(),
-            cles: self.cles_to_map(),
-            iv: Some(self.iv.clone()),
-            tag: Some(self.tag.clone()),
-            header: None,
-            format: FormatChiffrage::mgs3,
-            domaine: domaine.to_owned(),
-            partition,
-            identificateurs_document,
-            fingerprint_partitions: Some(fingerprint_partitions),
-        }
+        todo!("fix me - signature identite")
+
+        // CommandeSauvegarderCle {
+        //     hachage_bytes: self.hachage_bytes.clone(),
+        //     domaine: domaine.to_owned(),
+        //     identificateurs_document,
+        //     user_id: self.user_id.clone(),
+        //     signature_identite: self.signature_identite.clone(),
+        //     cles: self.cles_to_map(),
+        //     iv: Some(self.iv.clone()),
+        //     tag: Some(self.tag.clone()),
+        //     header: None,
+        //     format: FormatChiffrage::mgs3,
+        //     partition,
+        //     fingerprint_partitions: Some(fingerprint_partitions),
+        // }
     }
 
     fn get_cle_millegrille(&self) -> Option<String> {

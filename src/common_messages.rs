@@ -6,16 +6,25 @@ use crate::chiffrage::{CommandeSauvegarderCle, FormatChiffrage};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionCle {
-    pub cle: String,
-    pub domaine: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub partition: Option<String>,
-    pub format: FormatChiffrage,
+    // Identite
     pub hachage_bytes: String,
+    pub domaine: String,
     pub identificateurs_document: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    pub signature_identite: String,
+
+    // Cle chiffree
+    pub cle: String,
+
+    // Dechiffrage contenu
+    pub format: FormatChiffrage,
     pub iv: Option<String>,
     pub tag: Option<String>,
     pub header: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition: Option<String>,
 }
 
 impl TransactionCle {
@@ -30,15 +39,17 @@ impl TransactionCle {
         };
 
         Ok(TransactionCle {
-            cle: cle.to_owned(),
-            domaine: commande.domaine.clone(),
-            partition: commande.partition.clone(),
-            format: commande.format.clone(),
             hachage_bytes: commande.hachage_bytes.to_owned(),
+            domaine: commande.domaine.clone(),
             identificateurs_document: commande.identificateurs_document.clone(),
+            user_id: commande.user_id.clone(),
+            signature_identite: commande.signature_identite.clone(),
+            cle: cle.to_owned(),
+            format: commande.format.clone(),
             iv: commande.iv.clone(),
             tag: commande.tag.clone(),
             header: commande.header.clone(),
+            partition: commande.partition.clone(),
         })
     }
 
@@ -49,15 +60,17 @@ impl TransactionCle {
         let mut cles: HashMap<String, String> = HashMap::new();
         cles.insert(fingerprint_, self.cle);
         CommandeSauvegarderCle {
-            cles,
-            domaine: self.domaine,
-            partition: self.partition,
-            format: self.format,
             hachage_bytes: self.hachage_bytes,
+            domaine: self.domaine,
             identificateurs_document: self.identificateurs_document,
+            user_id: self.user_id,
+            signature_identite: self.signature_identite,
+            cles,
+            format: self.format,
             iv: self.iv,
             tag: self.tag,
             header: self.header,
+            partition: self.partition,
             fingerprint_partitions: None
         }
     }

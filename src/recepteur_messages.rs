@@ -12,10 +12,11 @@ use TypeMessageOut as TypeMessageIn;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509, VerificateurPermissions};
 use crate::chiffrage::Chiffreur;
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
+use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
+use crate::middleware::{ChiffrageFactoryTrait, formatter_message_certificat, IsConfigurationPki};
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, TypeMessageOut};
 use crate::transactions::TransactionImpl;
 use crate::verificateur::verifier_message;
@@ -27,7 +28,7 @@ pub async fn recevoir_messages<M>(
     tx_verifie: Sender<TypeMessage>,
     tx_certificats_manquants: Sender<RequeteCertificatInterne>
 )
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
 
@@ -255,7 +256,7 @@ pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>,
 }
 
 pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     // Intercepter reponses et requetes de certificat
     match &message {
@@ -265,7 +266,8 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                     match correlation_id.as_str() {
                         COMMANDE_CERT_MAITREDESCLES => {
                             debug!("intercepter_message Reponse certificat maitre des cles recus : {:?}", inner);
-                            match middleware.recevoir_certificat_chiffrage(&inner.message).await {
+                            let chiffrage_factory = middleware.get_chiffrage_factory();
+                            match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
                                 Ok(_) => true,
                                 Err(e) => {
                                     error!("intercepter_message Erreur interception certificat maitre des cles : {:?}", e);
@@ -290,7 +292,7 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                         },
                         COMMANDE_CERT_MAITREDESCLES => {
                             debug!("intercepter_messageEvenement certificat maitre des cles recus : {:?}", inner);
-                            match middleware.recevoir_certificat_chiffrage(&inner.message).await {
+                            match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
                                 Ok(_) => true,
                                 Err(e) => {
                                     error!("Erreur interception certificat maitre des cles : {:?}", e);

@@ -15,13 +15,15 @@ use tokio::task::JoinHandle;
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{Chiffreur, CleChiffrageHandler, Dechiffreur, MgsCipherData};
+use crate::chiffrage::{ChiffrageFactory, ChiffrageFactoryImpl, Chiffreur, CleChiffrageHandler, Dechiffreur, MgsCipherData};
+use crate::chiffrage_aesgcm::CipherMgs2;
 use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
+use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, ReponseDechiffrageCle, RedisTrait};
+use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, ReponseDechiffrageCle, RedisTrait, ChiffrageFactoryTrait};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
@@ -34,9 +36,10 @@ pub struct MiddlewareDb {
     mongo: Arc<MongoDaoImpl>,
     validateur: Arc<ValidateurX509Impl>,
     generateur_messages: Arc<GenerateurMessagesImpl>,
-    pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
+    // pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
     redis: RedisDao,
     tx_backup: Sender<CommandeBackup>,
+    chiffrage_factory: Arc<ChiffrageFactoryImpl>,
 }
 
 impl MiddlewareDb {
@@ -236,7 +239,7 @@ impl IsConfigNoeud for MiddlewareDb {
 impl CleChiffrageHandler for MiddlewareDb {
 
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-        let guard = self.cles_chiffrage.lock().expect("lock");
+        let guard = self.chiffrage_factory.cles_chiffrage.lock().expect("lock");
 
         // Copier les cles (extraire du mutex), retourner dans un vecteur
         let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
@@ -244,32 +247,34 @@ impl CleChiffrageHandler for MiddlewareDb {
         vals
     }
 
-    async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
+    async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>)
+        -> Result<(), Box<dyn Error>>
+        where M: GenerateurMessages
+    {
         debug!("Charger les certificats de maitre des cles pour chiffrage");
 
         // Reset certificats maitredescles. Reinserer cert millegrille immediatement.
         {
             let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-            let mut guard = self.cles_chiffrage.lock().expect("lock");
+            let mut guard = self.chiffrage_factory.cles_chiffrage.lock().expect("lock");
             guard.clear();
 
             // Reinserer certificat de millegrille
-            let env_privee = self.get_enveloppe_privee();
             let fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
             let fingerprint = fingerprint_cert[0].fingerprint.clone();
             guard.insert(fingerprint, fingerprint_cert[0].clone());
         }
 
-        emettre_commande_certificat_maitredescles(self).await?;
+        emettre_commande_certificat_maitredescles(middleware).await?;
 
         // Donner une chance aux certificats de rentrer
         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
 
-        let certs = self.cles_chiffrage.lock().expect("lock").clone();
+        let certs = self.chiffrage_factory.cles_chiffrage.lock().expect("lock").clone();
         debug!("charger_certificats_chiffrage Certificats de chiffrage recus : {:?}", certs);
 
         // Verifier si on a au moins un certificat
-        let nb_certs = self.cles_chiffrage.lock().expect("lock").len();
+        let nb_certs = self.chiffrage_factory.cles_chiffrage.lock().expect("lock").len();
         if nb_certs <= 1 {  // 1 => le cert millegrille est deja charge
             Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
         } else {
@@ -279,7 +284,9 @@ impl CleChiffrageHandler for MiddlewareDb {
         Ok(())
     }
 
-    async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
+    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+        where M: ConfigMessages
+    {
         let cert_chiffrage = match &message.certificat {
             Some(c) => c.clone(),
             None => {
@@ -304,7 +311,7 @@ impl CleChiffrageHandler for MiddlewareDb {
                 Ok(f) => f,
                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage cert_chiffrage.fingerprint_cert_publickeys : {:?}", e))?
             };
-            let mut guard = match self.cles_chiffrage.lock() {
+            let mut guard = match self.chiffrage_factory.cles_chiffrage.lock() {
                 Ok(g) => g,
                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock() : {:?}", e))?
             };
@@ -313,7 +320,7 @@ impl CleChiffrageHandler for MiddlewareDb {
             }
 
             // S'assurer d'avoir le certificat de millegrille local
-            let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+            let enveloppe_privee = middleware.get_configuration_pki().get_enveloppe_privee();
             let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
             let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
                 Ok(p) => p,
@@ -417,6 +424,30 @@ impl BackupStarter for MiddlewareDb {
     }
 }
 
+impl ChiffrageFactoryTrait for MiddlewareDb {
+    fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
+        self.chiffrage_factory.as_ref()
+    }
+}
+
+impl ChiffrageFactory for MiddlewareDb {
+    fn get_chiffreur(&self) -> Result<CipherMgs4, String> {
+        self.chiffrage_factory.get_chiffreur()
+    }
+
+    fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
+        self.chiffrage_factory.get_chiffreur_mgs2()
+    }
+
+    fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
+        self.chiffrage_factory.get_chiffreur_mgs3()
+    }
+
+    fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String> {
+        self.chiffrage_factory.get_chiffreur_mgs4()
+    }
+}
+
 /// Version speciale du middleware avec un acces a MongoDB
 pub fn preparer_middleware_db(
     queues: Vec<QueueType>,
@@ -433,7 +464,7 @@ pub fn preparer_middleware_db(
     let generateur_messages_arc = Arc::new(generateur_messages);
 
     // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-    let cles_chiffrage = {
+    let chiffrage_factory = {
         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
         let cert_local = env_privee.enveloppe.as_ref();
         let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
@@ -447,7 +478,7 @@ pub fn preparer_middleware_db(
 
         debug!("Map cles chiffrage : {:?}", map);
 
-        map
+        Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
     };
 
     // let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
@@ -463,9 +494,10 @@ pub fn preparer_middleware_db(
         mongo,
         validateur: validateur.clone(),
         generateur_messages: generateur_messages_arc.clone(),
-        cles_chiffrage: Mutex::new(cles_chiffrage),
+        // cles_chiffrage: Mutex::new(cles_chiffrage),
         redis: redis_dao,
         tx_backup,
+        chiffrage_factory,
     });
 
     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);
