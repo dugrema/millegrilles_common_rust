@@ -11,7 +11,7 @@ use TypeMessageOut as TypeMessageIn;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509, VerificateurPermissions};
 use crate::chiffrage::Chiffreur;
-use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
+// use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};

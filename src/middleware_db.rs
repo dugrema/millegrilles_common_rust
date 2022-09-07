@@ -15,15 +15,15 @@ use tokio::task::JoinHandle;
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{ChiffrageFactory, ChiffrageFactoryImpl, Chiffreur, CleChiffrageHandler, Dechiffreur, MgsCipherData};
+use crate::chiffrage::{ChiffrageFactory, ChiffrageFactoryImpl, Chiffreur, CipherMgsCurrent, CleChiffrageHandler, Dechiffreur, MgsCipherData, MgsCipherKeysCurrent};
 use crate::chiffrage_aesgcm::CipherMgs2;
-use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
+// use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, ReponseDechiffrageCle, RedisTrait, ChiffrageFactoryTrait};
+use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, RedisTrait, ChiffrageFactoryTrait};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
@@ -338,50 +338,50 @@ impl CleChiffrageHandler for MiddlewareDb {
 
 }
 
-#[async_trait]
-impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareDb {
+// #[async_trait]
+// impl Chiffreur<CipherMgsCurrent, MgsCipherKeysCurrent> for MiddlewareDb {
+//
+//     fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
+//         let fp_public_keys = self.get_publickeys_chiffrage();
+//         Ok(CipherMgsCurrent::new(&fp_public_keys)?)
+//     }
+//
+// }
 
-    fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
-        let fp_public_keys = self.get_publickeys_chiffrage();
-        Ok(CipherMgs3::new(&fp_public_keys)?)
-    }
-
-}
-
-#[async_trait]
-impl Dechiffreur<DecipherMgs3, Mgs3CipherData> for MiddlewareDb {
-
-    async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs3CipherData, Box<dyn Error>> {
-        let requete = {
-            let mut liste_hachage_bytes = Vec::new();
-            liste_hachage_bytes.push(hachage_bytes);
-            json!({
-                "liste_hachage_bytes": liste_hachage_bytes,
-            })
-        };
-        let routage = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
-        let reponse_cle_rechiffree = self.transmettre_requete(routage, &requete).await?;
-
-        error!("Reponse reechiffrage cle : {:?}", reponse_cle_rechiffree);
-
-        let contenu_dechiffrage = match reponse_cle_rechiffree {
-            TypeMessage::Valide(m) => m.message.get_msg().map_contenu::<ReponseDechiffrageCle>(None)?,
-            _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
-        };
-
-        contenu_dechiffrage.to_cipher_data()
-    }
-
-    async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs3, Box<dyn Error>> {
-        let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
-        let env_privee = self.get_enveloppe_privee();
-        let cle_privee = env_privee.cle_privee();
-        info_cle.dechiffrer_cle(cle_privee)?;
-
-        Ok(DecipherMgs3::new(&info_cle)?)
-    }
-
-}
+// #[async_trait]
+// impl Dechiffreur<DecipherMgs3, Mgs3CipherData> for MiddlewareDb {
+//
+//     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs3CipherData, Box<dyn Error>> {
+//         let requete = {
+//             let mut liste_hachage_bytes = Vec::new();
+//             liste_hachage_bytes.push(hachage_bytes);
+//             json!({
+//                 "liste_hachage_bytes": liste_hachage_bytes,
+//             })
+//         };
+//         let routage = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
+//         let reponse_cle_rechiffree = self.transmettre_requete(routage, &requete).await?;
+//
+//         error!("Reponse reechiffrage cle : {:?}", reponse_cle_rechiffree);
+//
+//         let contenu_dechiffrage = match reponse_cle_rechiffree {
+//             TypeMessage::Valide(m) => m.message.get_msg().map_contenu::<ReponseDechiffrageCle>(None)?,
+//             _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
+//         };
+//
+//         contenu_dechiffrage.to_cipher_data()
+//     }
+//
+//     async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs3, Box<dyn Error>> {
+//         let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
+//         let env_privee = self.get_enveloppe_privee();
+//         let cle_privee = env_privee.cle_privee();
+//         info_cle.dechiffrer_cle(cle_privee)?;
+//
+//         Ok(DecipherMgs3::new(&info_cle)?)
+//     }
+//
+// }
 
 impl VerificateurMessage for MiddlewareDb {
     fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
@@ -439,9 +439,9 @@ impl ChiffrageFactory for MiddlewareDb {
         self.chiffrage_factory.get_chiffreur_mgs2()
     }
 
-    fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
-        self.chiffrage_factory.get_chiffreur_mgs3()
-    }
+    // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
+    //     self.chiffrage_factory.get_chiffreur_mgs3()
+    // }
 
     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String> {
         self.chiffrage_factory.get_chiffreur_mgs4()

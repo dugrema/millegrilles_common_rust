@@ -1,14 +1,14 @@
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
 
-use aead::{NewAead, AeadMut};
+use chacha20poly1305::{aead::{Aead, AeadCore, KeyInit, OsRng}, ChaCha20Poly1305, Nonce};
 use log::debug;
 use multihash::Code;
 use openssl::derive::Deriver;
 use openssl::pkey::{Id, PKey, Private, Public};
 use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
 
-use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
+// use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
 use crate::chiffrage::CleSecrete;
 use crate::hachages::hacher_bytes_vu8;
 

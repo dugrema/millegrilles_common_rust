@@ -11,7 +11,7 @@ bytes = { version = "1.1.0" }
 log = { version = "0.4.14", features = ["max_level_trace", "release_max_level_info"] }
 env_logger = { version = "0.9.0" }
 num-traits = "0.2.14"
-rand = "0.7"
+rand = "0.8.5"
 reqwest = { version = "0.11.6", features = ["default-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream"] }
 tempfile = { version = "3.2.0" }
 xz2 = { version = "0.1.7", features = ["tokio"] }
@@ -26,18 +26,20 @@ tokio-util = { version = "*", features = ["codec", "io"] }
 
 # Crypto et certs
 openssl = { version = "0.10.29", features = ["vendored"] }
-x509-parser = { "version" = "0.10.0" }
+x509-parser = { "version" = ">=0.10, <=0.14.0" }
 multibase = "0.9.1"
 multicodec = "0.1.0"
 multihash = "0.14.0"
 blake2 = "0.10.2"
 # chacha20poly1305 = { version= "0.9.0", features = ["stream"] }
+#rust_sodium-sys = { version = "0.10.4" }
 aead = { version = "0.4", default-features = false, features = ['alloc'] }
-chacha20 = { version = "0.8", features = ["zeroize"] }
-cipher = "0.3"
+# chacha20 = { version = "0.9.0", features = ["zeroize"] }
+cipher = "0.4.3"
 dryoc = { version = "^0.3.11" }
-poly1305 = "0.7"
-zeroize = { version = ">=1, <1.5", default-features = false }
+# poly1305 = "0.7"
+chacha20poly1305 = "0.10.1"
+zeroize = { version = ">=1, <1.6", default-features = false }
 
 # JSON
 serde = { version = "1.0", features = ["derive"] }
@@ -46,7 +48,7 @@ serde_json = "1.0"
 # Formats
 chrono = { version = "0.4.19", features = ["serde"] }
 url = { version = "2.2.2", features = ["serde"] }
-uuid = { version = "0.8.2", features = ["serde", "v4"] }
+uuid = { version = "1.1.2", features = ["serde", "v4"] }
 substring = { version = "1.4.5" }
 
 # MongoDB
@@ -54,10 +56,10 @@ mongodb = { version = "2.1.0", default-features = false, features = ["tokio-runt
 # bson = "2.0.0"
 
 # RabbitMQ
-lapin = { "version" = "1.8.0" }
+lapin = { "version" = "1.10.0" }
 futures = "0.3.1"
 futures-util = "0.3.16"
-tokio-amqp = { version = "1.0.0" }
+tokio-amqp = { version = "1.1.0" }
 
 redis = { version = "0.21.5", features = ["tokio-comp", "tokio-native-tls-comp"] }
 

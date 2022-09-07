@@ -26,7 +26,8 @@ use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
 use crate::chiffrage::{Chiffreur, Dechiffreur, DecipherMgs, MgsCipherKeys};
-use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
+use crate::chiffrage_streamxchacha20poly1305::{DecipherMgs4, Mgs4CipherData};
+// use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
@@ -47,31 +48,31 @@ pub struct TransactionReader<'a> {
     data: Box<dyn AsyncRead + Unpin + 'a>,
     xz_decoder: stream::Stream,
     // hacheur: Hacheur,
-    dechiffreur: Option<DecipherMgs3>,
+    dechiffreur: Option<DecipherMgs4>,
 }
 
 impl<'a> TransactionReader<'a> {
 
     const BUFFER_SIZE: usize = 65535;
 
-    pub fn new(data: Box<impl AsyncRead + Unpin + 'a>, decipher_data: Option<&Mgs3CipherData>) -> Result<Self, Box<dyn Error>> {
-
-        let xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
-
-        let dechiffreur = match decipher_data {
-            Some(cd) => {
-                let dechiffreur = DecipherMgs3::new(cd)?;
-                Some(dechiffreur)
-            },
-            None => None,
-        };
-
-        Ok(TransactionReader {
-            data,
-            xz_decoder,
-            // hacheur,
-            dechiffreur,
-        })
+    pub fn new(data: Box<impl AsyncRead + Unpin + 'a>, decipher_data: Option<&Mgs4CipherData>) -> Result<Self, Box<dyn Error>> {
+        todo!("fix me")
+        // let xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
+        //
+        // let dechiffreur = match decipher_data {
+        //     Some(cd) => {
+        //         let dechiffreur = DecipherMgs3::new(cd)?;
+        //         Some(dechiffreur)
+        //     },
+        //     None => None,
+        // };
+        //
+        // Ok(TransactionReader {
+        //     data,
+        //     xz_decoder,
+        //     // hacheur,
+        //     dechiffreur,
+        // })
     }
 
     /// todo Les transactions sont lues en memoire avant d'etre traitees - changer pour iterator async

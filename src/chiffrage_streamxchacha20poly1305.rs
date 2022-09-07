@@ -4,6 +4,7 @@ use core::fmt::Formatter;
 use std::fmt::Debug;
 use multibase::{Base, decode};
 use openssl::pkey::{PKey, Private};
+
 use crate::certificats::FingerprintCertPublicKey;
 use crate::chiffrage::{CipherMgs, CleSecrete, CommandeSauvegarderCle, DecipherMgs, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
@@ -17,11 +18,6 @@ pub struct CipherMgs4 {
     hacheur: Hacheur,
     hachage_bytes: Option<String>,
     header: Option<String>,
-}
-
-pub struct DecipherMgs4 {
-    // decrypter: ChaCha20Poly1305,
-    header: [u8; 24],
 }
 
 impl CipherMgs4 {
@@ -131,6 +127,30 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
         // }
     }
 
+}
+
+pub struct DecipherMgs4 {
+    // decrypter: ChaCha20Poly1305,
+    header: [u8; 24],
+}
+
+impl DecipherMgs4 {
+    pub fn new(decipher_data: &Mgs4CipherData) -> Result<Self, String> {
+        todo!("fix me")
+
+        // let cle_dechiffree = match &decipher_data.cle_dechiffree {
+        //     Some(c) => c,
+        //     None => Err("Cle n'est pas dechiffree")?,
+        // };
+        //
+        // let mut decrypter = ChaCha20Poly1305::new(&cle_dechiffree.0.into());
+        // decrypter.set_nonce(decipher_data.iv[..].into());
+        //
+        // let mut tag = [0u8; 16];
+        // tag.copy_from_slice(&decipher_data.tag[0..16]);
+        //
+        // Ok(DecipherMgs4 { decrypter, tag })
+    }
 }
 
 impl DecipherMgs<Mgs4CipherData> for DecipherMgs4 {
@@ -300,4 +320,72 @@ impl Debug for Mgs4CipherData {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(format!("Mgs4CipherData header: {:?}", self.header).as_str())
     }
+}
+
+#[cfg(test)]
+mod test {
+    use log::debug;
+    use openssl::pkey::{Id, PKey};
+    use crate::test_setup::setup;
+    use super::*;
+
+    #[test]
+    fn test_cipher4_vide() -> Result<(), Box<dyn Error>> {
+        setup("test_cipher4_vide");
+
+        // Generer deux cles
+        let cle_millegrille = PKey::generate_ed25519()?;
+        let cle_millegrille_public = PKey::public_key_from_raw_bytes(
+            &cle_millegrille.raw_public_key()?, Id::ED25519)?;
+        let cle_maitrecles1 = PKey::generate_ed25519()?;
+        let cle_maitrecles1_public = PKey::public_key_from_raw_bytes(
+            &cle_maitrecles1.raw_public_key()?, Id::ED25519)?;
+
+        let mut fpkeys = Vec::new();
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "CleMillegrille".into(),
+            public_key: cle_millegrille_public,
+            est_cle_millegrille: true,
+        });
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "MaitreCles1".into(),
+            public_key: cle_maitrecles1_public,
+            est_cle_millegrille: false,
+        });
+
+        // Chiffrer contenu "vide"
+        let cipher = CipherMgs4::new(&fpkeys)?;
+        debug!("Nouveau cipher info : Cles chiffrees: {:?}", cipher.cles_chiffrees);
+        let (out_len, info_keys) = cipher.finalize(&mut [0u8])?;
+        debug!("Output header: keys : {:?}", info_keys);
+
+        // Dechiffrer contenu "vide"
+        for key in &info_keys.cles_chiffrees {
+
+            if key.fingerprint.as_str() == "CleMillegrille" {
+                // Test dechiffrage avec cle de millegrille (cle chiffree est 32 bytes)
+                debug!("Test dechiffrage avec CleMillegrille");
+                let mut decipher_data = Mgs4CipherData::new(
+                    key.cle_chiffree.as_str(), info_keys.header.as_str())?;
+                decipher_data.dechiffrer_cle(&cle_millegrille)?;
+                let mut decipher = DecipherMgs4::new(&decipher_data)?;
+                let out_len = decipher.finalize(&mut [0u8])?;
+                debug!("Output len dechiffrage CleMillegrille : {}.", out_len);
+                assert_eq!(out_len, 0);
+            } else if key.fingerprint.as_str() == "MaitreCles1" {
+                // Test dechiffrage avec cle de MaitreDesCles (cle chiffree est 80 bytes : 32 bytes peer public, 32 bytes chiffre, 16 bytes tag)
+                debug!("Test dechiffrage avec MaitreCles1");
+                let mut decipher_data = Mgs4CipherData::new(
+                    key.cle_chiffree.as_str(), info_keys.header.as_str())?;
+                decipher_data.dechiffrer_cle(&cle_maitrecles1)?;
+                let mut decipher = DecipherMgs4::new(&decipher_data)?;
+                let out_len = decipher.finalize(&mut [0u8])?;
+                debug!("Output len dechiffrage MaitreCles1 : {}.", out_len);
+                assert_eq!(out_len, 0);
+            }
+        }
+
+        Ok(())
+    }
+
 }

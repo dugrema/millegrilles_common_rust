@@ -18,9 +18,9 @@ use openssl::x509::X509;
 
 use crate::backup::BackupStarter;
 use crate::certificats::{charger_enveloppe, emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{ChiffrageFactoryImpl, Chiffreur, ChiffrageFactory, CleChiffrageHandler, Dechiffreur, MgsCipherData, ChiffreurMgs4, ChiffreurMgs2, ChiffreurMgs3};
+use crate::chiffrage::{ChiffrageFactoryImpl, Chiffreur, ChiffrageFactory, CleChiffrageHandler, Dechiffreur, MgsCipherData, ChiffreurMgs4, ChiffreurMgs2, MgsCipherDataCurrent};
 use crate::chiffrage_aesgcm::CipherMgs2;
-use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
+// use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{charger_configuration, charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
@@ -512,9 +512,9 @@ impl ChiffrageFactory for MiddlewareMessage {
         self.chiffrage_factory.get_chiffreur_mgs2()
     }
 
-    fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
-        self.chiffrage_factory.get_chiffreur_mgs3()
-    }
+    // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
+    //     self.chiffrage_factory.get_chiffreur_mgs3()
+    // }
 
     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String> {
         self.chiffrage_factory.get_chiffreur_mgs4()
@@ -526,6 +526,7 @@ pub struct ReponseCertificatMaitredescles {
     certificat: Vec<String>,
     // certificat_millegrille: String,
 }
+
 impl ReponseCertificatMaitredescles {
     pub async fn get_enveloppe_maitredescles<V>(&self, validateur: &V) -> Result<Arc<EnveloppeCertificat>, Box<dyn Error>>
     where
@@ -535,47 +536,46 @@ impl ReponseCertificatMaitredescles {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct ReponseDechiffrageCle {
-    acces: String,
-    pub cles: Option<HashMap<String, ReponseDechiffrageCleInfo>>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ReponseDechiffrageCleInfo {
-    acces: Option<String>,
-    cle: String,
-    domaine: String,
-    format: String,
-    hachage_bytes: Option<String>,
-    identificateurs_document: Option<HashMap<String, String>>,
-    iv: String,
-    tag: String,
-}
-
-impl ReponseDechiffrageCle {
-    pub fn to_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
-        match &self.cles {
-            Some(cles) => {
-                if cles.len() == 1 {
-                    let (_, cle) = cles.iter().next().expect("cle");
-                    cle.to_cipher_data()
-                } else {
-                    Err(String::from("Plusieurs cles presentes"))?
-                }
-            },
-            None => {
-                Err(String::from("Aucunes cles presentes"))?
-            }
-        }
-    }
-}
-
-impl ReponseDechiffrageCleInfo {
-    pub fn to_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
-        Mgs3CipherData::new(&self.cle, &self.iv, &self.tag)
-    }
-}
+// #[derive(Clone, Debug, Deserialize)]
+// pub struct ReponseDechiffrageCle {
+//     acces: String,
+//     pub cles: Option<HashMap<String, ReponseDechiffrageCleInfo>>,
+// }
+//
+// #[derive(Clone, Debug, Deserialize)]
+// pub struct ReponseDechiffrageCleInfo {
+//     acces: Option<String>,
+//     cle: String,
+//     domaine: String,
+//     format: String,
+//     hachage_bytes: Option<String>,
+//     identificateurs_document: Option<HashMap<String, String>>,
+//     header: String,
+// }
+//
+// impl ReponseDechiffrageCle {
+//     pub fn to_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
+//         match &self.cles {
+//             Some(cles) => {
+//                 if cles.len() == 1 {
+//                     let (_, cle) = cles.iter().next().expect("cle");
+//                     cle.to_cipher_data()
+//                 } else {
+//                     Err(String::from("Plusieurs cles presentes"))?
+//                 }
+//             },
+//             None => {
+//                 Err(String::from("Aucunes cles presentes"))?
+//             }
+//         }
+//     }
+// }
+//
+// impl ReponseDechiffrageCleInfo {
+//     pub fn to_cipher_data(&self) -> Result<MgsCipherDataCurrent, Box<dyn Error>> {
+//         Mgs3CipherData::new(&self.cle, &self.header)
+//     }
+// }
 
 pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection<Document>, dirty: Option<bool>) -> Result<Option<String>, String> {
     let fingerprint = enveloppe.fingerprint();

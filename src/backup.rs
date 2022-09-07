@@ -39,8 +39,8 @@ use uuid::Uuid;
 use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{ChiffrageFactory, Chiffreur, CipherMgsCurrent, Dechiffreur, DecipherMgs, MgsCipherKeys, MgsCipherKeysCurrent};
-use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
+use crate::chiffrage::{ChiffrageFactory, Chiffreur, CipherMgsCurrent, Dechiffreur, DecipherMgs, MgsCipherDataCurrent, MgsCipherKeys, MgsCipherKeysCurrent};
+// use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherKeys};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
@@ -526,15 +526,13 @@ impl CatalogueBackup {
         CatalogueBackupBuilder::new(heure, nom_domaine, partition, uuid_backup)
     }
 
-    pub fn get_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
+    pub fn get_cipher_data(&self) -> Result<MgsCipherDataCurrent, Box<dyn Error>> {
         match &self.cle {
             Some(c) => {
-                let iv = self.iv.as_ref().expect("iv");
-                let tag = self.tag.as_ref().expect("tag");
-                Mgs3CipherData::new(
+                let header = self.header.as_ref().expect("header");
+                MgsCipherDataCurrent::new(
                     c.as_str(),
-                    iv,
-                    tag
+                    header,
                 )
             },
             None => Err("Non chiffre")?,

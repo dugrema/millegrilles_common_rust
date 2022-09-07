@@ -14,7 +14,7 @@ use zeroize::Zeroize;
 use crate::bson::Document;
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ordered_map, VerificateurPermissions};
 use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherKeys};
-use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
+// use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::chiffrage_rsa::{chiffrer_asymetrique as chiffrer_asymetrique_aesgcm, dechiffrer_asymetrique as dechiffrer_asymetrique_aesgcm};
 use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherData, Mgs4CipherKeys};
@@ -203,7 +203,7 @@ pub trait ChiffrageFactory {
     // Toutes les versions supportees (requis pour le dechiffrage)
 
     fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String>;
-    fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String>;
+    // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String>;
     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String>;
 }
 
@@ -235,13 +235,13 @@ impl ChiffrageFactory for ChiffrageFactoryImpl {
         }
     }
 
-    fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
-        let fp_public_keys = self.get_publickeys_chiffrage();
-        match CipherMgs3::new(&fp_public_keys) {
-            Ok(c) => Ok(c),
-            Err(e) => Err(format!("ChiffrageFactoryImpl.get_chiffreur_mgs2 Erreur {:?}", e))
-        }
-    }
+    // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
+    //     let fp_public_keys = self.get_publickeys_chiffrage();
+    //     match CipherMgs3::new(&fp_public_keys) {
+    //         Ok(c) => Ok(c),
+    //         Err(e) => Err(format!("ChiffrageFactoryImpl.get_chiffreur_mgs2 Erreur {:?}", e))
+    //     }
+    // }
 
     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String> {
         let fp_public_keys = self.get_publickeys_chiffrage();
@@ -378,7 +378,7 @@ pub fn random_vec(nb_bytes: usize) -> Vec<u8> {
 }
 
 pub type ChiffreurMgs2 = dyn Chiffreur<CipherMgs2, Mgs2CipherKeys>;
-pub type ChiffreurMgs3 = dyn Chiffreur<CipherMgs3, Mgs3CipherKeys>;
+// pub type ChiffreurMgs3 = dyn Chiffreur<CipherMgs3, Mgs3CipherKeys>;
 pub type ChiffreurMgs4 = dyn Chiffreur<CipherMgs4, Mgs4CipherKeys>;
 
 pub type ChiffreurMgsCurrent = ChiffreurMgs4;
