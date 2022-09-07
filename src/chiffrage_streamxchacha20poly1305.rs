@@ -1,23 +1,36 @@
 use std::collections::HashMap;
 use std::error::Error;
 use core::fmt::Formatter;
+use std::cmp::min;
 use std::fmt::Debug;
-use multibase::{Base, decode};
+use multibase::{Base, decode, encode};
 use openssl::pkey::{PKey, Private};
+
+use dryoc::classic::crypto_secretstream_xchacha20poly1305::*;
+use dryoc::constants::{
+    CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES,
+    CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL,
+    CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE
+};
+use multihash::Code;
 
 use crate::certificats::FingerprintCertPublicKey;
 use crate::chiffrage::{CipherMgs, CleSecrete, CommandeSauvegarderCle, DecipherMgs, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
 use crate::hachages::Hacheur;
 
+const CONST_TAILLE_BLOCK_MGS4: usize = 64 * 1024;
+
 /// Implementation mgs4
 pub struct CipherMgs4 {
-    // encrypter: ChaCha20Poly1305,
+    state: State,
+    header: String,
     cles_chiffrees: Vec<FingerprintCleChiffree>,
     fp_cle_millegrille: Option<String>,
     hacheur: Hacheur,
     hachage_bytes: Option<String>,
-    header: Option<String>,
+    buffer: [u8; CONST_TAILLE_BLOCK_MGS4],  // Buffer de chiffrage
+    position_buffer: usize,
 }
 
 impl CipherMgs4 {
@@ -55,24 +68,26 @@ impl CipherMgs4 {
             });
         }
 
-        todo!("fix me")
-        // let mut encrypter = ChaCha20Poly1305::new(&cle_derivee.secret.0.into());
-        // encrypter.set_nonce(nonce.into());
-        //
-        // let hacheur = Hacheur::builder()
-        //     .digester(Code::Blake2b512)
-        //     .base(Base::Base58Btc)
-        //     .build();
-        //
-        // Ok(CipherMgs3 {
-        //     encrypter,
-        //     iv: encode(Base::Base64, nonce),
-        //     cles_chiffrees: fp_cles,
-        //     fp_cle_millegrille: Some(cle_millegrille.fingerprint.clone()),
-        //     hacheur,
-        //     hachage_bytes: None,
-        //     tag: None,
-        // })
+        let mut state = State::new();
+        let mut header = Header::default();
+        let mut key = Key::from(cle_derivee.secret.0);
+        crypto_secretstream_xchacha20poly1305_init_push(&mut state, &mut header, &key);
+
+        let hacheur = Hacheur::builder()
+            .digester(Code::Blake2b512)
+            .base(Base::Base58Btc)
+            .build();
+
+        Ok(Self {
+            state,
+            header: encode(Base::Base64, header),
+            cles_chiffrees: fp_cles,
+            fp_cle_millegrille: Some(cle_millegrille.fingerprint.clone()),
+            hacheur,
+            hachage_bytes: None,
+            buffer: [0u8; CONST_TAILLE_BLOCK_MGS4],
+            position_buffer: 0,
+        })
     }
 }
 
@@ -99,86 +114,138 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
         // }
     }
 
-    fn finalize(mut self, _out: &mut [u8]) -> Result<(usize, Mgs4CipherKeys), String> {
-        todo!("fix me")
-        // if self.tag.is_some() {
-        //     Err("Deja finalise")?;
-        // }
-        //
-        // match self.encrypter.encrypt_finalize() {
-        //     Ok(tag) => {
-        //         // Calculer et conserver hachage
-        //         let hachage_bytes = self.hacheur.finalize();
-        //
-        //         // Conserver le compute tag
-        //         let tag_b64 = encode(Base::Base64, &tag);
-        //
-        //         let mut cipher_keys = Mgs3CipherKeys::new(
-        //             self.cles_chiffrees.clone(),
-        //             self.iv.clone(),
-        //             tag_b64,
-        //             hachage_bytes,
-        //         );
-        //         cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
-        //
-        //         Ok((0, cipher_keys))
-        //     },
-        //     Err(e) => Err(format!("Erreur update : {:?}", e)),
-        // }
+    fn finalize(mut self, out: &mut [u8]) -> Result<(usize, Mgs4CipherKeys), String> {
+
+        let taille_output = self.position_buffer + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
+
+        {
+            let resultat = crypto_secretstream_xchacha20poly1305_push(
+                &mut self.state,
+                out,
+                &self.buffer[..self.position_buffer],
+                None,
+                CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL,
+            );
+
+            if let Err(e) = resultat {
+                Err(format!("CipherMgs4.finalize Erreur crypto_secretstream_xchacha20poly1305_push {:?}", e))?
+            }
+        }
+
+        if self.hachage_bytes.is_some() {
+            Err("Deja finalise")?;
+        }
+
+        // Calculer et conserver hachage
+        let hachage_bytes = self.hacheur.finalize();
+
+        let mut cipher_keys = Mgs4CipherKeys::new(
+            self.cles_chiffrees.clone(),
+            self.header.clone(),
+            hachage_bytes,
+        );
+        cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
+
+        Ok((taille_output, cipher_keys))
     }
 
 }
 
 pub struct DecipherMgs4 {
-    // decrypter: ChaCha20Poly1305,
+    state: State,
     header: [u8; 24],
+    buffer: [u8; CONST_TAILLE_BLOCK_MGS4],
+    position_buffer: usize,
 }
 
 impl DecipherMgs4 {
     pub fn new(decipher_data: &Mgs4CipherData) -> Result<Self, String> {
-        todo!("fix me")
 
-        // let cle_dechiffree = match &decipher_data.cle_dechiffree {
-        //     Some(c) => c,
-        //     None => Err("Cle n'est pas dechiffree")?,
-        // };
-        //
-        // let mut decrypter = ChaCha20Poly1305::new(&cle_dechiffree.0.into());
-        // decrypter.set_nonce(decipher_data.iv[..].into());
-        //
-        // let mut tag = [0u8; 16];
-        // tag.copy_from_slice(&decipher_data.tag[0..16]);
-        //
-        // Ok(DecipherMgs4 { decrypter, tag })
+        let cle_dechiffree = match &decipher_data.cle_dechiffree {
+            Some(c) => c,
+            None => Err("Cle n'est pas dechiffree")?,
+        };
+
+        let mut state = State::new();
+        let key = Key::from(cle_dechiffree.0);
+        let mut header: Header = Header::default();
+        header.copy_from_slice(&decipher_data.header[0..24]);
+        crypto_secretstream_xchacha20poly1305_init_pull(&mut state, &header, &key);
+
+        Ok(DecipherMgs4 { state, header, buffer: [0u8; CONST_TAILLE_BLOCK_MGS4], position_buffer: 0 })
     }
 }
 
 impl DecipherMgs<Mgs4CipherData> for DecipherMgs4 {
 
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String> {
-        todo!("fix me")
-        // let out_len = if data.is_empty() {
-        //     // Input data vide, on assume que le data a dechiffrer
-        //     // est deja dans out (dechiffrage "in place")
-        //     0
-        // } else {
-        //     // Copier data vers out, dechiffrage se fait "in place"
-        //     out[0..data.len()].copy_from_slice(data);
-        //     data.len()
-        // };
-        //
-        // match self.decrypter.decrypt_update(&mut out[0..out_len]) {
-        //     Ok(()) => Ok(out_len),
-        //     Err(e) => Err(format!("Erreur update : {:?}", e))
-        // }
+
+        let mut position_data: usize = 0;
+        let mut position_output: usize = 0;
+
+        while position_data < data.len() {
+
+            // Dechiffrer un block de donnees
+            let taille_data_restante = data.len() - position_data;
+
+            // Copier chunk dans le buffer
+            let taille_chunk = min(taille_data_restante, CONST_TAILLE_BLOCK_MGS4);
+            self.buffer[self.position_buffer..self.position_buffer+taille_chunk].copy_from_slice(&data[position_data..position_data+taille_chunk]);
+            self.position_buffer += taille_chunk;
+            position_data += taille_chunk;
+
+            // Verifier si on fait un output
+            if self.position_buffer == CONST_TAILLE_BLOCK_MGS4 {
+                const TAILLE_OUTPUT: usize = CONST_TAILLE_BLOCK_MGS4 - CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
+                let mut slice_output = &mut out[position_output..position_output+TAILLE_OUTPUT];
+                let mut output_tag = 0u8;
+
+                let result = crypto_secretstream_xchacha20poly1305_pull(
+                    &mut self.state, slice_output, &mut output_tag, &self.buffer, None);
+
+                // Error handling
+                if let Err(e) = result {
+                    return Err(format!("DecipherMgs4.finalize Erreur dechiffrage : {:?}", e))
+                }
+
+                if output_tag != CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE {
+                    return Err(format!("DecipherMgs4.finalize Erreur block final mauvais tag"))
+                }
+
+                self.position_buffer = 0;  // Reset position buffer
+                position_output += TAILLE_OUTPUT;
+            }
+
+        }
+
+        Ok(position_output)
     }
 
-    fn finalize(self, _out: &mut [u8]) -> Result<usize, String> {
-        todo!("fix me")
-        // match self.decrypter.decrypt_finalize(self.tag[0..16].into()) {
-        //     Ok(()) => Ok(0),
-        //     Err(e) => Err(format!("Erreur finalize : {:?}", e))
-        // }
+    fn finalize(mut self, out: &mut [u8]) -> Result<usize, String> {
+
+        if self.position_buffer < CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES {
+            return Err(format!("DecipherMgs4.finalize Erreur block final < 17 bytes"))
+        }
+
+        let taille_output = self.position_buffer - CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
+
+        {
+            let mut output_tag = 0u8;
+
+            // Dechiffrer
+            let result = crypto_secretstream_xchacha20poly1305_pull(
+                &mut self.state, out, &mut output_tag, &self.buffer[0..self.position_buffer], None);
+
+            // Error handling
+            if let Err(e) = result {
+                return Err(format!("DecipherMgs4.finalize Erreur dechiffrage : {:?}", e))
+            }
+            if output_tag != CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL {
+                return Err(format!("DecipherMgs4.finalize Erreur block final mauvais tag"))
+            }
+        }
+
+        Ok(taille_output)
     }
 
 }
@@ -356,8 +423,11 @@ mod test {
         // Chiffrer contenu "vide"
         let cipher = CipherMgs4::new(&fpkeys)?;
         debug!("Nouveau cipher info : Cles chiffrees: {:?}", cipher.cles_chiffrees);
-        let (out_len, info_keys) = cipher.finalize(&mut [0u8])?;
-        debug!("Output header: keys : {:?}", info_keys);
+        let mut output_chiffrage_final = [0u8; 17];
+        let (out_len, info_keys) = cipher.finalize(&mut output_chiffrage_final)?;
+        debug!("Output header: keys : {:?}, output final : {:?}", info_keys, output_chiffrage_final);
+
+        let mut out_dechiffre = [0u8; 0];
 
         // Dechiffrer contenu "vide"
         for key in &info_keys.cles_chiffrees {
@@ -369,9 +439,10 @@ mod test {
                     key.cle_chiffree.as_str(), info_keys.header.as_str())?;
                 decipher_data.dechiffrer_cle(&cle_millegrille)?;
                 let mut decipher = DecipherMgs4::new(&decipher_data)?;
+                decipher.update(&output_chiffrage_final, &mut out_dechiffre)?;
                 let out_len = decipher.finalize(&mut [0u8])?;
                 debug!("Output len dechiffrage CleMillegrille : {}.", out_len);
-                assert_eq!(out_len, 0);
+                assert_eq!(0, out_len);
             } else if key.fingerprint.as_str() == "MaitreCles1" {
                 // Test dechiffrage avec cle de MaitreDesCles (cle chiffree est 80 bytes : 32 bytes peer public, 32 bytes chiffre, 16 bytes tag)
                 debug!("Test dechiffrage avec MaitreCles1");
@@ -379,9 +450,10 @@ mod test {
                     key.cle_chiffree.as_str(), info_keys.header.as_str())?;
                 decipher_data.dechiffrer_cle(&cle_maitrecles1)?;
                 let mut decipher = DecipherMgs4::new(&decipher_data)?;
+                decipher.update(&output_chiffrage_final, &mut out_dechiffre)?;
                 let out_len = decipher.finalize(&mut [0u8])?;
-                debug!("Output len dechiffrage MaitreCles1 : {}.", out_len);
-                assert_eq!(out_len, 0);
+                debug!("Output len dechiffrage MaitreCles1 : {}", out_len);
+                assert_eq!(0, out_len);
             }
         }
 
