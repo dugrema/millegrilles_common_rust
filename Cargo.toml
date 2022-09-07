@@ -26,17 +26,17 @@ tokio-util = { version = "*", features = ["codec", "io"] }
 
 # Crypto et certs
 openssl = { version = "0.10.29", features = ["vendored"] }
-x509-parser = { "version" = ">=0.10, <=0.14.0" }
+x509-parser = { "version" = "0.14.0" }
 multibase = "0.9.1"
 multicodec = "0.1.0"
 multihash = "0.14.0"
 blake2 = "0.10.2"
 # chacha20poly1305 = { version= "0.9.0", features = ["stream"] }
-#rust_sodium-sys = { version = "0.10.4" }
-aead = { version = "0.4", default-features = false, features = ['alloc'] }
+# libsodium-sys-stable = "1.19.22"
+# aead = { version = "0.4", default-features = false, features = ['alloc'] }
 # chacha20 = { version = "0.9.0", features = ["zeroize"] }
-cipher = "0.4.3"
-dryoc = { version = "^0.3.11" }
+# cipher = "0.4.3"
+dryoc = { version = "0.3.14" }
 # poly1305 = "0.7"
 chacha20poly1305 = "0.10.1"
 zeroize = { version = ">=1, <1.6", default-features = false }
