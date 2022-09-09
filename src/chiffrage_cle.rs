@@ -1,13 +1,17 @@
 use std::collections::HashMap;
+use log::debug;
+use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use crate::bson::Document;
-use crate::chiffrage::FormatChiffrage;
+use crate::chiffrage::{CleSecrete, FormatChiffrage};
 
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::certificats::ordered_map;
 use crate::constantes::*;
 use crate::recepteur_messages::TypeMessage;
+use crate::formatteur_messages::MessageMilleGrille;
+use crate::signatures::{signer_message, verifier_message};
 
 /// Effectue une requete pour charger des cles a partir du maitre des cles
 pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>)
@@ -113,3 +117,176 @@ impl Into<Document> for CommandeSauvegarderCle {
         serde_json::from_value(val).expect("bson")
     }
 }
+
+impl CommandeSauvegarderCle {
+
+    pub fn signer_identite(&mut self, cle_secrete: &CleSecrete) -> Result<(), String> {
+        let identite = IdentiteCle::from(self.clone());
+        let signature_identite = identite.signer(cle_secrete)?;
+        self.signature_identite = signature_identite;
+        Ok(())
+    }
+
+    pub fn verifier_identite(&mut self, cle_secrete: &CleSecrete) -> Result<bool, String> {
+        let identite = IdentiteCle::from(self.clone());
+        Ok(identite.verifier(cle_secrete)?)
+    }
+
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct IdentiteCle {
+    pub hachage_bytes: String,
+    pub domaine: String,
+    #[serde(serialize_with = "ordered_map")]
+    pub identificateurs_document: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing)]
+    pub signature_identite: String,
+}
+
+impl From<CommandeSauvegarderCle> for IdentiteCle {
+    fn from(value: CommandeSauvegarderCle) -> Self {
+        IdentiteCle {
+            hachage_bytes: value.hachage_bytes,
+            domaine: value.domaine,
+            identificateurs_document: value.identificateurs_document,
+            user_id: value.user_id,
+            signature_identite: value.signature_identite
+        }
+    }
+}
+
+impl IdentiteCle {
+
+    /// Verifie la signature de l'identite avec la cle secrete
+    fn verifier(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
+        // Obtenir la cle publique Ed25519 qui correspond au seed prive de la cle secrete
+        let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_secrete.0, Id::ED25519) {
+            Ok(s) => s,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur preparation secret key : {:?}", e))?
+        };
+        let public_bytes = match private_ed25519.raw_public_key() {
+            Ok(p) => p,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur private_ed25519.raw_public_key : {:?}", e))?
+        };
+        let public_ed25519 = match PKey::public_key_from_raw_bytes(public_bytes.as_slice(), Id::ED25519) {
+            Ok(p) => p,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur PKey::public_key_from_raw_bytes : {:?}", e))?
+        };
+
+        // Preparer le message
+        let value_ordered: Map<String, Value> = match MessageMilleGrille::serialiser_contenu(self) {
+            Ok(v) => v,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur mapping values : {:?}", e))?
+        };
+        let message_string = match serde_json::to_string(&value_ordered) {
+            Ok(m) => m,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur conversion en string : {:?}", e))?
+        };
+        debug!("Message string a verifier {}", message_string);
+
+        // Verifier la signature
+        match verifier_message(&public_ed25519, message_string.as_bytes(), self.signature_identite.as_str()) {
+            Ok(r) => Ok(r),
+            Err(e) => Err(format!("IdentiteCle.verifier Erreur verification message : {:?}", e))?
+        }
+    }
+
+    /// Signe l'identite avec la cle secrete (sert de cle privee Ed25519).
+    fn signer(&self, cle_secrete: &CleSecrete) -> Result<String, String> {
+        let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_secrete.0, Id::ED25519) {
+            Ok(s) => s,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur preparation secret key : {:?}", e))?
+        };
+        let value_ordered: Map<String, Value> = match MessageMilleGrille::serialiser_contenu(self) {
+            Ok(v) => v,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur mapping values : {:?}", e))?
+        };
+        let message_string = match serde_json::to_string(&value_ordered) {
+            Ok(m) => m,
+            Err(e) => Err(format!("IdentiteCle.signer Erreur conversion en string : {:?}", e))?
+        };
+        debug!("Message string a signer {}", message_string);
+        match signer_message(&private_ed25519, message_string.as_bytes()) {
+            Ok(s) => Ok(s),
+            Err(e) => Err(format!("IdentiteCle.signer Erreur signature identite cle : {:?}", e))
+        }
+    }
+
+}
+
+#[cfg(test)]
+mod test {
+    use std::error::Error;
+    use log::debug;
+    use openssl::pkey::{Id, PKey};
+    use crate::test_setup::setup;
+    use super::*;
+
+    fn produire_commande() -> CommandeSauvegarderCle {
+        let mut identificateurs_document = HashMap::new();
+        identificateurs_document.insert("fuuid".to_string(), "fuuid_dummy".to_string());
+
+        CommandeSauvegarderCle {
+            hachage_bytes: "hachage_dummy".to_string(),
+            domaine: "DomaineDummy".to_string(),
+            identificateurs_document,
+            user_id: Some("userIdDummy".to_string()),
+            signature_identite: "".to_string(),
+            cles: Default::default(),
+            format: FormatChiffrage::mgs4,
+            iv: None,
+            tag: None,
+            header: None,
+            partition: None,
+            fingerprint_partitions: None
+        }
+    }
+
+    #[test]
+    fn test_signature_identite() -> Result<(), Box<dyn Error>> {
+        setup("test_signature_identite");
+
+        let mut commande = produire_commande();
+        let cle_secrete = CleSecrete::generer();
+
+        // Signer
+        commande.signer_identite(&cle_secrete)?;
+
+        debug!("Commande signee : {:?}", commande);
+
+        // Verifier
+        let resultat = commande.verifier_identite(&cle_secrete)?;
+
+        assert_eq!(true, resultat);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_corruption_identite() -> Result<(), Box<dyn Error>> {
+        setup("test_signature_identite");
+
+        let mut commande = produire_commande();
+        let cle_secrete = CleSecrete::generer();
+
+        // Signer
+        commande.signer_identite(&cle_secrete)?;
+
+        debug!("Commande signee : {:?}", commande);
+
+        // Corrompre la commande (retirer user_id)
+        commande.user_id = None;
+
+        // Verifier
+        let resultat = commande.verifier_identite(&cle_secrete)?;
+
+        assert_eq!(false, resultat);
+
+        Ok(())
+    }
+
+}
+

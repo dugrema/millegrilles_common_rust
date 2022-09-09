@@ -367,7 +367,7 @@ impl MessageMilleGrille {
         Ok(())
     }
 
-    fn serialiser_contenu<S>(contenu: &S) -> Result<Map<String, Value>, Box<dyn std::error::Error>>
+    pub fn serialiser_contenu<S>(contenu: &S) -> Result<Map<String, Value>, Box<dyn std::error::Error>>
     where
         S: Serialize,
     {

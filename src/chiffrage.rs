@@ -39,6 +39,14 @@ impl PartialEq for CleSecrete {
     }
 }
 
+impl CleSecrete {
+    pub fn generer() -> Self {
+        let mut buffer = [0u8; 32];
+        openssl::rand::rand_bytes(&mut buffer).expect("openssl::random::rand_bytes");
+        CleSecrete (buffer)
+    }
+}
+
 /// Rechiffre une cle asymetrique pour une nouvelle cle publique
 pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key: &PKey<Public>, cle: &str)
     -> Result<String, Box<dyn Error>>
