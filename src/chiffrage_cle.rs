@@ -135,8 +135,8 @@ impl CommandeSauvegarderCle {
 
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct IdentiteCle {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IdentiteCle {
     pub hachage_bytes: String,
     pub domaine: String,
     #[serde(serialize_with = "ordered_map")]
