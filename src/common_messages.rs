@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 
-use crate::chiffrage::{CommandeSauvegarderCle, FormatChiffrage};
+use crate::chiffrage::FormatChiffrage;
+use crate::chiffrage_cle::CommandeSauvegarderCle;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionCle {

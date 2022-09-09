@@ -16,7 +16,8 @@ use log::debug;
 use multihash::Code;
 
 use crate::certificats::FingerprintCertPublicKey;
-use crate::chiffrage::{CipherMgs, CleSecrete, CommandeSauvegarderCle, DecipherMgs, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
 use crate::hachages::Hacheur;
 

@@ -10,7 +10,8 @@ use openssl::pkey::{PKey, Private};
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use crate::certificats::FingerprintCertPublicKey;
-use crate::chiffrage::{CipherMgs, CommandeSauvegarderCle, DecipherMgs, FingerprintCleChiffree, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage::{CipherMgs, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree};
 use crate::hachages::Hacheur;
 use crate::chiffrage_rsa::*;
 

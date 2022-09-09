@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use crate::bson::Document;
+use crate::chiffrage::FormatChiffrage;
 
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::certificats::ordered_map;
 use crate::constantes::*;
 use crate::recepteur_messages::TypeMessage;
 
@@ -65,5 +68,48 @@ impl From<InformationCle> for MetaInformationCle {
             iv: value.iv,
             tag: value.tag,
         }
+    }
+}
+
+// Structure qui conserve une cle chiffree pour un fingerprint de certificat
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FingerprintCleChiffree {
+    pub fingerprint: String,
+    pub cle_chiffree: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeSauvegarderCle {
+    // Identite de la cle
+    pub hachage_bytes: String,
+    pub domaine: String,
+    #[serde(serialize_with = "ordered_map")]
+    pub identificateurs_document: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    pub signature_identite: String,
+
+    // Cles chiffrees
+    #[serde(serialize_with = "ordered_map")]
+    pub cles: HashMap<String, String>,
+
+    // Information de dechiffrage
+    pub format: FormatChiffrage,
+    pub iv: Option<String>,
+    pub tag: Option<String>,
+    pub header: Option<String>,
+
+    /// Partitions de maitre des cles (fingerprint certs). Utilise pour routage de la commande.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint_partitions: Option<Vec<String>>
+}
+
+/// Converti en Document Bson pour sauvegarder dans MongoDB
+impl Into<Document> for CommandeSauvegarderCle {
+    fn into(self) -> Document {
+        let val = serde_json::to_value(self).expect("value");
+        serde_json::from_value(val).expect("bson")
     }
 }

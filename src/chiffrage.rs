@@ -14,6 +14,7 @@ use zeroize::Zeroize;
 use crate::bson::Document;
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ordered_map, VerificateurPermissions};
 use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherKeys};
+use crate::chiffrage_cle::CommandeSauvegarderCle;
 // use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::chiffrage_rsa::{chiffrer_asymetrique as chiffrer_asymetrique_aesgcm, dechiffrer_asymetrique as dechiffrer_asymetrique_aesgcm};
@@ -87,48 +88,6 @@ pub fn dechiffrer_asymetrique_multibase(private_key: &PKey<Private>, cle: &str)
     };
 
     Ok(cle_rechiffree)
-}
-
-// Structure qui conserve une cle chiffree pour un fingerprint de certificat
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FingerprintCleChiffree {
-    pub fingerprint: String,
-    pub cle_chiffree: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CommandeSauvegarderCle {
-    // Identite de la cle
-    pub hachage_bytes: String,
-    pub domaine: String,
-    #[serde(serialize_with = "ordered_map")]
-    pub identificateurs_document: HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
-    pub signature_identite: String,
-
-    // Cles chiffrees
-    #[serde(serialize_with = "ordered_map")]
-    pub cles: HashMap<String, String>,
-
-    // Information de dechiffrage
-    pub format: FormatChiffrage,
-    pub iv: Option<String>,
-    pub tag: Option<String>,
-    pub header: Option<String>,
-
-    /// Partitions de maitre des cles (fingerprint certs). Utilise pour routage de la commande.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub partition: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fingerprint_partitions: Option<Vec<String>>
-}
-
-/// Converti en Document Bson pour sauvegarder dans MongoDB
-impl Into<Document> for CommandeSauvegarderCle {
-    fn into(self) -> Document {
-        let val = serde_json::to_value(self).expect("value");
-        serde_json::from_value(val).expect("bson")
-    }
 }
 
 pub trait MgsCipherData {
