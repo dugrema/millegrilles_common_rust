@@ -162,7 +162,7 @@ impl From<CommandeSauvegarderCle> for IdentiteCle {
 impl IdentiteCle {
 
     /// Verifie la signature de l'identite avec la cle secrete
-    fn verifier(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
+    pub fn verifier(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
         // Hacher la cle secrete, va servir de cle privee Ed25519
         let mut hasher = Blake2s256::new();
         hasher.update(&cle_secrete.0);
