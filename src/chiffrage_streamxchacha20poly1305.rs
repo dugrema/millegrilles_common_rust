@@ -12,6 +12,7 @@ use dryoc::constants::{
     CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL,
     CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE
 };
+use log::debug;
 use multihash::Code;
 
 use crate::certificats::FingerprintCertPublicKey;
@@ -29,7 +30,7 @@ pub struct CipherMgs4 {
     fp_cle_millegrille: Option<String>,
     hacheur: Hacheur,
     hachage_bytes: Option<String>,
-    buffer: [u8; CONST_TAILLE_BLOCK_MGS4],  // Buffer de chiffrage
+    buffer: [u8; CONST_TAILLE_BLOCK_MGS4-CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES],  // Buffer de chiffrage
     position_buffer: usize,
 }
 
@@ -85,7 +86,7 @@ impl CipherMgs4 {
             fp_cle_millegrille: Some(cle_millegrille.fingerprint.clone()),
             hacheur,
             hachage_bytes: None,
-            buffer: [0u8; CONST_TAILLE_BLOCK_MGS4],
+            buffer: [0u8; CONST_TAILLE_BLOCK_MGS4-CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES],
             position_buffer: 0,
         })
     }
@@ -94,34 +95,56 @@ impl CipherMgs4 {
 impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
 
     fn update(&mut self, data: &[u8], out: &mut [u8]) -> Result<usize, String> {
-        todo!("fix me")
-        // // Deplacer source dans buffer out. Chiffrage fait "in place".
-        // let out_len = if data.is_empty() {
-        //     0
-        // } else {
-        //     out[0..data.len()].copy_from_slice(data);
-        //     data.len()
-        // };
-        //
-        // match self.encrypter.encrypt_update(&mut out[0..data.len()]) {
-        //     Ok(()) => {
-        //         self.hacheur.update(&out[0..data.len()]);  // Calculer hachage output
-        //
-        //         // Stream encryption, le nombre de bytes chiffres est le meme que bytes en entree
-        //         Ok(out_len)
-        //     },
-        //     Err(e) => Err(format!("Erreur update : {:?}", e))
-        // }
+        let mut position_data: usize = 0;
+        let mut position_output: usize = 0;
+
+        // Taille du block de lecture de data (enlever 17 bytes overhead au block cipher)
+        const TAILLE_BLOCK_DATA: usize = CONST_TAILLE_BLOCK_MGS4 - CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
+
+        while position_data < data.len() {
+
+            // Dechiffrer un block de donnees
+            let taille_data_restante = data.len() - position_data;
+
+            // Copier chunk dans le buffer
+            let taille_chunk = min(taille_data_restante, TAILLE_BLOCK_DATA);
+            self.buffer[self.position_buffer..self.position_buffer+taille_chunk].copy_from_slice(&data[position_data..position_data+taille_chunk]);
+            self.position_buffer += taille_chunk;
+            position_data += taille_chunk;
+
+            // Verifier si on fait un output
+            if self.position_buffer == TAILLE_BLOCK_DATA {
+                let mut slice_output = &mut out[position_output..position_output+CONST_TAILLE_BLOCK_MGS4];
+
+                let result = crypto_secretstream_xchacha20poly1305_push(
+                    &mut self.state, slice_output, &self.buffer, None, CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE);
+
+                // Error handling
+                if let Err(e) = result {
+                    return Err(format!("CipherMgs4.finalize Erreur chiffrage : {:?}", e))
+                }
+
+                self.position_buffer = 0;  // Reset position buffer
+                position_output += CONST_TAILLE_BLOCK_MGS4;
+            }
+
+        }
+
+        Ok(position_output)
     }
 
     fn finalize(mut self, out: &mut [u8]) -> Result<(usize, Mgs4CipherKeys), String> {
 
         let taille_output = self.position_buffer + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
 
+        debug!("CipherMgs4.finalize Output buffer len {}", out.len());
+
         {
+            let mut slice_output = &mut out[..taille_output];
+
             let resultat = crypto_secretstream_xchacha20poly1305_push(
                 &mut self.state,
-                out,
+                slice_output,
                 &self.buffer[..self.position_buffer],
                 None,
                 CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL,
@@ -232,9 +255,12 @@ impl DecipherMgs<Mgs4CipherData> for DecipherMgs4 {
         {
             let mut output_tag = 0u8;
 
+            let ciphertext = &self.buffer[0..self.position_buffer];
+            debug!("Finalize dechiffrage de ciphertext {:?}", ciphertext);
+
             // Dechiffrer
             let result = crypto_secretstream_xchacha20poly1305_pull(
-                &mut self.state, out, &mut output_tag, &self.buffer[0..self.position_buffer], None);
+                &mut self.state, out, &mut output_tag, ciphertext, None);
 
             // Error handling
             if let Err(e) = result {
@@ -460,4 +486,130 @@ mod test {
         Ok(())
     }
 
+    #[test]
+    fn test_cipher4_message_court() -> Result<(), Box<dyn Error>> {
+        setup("test_cipher4_message_court");
+
+        // Generer cle
+        let cle_millegrille = PKey::generate_ed25519()?;
+        let cle_millegrille_public = PKey::public_key_from_raw_bytes(
+            &cle_millegrille.raw_public_key()?, Id::ED25519)?;
+
+        let mut fpkeys = Vec::new();
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "CleMillegrille".into(),
+            public_key: cle_millegrille_public,
+            est_cle_millegrille: true,
+        });
+
+        // Chiffrer contenu "vide"
+        const MESSAGE_COURT: &[u8] = b"Ceci est un msg";  // Message 15 bytes
+
+        let (ciphertext, info_keys) = {
+            let mut ciphertext = Vec::new();
+            // ciphertext.reserve(MESSAGE_COURT.len() + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES);
+            ciphertext.extend([0u8; MESSAGE_COURT.len() + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES]);
+
+            let mut cipher = CipherMgs4::new(&fpkeys)?;
+            debug!("Chiffrer message de {} bytes", MESSAGE_COURT.len());
+
+            let mut output_buffer = ciphertext.as_mut_slice();
+            let taille_chiffree = cipher.update(&MESSAGE_COURT, &mut output_buffer)?;
+            debug!("Output taille message chiffree (update) : {}", taille_chiffree);
+            let (out_len, info_keys) = cipher.finalize(&mut output_buffer[taille_chiffree..])?;
+            debug!("Output chiffrage (confirmation taille: {}): {:?}.", out_len, output_buffer);
+
+            (ciphertext, info_keys)
+        };
+
+        // Dechiffrer contenu "vide"
+        for key in &info_keys.cles_chiffrees {
+
+            if key.fingerprint.as_str() == "CleMillegrille" {
+                // Test dechiffrage avec cle de millegrille (cle chiffree est 32 bytes)
+                debug!("Test dechiffrage avec CleMillegrille");
+                let mut decipher_data = Mgs4CipherData::new(
+                    key.cle_chiffree.as_str(), info_keys.header.as_str())?;
+                decipher_data.dechiffrer_cle(&cle_millegrille)?;
+                let mut decipher = DecipherMgs4::new(&decipher_data)?;
+
+                // Dechiffrer message
+                let mut output_vec = Vec::new();
+                // output_vec.reserve(MESSAGE_COURT.len());
+                output_vec.extend([0u8; MESSAGE_COURT.len()]);
+                decipher.update(&ciphertext.as_slice(), &mut [0u8; 0])?;
+
+                let out_len = decipher.finalize(output_vec.as_mut_slice())?;
+                assert_eq!(MESSAGE_COURT.len(), out_len);
+                assert_eq!(MESSAGE_COURT, output_vec.as_slice());
+            }
+
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cipher4_message_split() -> Result<(), Box<dyn Error>> {
+        setup("test_cipher4_message_split");
+
+        // Generer cle
+        let cle_millegrille = PKey::generate_ed25519()?;
+        let cle_millegrille_public = PKey::public_key_from_raw_bytes(
+            &cle_millegrille.raw_public_key()?, Id::ED25519)?;
+
+        let mut fpkeys = Vec::new();
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "CleMillegrille".into(),
+            public_key: cle_millegrille_public,
+            est_cle_millegrille: true,
+        });
+
+        // Chiffrer contenu "vide"
+        let message = [1u8; 65537];
+
+        let (ciphertext, info_keys) = {
+            let mut ciphertext = Vec::new();
+            ciphertext.reserve(message.len() + 2*CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES);
+            ciphertext.extend(std::iter::repeat(1u8).take(message.len() + 2*CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES));
+
+            let mut cipher = CipherMgs4::new(&fpkeys)?;
+            debug!("Chiffrer message de {} bytes", message.len());
+
+            let mut output_buffer = ciphertext.as_mut_slice();
+            let taille_chiffree = cipher.update(&message, &mut output_buffer)?;
+            debug!("Output taille message chiffree (update) : {}", taille_chiffree);
+            let (out_len, info_keys) = cipher.finalize(&mut output_buffer[taille_chiffree..])?;
+            debug!("Output chiffrage (confirmation taille: {})", out_len);
+
+            (ciphertext, info_keys)
+        };
+
+        // Dechiffrer contenu "vide"
+        for key in &info_keys.cles_chiffrees {
+
+            if key.fingerprint.as_str() == "CleMillegrille" {
+                // Test dechiffrage avec cle de millegrille (cle chiffree est 32 bytes)
+                debug!("Test dechiffrage avec CleMillegrille");
+                let mut decipher_data = Mgs4CipherData::new(
+                    key.cle_chiffree.as_str(), info_keys.header.as_str())?;
+                decipher_data.dechiffrer_cle(&cle_millegrille)?;
+                let mut decipher = DecipherMgs4::new(&decipher_data)?;
+
+                // Dechiffrer message
+                let mut output_vec = Vec::new();
+                output_vec.reserve(message.len());
+                output_vec.extend(std::iter::repeat(0u8).take(message.len()));
+                let out_len_msg = decipher.update(&ciphertext.as_slice(), output_vec.as_mut_slice())?;
+
+                let out_len_final = decipher.finalize(&mut output_vec.as_mut_slice()[out_len_msg..])?;
+                debug!("Output dechiffrage CleMillegrille : len {}.", out_len_msg + out_len_final);
+                assert_eq!(message.len(), out_len_msg + out_len_final);
+                assert_eq!(&message, output_vec.as_slice());
+            }
+
+        }
+
+        Ok(())
+    }
 }

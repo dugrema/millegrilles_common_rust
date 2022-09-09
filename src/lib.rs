@@ -1,3 +1,5 @@
+extern crate core;
+
 pub mod certificats;
 pub mod configuration;
 pub mod constantes;
