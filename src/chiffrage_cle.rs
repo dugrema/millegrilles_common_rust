@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use log::debug;
+use blake2::{Blake2s256, Digest};
 use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -162,8 +163,13 @@ impl IdentiteCle {
 
     /// Verifie la signature de l'identite avec la cle secrete
     fn verifier(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
-        // Obtenir la cle publique Ed25519 qui correspond au seed prive de la cle secrete
-        let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_secrete.0, Id::ED25519) {
+        // Hacher la cle secrete, va servir de cle privee Ed25519
+        let mut hasher = Blake2s256::new();
+        hasher.update(&cle_secrete.0);
+        let cle_privee_bytes = hasher.finalize();
+
+        // Obtenir la cle publique Ed25519 qui correspond au seed prive
+        let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_privee_bytes.as_slice(), Id::ED25519) {
             Ok(s) => s,
             Err(e) => Err(format!("IdentiteCle.signer Erreur preparation secret key : {:?}", e))?
         };
@@ -196,7 +202,13 @@ impl IdentiteCle {
 
     /// Signe l'identite avec la cle secrete (sert de cle privee Ed25519).
     fn signer(&self, cle_secrete: &CleSecrete) -> Result<String, String> {
-        let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_secrete.0, Id::ED25519) {
+
+        // Hacher la cle secrete, va servir de cle privee Ed25519
+        let mut hasher = Blake2s256::new();
+        hasher.update(&cle_secrete.0);
+        let cle_privee_bytes = hasher.finalize();
+
+        let private_ed25519 = match PKey::private_key_from_raw_bytes(cle_privee_bytes.as_slice(), Id::ED25519) {
             Ok(s) => s,
             Err(e) => Err(format!("IdentiteCle.signer Erreur preparation secret key : {:?}", e))?
         };
