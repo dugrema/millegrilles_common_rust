@@ -49,9 +49,9 @@ impl CleSecrete {
 
 /// Rechiffre une cle asymetrique pour une nouvelle cle publique
 pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key: &PKey<Public>, cle: &str)
-    -> Result<String, Box<dyn Error>>
+    -> Result<(String, CleSecrete), Box<dyn Error>>
 {
-    let cle_rechiffree = {
+    let (cle_rechiffree, cle_secrete) = {
         let (_, cle_bytes): (_, Vec<u8>) = multibase::decode(cle)?;
 
         // Determiner le type de cle. Supporte RSA et ED25519.
@@ -62,18 +62,21 @@ pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key:
                     Ok(c) => c,
                     Err(e) => Err(format!("Erreur dechiffrage cle asymmetrique ed25519 : {:?}", e))?
                 };
-                let cle_rechiffree = chiffrer_asymmetrique_ed25519(&cle_secrete.0[..], public_key)?;
-                Ok(cle_rechiffree.to_vec())
+                let cle_rechiffree = chiffrer_asymmetrique_ed25519(&cle_secrete.0[..], public_key)?.to_vec();
+                (cle_rechiffree, cle_secrete)
             },
             Id::RSA => {
                 let cle_secrete = dechiffrer_asymetrique_aesgcm(private_key, cle_bytes.as_slice())?;
-                chiffrer_asymetrique_aesgcm(public_key, &cle_secrete.0[..])
+                let cle_rechiffree = chiffrer_asymetrique_aesgcm(public_key, &cle_secrete.0[..])?;
+                (cle_rechiffree, cle_secrete)
             },
             _ => Err(format!("Unsupported key format - only Ed25519 and RSA are supported"))?
         }
-    }?;
+    };
 
-    Ok(multibase::encode(Base::Base64, &cle_rechiffree[..]))
+    let cle_rechiffree_string: String = multibase::encode(Base::Base64, &cle_rechiffree[..]);
+
+    Ok((cle_rechiffree_string, cle_secrete))
 }
 
 /// Dechiffrer une cle secrete
