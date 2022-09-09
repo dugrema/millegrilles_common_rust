@@ -128,7 +128,7 @@ impl CommandeSauvegarderCle {
         Ok(())
     }
 
-    pub fn verifier_identite(&mut self, cle_secrete: &CleSecrete) -> Result<bool, String> {
+    pub fn verifier_identite(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
         let identite = IdentiteCle::from(self.clone());
         Ok(identite.verifier(cle_secrete)?)
     }
