@@ -265,6 +265,7 @@ pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
 
 pub const COMMANDE_SAUVEGARDER_CLE: &str = "sauvegarderCle";
 pub const COMMANDE_CERT_MAITREDESCLES: &str = "certMaitreDesCles";
+pub const COMMANDE_TRANSFERT_CLE: &str = "transfertCle";
 
 
 // Backup

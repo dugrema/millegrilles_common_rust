@@ -98,8 +98,11 @@ pub struct CommandeSauvegarderCle {
 
     // Information de dechiffrage
     pub format: FormatChiffrage,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub iv: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<String>,
 
     /// Partitions de maitre des cles (fingerprint certs). Utilise pour routage de la commande.
