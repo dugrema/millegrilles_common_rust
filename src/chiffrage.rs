@@ -94,7 +94,6 @@ pub trait MgsCipherKeys {
         domaine: &str,
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>,
-        user_id: Option<String>,
     ) -> CommandeSauvegarderCle;
 
     /// Retourne la valeur chiffree de la cle de millegrille

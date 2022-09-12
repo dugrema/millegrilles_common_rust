@@ -90,8 +90,6 @@ pub struct CommandeSauvegarderCle {
     pub domaine: String,
     #[serde(serialize_with = "ordered_map")]
     pub identificateurs_document: HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
     pub signature_identite: String,
 
     // Cles chiffrees
@@ -141,8 +139,6 @@ pub struct IdentiteCle {
     pub domaine: String,
     #[serde(serialize_with = "ordered_map")]
     pub identificateurs_document: HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<String>,
     #[serde(skip_serializing)]
     pub signature_identite: String,
 }
@@ -153,7 +149,6 @@ impl From<CommandeSauvegarderCle> for IdentiteCle {
             hachage_bytes: value.hachage_bytes,
             domaine: value.domaine,
             identificateurs_document: value.identificateurs_document,
-            user_id: value.user_id,
             signature_identite: value.signature_identite
         }
     }
@@ -245,7 +240,6 @@ mod test {
             hachage_bytes: "hachage_dummy".to_string(),
             domaine: "DomaineDummy".to_string(),
             identificateurs_document,
-            user_id: Some("userIdDummy".to_string()),
             signature_identite: "".to_string(),
             cles: Default::default(),
             format: FormatChiffrage::mgs4,
@@ -290,7 +284,7 @@ mod test {
         debug!("Commande signee : {:?}", commande);
 
         // Corrompre la commande (retirer user_id)
-        commande.user_id = None;
+        commande.identificateurs_document.insert("corrupt".to_owned(), "true".to_owned());
 
         // Verifier
         let resultat = commande.verifier_identite(&cle_secrete)?;

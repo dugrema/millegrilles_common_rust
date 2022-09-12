@@ -340,8 +340,7 @@ impl MgsCipherKeys for Mgs4CipherKeys {
         &self,
         domaine: &str,
         partition: Option<String>,
-        identificateurs_document: HashMap<String, String>,
-        user_id: Option<String>
+        identificateurs_document: HashMap<String, String>
     ) -> CommandeSauvegarderCle {
 
         let fingerprint_partitions = self.get_fingerprint_partitions();
