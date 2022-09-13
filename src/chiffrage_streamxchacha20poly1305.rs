@@ -103,12 +103,13 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
         const TAILLE_BLOCK_DATA: usize = CONST_TAILLE_BLOCK_MGS4 - CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
 
         while position_data < data.len() {
-
             // Dechiffrer un block de donnees
             let taille_data_restante = data.len() - position_data;
+            debug!("CipherMgs<Mgs4CipherKeys>.update position_data {}, data.len {}, taille_data_restante {}", position_data, data.len(), taille_data_restante);
 
             // Copier chunk dans le buffer
-            let taille_chunk = min(taille_data_restante, TAILLE_BLOCK_DATA);
+            let taille_max = TAILLE_BLOCK_DATA - self.position_buffer;  // Max espace restant dans buffer
+            let taille_chunk = min(taille_data_restante, taille_max);
             self.buffer[self.position_buffer..self.position_buffer+taille_chunk].copy_from_slice(&data[position_data..position_data+taille_chunk]);
             self.position_buffer += taille_chunk;
             position_data += taille_chunk;
@@ -213,7 +214,8 @@ impl DecipherMgs<Mgs4CipherData> for DecipherMgs4 {
             let taille_data_restante = data.len() - position_data;
 
             // Copier chunk dans le buffer
-            let taille_chunk = min(taille_data_restante, CONST_TAILLE_BLOCK_MGS4);
+            let taille_max = CONST_TAILLE_BLOCK_MGS4 - self.position_buffer;  // Max espace restant dans buffer
+            let taille_chunk = min(taille_data_restante, taille_max);
             self.buffer[self.position_buffer..self.position_buffer+taille_chunk].copy_from_slice(&data[position_data..position_data+taille_chunk]);
             self.position_buffer += taille_chunk;
             position_data += taille_chunk;

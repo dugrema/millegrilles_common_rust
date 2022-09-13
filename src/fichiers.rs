@@ -24,6 +24,7 @@ use crate::verificateur::VerificateurMessage;
 
 const PRESET_COMPRESSION_XZ: u32 = 6;
 const BUFFER_SIZE: usize = 64 * 1024;
+const BUFFER_CHIFFRAGE_SIZE: usize = 2 * BUFFER_SIZE + 2 * 17;  // Output est 2 x buffer plus 2 x header (17 bytes)
 
 pub struct FichierWriter<K, M>
     where M: CipherMgs<K>,
@@ -76,7 +77,7 @@ impl FichierWriter<Mgs4CipherKeys, CipherMgs4> {
         let mut chunks = tokio_stream::iter(chunks);
 
         // Preparer vecteur pour recevoir data compresse (avant chiffrage) pour output vers fichier
-        let mut buffer_chiffre = [0u8; BUFFER_SIZE];
+        let mut buffer_chiffre = [0u8; BUFFER_CHIFFRAGE_SIZE];  // Besoin 2x buffer plus 2x ABYTES (17 bytes) pour mgs4
         let mut buffer : Vec<u8> = Vec::new();
         buffer.reserve(BUFFER_SIZE);
 
@@ -112,7 +113,7 @@ impl FichierWriter<Mgs4CipherKeys, CipherMgs4> {
     }
 
     pub async fn fermer(mut self) -> Result<(String, Option<Mgs4CipherKeys>), Box<dyn Error>> {
-        let mut buffer_chiffre = [0u8; BUFFER_SIZE];
+        let mut buffer_chiffre = [0u8; BUFFER_CHIFFRAGE_SIZE];  // Besoin 2x buffer plus 2x ABYTES (17 bytes) pour mgs4
         let mut buffer : Vec<u8> = Vec::new();
         buffer.reserve(BUFFER_SIZE);
 
