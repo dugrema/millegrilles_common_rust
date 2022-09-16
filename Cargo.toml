@@ -1,6 +1,6 @@
 [package]
 name = "millegrilles_common_rust"
-version = "2022.5.0"
+version = "2022.6.0"
 edition = "2021"
 
 [dependencies]
@@ -21,7 +21,6 @@ async-recursion = "*"
 async-trait = "0.1.51"
 tokio = { version = "1.11.0", features = ["full"] }
 tokio-stream = { version = "0.1.7" }
-# tokio-tar = { version = "0.3.0" }
 tokio-util = { version = "*", features = ["codec", "io"] }
 
 # Crypto et certs
@@ -31,13 +30,7 @@ multibase = "0.9.1"
 multicodec = "0.1.0"
 multihash = "0.14.0"
 blake2 = "0.10.2"
-# chacha20poly1305 = { version= "0.9.0", features = ["stream"] }
-# libsodium-sys-stable = "1.19.22"
-# aead = { version = "0.4", default-features = false, features = ['alloc'] }
-# chacha20 = { version = "0.9.0", features = ["zeroize"] }
-# cipher = "0.4.3"
 dryoc = { version = "0.3.14" }
-# poly1305 = "0.7"
 chacha20poly1305 = "0.10.1"
 zeroize = { version = ">=1, <1.6", default-features = false }
 
@@ -53,7 +46,6 @@ substring = { version = "1.4.5" }
 
 # MongoDB
 mongodb = { version = "2.1.0", default-features = false, features = ["tokio-runtime", "bson-chrono-0_4"] }
-# bson = "2.0.0"
 
 # RabbitMQ
 lapin = { "version" = "1.10.0" }
@@ -64,4 +56,3 @@ tokio-amqp = { version = "1.1.0" }
 redis = { version = "0.21.5", features = ["tokio-comp", "tokio-native-tls-comp"] }
 
 #[dev-dependencies]
-#aead = { version = "0.4", features = ["dev"], default-features = false }
