@@ -242,14 +242,14 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     fn get_partition(&self) -> Option<String> { None }
 
     /// Retourne le nom de la collection de transactions
-    fn get_collection_transactions(&self) -> String;
+    fn get_collection_transactions(&self) -> Option<String>;
 
     // Retourne la liste de collections de documents
     fn get_collections_documents(&self) -> Vec<String>;
 
-    fn get_q_transactions(&self) -> String;
-    fn get_q_volatils(&self) -> String;
-    fn get_q_triggers(&self) -> String;
+    fn get_q_transactions(&self) -> Option<String>;
+    fn get_q_volatils(&self) -> Option<String>;
+    fn get_q_triggers(&self) -> Option<String>;
 
     /// Retourne la liste des Q a configurer pour ce domaine
     fn preparer_queues(&self) -> Vec<QueueType>;
@@ -352,7 +352,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     async fn consommer_messages<M>(self: &'static Self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
         where M: Middleware + 'static
     {
-        info!("domaines.consommer_messages : Debut thread {}", self.get_q_transactions());
+        info!("domaines.consommer_messages : Debut thread {:?}", self.get_nom_domaine());
         while let Some(message) = rx.recv().await {
             trace!("Message {} recu : {:?}", self.get_nom_domaine(), message);
 
@@ -373,7 +373,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
         }
 
-        info!("domaines.consommer_messages : Fin thread {}", self.get_q_transactions());
+        info!("domaines.consommer_messages : Fin thread {:?}", self.get_nom_domaine());
     }
 
     async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction) -> Result<(), Box<dyn Error>>
@@ -429,7 +429,14 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             Err(e) => Err(format!("Erreur conversion message vers Trigger {:?} : {:?}", m, e))?,
         };
 
-        let transaction = charger_transaction(middleware, self.get_collection_transactions().as_str(), &trigger).await?;
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(n) => n,
+            None => {
+                return Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))
+            }
+        };
+
+        let transaction = charger_transaction(middleware, nom_collection_transactions.as_str(), &trigger).await?;
         debug!("Traitement transaction, chargee : {:?}", transaction);
 
         let uuid_transaction = transaction.get_uuid_transaction().to_owned();
@@ -437,7 +444,13 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             Ok(r) => {
                 // Marquer transaction completee
                 debug!("Transaction traitee {}, marquer comme completee", uuid_transaction);
-                marquer_transaction(middleware, self.get_collection_transactions(), uuid_transaction, EtatTransaction::Complete).await?;
+                let nom_collection_transactions = match self.get_collection_transactions() {
+                    Some(n) => n,
+                    None => {
+                        return Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))
+                    }
+                };
+                marquer_transaction(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete).await?;
 
                 // Repondre en fonction du contenu du trigger
                 if let Some(reponse) = r {
@@ -458,49 +471,54 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     async fn preparer_index_mongodb<M>(&self, middleware: &M) -> Result<(), String>
         where M: Middleware + 'static
     {
-        // Index transactions par uuid-transaction
-        let options_unique_transactions = IndexOptions {
-            nom_index: Some(String::from(TRANSACTION_CHAMP_UUID_TRANSACTION)),
-            unique: true
-        };
-        let champs_index_transactions = vec!(
-            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION), direction: 1}
-        );
-        middleware.create_index(
-            self.get_collection_transactions().as_str(),
-            champs_index_transactions,
-            Some(options_unique_transactions)
-        ).await?;
+        if let Some(nom_collection_transactions) = self.get_collection_transactions() {
 
-        // Index transactions completes
-        let options_unique_transactions = IndexOptions {
-            nom_index: Some(String::from(TRANSACTION_CHAMP_COMPLETE)),
-            unique: false
-        };
-        let champs_index_transactions = vec!(
-            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1}
-        );
-        middleware.create_index(
-            self.get_collection_transactions().as_str(),
-            champs_index_transactions,
-            Some(options_unique_transactions)
-        ).await?;
+            // Index transactions par uuid-transaction
+            let options_unique_transactions = IndexOptions {
+                nom_index: Some(String::from(TRANSACTION_CHAMP_UUID_TRANSACTION)),
+                unique: true
+            };
+            let champs_index_transactions = vec!(
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION), direction: 1}
+            );
 
-        // Index backup transactions
-        let options_unique_transactions = IndexOptions {
-            nom_index: Some(String::from(BACKUP_CHAMP_BACKUP_TRANSACTIONS)),
-            unique: false
-        };
-        let champs_index_transactions = vec!(
-            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1},
-            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1},
-            ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1},
-        );
-        middleware.create_index(
-            self.get_collection_transactions().as_str(),
-            champs_index_transactions,
-            Some(options_unique_transactions)
-        ).await?;
+            middleware.create_index(
+                nom_collection_transactions.as_str(),
+                champs_index_transactions,
+                Some(options_unique_transactions)
+            ).await?;
+
+            // Index transactions completes
+            let options_unique_transactions = IndexOptions {
+                nom_index: Some(String::from(TRANSACTION_CHAMP_COMPLETE)),
+                unique: false
+            };
+            let champs_index_transactions = vec!(
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1}
+            );
+            middleware.create_index(
+                nom_collection_transactions.as_str(),
+                champs_index_transactions,
+                Some(options_unique_transactions)
+            ).await?;
+
+            // Index backup transactions
+            let options_unique_transactions = IndexOptions {
+                nom_index: Some(String::from(BACKUP_CHAMP_BACKUP_TRANSACTIONS)),
+                unique: false
+            };
+            let champs_index_transactions = vec!(
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1},
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1},
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1},
+            );
+            middleware.create_index(
+                nom_collection_transactions.as_str(),
+                champs_index_transactions,
+                Some(options_unique_transactions)
+            ).await?;
+
+        }
 
         // Hook pour index custom du domaine
         self.preparer_database(middleware).await
@@ -553,11 +571,13 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let message_backup: MessageBackupTransactions = message.message.parsed.map_contenu(None)?;
         let complet = match message_backup.complet.as_ref() { Some(v) => v.to_owned(), None => false };
 
-        middleware.demarrer_backup(
-            self.get_nom_domaine().as_str(),
-            self.get_collection_transactions().as_str(),
-            complet
-        ).await?;
+        if let Some(nom_collection_transactions) = self.get_collection_transactions() {
+            middleware.demarrer_backup(
+                self.get_nom_domaine().as_str(),
+                nom_collection_transactions.as_str(),
+                complet
+            ).await?;
+        }
 
         Ok(None)
     }
@@ -569,6 +589,10 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         where M: Middleware + 'static
     {
         debug!("restaurer_transaction {:?}", message);
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(n) => n,
+            None => Err(format!("domaines.restaurer_transaction Tentative de restauration sur domaine sans collection de transactions"))?
+        };
         let message_restauration: MessageRestaurerTransaction = message.message.parsed.map_contenu(None)?;
         let transaction = message_restauration.transaction;
         let mut message_serialise = MessageSerialise::from_parsed(transaction)?;
@@ -592,7 +616,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
         // Conserver la transaction
         // let transaction_doc = TransactionImpl::try_from(message_serialise)?;
-        let resultat_batch = sauvegarder_batch(middleware, self.get_collection_transactions().as_str(), vec![message_serialise.parsed]).await?;
+        let resultat_batch = sauvegarder_batch(middleware, nom_collection_transactions.as_str(), vec![message_serialise.parsed]).await?;
         debug!("domaines.restaurer_transaction Resultat batch sauvegarde : {:?}", resultat_batch);
 
         match message_restauration.ack {
@@ -625,8 +649,14 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref(), m).await,
                     // COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
-                    COMMANDE_RESET_BACKUP => reset_backup_flag(
-                        middleware.as_ref(), self.get_collection_transactions().as_str()).await,
+                    COMMANDE_RESET_BACKUP => {
+                        let nom_collection_transactions = match self.get_collection_transactions() {
+                            Some(n) => n,
+                            None => Err(format!("domaines.consommer_commande_trait Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
+                        };
+                        reset_backup_flag(
+                            middleware.as_ref(), nom_collection_transactions.as_str()).await
+                    },
 
                     // Commandes specifiques au domaine
                     _ => self.consommer_commande(middleware.as_ref(), m).await
@@ -648,11 +678,16 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     async fn regenerer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
     {
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(n) => n,
+            None => Err(format!("domaines.regenerer_transactions Tentative de regeneration sur domaine sans collection de transactions"))?
+        };
+
         let noms_collections_docs = self.get_collections_documents();
 
         regenerer_operation(
             middleware.as_ref(),
-            self.get_collection_transactions().as_str(),
+            nom_collection_transactions.as_str(),
             &noms_collections_docs,
             self
         ).await?;

@@ -777,7 +777,13 @@ pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageVal
         M: ValidateurX509 + GenerateurMessages + MongoDao,
         G: GestionnaireDomaine
 {
-    let nom_collection_transactions = gestionnaire.get_collection_transactions();
+    let nom_collection_transactions = match gestionnaire.get_collection_transactions() {
+        Some(n) => n,
+        None => {
+            return Err(format!("middleware.sauvegarder_traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))
+        }
+    };
+
     let doc_transaction = match sauvegarder_transaction(middleware, &m, nom_collection_transactions.as_str()).await {
         Ok(d) => Ok(d),
         Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur sauvegarde transaction : {:?}", e))
