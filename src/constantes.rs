@@ -125,7 +125,7 @@ pub const ROLE_NOEUD_PUBLIC: &str = "public";
 pub const ROLE_MAITRE_COMPTES: &str = "maitrecomptes";
 pub const ROLE_MONITOR: &str = "monitor";
 pub const ROLE_MAITRE_DES_CLES: &str = "maitredescles";
-pub const ROLE_MAITRE_DES_CLES_SUPPORT: &str = "maitredescles_support";
+pub const ROLE_MAITRE_DES_CLES_CONNEXION: &str = "maitredescles_connexion";
 pub const ROLE_MAITRE_DES_CLES_VOLATIL: &str = "maitredescles_volatil";
 pub const ROLE_FICHIERS: &str = "fichiers";
 pub const ROLE_COMPTE_PRIVE: &str = "compte_prive";
@@ -139,9 +139,9 @@ pub enum RolesCertificats {
     NoeudPublic,
     MaitreComptes,
     Monitor,  // Deprecated, devenu instance
-    MaitreDesCles,         // Certificat de connexion (4.secure) et gestion de cles
-    MaitreDesClesSupport,  // Certificat de connexion sans droit de gestion de cles
-    MaitreDesClesVolatil,  // Certificat de gestion de cles sans droit de connexion
+    MaitreDesCles,           // Certificat de connexion (4.secure) et gestion de cles
+    MaitreDesClesConnexion,  // Certificat de connexion sans droit de gestion de cles
+    MaitreDesClesVolatil,    // Certificat de gestion de cles sans droit de connexion
     Fichiers,  // ConsignationFichiers
     ComptePrive,
     Core,
@@ -157,7 +157,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::MaitreComptes => ROLE_MAITRE_COMPTES,
             RolesCertificats::Monitor => ROLE_MONITOR,
             RolesCertificats::MaitreDesCles => ROLE_MAITRE_DES_CLES,
-            RolesCertificats::MaitreDesClesSupport => ROLE_MAITRE_DES_CLES_SUPPORT,
+            RolesCertificats::MaitreDesClesConnexion => ROLE_MAITRE_DES_CLES_CONNEXION,
             RolesCertificats::MaitreDesClesVolatil => ROLE_MAITRE_DES_CLES_VOLATIL,
             RolesCertificats::Fichiers => ROLE_FICHIERS,
             RolesCertificats::ComptePrive => ROLE_COMPTE_PRIVE,
