@@ -291,7 +291,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Methode qui peut etre re-implementee dans une impl
     async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
+        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>), Box<dyn Error>>
         where M: Middleware + 'static
     {
         self.preparer_threads_super(middleware).await
@@ -299,7 +299,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Initialise le domaine.
     async fn preparer_threads_super<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>), Box<dyn Error>>
+        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>), Box<dyn Error>>
         where M: Middleware + 'static
     {
         // Attendre pour eviter echec immedia sur connexion (note to do : ajouter event wait sur MQ)
@@ -346,7 +346,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         futures.push(spawn(self.entretien(middleware.clone())));
         futures.push(spawn(thread_emettre_presence_domaine(middleware.clone(), self.get_nom_domaine())));
 
-        Ok((routing, futures))
+        Ok((routing, futures, tx_messages, tx_triggers))
     }
 
     async fn consommer_messages<M>(self: &'static Self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
