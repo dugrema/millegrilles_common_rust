@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::error::Error;
 
 use crate::chiffrage::FormatChiffrage;
@@ -81,4 +82,12 @@ use crate::chiffrage_cle::{CommandeSauvegarderCle, IdentiteCle};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequeteVerifierPreuve {
     pub cles: Vec<IdentiteCle>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DemandeSignature {
+    pub roles: Option<Vec<String>>,     // Ex: ["media", "fichiers"],
+    pub domaines: Option<Vec<String>>,  // Ex: ["GrosFichiers"]
+    pub exchanges: Option<Vec<String>>, // Ex: ["4.secure", "3.protege", "2.prive", "1.public"]
+    pub dns: Option<Value>,  // Ex: {"localhost": true, "hostnames": ["media"], "domain": true}
 }
