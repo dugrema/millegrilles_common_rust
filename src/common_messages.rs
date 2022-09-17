@@ -86,8 +86,15 @@ pub struct RequeteVerifierPreuve {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DemandeSignature {
+    pub csr: String,
     pub roles: Option<Vec<String>>,     // Ex: ["media", "fichiers"],
     pub domaines: Option<Vec<String>>,  // Ex: ["GrosFichiers"]
     pub exchanges: Option<Vec<String>>, // Ex: ["4.secure", "3.protege", "2.prive", "1.public"]
     pub dns: Option<Value>,  // Ex: {"localhost": true, "hostnames": ["media"], "domain": true}
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReponseSignatureCertificat {
+    pub ok: Option<bool>,
+    pub certificat: Option<Vec<String>>
 }

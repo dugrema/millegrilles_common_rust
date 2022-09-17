@@ -190,6 +190,7 @@ pub const DOMAINE_SERVICE_MONITOR: &str = DOMAINE_APPLICATION_INSTANCE;
 pub const DOMAINE_FICHIERS: &str = "fichiers";
 pub const DOMAINE_RELAIWEB: &str = "relaiweb";
 pub const DOMAINE_TOPOLOGIE: &str = "CoreTopologie";
+pub const DOMAINE_PKI: &str = "CorePki";
 
 // Evenements/commandes globaux
 pub const DOMAINE_GLOBAL: &str = "evenement.global.cedule";

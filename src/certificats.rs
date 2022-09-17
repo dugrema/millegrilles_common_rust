@@ -583,7 +583,19 @@ pub struct EnveloppePrivee {
     pub enveloppe_ca: Arc<EnveloppeCertificat>,
 }
 
+
 impl EnveloppePrivee {
+
+    pub fn new(
+        enveloppe: Arc<EnveloppeCertificat>,
+        cle_privee: PKey<Private>,
+        chaine_pem: Vec<String>,
+        clecert_pem: String,
+        ca: String,
+        enveloppe_ca: Arc<EnveloppeCertificat>
+    ) -> Self {
+        Self { enveloppe, cle_privee, chaine_pem, clecert_pem, ca, enveloppe_ca }
+    }
 
     pub fn certificat(&self) -> &X509 { &self.enveloppe.certificat }
 
