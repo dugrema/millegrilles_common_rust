@@ -5,11 +5,13 @@ mod rabbitmq_dao_tests {
     use std::sync::Arc;
     use futures_util::stream::FuturesUnordered;
     use log::debug;
+    use mongodb::options::Hint::Name;
     use openssl::x509::store::X509Store;
     use openssl::x509::X509;
     use serde::Serialize;
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
+    use tokio::time::timeout;
     use tokio_stream::StreamExt;
     use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509};
     use crate::chiffrage::{ChiffrageFactoryImpl, CleChiffrageHandler};
@@ -53,12 +55,24 @@ mod rabbitmq_dao_tests {
         assert_eq!(status.connected(), true);
 
         let queues: Vec<QueueType> = vec![];
-        let executor = executer_mq(
+        let mut executor = executer_mq(
             Arc::new(config),
             Some(queues),
             None,
             Securite::L3Protege
         ).expect("executer_mq");
+
+        let mut named_queues_guard = executor.rx_named_queues.lock().expect("lock");
+        let config_test_queue = ConfigQueue {
+            nom_queue: "test_named_queue".to_string(),
+            routing_keys: vec![
+                ConfigRoutingExchange { routing_key: "commande.CorePki.testMoi".to_string(), exchange: Securite::L3Protege }
+            ],
+            ttl: None,
+            durable: false
+        };
+        let test_named_queue = NamedQueue::new(config_test_queue, None);
+        named_queues_guard.insert("test_named_queue".to_string(), test_named_queue);
 
         let (_tx_reply, rx_reply) = mpsc::channel(1);
         let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
@@ -74,7 +88,15 @@ mod rabbitmq_dao_tests {
             tx_certificats_manquants.clone()
         )));
 
-        futures.next().await.expect("next").expect("reponse next");
+        match timeout(tokio::time::Duration::new(5, 0), futures.next()).await {
+            Ok(result) => {
+                result.expect("next").expect("reponse next");
+            },
+            Err(t) => {
+                debug!("Timeout - OK");
+            }
+        }
+
     }
 
     struct MiddlewareStub {

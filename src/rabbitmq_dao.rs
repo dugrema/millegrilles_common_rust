@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -251,13 +252,22 @@ pub fn executer_mq<'a>(
         reply_q,
         securite: securite.clone()
     };
+
+    let mut rx_named_queues = HashMap::new();
+    // todo Configuration Queues deja fournies
+
     let rx_queues = RabbitMqExecutorRx {
         rx_messages: rx_traiter_message,
         rx_reply: rx_traiter_reply,
         rx_triggers: rx_traiter_trigger,
     };
 
-    Ok(RabbitMqExecutorConfig { executor, rx_queues, securite: securite.clone() })
+    Ok(RabbitMqExecutorConfig {
+        executor,
+        rx_queues,
+        securite: securite.clone(),
+        rx_named_queues: Mutex::new(rx_named_queues),
+    })
 }
 
 #[async_trait]
@@ -270,6 +280,7 @@ pub struct RabbitMqExecutorConfig {
     pub executor: RabbitMqExecutor,
     pub rx_queues: RabbitMqExecutorRx,
     pub securite: Securite,
+    pub rx_named_queues: Mutex<HashMap<String, NamedQueue>>
 }
 
 pub struct RabbitMqExecutor {
@@ -278,12 +289,6 @@ pub struct RabbitMqExecutor {
     pub tx_reply: Sender<MessageInterne>,
     pub reply_q: Arc<Mutex<Option<String>>>,
     pub securite: Securite,
-}
-
-pub struct RabbitMqExecutorRx {
-    pub rx_messages: Receiver<MessageInterne>,
-    pub rx_reply: Receiver<MessageInterne>,
-    pub rx_triggers: Receiver<MessageInterne>,
 }
 
 #[async_trait]
@@ -306,6 +311,82 @@ impl MqMessageSendInformation for RabbitMqExecutor {
     fn get_reqly_q_name(&self) -> Option<String> {
         self.reply_q.lock().expect("lock").clone()
     }
+}
+
+pub struct NamedQueue {
+    pub config: ConfigQueue,
+    pub tx: Sender<MessageInterne>,
+    rx: Mutex<Option<Receiver<MessageInterne>>>,  // Conserve rx jusqu'au demarrage de la thread
+}
+
+impl NamedQueue {
+    pub fn new(config: ConfigQueue, buffer_size: Option<usize>) -> Self {
+        let buffer = match buffer_size {
+            Some(b) => b,
+            None => 1
+        };
+        let (tx, rx) = mpsc::channel(buffer);
+        Self { config, tx, rx: Mutex::new(Some(rx)) }
+    }
+
+    pub async fn run(&self) {
+        info!("Demarrage thread named queue {}", self.config.nom_queue);
+        let mut futures = FuturesUnordered::new();
+
+        // Extraire le receiver
+        let mut rx = {
+            let mut guard = self.rx.lock().expect("lock");
+            let rx = match guard.take() {
+                Some(rx) => rx,
+                None => {
+                    error!("NamedQueue rx n'est pas disponible, abort");
+                    return
+                }
+            };
+            rx
+        };
+
+        futures.push(task::spawn(named_queue_consume(self.tx.clone(), self.config.clone())));
+        futures.push(task::spawn(named_queue_traiter_messages(rx)));
+
+        futures.next().await.expect("run await").expect("run await resultat");
+    }
+}
+
+pub async fn named_queue_consume(tx: Sender<MessageInterne>, config: ConfigQueue) {
+    loop {
+        // Creer channel
+
+        let tx_consumer = tx.clone();
+        let queue_type = QueueType::ExchangeQueue(config.clone());
+
+        // Demarrer consumer (va creer Q si necessaire)
+        // ecouter_consumer(channel, queue_type.clone(), tx_consumer).await;
+
+        warn!("channel/consumer {} deconnecte, reconnexion dans 15 secondes", config.nom_queue);
+        tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
+    }
+}
+
+pub async fn named_queue_traiter_messages(mut rx: Receiver<MessageInterne>) {
+    // Demarrer ecoute de messages
+    while let Some(message) = rx.recv().await {
+        debug!("NamedQueue.run Message recu : {:?}", message);
+        match message {
+            MessageInterne::Delivery(delivery, routing) => {
+                todo!("Traiter message Delivery")
+            },
+            _ => {
+                debug!("Type de message non-supporte, on l'ignore");
+            }
+        }
+    }
+}
+
+pub struct RabbitMqExecutorRx {
+    pub rx_messages: Receiver<MessageInterne>,
+    pub rx_reply: Receiver<MessageInterne>,
+    pub rx_triggers: Receiver<MessageInterne>,
 }
 
 async fn boucle_execution(
