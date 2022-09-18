@@ -366,7 +366,8 @@ pub async fn run_rabbitmq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
 {
     let mut futures = FuturesUnordered::new();
     futures.push(task::spawn(thread_connexion(rabbitmq.clone(), config.clone())));
-    futures.push(task::spawn(thread_consumers_statiques(rabbitmq.clone())));
+    futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
+    futures.push(task::spawn(task_emettre_messages(rabbitmq.clone())));
 
     // Run, quit sur premier echec/thread complete
     futures.next().await.expect("futures next").expect("futures result");
@@ -379,10 +380,12 @@ async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
     loop {
         info!("Demarrage thread connexion MQ");
         let config_ref = &**config.as_ref();
-        match connecter(config_ref).await {
+        let connexion = match connecter(config_ref).await {
             Ok(c) => {
+                let connexion = Arc::new(c);
                 let mut guard = rabbitmq.connexion.lock().expect("lock");
-                *guard = Some(Arc::new(c));
+                *guard = Some(connexion.clone());
+                connexion
             },
             Err(e) => {
                 error!("thread_connexion Erreur connexion : {:?}", e);
@@ -391,16 +394,70 @@ async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
             }
         };
 
+        // Verifier etat connexion aux 5 secondes - to be fixed, utiliser channel/methode instantannee
+        while connexion.status().connected() == true {
+            debug!("Connexion OK");
+            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+        }
+
         warn!("rabbit mq deconnecte, reconnexion dans 30 secondes");
         rabbitmq.cleanup_connexion();
         tokio::time::sleep(tokio::time::Duration::new(30, 0)).await;
     }
 }
 
-async fn thread_consumers_statiques(rabbitmq: Arc<RabbitMqExecutor>) {
+async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
+    where C: ConfigMessages
+{
+    let mut first_run = true;
     loop {
+        if first_run {
+            first_run = false;
+        } else {
+            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+        }
+
+        let connexion = {
+            let guard = rabbitmq.connexion.lock().expect("lock");
+            match guard.as_ref() {
+                Some(c) => c.clone(),
+                None => {
+                    warn!("thread_consumers_statiques mq deconnecte, reconnexion dans 5 secondes");
+                    continue;
+                }
+            }
+        };
+
+        // Setup channels MQ
+        let mut futures = FuturesUnordered::new();
+
+        // Reply Q
+        {
+            let configuration = &**config.as_ref();
+
+            let qos_options_reponses = BasicQosOptions { global: false };
+            let channel = connexion.create_channel().await.expect("channel_reponses");
+            channel.basic_qos(20, qos_options_reponses).await.expect("channel_reponses basic_qos");
+
+            let pki = configuration.get_configuration_pki();
+            let reply_q = ReplyQueue {
+                fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
+                securite: rabbitmq.securite.clone(),
+                ttl: Some(300000),
+                reply_q_name: Arc::new(Mutex::new(None)),  // Permet de maj le nom de la reply_q globalement
+            };
+
+            let tx_reply: Sender<MessageInterne> = rabbitmq.tx_reply.clone();
+            futures.push(task::spawn(ecouter_consumer(
+                channel,
+                QueueType::ReplyQueue(reply_q),
+                tx_reply
+            )));
+        }
+
+        futures.next().await.expect("futures").expect("reponse");
+
         warn!("channel/consumer statiques deconnecte, reconnexion dans 15 secondes");
-        tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
     }
 }
 
@@ -513,11 +570,11 @@ pub async fn named_queue_traiter_messages(mut rx: Receiver<MessageInterne>) {
     }
 }
 
-pub struct RabbitMqExecutorRx {
-    // pub rx_messages: Receiver<MessageInterne>,
-    pub rx_reply: Receiver<MessageInterne>,
-    pub rx_triggers: Receiver<MessageInterne>,
-}
+// pub struct RabbitMqExecutorRx {
+//     // pub rx_messages: Receiver<MessageInterne>,
+//     pub rx_reply: Receiver<MessageInterne>,
+//     pub rx_triggers: Receiver<MessageInterne>,
+// }
 
 // async fn boucle_execution<C>(
 //     configuration: Arc<C>,
@@ -810,7 +867,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
         ).await.expect("Binding routing key");
     }
 
-    debug!("Creation trigger-Q secure {:?}", trigger_queue);
+    debug!("Creation trigger-Q {:?}", trigger_queue);
     trigger_queue
 }
 
@@ -955,18 +1012,20 @@ fn concatener_rk(message: &MessageOut) -> Result<String, String> {
     Ok(routing_key)
 }
 
-async fn task_emettre_messages<C>(configuration: Arc<C>, channel: Channel, securite: Securite, mut rx: Receiver<MessageOut>, reply_q: Arc<Mutex<Option<String>>>)
-where
-    C: ConfigMessages,
-{
+async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
     let mut compteur: usize = 0;
-    let mq = configuration.get_configuration_mq();
-    // let mq = match configuration.as_ref() {
-    //     TypeConfiguration::ConfigurationMessages {mq, pki} => mq,
-    //     TypeConfiguration::ConfigurationMessagesDb {mq, mongo, pki} => mq,
-    // };
-    let exchange_defaut = securite.get_str();  // mq.exchange_default.as_str();
+    let exchange_defaut = rabbitmq.securite.get_str();
     debug!("task_emettre_messages : Demarrage thread, exchange defaut {}", exchange_defaut);
+
+    let mut rx = {
+        let mut guard = rabbitmq.rx_out.lock().expect("lock");
+        match guard.take() {
+            Some(rx) => rx,
+            None => panic!("rabbitmq_dao.task_emettre_messages Erreur extraction rx_out")
+        }
+    };
+
+    let mut channel_opt: Option<Channel> = None;
 
     while let Some(message) = rx.recv().await {
         compteur += 1;
@@ -974,10 +1033,43 @@ where
         let contenu = &message.message;
 
         // Verifier etat du channel (doit etre connecte)
-        if ! channel.status().connected() {
-            warn!("task_emettre_messages Channel OUT est ferme, on ferme la connexion MQ");
-            break
-        }
+        let connecte = match channel_opt.as_ref() {
+            Some(channel) => {
+                if channel.status().connected() {
+                    true
+                } else {
+                    warn!("task_emettre_messages Channel OUT est ferme, tenter de reouvrir channel");
+                    false
+                }
+            },
+            None => false
+        };
+
+        if ! connecte {
+            // Tenter de recreer un channel
+            channel_opt = None;
+            let connexion = {
+                let guard = rabbitmq.connexion.lock().expect("lock");
+                match guard.as_ref() {
+                    Some(c) => c.clone(),
+                    None => {
+                        warn!("Connexion fermee, reessayer plus tard");
+                        continue
+                    }
+                }
+            };
+            match connexion.create_channel().await {
+                Ok(c) => {
+                    channel_opt = Some(c);
+                },
+                Err(e) => {
+                    warn!("Erreur ouverture channel, reessayer plus tard");
+                    continue
+                }
+            }
+        };
+
+        let channel = channel_opt.as_ref().expect("channel");
 
         let entete = &contenu.entete;
         debug!("Emettre_message {:?}", entete);
@@ -990,9 +1082,10 @@ where
         let exchanges = match &message.exchanges {
             Some(e) => Some(e.clone()),
             None => {
+                let securite = rabbitmq.securite.clone();
                 match message.type_message {
                     TypeMessageOut::Reponse => None,  // Aucun exchange pour une reponse
-                    _ => Some(vec![securite.clone()])  // Toutes les autre reponses, prendre exchange defaut
+                    _ => Some(vec![securite])  // Toutes les autre reponses, prendre exchange defaut
                 }
             }
         };
@@ -1039,7 +1132,7 @@ where
                     properties = properties.with_reply_to(r.as_str().into());
                 },
                 None => {
-                    let lock_reply_q = reply_q.lock().expect("lock");
+                    let lock_reply_q = rabbitmq.reply_q.lock().expect("lock");
                     debug!("task_emettre_messages Emission message, reply_q locale : {:?}", lock_reply_q);
                     match lock_reply_q.as_ref() {
                         Some(qs) => {

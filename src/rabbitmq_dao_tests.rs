@@ -3,6 +3,7 @@ mod rabbitmq_dao_tests {
     use async_trait::async_trait;
     use std::error::Error;
     use std::sync::Arc;
+    use async_std::prelude::FutureExt;
     use futures_util::stream::FuturesUnordered;
     use log::debug;
     use mongodb::options::Hint::Name;
@@ -11,7 +12,7 @@ mod rabbitmq_dao_tests {
     use serde::Serialize;
     use tokio::sync::mpsc;
     use tokio::task::JoinHandle;
-    use tokio::time::timeout;
+    use tokio::time::{sleep, timeout};
     use tokio_stream::StreamExt;
     use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509};
     use crate::chiffrage::{ChiffrageFactoryImpl, CleChiffrageHandler};
@@ -50,13 +51,35 @@ mod rabbitmq_dao_tests {
         let config = charger_configuration().expect("config");
         let rabbitmq = RabbitMqExecutor::new(None);
 
-        let rabbitmq_thread = run_rabbitmq(Arc::new(rabbitmq), Arc::new(Box::new(config)));
-        match timeout(tokio::time::Duration::new(5, 0), rabbitmq_thread).await {
-            Ok(result) => (),
-            Err(t) => {
-                debug!("Timeout - OK");
-            }
-        }
+        let mut futures = FuturesUnordered::new();
+        let rabbitmq_arc = Arc::new(rabbitmq);
+        futures.push(tokio::spawn(run_rabbitmq(rabbitmq_arc.clone(), Arc::new(Box::new(config)))));
+        futures.push(tokio::spawn(sleep_thread(5)));
+
+        futures.next().await;
+
+        debug!("Pass 2");
+        futures.push(tokio::spawn(sleep_thread(5)));
+        futures.next().await;
+
+        let message_millegrille = MessageMilleGrille::new();
+        let message = MessageOut::new(
+            "test", "action", None, message_millegrille,
+            TypeMessageOut::Commande, Some(vec![Securite::L1Public]),
+            None, None
+        );
+        rabbitmq_arc.as_ref().send_out(message).await.expect("send");
+
+        debug!("Pass 3");
+        futures.push(tokio::spawn(sleep_thread(20)));
+        futures.next().await;
+
+        // match timeout(tokio::time::Duration::new(15, 0), rabbitmq_thread).await {
+        //     Ok(result) => (),
+        //     Err(t) => {
+        //         debug!("Timeout - OK");
+        //     }
+        // }
 
         // let mut executor = executer_mq(
         //     Arc::new(config),
@@ -249,4 +272,8 @@ mod rabbitmq_dao_tests {
         }
     }
 
+}
+
+async fn sleep_thread(secs: u64) {
+    tokio::time::sleep(tokio::time::Duration::new(secs, 0)).await;
 }
