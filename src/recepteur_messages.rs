@@ -28,7 +28,7 @@ pub async fn recevoir_messages<M>(
     tx_verifie: Sender<TypeMessage>,
     tx_certificats_manquants: Sender<RequeteCertificatInterne>
 )
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages
 {
     debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
 
