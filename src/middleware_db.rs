@@ -23,7 +23,9 @@ use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, Configuratio
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{configurer, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, RedisTrait, ChiffrageFactoryTrait};
+use crate::middleware::{
+    /*configurer,*/
+    EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, RedisTrait, ChiffrageFactoryTrait};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
@@ -449,105 +451,105 @@ impl ChiffrageFactory for MiddlewareDb {
 }
 
 /// Version speciale du middleware avec un acces a MongoDB
-pub fn preparer_middleware_db(
-    queues: Vec<QueueType>,
-    listeners: Option<Mutex<Callback<'static, EventMq>>>
-) -> MiddlewareHooks {
-    let (
-        configuration,
-        validateur,
-        mongo,
-        mq_executor_config,
-        generateur_messages
-    ) = configurer(queues, listeners);
-
-    let generateur_messages_arc = Arc::new(generateur_messages);
-
-    // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-    let chiffrage_factory = {
-        let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
-        let cert_local = env_privee.enveloppe.as_ref();
-        let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-        let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-        fp_certs.extend(list_fp_ca);
-
-        let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
-        for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-            map.insert(f.fingerprint.clone(), f);
-        }
-
-        debug!("Map cles chiffrage : {:?}", map);
-
-        Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
-    };
-
-    // let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
-    //     Some(u) => Some(u.as_str()),
-    //     None => None,
-    // };
-    let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
-
-    let (tx_backup, rx_backup) = mpsc::channel::<CommandeBackup>(5);
-
-    let middleware = Arc::new(MiddlewareDb {
-        configuration,
-        mongo,
-        validateur: validateur.clone(),
-        generateur_messages: generateur_messages_arc.clone(),
-        // cles_chiffrage: Mutex::new(cles_chiffrage),
-        redis: redis_dao,
-        tx_backup,
-        chiffrage_factory,
-    });
-
-    let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);
-    let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
-    let (tx_triggers, rx_triggers) = mpsc::channel(1);
-
-    let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(10);
-
-    let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-
-    let mq_executor = mq_executor_config.executor;  // Move
-    let mq_executor_rx = mq_executor_config.rx_queues;
-
-    futures.push(tokio::spawn(recevoir_messages(
-        middleware.clone(),
-        mq_executor_rx.rx_messages,
-        tx_messages_verifies.clone(),
-        tx_certificats_manquants.clone()
-    )));
-
-    futures.push(tokio::spawn(recevoir_messages(
-        middleware.clone(),
-        mq_executor_rx.rx_reply,
-        tx_messages_verif_reply.clone(),
-        tx_certificats_manquants.clone()
-    )));
-
-    futures.push(tokio::spawn(recevoir_messages(
-        middleware.clone(),
-        mq_executor_rx.rx_triggers,
-        tx_triggers,
-        tx_certificats_manquants.clone()
-    )));
-
-    // Thread requete certificats manquants
-    futures.push(tokio::spawn(task_requetes_certificats(
-        middleware.clone(),
-        rx_certificats_manquants,
-        mq_executor.tx_reply.clone(),
-        false
-    )));
-
-    futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
-
-    MiddlewareHooks {
-        middleware, mq_executor,
-        rx_messages_verifies, rx_messages_verif_reply, rx_triggers, tx_certificats_manquants,
-        futures
-    }
-}
+// pub fn preparer_middleware_db(
+//     queues: Vec<QueueType>,
+//     listeners: Option<Mutex<Callback<'static, EventMq>>>
+// ) -> MiddlewareHooks {
+//     let (
+//         configuration,
+//         validateur,
+//         mongo,
+//         mq_executor_config,
+//         generateur_messages
+//     ) = configurer(queues, listeners);
+//
+//     let generateur_messages_arc = Arc::new(generateur_messages);
+//
+//     // Extraire le cert millegrille comme base pour chiffrer les cles secretes
+//     let chiffrage_factory = {
+//         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
+//         let cert_local = env_privee.enveloppe.as_ref();
+//         let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+//         let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+//         fp_certs.extend(list_fp_ca);
+//
+//         let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
+//         for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
+//             map.insert(f.fingerprint.clone(), f);
+//         }
+//
+//         debug!("Map cles chiffrage : {:?}", map);
+//
+//         Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
+//     };
+//
+//     // let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
+//     //     Some(u) => Some(u.as_str()),
+//     //     None => None,
+//     // };
+//     let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
+//
+//     let (tx_backup, rx_backup) = mpsc::channel::<CommandeBackup>(5);
+//
+//     let middleware = Arc::new(MiddlewareDb {
+//         configuration,
+//         mongo,
+//         validateur: validateur.clone(),
+//         generateur_messages: generateur_messages_arc.clone(),
+//         // cles_chiffrage: Mutex::new(cles_chiffrage),
+//         redis: redis_dao,
+//         tx_backup,
+//         chiffrage_factory,
+//     });
+//
+//     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);
+//     let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
+//     let (tx_triggers, rx_triggers) = mpsc::channel(1);
+//
+//     let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(10);
+//
+//     let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
+//
+//     let mq_executor = mq_executor_config.executor;  // Move
+//     let mq_executor_rx = mq_executor_config.rx_queues;
+//
+//     futures.push(tokio::spawn(recevoir_messages(
+//         middleware.clone(),
+//         mq_executor_rx.rx_messages,
+//         tx_messages_verifies.clone(),
+//         tx_certificats_manquants.clone()
+//     )));
+//
+//     futures.push(tokio::spawn(recevoir_messages(
+//         middleware.clone(),
+//         mq_executor_rx.rx_reply,
+//         tx_messages_verif_reply.clone(),
+//         tx_certificats_manquants.clone()
+//     )));
+//
+//     futures.push(tokio::spawn(recevoir_messages(
+//         middleware.clone(),
+//         mq_executor_rx.rx_triggers,
+//         tx_triggers,
+//         tx_certificats_manquants.clone()
+//     )));
+//
+//     // Thread requete certificats manquants
+//     futures.push(tokio::spawn(task_requetes_certificats(
+//         middleware.clone(),
+//         rx_certificats_manquants,
+//         mq_executor.tx_reply.clone(),
+//         false
+//     )));
+//
+//     futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
+//
+//     MiddlewareHooks {
+//         middleware, mq_executor,
+//         rx_messages_verifies, rx_messages_verif_reply, rx_triggers, tx_certificats_manquants,
+//         futures
+//     }
+// }
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareMessagesHooks {

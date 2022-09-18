@@ -980,7 +980,7 @@ mod backup_tests {
     use openssl::x509::X509;
     use crate::backup_restoration::TransactionReader;
     use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
-    use crate::middleware_db::preparer_middleware_db;
+    // use crate::middleware_db::preparer_middleware_db;
     use crate::chiffrage::{ChiffrageFactoryImpl, CipherMgsCurrent, CleChiffrageHandler, MgsCipherData, MgsCipherKeysCurrent};
     use crate::generateur_messages::RoutageMessageReponse;
     use crate::mongo_dao::convertir_to_bson;

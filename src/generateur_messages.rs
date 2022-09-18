@@ -210,13 +210,14 @@ pub struct GenerateurMessagesImpl {
 impl GenerateurMessagesImpl {
 
     pub fn new(config: &ConfigurationPki, mq: &RabbitMqExecutor) -> GenerateurMessagesImpl {
-        GenerateurMessagesImpl {
-            tx_out: mq.tx_out.clone(),
-            tx_reply: mq.tx_reply.clone(),
-            enveloppe_privee: config.get_enveloppe_privee(),
-            mode_regeneration: Mutex::new(false),
-            securite: mq.securite.clone()
-        }
+        todo!("Fix me")
+        // GenerateurMessagesImpl {
+        //     tx_out: mq.tx_out.clone(),
+        //     tx_reply: mq.tx_reply.clone(),
+        //     enveloppe_privee: config.get_enveloppe_privee(),
+        //     mode_regeneration: Mutex::new(false),
+        //     securite: mq.securite.clone()
+        // }
     }
 
     async fn emettre_message_serializable<M>(
