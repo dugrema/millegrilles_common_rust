@@ -30,6 +30,8 @@ pub mod chiffrage_cle;
 pub mod backup_restoration;
 pub mod chiffrage_streamxchacha20poly1305;
 
+mod rabbitmq_dao_tests;
+
 // Re-exports
 pub use async_trait;
 pub use chrono;

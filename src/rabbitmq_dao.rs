@@ -69,7 +69,7 @@ pub async fn initialiser(configuration: &impl ConfigMessages) -> Result<RabbitMq
     })
 }
 
-async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
+pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     where C: ConfigMessages
 {
     let pki = configuration.get_configuration_pki();
@@ -1027,26 +1027,26 @@ impl<'a, T> Callback<'a, T> {
     }
 }
 
-#[cfg(test)]
-mod rabbitmq_integration_test {
-    use crate::configuration::charger_configuration;
-    use crate::test_setup::setup;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn connecter_mq() {
-        setup("connecter");
-        debug!("Connecter");
-
-        let config = charger_configuration().expect("config");
-        let connexion = connecter(&config).await.expect("connexion");
-
-        // debug!("Sleep 5 secondes");
-        // tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-
-        let status = connexion.status();
-        debug!("Connexion status : {:?}", status);
-        assert_eq!(status.connected(), true);
-    }
-}
+// #[cfg(test)]
+// mod rabbitmq_integration_test {
+//     use crate::configuration::charger_configuration;
+//     use crate::test_setup::setup;
+//
+//     use super::*;
+//
+//     #[tokio::test]
+//     async fn connecter_mq() {
+//         setup("connecter");
+//         debug!("Connecter");
+//
+//         let config = charger_configuration().expect("config");
+//         let connexion = connecter(&config).await.expect("connexion");
+//
+//         // debug!("Sleep 5 secondes");
+//         // tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+//
+//         let status = connexion.status();
+//         debug!("Connexion status : {:?}", status);
+//         assert_eq!(status.connected(), true);
+//     }
+// }
