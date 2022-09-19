@@ -524,6 +524,7 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
 
         let tx_reply: Sender<MessageInterne> = rabbitmq.tx_reply.clone();
         if let Err(e) = ecouter_consumer(
+            rabbitmq.clone(),
             channel,
             QueueType::ReplyQueue(reply_q.clone()),
             tx_reply
@@ -766,7 +767,7 @@ pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<Mes
 
         let tx_consumer = tx.clone();
         // Demarrer consumer (va creer Q si necessaire)
-        match ecouter_consumer(channel, queue.clone(), tx_consumer).await {
+        match ecouter_consumer(rabbitmq.clone(), channel, queue.clone(), tx_consumer).await {
             Ok(()) => (),
             Err(e) => {
                 error!("named_queue_consume ecouter_consumer Error : {:?}", e);
@@ -975,7 +976,7 @@ async fn entretien_connexion(mq: Arc<RabbitMqExecutor>) {
     warn!("Connexion MQ perdue, on va se reconnecter");
 }
 
-async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
+async fn creer_reply_q(rabbitmq: Arc<RabbitMqExecutor>, channel: &Channel, rq: &ReplyQueue) -> Queue {
     let options = QueueDeclareOptions {
         passive: false,
         durable: false,
@@ -996,6 +997,13 @@ async fn creer_reply_q(channel: &Channel, rq: &ReplyQueue) -> Queue {
             options,
             params,
         ).await.unwrap();
+
+    let queue_name = reply_queue.name().as_str();
+    debug!("creer_reply_q Reply Q {}", queue_name);
+    {
+        let mut guard = rabbitmq.reply_q.lock().expect("lock");
+        *guard = Some(queue_name.to_string());
+    }
 
     // Ajouter routing keys pour ecouter evenements certificats, requete cert local
     let rk_fingerprint = format!("requete.certificat.{}", rq.fingerprint_certificat);
@@ -1131,7 +1139,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 }
 
 
-async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<MessageInterne>) -> Result<(), String> {
+async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, queue_type: QueueType, tx: Sender<MessageInterne>) -> Result<(), String> {
 
     debug!("Ouvrir queue {:?}", queue_type);
 
@@ -1172,7 +1180,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
             queue
         },
         QueueType::ReplyQueue(rq) => {
-            creer_reply_q(&channel, &rq).await
+            creer_reply_q(rabbitmq.clone(), &channel, &rq).await
         },
         QueueType::Triggers(nom_domaine, securite) => {
             creer_internal_q(nom_domaine.to_owned(), &channel, securite).await
@@ -1480,19 +1488,24 @@ pub struct MessageOut {
 }
 
 impl MessageOut {
-    pub fn new<S>(
+    pub fn new<S,T,U,V,W>(
         domaine: S,
-        action: S,
-        partition: Option<S>,
+        action: T,
+        partition: Option<U>,
         message: MessageMilleGrille,
         type_message: TypeMessageOut,
         exchanges: Option<Vec<Securite>>,
-        replying_to: Option<S>,
-        correlation_id: Option<S>,
+        replying_to: Option<V>,
+        correlation_id: Option<W>,
         attente_expiration: Option<DateTime<Utc>>,
     )
         -> MessageOut
-        where S: Into<String>
+        where
+            S: Into<String>,
+            T: Into<String>,
+            U: Into<String>,
+            V: Into<String>,
+            W: Into<String>,
     {
         if type_message == TypeMessageOut::Reponse {
             panic!("Reponse non supportee, utiliser MessageOut::new_reply()");

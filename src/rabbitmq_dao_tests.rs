@@ -64,12 +64,14 @@ mod rabbitmq_dao_tests {
         futures.push(tokio::spawn(sleep_thread(5)));
         futures.next().await;
 
+        let reply_q = rabbitmq_arc.reply_q.lock().expect("lock").clone();
+
         let message_millegrille = MessageMilleGrille::new();
         let attente_expiration = Utc::now() + chrono::Duration::seconds(9);
         let message = MessageOut::new(
-            "test", "action", None, message_millegrille,
+            "test", "action", None::<&str>, message_millegrille,
             TypeMessageOut::Commande, Some(vec![Securite::L1Public]),
-            None, "abcd-1234".into(), Some(attente_expiration)
+            reply_q, "abcd-1234".into(), Some(attente_expiration)
         );
         rabbitmq_arc.as_ref().send_out(message).await.expect("send");
 
