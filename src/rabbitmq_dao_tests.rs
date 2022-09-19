@@ -162,7 +162,7 @@ mod rabbitmq_dao_tests {
         rabbitmq_arc.ajouter_named_queue("CorePki/test1", named_queue_test1);
 
         futures.push(tokio::spawn(run_rabbitmq(rabbitmq_arc.clone(), Arc::new(Box::new(config)))));
-        futures.push(tokio::spawn(sleep_thread(5)));
+        futures.push(tokio::spawn(sleep_thread(30)));
 
         futures.next().await;
 
@@ -178,7 +178,26 @@ mod rabbitmq_dao_tests {
         // let test_named_queue = NamedQueue::new(config_test_queue, None);
         // named_queues_guard.insert("test_named_queue".to_string(), test_named_queue);
 
-        futures.push(tokio::spawn(sleep_thread(20)));
+        // Ajouter nouvelle Q
+        let named_queue_test2 = NamedQueue::new(
+            QueueType::ExchangeQueue(
+                ConfigQueue {
+                    nom_queue: "CorePki/test2".to_string(),
+                    routing_keys: vec![
+                        ConfigRoutingExchange{
+                            routing_key: "commande.CorePki.test2".to_string(),
+                            exchange: Securite::L3Protege
+                        },
+                    ],
+                    ttl: None,
+                    durable: false
+                }
+            ),
+            Some(1)
+        );
+
+        rabbitmq_arc.ajouter_named_queue("CorePki/test2", named_queue_test2);
+        futures.push(tokio::spawn(sleep_thread(30)));
         futures.next().await;
 
     }

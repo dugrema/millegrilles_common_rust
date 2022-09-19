@@ -10,7 +10,7 @@ use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
 use log::{debug, error, info, warn};
 use tokio::task;
-use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, oneshot::Sender as SenderOneshot};
+use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
 use tokio_amqp::*;
 use tokio_stream::StreamExt;
@@ -282,6 +282,7 @@ pub trait MqMessageSendInformation {
 pub struct RabbitMqExecutor {
     connexion: Mutex<Option<Arc<Connection>>>,
     named_queues: Mutex<HashMap<String, NamedQueue>>,
+    notify_queues_changed: Arc<Notify>,
     pub reply_q: Arc<Mutex<Option<String>>>,
     pub securite: Securite,
 
@@ -314,6 +315,7 @@ impl RabbitMqExecutor {
         Self {
             connexion: Mutex::new(None),
             named_queues: Mutex::new(Default::default()),
+            notify_queues_changed: Default::default(),
             reply_q: Arc::new(Mutex::new(None)),
             securite,
 
@@ -363,11 +365,21 @@ impl RabbitMqExecutor {
     pub fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue)
         where S: Into<String>
     {
-        let mut guard = self.named_queues.lock().expect("lock named_queues");
-        guard.insert(queue_name.into(), named_queue);
+        let queue_name_str = queue_name.into();
+        debug!("ajouter_named_queue {}", queue_name_str);
 
-        // TODO Trigger q reload
+        let mut guard = self.named_queues.lock().expect("lock named_queues");
+        guard.insert(queue_name_str, named_queue);
+
+        // Trigger q reload
+        self.notify_queues_changed.notify_waiters();
     }
+
+}
+
+pub async fn notify_wait_thread(rabbitmq: Arc<RabbitMqExecutor>) {
+    let notify = rabbitmq.notify_queues_changed.clone();
+    notify.notified().await;
 }
 
 pub async fn run_rabbitmq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
@@ -485,6 +497,9 @@ async fn thread_consumers_named_queues(rabbitmq: Arc<RabbitMqExecutor>) {
                 }
             }
         }
+
+        // Ajout task wait notify
+        futures.push(task::spawn(notify_wait_thread(rabbitmq.clone())));
 
         match futures.next().await {
             Some(result) => {
