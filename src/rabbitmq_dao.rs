@@ -20,7 +20,9 @@ use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
 use crate::formatteur_messages::MessageSerialise;
 use crate::formatteur_messages::MessageMilleGrille;
-use crate::recepteur_messages::TypeMessage;
+use crate::generateur_messages::GenerateurMessages;
+use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
+use crate::recepteur_messages::{RequeteCertificatInterne, traiter_delivery, TypeMessage};
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 const FLAG_TTL: &str = "x-message-ttl";
@@ -284,6 +286,7 @@ pub struct RabbitMqExecutor {
     named_queues: Mutex<HashMap<String, NamedQueue>>,
     notify_connexion_ready: Arc<Notify>,
     notify_queues_changed: Arc<Notify>,
+    map_attente: Mutex<HashMap<String, AttenteReponse>>,
     pub reply_q: Arc<Mutex<Option<String>>>,
     pub securite: Securite,
 
@@ -291,11 +294,13 @@ pub struct RabbitMqExecutor {
     pub tx_out: Sender<MessageOut>,
     pub tx_reply: Sender<MessageInterne>,
     pub tx_trigger: Sender<MessageInterne>,
+    pub tx_certificats_manquants: Sender<RequeteCertificatInterne>,
 
     // RX holder
     rx_out: Mutex<Option<Receiver<MessageOut>>>,
     rx_reply: Mutex<Option<Receiver<MessageInterne>>>,
     rx_trigger: Mutex<Option<Receiver<MessageInterne>>>,
+    rx_certificats_manquants: Mutex<Option<Receiver<RequeteCertificatInterne>>>,
 }
 
 impl RabbitMqExecutor {
@@ -306,6 +311,7 @@ impl RabbitMqExecutor {
         let (tx_out, rx_out) = mpsc::channel(3);
         let (tx_reply, rx_reply) = mpsc::channel(1);
         let (tx_trigger, rx_trigger) = mpsc::channel(1);
+        let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(1);
 
         // Securite default = 1.public
         let securite = match securite {
@@ -318,6 +324,7 @@ impl RabbitMqExecutor {
             named_queues: Mutex::new(Default::default()),
             notify_connexion_ready: Arc::new(Default::default()),
             notify_queues_changed: Default::default(),
+            map_attente: Mutex::new(Default::default()),
             reply_q: Arc::new(Mutex::new(None)),
             securite,
 
@@ -325,11 +332,13 @@ impl RabbitMqExecutor {
             tx_out,
             tx_reply,
             tx_trigger,
+            tx_certificats_manquants,
 
             // RX
             rx_out: Mutex::new(Some(rx_out)),
             rx_reply: Mutex::new(Some(rx_reply)),
             rx_trigger: Mutex::new(Some(rx_trigger)),
+            rx_certificats_manquants: Mutex::new(Some(rx_certificats_manquants)),
         }
     }
 
@@ -387,14 +396,16 @@ pub async fn notify_wait_thread(rabbitmq: Arc<RabbitMqExecutor>) {
     notify.notified().await;
 }
 
-pub async fn run_rabbitmq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
-    where C: ConfigMessages + 'static
+pub async fn run_rabbitmq<C,M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
+    where
+        C: ConfigMessages + 'static,
+        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
 {
     let mut futures = FuturesUnordered::new();
     futures.push(task::spawn(thread_connexion(rabbitmq.clone(), config.clone())));
     futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
     futures.push(task::spawn(task_emettre_messages(rabbitmq.clone())));
-    futures.push(task::spawn(thread_consumers_named_queues(rabbitmq.clone())));
+    futures.push(task::spawn(thread_consumers_named_queues(middleware, rabbitmq.clone())));
 
     // Run, quit sur premier echec/thread complete
     futures.next().await.expect("futures next").expect("futures result");
@@ -487,13 +498,15 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
             )));
         }
 
-        futures.next().await.expect("futures").expect("reponse");
+        futures.next().await.expect("futures").expect("reponse").expect("reponse");
 
         warn!("channel/consumer statiques deconnecte, reconnexion dans 15 secondes");
     }
 }
 
-async fn thread_consumers_named_queues(rabbitmq: Arc<RabbitMqExecutor>) {
+async fn thread_consumers_named_queues<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>)
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+{
 
     let mut futures = FuturesUnordered::new();
     loop {
@@ -502,7 +515,7 @@ async fn thread_consumers_named_queues(rabbitmq: Arc<RabbitMqExecutor>) {
             for (_, named_queue) in named_queues.iter() {
                 if ! named_queue.is_running() {
                     // Creer nouvelle thread
-                    let futures_nq = named_queue.get_futures(rabbitmq.clone()).expect("futures named_queues");
+                    let futures_nq = named_queue.get_futures(middleware.clone(), rabbitmq.clone()).expect("futures named_queues");
                     futures.extend(futures_nq);
                 }
             }
@@ -541,16 +554,17 @@ pub struct NamedQueue {
     pub queue: QueueType,
     pub tx: Sender<MessageInterne>,
     rx: Mutex<Option<Receiver<MessageInterne>>>,  // Conserve rx jusqu'au demarrage de la thread
+    tx_traite: Sender<TypeMessage>, // Receiver message traite
 }
 
 impl NamedQueue {
-    pub fn new(queue: QueueType, buffer_size: Option<usize>) -> Self {
+    pub fn new(queue: QueueType, tx: Sender<TypeMessage>, buffer_size: Option<usize>) -> Self {
         let buffer = match buffer_size {
             Some(b) => b,
             None => 1
         };
-        let (tx, rx) = mpsc::channel(buffer);
-        Self { queue, tx, rx: Mutex::new(Some(rx)) }
+        let (tx_interne, rx_interne) = mpsc::channel(buffer);
+        Self { queue, tx: tx_interne, rx: Mutex::new(Some(rx_interne)), tx_traite: tx }
     }
 
     fn is_running(&self) -> bool {
@@ -558,7 +572,9 @@ impl NamedQueue {
         guard.is_none()  // Si rx est None, la thread est running
     }
 
-    fn get_futures(&self, rabbitmq: Arc<RabbitMqExecutor>) -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>> {
+    fn get_futures<M>(&self, middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>) -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
+        where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+    {
         info!("Demarrage thread named queue {:?}", self.queue);
         let mut futures = FuturesUnordered::new();
 
@@ -572,8 +588,10 @@ impl NamedQueue {
             rx
         };
 
-        futures.push(task::spawn(named_queue_consume(rabbitmq, self.tx.clone(), self.queue.clone())));
-        futures.push(task::spawn(named_queue_traiter_messages(rx, self.queue.clone())));
+        let tx_traitement = self.tx_traite.clone();
+
+        futures.push(task::spawn(named_queue_consume(rabbitmq.clone(), self.tx.clone(), self.queue.clone())));
+        futures.push(task::spawn(named_queue_traiter_messages(middleware, rabbitmq, rx, self.queue.clone(), tx_traitement)));
 
         // futures.next().await.expect("run await").expect("run await resultat");
         Ok(futures)
@@ -610,30 +628,67 @@ pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<Mes
 
         let tx_consumer = tx.clone();
         // Demarrer consumer (va creer Q si necessaire)
-        ecouter_consumer(channel, queue.clone(), tx_consumer).await;
+        match ecouter_consumer(channel, queue.clone(), tx_consumer).await {
+            Ok(()) => (),
+            Err(e) => {
+                error!("named_queue_consume ecouter_consumer Error : {:?}", e);
+            }
+        }
 
         // Boucler, le sleep est au debut
         warn!("channel/consumer {:?} deconnecte, reconnexion dans 15 secondes", queue);
     }
 }
 
-pub async fn named_queue_traiter_messages(mut rx: Receiver<MessageInterne>, queue: QueueType) {
-    debug!("named_queue_traiter_messages Demarrage queue {:?}", queue);
+pub async fn named_queue_traiter_messages<M>(
+    middleware: Arc<M>,
+    rabbitmq: Arc<RabbitMqExecutor>,
+    mut rx: Receiver<MessageInterne>,
+    queue: QueueType,
+    tx_traite: Sender<TypeMessage>
+)
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+{
+    let nom_queue = match queue {
+        QueueType::ExchangeQueue(config) => config.nom_queue.clone(),
+        QueueType::Triggers(nom, securite) => nom,
+        _ => panic!("named_queue_traiter_messages Type de queue non supporte")
+    };
+    debug!("named_queue_traiter_messages Demarrage queue {}", nom_queue);
 
     // Demarrer ecoute de messages
     while let Some(message) = rx.recv().await {
         debug!("NamedQueue.run Message recu : {:?}", message);
-        match message {
+        let tx_certificats_manquants = rabbitmq.tx_certificats_manquants.clone();
+        let resultat = match message {
             MessageInterne::Delivery(delivery, routing) => {
-                todo!("Traiter message Delivery")
+                match traiter_delivery(
+                    middleware.as_ref(),
+                    tx_certificats_manquants,
+                    nom_queue.as_str(),
+                    delivery
+                ).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("named_queue_traiter_messages Erreur traitement message : {:?}", e);
+                        None
+                    }
+                }
             },
             _ => {
-                debug!("Type de message non-supporte, on l'ignore");
+                debug!("named_queue_traiter_messages Type de message non-supporte, on l'ignore");
+                None
+            }
+        };
+
+        if let Some(message_traite) = resultat {
+            if let Err(e) = tx_traite.send(message_traite).await {
+                error!("named_queue_traiter_messages Erreur send message interne : {:?}", e);
             }
         }
     }
 
-    info!("named_queue_traiter_messages Fermeture queue {:?}", queue);
+    info!("named_queue_traiter_messages Fermeture queue {:?}", nom_queue);
 }
 
 // pub struct RabbitMqExecutorRx {
@@ -938,7 +993,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 }
 
 
-async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<MessageInterne>) {
+async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<MessageInterne>) -> Result<(), String> {
 
     debug!("Ouvrir queue {:?}", queue_type);
 
@@ -1003,7 +1058,10 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
     while let Some(delivery) = consumer.next().await {
         debug!("ecouter_consumer({}): Reception nouveau message {}: {:?}", &nom_queue, &nom_queue, &delivery);
 
-        let (channel, delivery) = delivery.expect("error in consumer");
+        let (channel, delivery) = match delivery {
+            Ok(r) => r,
+            Err(e) => Err(format!("Erreur delivery message : {:?}", e))?
+        };
         if ! channel.status().connected() {
             warn!("ecouter_consumer Channel closed, on ferme la connexion");
             break
@@ -1054,6 +1112,7 @@ async fn ecouter_consumer(channel: Channel, queue_type: QueueType, tx: Sender<Me
     }
 
     info!("rabbitmq_dao.ecouter_consumer Fermeture consumer (Q {:?})", queue_type);
+    Ok(())
 }
 
 fn concatener_rk(message: &MessageOut) -> Result<String, String> {

@@ -50,10 +50,11 @@ mod rabbitmq_dao_tests {
 
         let config = charger_configuration().expect("config");
         let rabbitmq = RabbitMqExecutor::new(None);
+        let middleware = Arc::new(MiddlewareStub::new());
 
         let mut futures = FuturesUnordered::new();
         let rabbitmq_arc = Arc::new(rabbitmq);
-        futures.push(tokio::spawn(run_rabbitmq(rabbitmq_arc.clone(), Arc::new(Box::new(config)))));
+        futures.push(tokio::spawn(run_rabbitmq(middleware.clone(), rabbitmq_arc.clone(), Arc::new(Box::new(config)))));
         futures.push(tokio::spawn(sleep_thread(5)));
 
         futures.next().await;
@@ -132,13 +133,17 @@ mod rabbitmq_dao_tests {
 
         let config = charger_configuration().expect("config");
         let rabbitmq = RabbitMqExecutor::new(None);
+        let middleware = Arc::new(MiddlewareStub::new());
 
         let mut futures = FuturesUnordered::new();
         let rabbitmq_arc = Arc::new(rabbitmq);
 
+        let (tx_certificat, rx_certificat) = mpsc::channel(1);
+
         // Ajouter named queues
         let named_queue_triggers = NamedQueue::new(
             QueueType::Triggers("CorePki".into(), Securite::L4Secure),
+            tx_certificat.clone(),
             Some(5)
         );
         rabbitmq_arc.ajouter_named_queue("Triggers.CorePki", named_queue_triggers);
@@ -157,11 +162,12 @@ mod rabbitmq_dao_tests {
                     durable: false
                 }
             ),
+            tx_certificat.clone(),
             Some(1)
         );
         rabbitmq_arc.ajouter_named_queue("CorePki/test1", named_queue_test1);
 
-        futures.push(tokio::spawn(run_rabbitmq(rabbitmq_arc.clone(), Arc::new(Box::new(config)))));
+        futures.push(tokio::spawn(run_rabbitmq(middleware.clone(), rabbitmq_arc.clone(), Arc::new(Box::new(config)))));
         futures.push(tokio::spawn(sleep_thread(20)));
 
         futures.next().await;
@@ -181,11 +187,12 @@ mod rabbitmq_dao_tests {
                     durable: false
                 }
             ),
+            tx_certificat.clone(),
             Some(1)
         );
 
         rabbitmq_arc.ajouter_named_queue("CorePki/test2", named_queue_test2);
-        futures.push(tokio::spawn(sleep_thread(15)));
+        futures.push(tokio::spawn(sleep_thread(20)));
         futures.next().await;
 
     }
