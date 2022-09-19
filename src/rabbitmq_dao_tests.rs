@@ -4,6 +4,7 @@ mod rabbitmq_dao_tests {
     use std::error::Error;
     use std::sync::Arc;
     use async_std::prelude::FutureExt;
+    use chrono::Utc;
     use futures_util::stream::FuturesUnordered;
     use log::debug;
     use mongodb::options::Hint::Name;
@@ -64,10 +65,11 @@ mod rabbitmq_dao_tests {
         futures.next().await;
 
         let message_millegrille = MessageMilleGrille::new();
+        let attente_expiration = Utc::now() + chrono::Duration::seconds(9);
         let message = MessageOut::new(
             "test", "action", None, message_millegrille,
             TypeMessageOut::Commande, Some(vec![Securite::L1Public]),
-            None, None
+            None, "abcd-1234".into(), Some(attente_expiration)
         );
         rabbitmq_arc.as_ref().send_out(message).await.expect("send");
 

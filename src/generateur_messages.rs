@@ -1,9 +1,12 @@
+use std::cmp::max;
 use std::marker::Send;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use log::{debug, error};
 use serde::Serialize;
+use tokio::sync;
 use tokio::sync::{mpsc::Sender, oneshot};
 use tokio::time::{Duration, timeout};
 
@@ -12,7 +15,7 @@ use crate::configuration::ConfigurationPki;
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::middleware::IsConfigurationPki;
-use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, RabbitMqExecutor, TypeMessageOut};
+use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, MqMessageSendInformation, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 
 /// Conserve l'information de routage in/out d'un message
@@ -200,8 +203,9 @@ pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
 }
 
 pub struct GenerateurMessagesImpl {
-    tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
-    tx_reply: Sender<MessageInterne>,
+    // tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
+    // tx_reply: Sender<MessageInterne>,
+    rabbitmq: Arc<RabbitMqExecutor>,
     enveloppe_privee: Arc<EnveloppePrivee>,
     mode_regeneration: Mutex<bool>,
     securite: Securite,
@@ -249,37 +253,39 @@ impl GenerateurMessagesImpl {
         self.emettre_message_millegrille(routage, blocking, type_message_out, message_signe).await
     }
 
-    async fn emettre(&self, message: MessageOut) -> Result<(), String> {
+    async fn emettre(&self, message: MessageOut) -> Result<Option<sync::oneshot::Receiver<TypeMessage>>, String> {
 
         if self.get_mode_regeneration() {
             // Rien a faire
-            return Ok(())
+            return Ok(None)
         }
 
-        // Faire un clone du sender
-        let sender = {
-            match self.tx_out.lock().unwrap().as_ref() {
-                Some(sender_ref) => Some(sender_ref.clone()),
-                None => None,
-            }
-        };
+        self.rabbitmq.send_out(message).await
 
-        match sender {
-            Some(s) => {
-                debug!("Emettre message out : {:?}", &message);
-                let resultat = s.send(message).await;
-                match resultat {
-                    Ok(()) => {
-                        debug!("Message emis");
-                        Ok(())
-                    },
-                    Err(e) => {
-                        Err(format!("Erreur send message {:?}", e.to_string()))
-                    }
-                }
-            },
-            None => Err("Err, MQ n'est pas pret a emettre des messages".into())
-        }
+        // // Faire un clone du sender
+        // let sender = {
+        //     match self.tx_out.lock().unwrap().as_ref() {
+        //         Some(sender_ref) => Some(sender_ref.clone()),
+        //         None => None,
+        //     }
+        // };
+        //
+        // match sender {
+        //     Some(s) => {
+        //         debug!("Emettre message out : {:?}", &message);
+        //         let resultat = s.send(message).await;
+        //         match resultat {
+        //             Ok(()) => {
+        //                 debug!("Message emis");
+        //                 Ok(())
+        //             },
+        //             Err(e) => {
+        //                 Err(format!("Erreur send message {:?}", e.to_string()))
+        //             }
+        //         }
+        //     },
+        //     None => Err("Err, MQ n'est pas pret a emettre des messages".into())
+        // }
     }
 }
 
@@ -321,7 +327,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             TypeMessageOut::Evenement,
             exchanges_effectifs,
             routage.reply_to,
-            routage.correlation_id
+            routage.correlation_id,
+            None,
         );
 
         let _ = self.emettre(message_out).await?;
@@ -414,6 +421,28 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         &self, routage: RoutageMessageAction, blocking: bool, type_message_out: TypeMessageOut, message_signe: MessageMilleGrille)
         -> Result<Option<TypeMessage>, String>
     {
+        let attendre = match &type_message_out {
+            TypeMessageOut::Requete => true,
+            TypeMessageOut::Commande => match routage.blocking {Some(b) => b, None => false},
+            TypeMessageOut::Transaction => match routage.blocking {Some(b) => b, None => false},
+            TypeMessageOut::Reponse => false,
+            TypeMessageOut::Evenement => false,
+        };
+
+        let attente_expiration = match attendre {
+            true => {
+                let timeout_messages = match routage.timeout_blocking {
+                    Some(t) => t,
+                    None => 15_000
+                };
+                let expiration: DateTime<Utc> = Utc::now() + chrono::Duration::milliseconds(timeout_messages as i64);
+                Some(expiration)
+            },
+            false => {
+                None
+            }
+        };
+
         let message_out = MessageOut::new(
             routage.domaine,
             routage.action,
@@ -422,55 +451,27 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             type_message_out,
             routage.exchanges,
             routage.reply_to,
-            routage.correlation_id
+            routage.correlation_id,
+            attente_expiration.clone(),
         );
 
-        let timeout_messages = match routage.timeout_blocking {
-            Some(t) => t,
-            None => 15_000
-        };
-
-        let (tx_delivery, rx_delivery) = oneshot::channel();
-
-        let correlation_id = message_out.correlation_id.as_ref().expect("correlation_id").to_owned();
-        if blocking {
-            let demande = MessageInterne::AttenteReponse(AttenteReponse {
-                correlation: correlation_id.clone(),
-                sender: tx_delivery,
-            });
-
-            // Ajouter un hook pour la nouvelle correlation, permet de recevoir la reponse
-            self.tx_reply.send(demande).await.expect("Erreur emission message reply (attente)");
-        }
-
         // Emettre la requete sur MQ
-        debug!("Emettre requete correlation {}", correlation_id);
-        let _ = self.emettre(message_out).await?;
-
-        // Retourner le channel pour attendre la reponse
-        if blocking {
-            let reponse = timeout(Duration::from_millis(timeout_messages), rx_delivery).await;
-            match reponse {
-                Ok(inner) => {
-                    match inner {
-                        Ok(inner2) => Ok(Some(inner2)),
-                        Err(e) => Err(format!("Erreur channel reponse {} : {:?}", correlation_id, e))?,
-                    }
-                },
-                Err(_t) => Err(format!("Timeout reponse {}", correlation_id))?,
+        let correlation = match &message_out.correlation_id {Some(c) => c.clone(), None => "placeholder".into()};
+        debug!("emettre_message_millegrille Emettre requete correlation {:?}", message_out.correlation_id);
+        if let Some(rx) = self.emettre(message_out).await? {
+            match rx.await {
+                Ok(r) => Ok(Some(r)),
+                Err(e) => {
+                    Err(format!("generateur_messages.emettre_message_millegrille Erreur reception reponse {} : {:?}", correlation, e))?
+                }
             }
         } else {
-            // Non-blocking, emission simple et on n'attend pas
             Ok(None)
         }
     }
 
     fn mq_disponible(&self) -> bool {
-        let guard = self.tx_out.lock().expect("mutex");
-        match guard.as_ref() {
-            Some(_) => true,
-            None => false,
-        }
+        self.rabbitmq.est_connecte()
     }
 
     fn set_regeneration(&self) {

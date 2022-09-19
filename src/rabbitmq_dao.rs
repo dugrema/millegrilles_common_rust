@@ -4,12 +4,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{Date, DateTime, Utc};
 use futures::stream::FuturesUnordered;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, Queue, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
 use log::{debug, error, info, warn};
-use tokio::task;
+use tokio::{sync, task};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
 use tokio_amqp::*;
@@ -272,7 +273,7 @@ fn get_tls_config(pki: &ConfigurationPki, mq: &ConfigurationMq) -> OwnedTLSConfi
 
 #[async_trait]
 pub trait MqMessageSendInformation {
-    async fn send_out(&self, message: MessageOut) -> Result<(), String>;
+    async fn send_out(&self, message: MessageOut) -> Result<Option<sync::oneshot::Receiver<TypeMessage>>, String>;
     fn get_reqly_q_name(&self) -> Option<String>;
 }
 
@@ -389,6 +390,20 @@ impl RabbitMqExecutor {
         self.notify_queues_changed.notify_waiters();
     }
 
+    /// Retourne true si la connexion MQ est etablie et active
+    pub fn est_connecte(&self) -> bool {
+        let guard = self.connexion.lock().expect("lock");
+        match &*guard {
+            Some(c) => c.status().connected(),
+            None => false
+        }
+    }
+
+    /// Methode d'attente de connexion
+    pub async fn attendre_connexion(&self) {
+        self.notify_connexion_ready.clone().notified().await
+    }
+
 }
 
 pub async fn notify_wait_thread(rabbitmq: Arc<RabbitMqExecutor>) {
@@ -453,9 +468,25 @@ async fn thread_reply_q<M, C>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor
     let mut futures = FuturesUnordered::new();
     futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
     futures.push(task::spawn(thread_traiter_reply_q(middleware.clone(), rabbitmq.clone())));
+    futures.push(task::spawn(thread_entretien_attente(rabbitmq.clone())));
 
     // Run, quit sur premier echec/thread complete
     futures.next().await.expect("thread_reply_q futures next").expect("thread_reply_q futures result");
+}
+
+/// Retire les "attentes" de reply expirees
+async fn thread_entretien_attente(rabbitmq: Arc<RabbitMqExecutor>) {
+    loop {
+        tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+        {
+            // Purger toutes les attentes expirees
+            let mut guard = rabbitmq.map_attente.lock().expect("lock");
+            let date_now = Utc::now();
+            debug!("Attentes de reponse pre-cleanup: {}", guard.len());
+            guard.retain(|_, attente| attente.expiration > date_now);
+            debug!("Attentes de reponse post-cleanup: {}", guard.len());
+        }
+    }
 }
 
 async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
@@ -552,6 +583,7 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
                         if let Some(attente_reponse) = guard.remove(correlation_id) {
                             Some(attente_reponse)
                         } else {
+                            info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
                             None
                         }
                     } else {
@@ -613,10 +645,40 @@ async fn thread_consumers_named_queues<M>(middleware: Arc<M>, rabbitmq: Arc<Rabb
 
 #[async_trait]
 impl MqMessageSendInformation for RabbitMqExecutor {
-    async fn send_out(&self, message: MessageOut) -> Result<(), String> {
+    async fn send_out(&self, message: MessageOut) -> Result<Option<sync::oneshot::Receiver<TypeMessage>>, String> {
         let sender = self.tx_out.clone();
+        let correlation = message.correlation_id.clone();
+        let attente_expiration = message.attente_expiration.clone();
         match sender.send(message).await {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                // Ajouter message attente
+                if let Some(expiration) = attente_expiration {
+                    if let Some(c) = correlation {
+                        // Creer channel de reception one-shot
+                        let (tx, rx) = sync::oneshot::channel();
+
+                        debug!("send_out Attente pour correlation {}", c);
+
+                        // Ajouter attente pour correlation
+                        let attente = AttenteReponse {
+                            correlation: c.clone(),
+                            sender: tx,
+                            expiration,
+                        };
+
+                        let mut guard = self.map_attente.lock().expect("lock");
+                        guard.insert(c, attente);
+
+                        Ok(Some(rx))
+                    } else {
+                        // Aucune correlation
+                        Ok(None)
+                    }
+                } else {
+                    // Type de message qui ne supporte pas de reponse
+                    Ok(None)
+                }
+            },
             Err(e) => Err(format!("Erreur send {:?}", e)),
         }
     }
@@ -1393,6 +1455,7 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
 pub struct AttenteReponse {
     pub correlation: String,
     pub sender: SenderOneshot<TypeMessage>,
+    pub expiration: DateTime<Utc>,
 }
 
 #[derive(Debug)]
@@ -1413,6 +1476,7 @@ pub struct MessageOut {
     exchanges: Option<Vec<Securite>>,     // Utilise pour emission de message avec domaine_action
     pub correlation_id: Option<String>,
     pub replying_to: Option<String>,    // Utilise pour une reponse
+    attente_expiration: Option<DateTime<Utc>>,
 }
 
 impl MessageOut {
@@ -1424,7 +1488,8 @@ impl MessageOut {
         type_message: TypeMessageOut,
         exchanges: Option<Vec<Securite>>,
         replying_to: Option<S>,
-        correlation_id: Option<S>
+        correlation_id: Option<S>,
+        attente_expiration: Option<DateTime<Utc>>,
     )
         -> MessageOut
         where S: Into<String>
@@ -1465,6 +1530,7 @@ impl MessageOut {
             exchanges: exchange_effectif,
             correlation_id: Some(corr_id),
             replying_to: rep_to,
+            attente_expiration,
         }
     }
 
@@ -1478,6 +1544,7 @@ impl MessageOut {
             exchanges: None,
             correlation_id: Some(correlation_id.to_owned()),
             replying_to: Some(replying_to.to_owned()),
+            attente_expiration: None,
         }
     }
 }
