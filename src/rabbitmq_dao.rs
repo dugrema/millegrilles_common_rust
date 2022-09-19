@@ -359,6 +359,15 @@ impl RabbitMqExecutor {
             *guard = None;
         }
     }
+
+    pub fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue)
+        where S: Into<String>
+    {
+        let mut guard = self.named_queues.lock().expect("lock named_queues");
+        guard.insert(queue_name.into(), named_queue);
+
+        // TODO Trigger q reload
+    }
 }
 
 pub async fn run_rabbitmq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
@@ -368,6 +377,7 @@ pub async fn run_rabbitmq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
     futures.push(task::spawn(thread_connexion(rabbitmq.clone(), config.clone())));
     futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
     futures.push(task::spawn(task_emettre_messages(rabbitmq.clone())));
+    futures.push(task::spawn(thread_consumers_named_queues(rabbitmq.clone())));
 
     // Run, quit sur premier echec/thread complete
     futures.next().await.expect("futures next").expect("futures result");
@@ -461,6 +471,31 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
     }
 }
 
+async fn thread_consumers_named_queues(rabbitmq: Arc<RabbitMqExecutor>) {
+
+    let mut futures = FuturesUnordered::new();
+    loop {
+        {
+            let named_queues = rabbitmq.as_ref().named_queues.lock().expect("lock");
+            for (_, named_queue) in named_queues.iter() {
+                if ! named_queue.is_running() {
+                    // Creer nouvelle thread
+                    let futures_nq = named_queue.get_futures(rabbitmq.clone()).expect("futures named_queues");
+                    futures.extend(futures_nq);
+                }
+            }
+        }
+
+        match futures.next().await {
+            Some(result) => {
+                info!("thread_consumers_named_queues Result thread : {:?}", result);
+            },
+            None => ()
+        };
+
+    }
+}
+
 #[async_trait]
 impl MqMessageSendInformation for RabbitMqExecutor {
     async fn send_out(&self, message: MessageOut) -> Result<(), String> {
@@ -477,23 +512,28 @@ impl MqMessageSendInformation for RabbitMqExecutor {
 }
 
 pub struct NamedQueue {
-    pub config: ConfigQueue,
+    pub queue: QueueType,
     pub tx: Sender<MessageInterne>,
     rx: Mutex<Option<Receiver<MessageInterne>>>,  // Conserve rx jusqu'au demarrage de la thread
 }
 
 impl NamedQueue {
-    pub fn new(config: ConfigQueue, buffer_size: Option<usize>) -> Self {
+    pub fn new(queue: QueueType, buffer_size: Option<usize>) -> Self {
         let buffer = match buffer_size {
             Some(b) => b,
             None => 1
         };
         let (tx, rx) = mpsc::channel(buffer);
-        Self { config, tx, rx: Mutex::new(Some(rx)) }
+        Self { queue, tx, rx: Mutex::new(Some(rx)) }
     }
 
-    pub async fn run(&self, rabbitmq: Arc<RabbitMqExecutor>) {
-        info!("Demarrage thread named queue {}", self.config.nom_queue);
+    fn is_running(&self) -> bool {
+        let mut guard = self.rx.lock().expect("lock");
+        guard.is_none()  // Si rx est None, la thread est running
+    }
+
+    fn get_futures(&self, rabbitmq: Arc<RabbitMqExecutor>) -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>> {
+        info!("Demarrage thread named queue {:?}", self.queue);
         let mut futures = FuturesUnordered::new();
 
         // Extraire le receiver
@@ -501,23 +541,21 @@ impl NamedQueue {
             let mut guard = self.rx.lock().expect("lock");
             let rx = match guard.take() {
                 Some(rx) => rx,
-                None => {
-                    error!("NamedQueue rx n'est pas disponible, abort");
-                    return
-                }
+                None => Err(format!("NamedQueue rx n'est pas disponible, abort"))?
             };
             rx
         };
 
-        futures.push(task::spawn(named_queue_consume(rabbitmq, self.tx.clone(), self.config.clone())));
-        futures.push(task::spawn(named_queue_traiter_messages(rx)));
+        futures.push(task::spawn(named_queue_consume(rabbitmq, self.tx.clone(), self.queue.clone())));
+        futures.push(task::spawn(named_queue_traiter_messages(rx, self.queue.clone())));
 
-        futures.next().await.expect("run await").expect("run await resultat");
+        // futures.next().await.expect("run await").expect("run await resultat");
+        Ok(futures)
     }
 }
 
-pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<MessageInterne>, config: ConfigQueue) {
-
+pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<MessageInterne>, queue: QueueType) {
+    debug!("named_queue_consume Demarrage pour {:?}", queue);
     let mut first_run = true;
 
     loop {
@@ -531,7 +569,7 @@ pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<Mes
         let channel = match rabbitmq.create_channel().await {
             Ok(c) => c,
             Err(e) => {
-                error!("named_queue_consume Erreur ouverture channel pour Q {}, retry", config.nom_queue);
+                error!("named_queue_consume Erreur ouverture channel pour Q {:?}, {:?}", queue, e);
                 continue
             }
         };
@@ -539,23 +577,23 @@ pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<Mes
         {
             let qos_options_reponses = BasicQosOptions { global: false };
             if let Err(e) = channel.basic_qos(1, qos_options_reponses).await {
-                error!("named_queue_consume Erreur configuration channel pour Q {}, retry", config.nom_queue);
+                error!("named_queue_consume Erreur configuration channel pour Q {:?}, {:?}", queue, e);
                 continue
             }
         }
 
         let tx_consumer = tx.clone();
-        let queue_type = QueueType::ExchangeQueue(config.clone());
-
         // Demarrer consumer (va creer Q si necessaire)
-        ecouter_consumer(channel, queue_type.clone(), tx_consumer).await;
+        ecouter_consumer(channel, queue.clone(), tx_consumer).await;
 
         // Boucler, le sleep est au debut
-        warn!("channel/consumer {} deconnecte, reconnexion dans 15 secondes", config.nom_queue);
+        warn!("channel/consumer {:?} deconnecte, reconnexion dans 15 secondes", queue);
     }
 }
 
-pub async fn named_queue_traiter_messages(mut rx: Receiver<MessageInterne>) {
+pub async fn named_queue_traiter_messages(mut rx: Receiver<MessageInterne>, queue: QueueType) {
+    debug!("named_queue_traiter_messages Demarrage queue {:?}", queue);
+
     // Demarrer ecoute de messages
     while let Some(message) = rx.recv().await {
         debug!("NamedQueue.run Message recu : {:?}", message);
@@ -568,6 +606,8 @@ pub async fn named_queue_traiter_messages(mut rx: Receiver<MessageInterne>) {
             }
         }
     }
+
+    info!("named_queue_traiter_messages Fermeture queue {:?}", queue);
 }
 
 // pub struct RabbitMqExecutorRx {
