@@ -403,7 +403,7 @@ pub async fn run_rabbitmq<C,M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecuto
 {
     let mut futures = FuturesUnordered::new();
     futures.push(task::spawn(thread_connexion(rabbitmq.clone(), config.clone())));
-    futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
+    futures.push(task::spawn(thread_reply_q(middleware.clone(), rabbitmq.clone(), config.clone())));
     futures.push(task::spawn(task_emettre_messages(rabbitmq.clone())));
     futures.push(task::spawn(thread_consumers_named_queues(middleware, rabbitmq.clone())));
 
@@ -445,11 +445,34 @@ async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
     }
 }
 
+async fn thread_reply_q<M, C>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
+    where
+        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+        C: ConfigMessages + 'static
+{
+    let mut futures = FuturesUnordered::new();
+    futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
+    futures.push(task::spawn(thread_traiter_reply_q(middleware.clone(), rabbitmq.clone())));
+
+    // Run, quit sur premier echec/thread complete
+    futures.next().await.expect("thread_reply_q futures next").expect("thread_reply_q futures result");
+}
+
 async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
     where C: ConfigMessages
 {
     let mut first_run = true;
-    let notify_connexion = rabbitmq.notify_connexion_ready.clone();
+
+    let reply_q = {
+        let pki = config.get_configuration_pki();
+        ReplyQueue {
+            fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
+            securite: rabbitmq.securite.clone(),
+            ttl: Some(300000),
+            reply_q_name: Arc::new(Mutex::new(None)),  // Permet de maj le nom de la reply_q globalement
+        }
+    };
+
     loop {
         if first_run {
             first_run = false;
@@ -457,51 +480,104 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
             tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
         }
 
-        // Attendre confirmation de connexion
-        notify_connexion.notified().await;
-
-        let connexion = {
-            let guard = rabbitmq.connexion.lock().expect("lock");
-            match guard.as_ref() {
-                Some(c) => c.clone(),
-                None => {
-                    warn!("thread_consumers_statiques mq deconnecte, reconnexion dans 5 secondes");
-                    continue;
-                }
+        // Reply Q
+        let channel = match rabbitmq.create_channel().await {
+            Ok(c) => c,
+            Err(e) => {
+                error!("Erreur ouverture channel, reessayer plus tard");
+                continue
             }
         };
+        let qos_options_reponses = BasicQosOptions { global: false };
+        channel.basic_qos(20, qos_options_reponses).await.expect("channel_reponses basic_qos");
 
-        // Setup channels MQ
-        let mut futures = FuturesUnordered::new();
-
-        // Reply Q
-        {
-            let configuration = &**config.as_ref();
-
-            let qos_options_reponses = BasicQosOptions { global: false };
-            let channel = connexion.create_channel().await.expect("channel_reponses");
-            channel.basic_qos(20, qos_options_reponses).await.expect("channel_reponses basic_qos");
-
-            let pki = configuration.get_configuration_pki();
-            let reply_q = ReplyQueue {
-                fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
-                securite: rabbitmq.securite.clone(),
-                ttl: Some(300000),
-                reply_q_name: Arc::new(Mutex::new(None)),  // Permet de maj le nom de la reply_q globalement
-            };
-
-            let tx_reply: Sender<MessageInterne> = rabbitmq.tx_reply.clone();
-            futures.push(task::spawn(ecouter_consumer(
-                channel,
-                QueueType::ReplyQueue(reply_q),
-                tx_reply
-            )));
+        let tx_reply: Sender<MessageInterne> = rabbitmq.tx_reply.clone();
+        if let Err(e) = ecouter_consumer(
+            channel,
+            QueueType::ReplyQueue(reply_q.clone()),
+            tx_reply
+        ).await {
+            error!("thread_consumer_replyq Erreur ecouter consumer : {:?}", e);
         }
-
-        futures.next().await.expect("futures").expect("reponse").expect("reponse");
 
         warn!("channel/consumer statiques deconnecte, reconnexion dans 15 secondes");
     }
+}
+
+async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>)
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+{
+    let mut rx = {
+        let mut guard = rabbitmq.rx_reply.lock().expect("lock");
+        match guard.take() {
+            Some(rx) => rx,
+            None => panic!("thread_consumer_reply_queue rx reply non disponible")
+        }
+    };
+
+    while let Some(message) = rx.recv().await {
+        debug!("Message reply q : {:?}", message);
+        let resultat = match message {
+            MessageInterne::Delivery(delivery, routing) => {
+                let tx_certificats_manquants = rabbitmq.tx_certificats_manquants.clone();
+                let nom_queue = match rabbitmq.reply_q.lock().expect("lock").clone() {
+                    Some(q) => q,
+                    None => "_reply".into()
+                };
+                match traiter_delivery(
+                    middleware.as_ref(),
+                    tx_certificats_manquants,
+                    nom_queue.as_str(),
+                    delivery
+                ).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("named_queue_traiter_messages Erreur traitement message : {:?}", e);
+                        None
+                    }
+                }
+            },
+            _ => {
+                debug!("named_queue_traiter_messages Type de message non-supporte, on l'ignore");
+                None
+            }
+        };
+
+        if let Some(message_traite) = resultat {
+            let attente_reponse = match &message_traite {
+                TypeMessage::Valide(message) => {
+                    // Reponse valide, retransmettre sur la correlation appropriee
+                    if let Some(correlation_id) = message.correlation_id.as_ref() {
+                        let mut guard = rabbitmq.map_attente.lock().expect("lock");
+                        if let Some(attente_reponse) = guard.remove(correlation_id) {
+                            Some(attente_reponse)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                },
+                TypeMessage::ValideAction(message) => {
+                    warn!("thread_traiter_reply_q Recu message ValideAction, ignorer : {:?}", message);
+                    None
+                },
+                TypeMessage::Certificat(certificat) => {
+                    warn!("thread_traiter_reply_q Recu MessageCertificat (deja traite) sur thread consommation, skip : {:?}", certificat);
+                    None
+                },
+                TypeMessage::Regeneration => None  // Ignorer
+            };
+
+            if let Some(attente) = attente_reponse {
+                if let Err(e) = attente.sender.send(message_traite) {
+                    error!("thread_traiter_reply_q Erreur transmission reponse attente correlation {} : {:?}", attente.correlation, e);
+                }
+            }
+        }
+    }
+
+    info!("thread_consumer_reply_queue Fin thread");
 }
 
 async fn thread_consumers_named_queues<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>)

@@ -168,7 +168,7 @@ mod rabbitmq_dao_tests {
         rabbitmq_arc.ajouter_named_queue("CorePki/test1", named_queue_test1);
 
         futures.push(tokio::spawn(run_rabbitmq(middleware.clone(), rabbitmq_arc.clone(), Arc::new(Box::new(config)))));
-        futures.push(tokio::spawn(sleep_thread(20)));
+        futures.push(tokio::spawn(sleep_thread(10)));
 
         futures.next().await;
 
