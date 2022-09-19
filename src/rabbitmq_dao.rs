@@ -294,13 +294,11 @@ pub struct RabbitMqExecutor {
     // TX
     pub tx_out: Sender<MessageOut>,
     pub tx_reply: Sender<MessageInterne>,
-    pub tx_trigger: Sender<MessageInterne>,
     pub tx_certificats_manquants: Sender<RequeteCertificatInterne>,
 
     // RX holder
     rx_out: Mutex<Option<Receiver<MessageOut>>>,
     rx_reply: Mutex<Option<Receiver<MessageInterne>>>,
-    rx_trigger: Mutex<Option<Receiver<MessageInterne>>>,
     rx_certificats_manquants: Mutex<Option<Receiver<RequeteCertificatInterne>>>,
 }
 
@@ -311,7 +309,6 @@ impl RabbitMqExecutor {
         // Creer channels communication mpsc
         let (tx_out, rx_out) = mpsc::channel(3);
         let (tx_reply, rx_reply) = mpsc::channel(1);
-        let (tx_trigger, rx_trigger) = mpsc::channel(1);
         let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(1);
 
         // Securite default = 1.public
@@ -332,13 +329,11 @@ impl RabbitMqExecutor {
             // TX
             tx_out,
             tx_reply,
-            tx_trigger,
             tx_certificats_manquants,
 
             // RX
             rx_out: Mutex::new(Some(rx_out)),
             rx_reply: Mutex::new(Some(rx_reply)),
-            rx_trigger: Mutex::new(Some(rx_trigger)),
             rx_certificats_manquants: Mutex::new(Some(rx_certificats_manquants)),
         }
     }
@@ -954,27 +949,27 @@ pub async fn named_queue_traiter_messages<M>(
 //
 // }
 
-/// Thread de verification de l'etat de connexion. Va se terminer si la connexion est fermee.
-async fn entretien_connexion(mq: Arc<RabbitMqExecutor>) {
-    loop {
-        tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
-        todo!("Fix me")
-        // let status = mq.connexion.status();
-        // debug!("Verification etat connexion MQ : {:?}", status);
-        // if ! status.connected() {
-        //     break
-        // }
-        // if status.errored() || status.closed() {
-        //     warn!("Connexion MQ en erreur/fermee - note: indique erreur detection _connected_");
-        //     break
-        // }
-        // if status.blocked() {
-        //     warn!("Connexion MQ bloquee (recoverable)");
-        //     break  // TODO - mettre compteur pour decider de fermer la connexion
-        // }
-    }
-    warn!("Connexion MQ perdue, on va se reconnecter");
-}
+// /// Thread de verification de l'etat de connexion. Va se terminer si la connexion est fermee.
+// async fn entretien_connexion(mq: Arc<RabbitMqExecutor>) {
+//     loop {
+//         tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
+//         todo!("Fix me")
+//         // let status = mq.connexion.status();
+//         // debug!("Verification etat connexion MQ : {:?}", status);
+//         // if ! status.connected() {
+//         //     break
+//         // }
+//         // if status.errored() || status.closed() {
+//         //     warn!("Connexion MQ en erreur/fermee - note: indique erreur detection _connected_");
+//         //     break
+//         // }
+//         // if status.blocked() {
+//         //     warn!("Connexion MQ bloquee (recoverable)");
+//         //     break  // TODO - mettre compteur pour decider de fermer la connexion
+//         // }
+//     }
+//     warn!("Connexion MQ perdue, on va se reconnecter");
+// }
 
 async fn creer_reply_q(rabbitmq: Arc<RabbitMqExecutor>, channel: &Channel, rq: &ReplyQueue) -> Queue {
     let options = QueueDeclareOptions {
@@ -1375,7 +1370,10 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                     TypeMessageOut::Requete => format!("requete.{}", rk),
                     TypeMessageOut::Commande => format!("commande.{}", rk),
                     TypeMessageOut::Transaction => format!("transaction.{}", rk),
-                    TypeMessageOut::Reponse => panic!("Reponse avec domaine non supportee"),
+                    TypeMessageOut::Reponse => {
+                        error!("Reponse avec domaine non supportee");
+                        continue;
+                    },
                     TypeMessageOut::Evenement => format!("evenement.{}", rk),
                 }
             },
