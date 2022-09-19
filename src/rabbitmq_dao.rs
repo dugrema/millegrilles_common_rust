@@ -282,6 +282,7 @@ pub trait MqMessageSendInformation {
 pub struct RabbitMqExecutor {
     connexion: Mutex<Option<Arc<Connection>>>,
     named_queues: Mutex<HashMap<String, NamedQueue>>,
+    notify_connexion_ready: Arc<Notify>,
     notify_queues_changed: Arc<Notify>,
     pub reply_q: Arc<Mutex<Option<String>>>,
     pub securite: Securite,
@@ -315,6 +316,7 @@ impl RabbitMqExecutor {
         Self {
             connexion: Mutex::new(None),
             named_queues: Mutex::new(Default::default()),
+            notify_connexion_ready: Arc::new(Default::default()),
             notify_queues_changed: Default::default(),
             reply_q: Arc::new(Mutex::new(None)),
             securite,
@@ -333,6 +335,9 @@ impl RabbitMqExecutor {
 
     pub async fn create_channel(&self) -> Result<Channel, String> {
         // Get connexion MQ
+        let notify = self.notify_connexion_ready.clone();
+        notify.notified().await;
+
         let connexion = {
             let guard = self.connexion.lock().expect("lock");
             match guard.as_ref() {
@@ -419,6 +424,7 @@ async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
         // Verifier etat connexion aux 5 secondes - to be fixed, utiliser channel/methode instantannee
         while connexion.status().connected() == true {
             debug!("Connexion OK");
+            rabbitmq.notify_connexion_ready.notify_waiters();  // Notify waiters a chaque fois
             tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
         }
 
@@ -432,12 +438,16 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
     where C: ConfigMessages
 {
     let mut first_run = true;
+    let notify_connexion = rabbitmq.notify_connexion_ready.clone();
     loop {
         if first_run {
             first_run = false;
         } else {
             tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
         }
+
+        // Attendre confirmation de connexion
+        notify_connexion.notified().await;
 
         let connexion = {
             let guard = rabbitmq.connexion.lock().expect("lock");
@@ -502,10 +512,11 @@ async fn thread_consumers_named_queues(rabbitmq: Arc<RabbitMqExecutor>) {
         futures.push(task::spawn(notify_wait_thread(rabbitmq.clone())));
 
         match futures.next().await {
-            Some(result) => {
-                info!("thread_consumers_named_queues Result thread : {:?}", result);
+            Some(result) => match result {
+                Ok(()) => info!("thread_consumers_named_queues Interruption pour changer named queues"),
+                Err(e) => panic!("thread_consumers_named_queues Erreur dans Q, abort : {:?}", e)
             },
-            None => ()
+            None => panic!("thread_consumers_named_queues Erreur dans Q (aucun resultat execution), abort")
         };
 
     }
