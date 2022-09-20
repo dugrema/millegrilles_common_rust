@@ -1,20 +1,18 @@
 #[cfg(test)]
 mod rabbitmq_dao_tests {
-    use async_trait::async_trait;
     use std::error::Error;
     use std::sync::Arc;
-    use async_std::prelude::FutureExt;
+
+    use async_trait::async_trait;
     use chrono::Utc;
     use futures_util::stream::FuturesUnordered;
     use log::debug;
-    use mongodb::options::Hint::Name;
     use openssl::x509::store::X509Store;
     use openssl::x509::X509;
     use serde::Serialize;
     use tokio::sync::mpsc;
-    use tokio::task::JoinHandle;
-    use tokio::time::{sleep, timeout};
     use tokio_stream::StreamExt;
+
     use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509};
     use crate::chiffrage::{ChiffrageFactoryImpl, CleChiffrageHandler};
     use crate::configuration::{charger_configuration, ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
@@ -22,9 +20,9 @@ mod rabbitmq_dao_tests {
     use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
     use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
     use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
-    use crate::test_setup::setup;
     use crate::rabbitmq_dao::*;
-    use crate::recepteur_messages::{recevoir_messages, TypeMessage};
+    use crate::recepteur_messages::TypeMessage;
+    use crate::test_setup::setup;
 
     use super::*;
 
@@ -143,7 +141,7 @@ mod rabbitmq_dao_tests {
         let mut futures = FuturesUnordered::new();
         let rabbitmq_arc = Arc::new(rabbitmq);
 
-        let (tx_certificat, rx_certificat) = mpsc::channel(1);
+        let (tx_certificat, _rx_certificat) = mpsc::channel(1);
 
         // Ajouter named queues
         let named_queue_triggers = NamedQueue::new(
@@ -214,15 +212,15 @@ mod rabbitmq_dao_tests {
 
     #[async_trait]
     impl ValidateurX509 for MiddlewareStub {
-        async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+        async fn charger_enveloppe(&self, _chaine_pem: &Vec<String>, _fingerprint: Option<&str>, _ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
             todo!()
         }
 
-        async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
+        async fn cacher(&self, _certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
             todo!()
         }
 
-        async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
+        async fn get_certificat(&self, _fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
             todo!()
         }
 
@@ -257,31 +255,31 @@ mod rabbitmq_dao_tests {
 
     #[async_trait]
     impl GenerateurMessages for MiddlewareStub {
-        async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<(), String> where M: Serialize + Send + Sync {
+        async fn emettre_evenement<M>(&self, _routage: RoutageMessageAction, _message: &M) -> Result<(), String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<TypeMessage, String> where M: Serialize + Send + Sync {
+        async fn transmettre_requete<M>(&self, _routage: RoutageMessageAction, _message: &M) -> Result<TypeMessage, String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
+        async fn soumettre_transaction<M>(&self, _routage: RoutageMessageAction, _message: &M, _blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
+        async fn transmettre_commande<M>(&self, _routage: RoutageMessageAction, _message: &M, _blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
+        async fn repondre(&self, _routage: RoutageMessageReponse, _message: MessageMilleGrille) -> Result<(), String> {
             todo!()
         }
 
-        async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        async fn emettre_message(&self, _routage: RoutageMessageAction, _type_message: TypeMessageOut, _message: &str, _blocking: bool) -> Result<Option<TypeMessage>, String> {
             todo!()
         }
 
-        async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
+        async fn emettre_message_millegrille(&self, _routage: RoutageMessageAction, _blocking: bool, _type_message: TypeMessageOut, _message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
             todo!()
         }
 
@@ -318,11 +316,11 @@ mod rabbitmq_dao_tests {
             todo!()
         }
 
-        async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>) -> Result<(), Box<dyn Error>> where M: GenerateurMessages {
+        async fn charger_certificats_chiffrage<M>(&self, _middleware: &M, _cert_local: &EnveloppeCertificat, _env_privee: Arc<EnveloppePrivee>) -> Result<(), Box<dyn Error>> where M: GenerateurMessages {
             todo!()
         }
 
-        async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String> where M: ConfigMessages {
+        async fn recevoir_certificat_chiffrage<M>(&self, _middleware: &M, _message: &MessageSerialise) -> Result<(), String> where M: ConfigMessages {
             todo!()
         }
     }

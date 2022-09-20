@@ -2,11 +2,11 @@ use std::error::Error;
 use std::fmt::{Debug, Formatter};
 
 use chacha20poly1305::{aead::{Aead, AeadCore, KeyInit, OsRng}, ChaCha20Poly1305, Nonce};
+use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
 use log::debug;
 use multihash::Code;
 use openssl::derive::Deriver;
 use openssl::pkey::{Id, PKey, Private, Public};
-use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
 
 // use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
 use crate::chiffrage::CleSecrete;
@@ -187,8 +187,9 @@ fn convertir_private_ed25519_to_x25519(ca_key: &PKey<Private>) -> Result<PKey<Pr
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use crate::test_setup::setup;
+
+    use super::*;
 
     #[test]
     fn test_chiffrage_asymmetrique() -> Result<(), Box<dyn Error>> {

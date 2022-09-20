@@ -1,17 +1,19 @@
 use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::error::Error;
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, info, error, warn};
+use log::{debug, error, info, warn};
 use mongodb::{bson::doc, Collection, Cursor};
 use mongodb::bson as bson;
 use mongodb::bson::{Bson, Document};
 use mongodb::error::{BulkWriteError, ErrorKind};
 use mongodb::options::{FindOptions, Hint, InsertManyOptions};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_stream::StreamExt;
 
@@ -19,10 +21,8 @@ use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX
 use crate::constantes::*;
 use crate::formatteur_messages::{Entete, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
-use std::convert::TryFrom;
-use std::fmt::Debug;
 use crate::middleware::requete_certificat;
+use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,

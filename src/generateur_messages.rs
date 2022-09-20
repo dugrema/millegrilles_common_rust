@@ -1,21 +1,18 @@
-use std::cmp::max;
 use std::marker::Send;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, error};
+use log::debug;
 use serde::Serialize;
 use tokio::sync;
-use tokio::sync::{mpsc::Sender, oneshot};
-use tokio::time::{Duration, timeout};
 
 use crate::certificats::EnveloppePrivee;
 use crate::configuration::ConfigurationPki;
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::middleware::IsConfigurationPki;
-use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, MessageOut, MqMessageSendInformation, RabbitMqExecutor, TypeMessageOut};
+use crate::rabbitmq_dao::{MessageOut, MqMessageSendInformation, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 
 /// Conserve l'information de routage in/out d'un message
@@ -422,8 +419,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     {
         let attendre = match &type_message_out {
             TypeMessageOut::Requete => true,
-            TypeMessageOut::Commande => match routage.blocking {Some(b) => b, None => false},
-            TypeMessageOut::Transaction => match routage.blocking {Some(b) => b, None => false},
+            TypeMessageOut::Commande => match routage.blocking {Some(b) => b || blocking, None => blocking},
+            TypeMessageOut::Transaction => match routage.blocking {Some(b) => b || blocking, None => blocking},
             TypeMessageOut::Reponse => false,
             TypeMessageOut::Evenement => false,
         };
@@ -442,6 +439,12 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             }
         };
 
+        let replying_to = if routage.ajouter_reply_q {
+            self.rabbitmq.reply_q.lock().expect("lock").clone()
+        } else {
+            routage.reply_to
+        };
+
         let message_out = MessageOut::new(
             routage.domaine,
             routage.action,
@@ -449,7 +452,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             message_signe,
             type_message_out,
             routage.exchanges,
-            routage.reply_to,
+            replying_to,
             routage.correlation_id,
             attente_expiration.clone(),
         );

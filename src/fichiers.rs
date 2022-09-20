@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::marker::PhantomData;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_std::io::ReadExt;
 use async_tar::Archive;
@@ -13,13 +13,12 @@ use tokio_stream::StreamExt;
 use xz2::stream;
 
 use crate::certificats::ValidateurX509;
-use crate::chiffrage::{ChiffrageFactory, Chiffreur, CipherMgs, Dechiffreur, MgsCipherKeys};
+use crate::chiffrage::{ChiffrageFactory, CipherMgs, Dechiffreur, MgsCipherKeys};
 // use crate::chiffrage_chacha20poly1305::{DecipherMgs3, Mgs3CipherData};
 use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, DecipherMgs4, Mgs4CipherData, Mgs4CipherKeys};
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::Hacheur;
-use crate::middleware::ChiffrageFactoryTrait;
 use crate::verificateur::VerificateurMessage;
 
 const PRESET_COMPRESSION_XZ: u32 = 6;
@@ -462,20 +461,14 @@ pub trait TraiterFichier {
 
 #[cfg(test)]
 pub mod fichiers_tests {
-    use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use async_std::future::Future;
-    use tokio_util::codec::{BytesCodec, FramedRead};
-
     //use crate::{MiddlewareDbPki, ValidateurX509};
-    use crate::certificats::{ValidateurX509, FingerprintCertPublicKey, EnveloppeCertificat};
-    use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
+    use crate::certificats::{ValidateurX509, FingerprintCertPublicKey};
     use crate::test_setup::setup;
 
     use super::*;
     use tokio::fs::File;
-    use crate::formatteur_messages::MessageSerialise;
     use crate::middleware_db::MiddlewareDb;
 
     const HASH_FICHIER_TEST: &str = "z8Vts2By1ww2kJBtEGeitMTrLgKLhYCxV3ZREi66F8g73Jo8U96dKYMrRKKzwGpBR6kFUgmMAZZcYaPVU3NW6TQ8duk";
@@ -486,9 +479,9 @@ pub mod fichiers_tests {
     impl TraiterFichier for DummyTraiterFichier {
         async fn traiter_fichier<M>(
             &mut self,
-            middleware: &M,
+            _middleware: &M,
             nom_fichier: &async_std::path::Path,
-            stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)
+            _stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)
         ) -> Result<(), Box<dyn Error>>
         where M: ValidateurX509 + Dechiffreur<DecipherMgs4, Mgs4CipherData>
         {
@@ -538,7 +531,7 @@ pub mod fichiers_tests {
 
         let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
         decompresseur.update(&mut fichier).await.expect("update");
-        let mut resultat = decompresseur.finish().expect("decompresseur");
+        let resultat = decompresseur.finish().expect("decompresseur");
         let resultat_str = String::from_utf8(resultat).expect("utf8");
         debug!("Resultat decompresse : {}", resultat_str);
     }

@@ -1,10 +1,8 @@
-use std::collections::HashMap;
-use std::error::Error;
 use core::fmt::Formatter;
 use std::cmp::min;
+use std::collections::HashMap;
+use std::error::Error;
 use std::fmt::Debug;
-use multibase::{Base, decode, encode};
-use openssl::pkey::{PKey, Private};
 
 use dryoc::classic::crypto_secretstream_xchacha20poly1305::*;
 use dryoc::constants::{
@@ -13,7 +11,9 @@ use dryoc::constants::{
     CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE
 };
 use log::debug;
+use multibase::{Base, decode, encode};
 use multihash::Code;
+use openssl::pkey::{PKey, Private};
 
 use crate::certificats::FingerprintCertPublicKey;
 use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
@@ -421,7 +421,9 @@ impl Debug for Mgs4CipherData {
 mod test {
     use log::debug;
     use openssl::pkey::{Id, PKey};
+
     use crate::test_setup::setup;
+
     use super::*;
 
     #[test]

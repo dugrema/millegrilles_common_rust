@@ -1,39 +1,36 @@
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::{bson::{Bson, Document, doc, to_bson}, Collection};
 use mongodb::bson as bson;
 use mongodb::options::UpdateOptions;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 
 use crate::backup::BackupStarter;
-use crate::certificats::{charger_enveloppe, emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage::{ChiffrageFactoryImpl, Chiffreur, ChiffrageFactory, CleChiffrageHandler, Dechiffreur, MgsCipherData, ChiffreurMgs4, ChiffreurMgs2, MgsCipherDataCurrent};
+use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
+use crate::chiffrage::{ChiffrageFactoryImpl, ChiffrageFactory, CleChiffrageHandler};
 use crate::chiffrage_aesgcm::CipherMgs2;
-// use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
-use crate::configuration::{charger_configuration, charger_configuration_avec_db, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
+use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl, verifier_erreur_duplication_mongo};
-use crate::rabbitmq_dao::{Callback, EventMq, NamedQueue, QueueType, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
+use crate::mongo_dao::{MongoDao, verifier_erreur_duplication_mongo};
+use crate::rabbitmq_dao::{RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
-use crate::recepteur_messages::{MessageValideAction, recevoir_messages, /*task_requetes_certificats, */ TypeMessage};
+use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
@@ -102,63 +99,6 @@ pub fn configurer() -> MiddlewareRessources {
 
     MiddlewareRessources { configuration, validateur, rabbitmq, generateur_messages }
 }
-
-// pub fn configurer_messages(
-//     queues: Vec<QueueType>,
-//     listeners: Option<Mutex<Callback<'static, EventMq>>>,
-//     securite: Securite
-// ) -> (Arc<ConfigurationMessages>, Arc<ValidateurX509Impl>, RabbitMqExecutorConfig, GenerateurMessagesImpl) {
-//     let configuration = Arc::new(charger_configuration().expect("Erreur configuration"));
-//
-//     let pki = configuration.get_configuration_pki();
-//
-//     // Preparer instances utils
-//     let validateur = pki.get_validateur();
-//
-//     todo!("fix me")
-//     // Connecter au middleware MQ
-//     // let mq_executor_config = executer_mq(
-//     //     configuration.clone(),
-//     //     Some(queues),
-//     //     listeners,
-//     //     securite
-//     // ).expect("Erreur demarrage MQ");
-//     //
-//     // let generateur_messages = GenerateurMessagesImpl::new(
-//     //     configuration.get_configuration_pki(),
-//     //     &mq_executor_config.executor
-//     // );
-//     //
-//     // (configuration, validateur, mq_executor_config, generateur_messages)
-// }
-
-// pub fn configurer(
-//     queues: Vec<QueueType>,
-//     listeners: Option<Mutex<Callback<'static, EventMq>>>
-// ) -> (Arc<ConfigurationMessagesDb>, Arc<ValidateurX509Impl>, Arc<MongoDaoImpl>, RabbitMqExecutorConfig, GenerateurMessagesImpl) {
-//     let configuration = Arc::new(charger_configuration_avec_db().expect("Erreur configuration"));
-//
-//     let pki = configuration.get_configuration_pki();
-//
-//     // Preparer instances utils
-//     let validateur = pki.get_validateur();
-//
-//     // Connecter au middleware mongo et MQ
-//     let mongo: Arc<MongoDaoImpl> = Arc::new(initialiser_mongodb(configuration.as_ref()).expect("Erreur connexion MongoDB"));
-//     let mq_executor_config = executer_mq(
-//         configuration.clone(),
-//         Some(queues),
-//         listeners,
-//         Securite::L3Protege
-//     ).expect("Erreur demarrage MQ");
-//
-//     let generateur_messages = GenerateurMessagesImpl::new(
-//         configuration.get_configuration_pki(),
-//         &mq_executor_config.executor
-//     );
-//
-//     (configuration, validateur, mongo, mq_executor_config, generateur_messages)
-// }
 
 // Middleware de base avec validateur et generateur de messages
 pub struct MiddlewareMessage {
@@ -349,146 +289,6 @@ impl GenerateurMessages for MiddlewareMessage {
     }
 }
 
-// #[async_trait]
-// impl CleChiffrageHandler for MiddlewareMessage {
-//
-//     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-//         let guard = self.cles_chiffrage.lock().expect("lock");
-//
-//         // Copier les cles (extraire du mutex), retourner dans un vecteur
-//         let vals: Vec<FingerprintCertPublicKey> = guard.iter().map(|v| v.1.to_owned()).collect();
-//
-//         vals
-//     }
-//
-//     async fn charger_certificats_chiffrage(&self, cert_local: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
-//         debug!("Charger les certificats de maitre des cles pour chiffrage");
-//
-//         // Reset certificats maitredescles. Reinserer cert millegrille immediatement.
-//         {
-//             let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-//             let mut guard = self.cles_chiffrage.lock().expect("lock");
-//             guard.clear();
-//
-//             // Reinserer certificat de millegrille
-//             let env_privee = self.get_enveloppe_privee();
-//             let fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-//             let fingerprint = fingerprint_cert[0].fingerprint.clone();
-//             guard.insert(fingerprint, fingerprint_cert[0].clone());
-//         }
-//
-//         emettre_commande_certificat_maitredescles(self).await?;
-//
-//         // Donner une chance aux certificats de rentrer
-//         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-//
-//         // Verifier si on a au moins un certificat
-//         let nb_certs = self.cles_chiffrage.lock().expect("lock").len();
-//         if nb_certs <= 1 {  // 1 => le cert millegrille est deja charge
-//             Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
-//         } else {
-//             debug!("On a {} certificats de maitre des cles valides", nb_certs);
-//         }
-//
-//         Ok(())
-//     }
-//
-//     async fn recevoir_certificat_chiffrage(&self, message: &MessageSerialise) -> Result<(), String> {
-//         let cert_chiffrage = match &message.certificat {
-//             Some(c) => c.clone(),
-//             None => {
-//                 Err(format!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait"))?
-//             }
-//         };
-//
-//         // Valider le certificat
-//         if ! cert_chiffrage.presentement_valide {
-//             Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
-//         }
-//
-//         if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
-//             Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
-//         }
-//
-//         info!("Certificat maitre des cles accepte {}", cert_chiffrage.fingerprint());
-//
-//         // Stocker cles chiffrage du maitre des cles
-//         {
-//             let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
-//                 Ok(f) => f,
-//                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
-//             };
-//             let mut guard = match self.cles_chiffrage.lock() {
-//                 Ok(g) => g,
-//                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
-//             };
-//             for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
-//                 guard.insert(fp.fingerprint.clone(), fp.clone());
-//             }
-//
-//             // S'assurer d'avoir le certificat de millegrille local
-//             let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
-//             let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
-//             let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
-//                 Ok(p) => p,
-//                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
-//             }.pop();
-//             if let Some(pk_ca) = public_keys_ca {
-//                 guard.insert(pk_ca.fingerprint.clone(), pk_ca);
-//             }
-//
-//             debug!("Certificats chiffrage maj {:?}", guard);
-//         }
-//
-//         Ok(())
-//     }
-// }
-
-// #[async_trait]
-// impl Chiffreur<CipherMgs3, Mgs3CipherKeys> for MiddlewareMessage {
-//
-//     fn get_cipher(&self) -> Result<CipherMgs3, Box<dyn Error>> {
-//         let fp_public_keys = self.get_publickeys_chiffrage();
-//         Ok(CipherMgs3::new(&fp_public_keys)?)
-//     }
-//
-// }
-//
-// #[async_trait]
-// impl Dechiffreur<DecipherMgs3, Mgs3CipherData> for MiddlewareMessage {
-//
-//     async fn get_cipher_data(&self, hachage_bytes: &str) -> Result<Mgs3CipherData, Box<dyn Error>> {
-//         let requete = {
-//             let mut liste_hachage_bytes = Vec::new();
-//             liste_hachage_bytes.push(hachage_bytes);
-//             json!({
-//                 "liste_hachage_bytes": liste_hachage_bytes,
-//             })
-//         };
-//         let routage = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
-//         let reponse_cle_rechiffree = self.transmettre_requete(routage, &requete).await?;
-//
-//         error!("Reponse reechiffrage cle : {:?}", reponse_cle_rechiffree);
-//
-//         let contenu_dechiffrage = match reponse_cle_rechiffree {
-//             TypeMessage::Valide(m) => m.message.get_msg().map_contenu::<ReponseDechiffrageCle>(None)?,
-//             _ => Err(format!("Mauvais type de reponse : {:?}", reponse_cle_rechiffree))?
-//         };
-//
-//         contenu_dechiffrage.to_cipher_data()
-//     }
-//
-//     async fn get_decipher(&self, hachage_bytes: &str) -> Result<DecipherMgs3, Box<dyn Error>> {
-//         let mut info_cle = self.get_cipher_data(hachage_bytes).await?;
-//         let env_privee = self.get_enveloppe_privee();
-//         let cle_privee = env_privee.cle_privee();
-//         info_cle.dechiffrer_cle(cle_privee)?;
-//
-//         Ok(DecipherMgs3::new(&info_cle)?)
-//     }
-//
-// }
-
 impl ConfigMessages for MiddlewareMessage {
     fn get_configuration_mq(&self) -> &ConfigurationMq {
         self.ressources.configuration.get_configuration_mq()
@@ -585,7 +385,6 @@ impl ChiffrageFactory for MiddlewareMessage {
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReponseCertificatMaitredescles {
     certificat: Vec<String>,
-    // certificat_millegrille: String,
 }
 
 impl ReponseCertificatMaitredescles {
@@ -597,53 +396,11 @@ impl ReponseCertificatMaitredescles {
     }
 }
 
-// #[derive(Clone, Debug, Deserialize)]
-// pub struct ReponseDechiffrageCle {
-//     acces: String,
-//     pub cles: Option<HashMap<String, ReponseDechiffrageCleInfo>>,
-// }
-//
-// #[derive(Clone, Debug, Deserialize)]
-// pub struct ReponseDechiffrageCleInfo {
-//     acces: Option<String>,
-//     cle: String,
-//     domaine: String,
-//     format: String,
-//     hachage_bytes: Option<String>,
-//     identificateurs_document: Option<HashMap<String, String>>,
-//     header: String,
-// }
-//
-// impl ReponseDechiffrageCle {
-//     pub fn to_cipher_data(&self) -> Result<Mgs3CipherData, Box<dyn Error>> {
-//         match &self.cles {
-//             Some(cles) => {
-//                 if cles.len() == 1 {
-//                     let (_, cle) = cles.iter().next().expect("cle");
-//                     cle.to_cipher_data()
-//                 } else {
-//                     Err(String::from("Plusieurs cles presentes"))?
-//                 }
-//             },
-//             None => {
-//                 Err(String::from("Aucunes cles presentes"))?
-//             }
-//         }
-//     }
-// }
-//
-// impl ReponseDechiffrageCleInfo {
-//     pub fn to_cipher_data(&self) -> Result<MgsCipherDataCurrent, Box<dyn Error>> {
-//         Mgs3CipherData::new(&self.cle, &self.header)
-//     }
-// }
-
 pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection<Document>, dirty: Option<bool>) -> Result<Option<String>, String> {
     let fingerprint = enveloppe.fingerprint();
 
     let filtre = doc! { "fingerprint": fingerprint };
 
-    let certificat = enveloppe.certificat();
     let (idmg, est_ca) = match enveloppe.est_ca()? {
         true => {
             debug!("Certificat self-signed, on ajout marqueurs de millegrille");
@@ -750,16 +507,10 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
     };
 
     let message = json!({
-        // "idmg": middleware.idmg(),
         "instance_id": instance_id,
         "domaine": nom_domaine,
         "sous_domaines": None::<String>,
         "exchanges_routing": None::<String>,
-        // "exchanges_routing": {
-        //     "1.public": ["requete.Principale.test"],
-        //     "2.prive": ["requete.Principale.test"],
-        //     "3.protege": ["requete.Principale.test"],
-        // },
         "primaire": true,
     });
 
@@ -806,13 +557,6 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Result<R
     for cert in pem_vec {
         pems.push(cert.pem);
     };
-
-    // let reponse = json! ({
-    //     "chaine_pem": pems,
-    //     "fingerprint": enveloppe.fingerprint(),
-    // });
-    //
-    // reponse
 
     let reponse = ReponseEnveloppe {
         chaine_pem: pems,
@@ -1014,103 +758,6 @@ pub fn map_serializable_to_bson<S>(val_serializable: &S) -> Result<Document, Box
     Ok(contenu_doc)
 }
 
-/// Version speciale du middleware avec un acces a MongoDB
-// pub fn preparer_middleware_message(
-//     queues: Vec<QueueType>,
-//     listeners: Option<Mutex<Callback<'static, EventMq>>>,
-//     securite: Securite
-// ) -> MiddlewareMessagesHooks {
-//     let (
-//         configuration,
-//         validateur,
-//         mq_executor_config,
-//         generateur_messages
-//     ) = configurer_messages(queues, listeners, securite);
-//
-//     let generateur_messages_arc = Arc::new(generateur_messages);
-//
-//     // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-//     let chiffrage_factory = {
-//         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
-//         let cert_local = env_privee.enveloppe.as_ref();
-//         let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-//         let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-//         fp_certs.extend(list_fp_ca);
-//
-//         let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
-//
-//         for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-//             map.insert(f.fingerprint.clone(), f);
-//         }
-//
-//         debug!("Map cles chiffrage : {:?}", map);
-//
-//         Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
-//     };
-//
-//     // let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
-//     //     Some(u) => Some(u.as_str()),
-//     //     None => None,
-//     // };
-//
-//     let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
-//
-//     let middleware = Arc::new(MiddlewareMessage {
-//         configuration,
-//         validateur: validateur.clone(),
-//         generateur_messages: generateur_messages_arc.clone(),
-//         // cles_chiffrage: Mutex::new(cles_chiffrage),
-//         redis: redis_dao,
-//         chiffrage_factory,
-//     });
-//
-//     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);
-//     let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
-//     let (tx_triggers, rx_triggers) = mpsc::channel(1);
-//
-//     let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(10);
-//
-//     let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-//
-//     let mq_executor = mq_executor_config.executor;  // Move
-//     let mq_executor_rx = mq_executor_config.rx_queues;
-//
-//     futures.push(tokio::spawn(recevoir_messages(
-//         middleware.clone(),
-//         mq_executor_rx.rx_messages,
-//         tx_messages_verifies.clone(),
-//         tx_certificats_manquants.clone()
-//     )));
-//
-//     futures.push(tokio::spawn(recevoir_messages(
-//         middleware.clone(),
-//         mq_executor_rx.rx_reply,
-//         tx_messages_verif_reply.clone(),
-//         tx_certificats_manquants.clone()
-//     )));
-//
-//     futures.push(tokio::spawn(recevoir_messages(
-//         middleware.clone(),
-//         mq_executor_rx.rx_triggers,
-//         tx_triggers,
-//         tx_certificats_manquants.clone()
-//     )));
-//
-//     // Thread requete certificats manquants
-//     futures.push(tokio::spawn(task_requetes_certificats(
-//         middleware.clone(),
-//         rx_certificats_manquants,
-//         mq_executor.tx_reply.clone(),
-//         false
-//     )));
-//
-//     MiddlewareMessagesHooks {
-//         middleware, mq_executor,
-//         rx_messages_verifies, rx_messages_verif_reply, rx_triggers, tx_certificats_manquants,
-//         futures
-//     }
-// }
-
 pub fn preparer_middleware_message() -> MiddlewareHooks {
     let ressources = configurer();
 
@@ -1141,15 +788,6 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
         redis: redis_dao,
         chiffrage_factory,
     });
-
-//     let middleware = Arc::new(MiddlewareMessage {
-//         configuration,
-//         validateur: validateur.clone(),
-//         generateur_messages: generateur_messages_arc.clone(),
-//         // cles_chiffrage: Mutex::new(cles_chiffrage),
-//         redis: redis_dao,
-//         chiffrage_factory,
-//     });
 
     // Preparer threads execution
     let rabbitmq = middleware.ressources.rabbitmq.clone();

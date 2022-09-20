@@ -11,8 +11,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-use crate::bson::Document;
-use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ordered_map, VerificateurPermissions};
+use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, VerificateurPermissions};
 use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherKeys};
 use crate::chiffrage_cle::CommandeSauvegarderCle;
 // use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
@@ -52,8 +51,6 @@ pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key:
     -> Result<String, Box<dyn Error>>
 {
     let cle_rechiffree = {
-        let (_, cle_bytes): (_, Vec<u8>) = multibase::decode(cle)?;
-
         let cle_secrete = extraire_cle_secrete(private_key, cle)?;
 
         // Determiner le type de cle. Supporte RSA et ED25519.
@@ -224,7 +221,7 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
 
         // Reset certificats maitredescles. Reinserer cert millegrille immediatement.
         {
-            let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+            // let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
             let mut guard = self.cles_chiffrage.lock().expect("lock");
             guard.clear();
 

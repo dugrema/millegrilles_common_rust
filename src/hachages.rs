@@ -303,8 +303,8 @@ mod backup_tests {
     #[test]
     fn hacher_uuid_test() {
         setup("hacher_uuid_test");
-        const uuid_str: &str = "7a2764fa-c457-4f25-af0d-0fc915439b21";
-        let valeur_hachee = hacher_uuid(uuid_str, None).expect("uuid");
+        const UUID_STR: &str = "7a2764fa-c457-4f25-af0d-0fc915439b21";
+        let valeur_hachee = hacher_uuid(UUID_STR, None).expect("uuid");
         debug!("hachage_uuid_test : {}", valeur_hachee);
 
     }

@@ -2,21 +2,18 @@ use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::io::Stderr;
 use std::sync::Arc;
 
 use lapin::message::Delivery;
 use log::{debug, error, info, trace, warn};
-use serde_json::json;
 use tokio::sync::mpsc::{Receiver, Sender};
 use TypeMessageOut as TypeMessageIn;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509, VerificateurPermissions};
-use crate::chiffrage::Chiffreur;
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::middleware::{ChiffrageFactoryTrait, formatter_message_certificat, IsConfigurationPki};
 use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, TypeMessageOut};
 use crate::transactions::TransactionImpl;
@@ -27,7 +24,6 @@ pub async fn recevoir_messages<M>(
     middleware: Arc<M>,
     mut rx: Receiver<MessageInterne>,
     tx_verifie: Sender<TypeMessage>,
-    tx_certificats_manquants: Sender<RequeteCertificatInterne>
 )
     where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages
 {
@@ -278,10 +274,10 @@ pub async fn traiter_delivery<M,S>(
     Ok(Some(message))
 }
 
-pub struct RequeteCertificatInterne {
-    delivery: Delivery,
-    fingerprint: String,
-}
+// pub struct RequeteCertificatInterne {
+//     delivery: Delivery,
+//     fingerprint: String,
+// }
 
 /// Task de requete et attente de reception de certificat
 // pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>, skip_requete: bool) {
@@ -330,7 +326,6 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                     match correlation_id.as_str() {
                         COMMANDE_CERT_MAITREDESCLES => {
                             debug!("intercepter_message Reponse certificat maitre des cles recus : {:?}", inner);
-                            let chiffrage_factory = middleware.get_chiffrage_factory();
                             match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
                                 Ok(_) => true,
                                 Err(e) => {
@@ -591,8 +586,8 @@ pub enum TypeMessage {
 }
 
 #[derive(Debug)]
-struct ErreurValidation {
-    verification: ErreurVerification,
+pub struct ErreurValidation {
+    pub verification: ErreurVerification,
 }
 
 impl ErreurValidation {

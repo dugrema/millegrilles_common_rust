@@ -4,7 +4,7 @@ use std::fmt::Formatter;
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use log::{debug, info, warn};
+use log::{debug, warn};
 use mongodb::bson as bson;
 use openssl::pkey::{PKey, Public};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -20,7 +20,6 @@ use crate::signatures::{signer_message, verifier_message as ref_verifier_message
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 use crate::bson::{Document, Bson};
 use std::convert::{TryFrom, TryInto};
-use crate::constantes::{RolesCertificats, Securite};
 use crate::mongo_dao::convertir_to_bson;
 
 pub trait FormatteurMessage: IsConfigurationPki {
@@ -1268,7 +1267,7 @@ mod serialization_tests {
     #[test]
     fn lire_message_millegrille() {
         setup("lire_message_millegrille");
-        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
+        let (_, _) = charger_enveloppe_privee_env();
         let message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
         let entete = message.get_entete();
         let contenu = &message.get_msg().contenu;
@@ -1372,11 +1371,11 @@ mod serialization_tests {
     #[test]
     fn creer_message_manuellement() {
         setup("creer_message_manuellement");
-        let (validateur, enveloppe_privee) = charger_enveloppe_privee_env();
+        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
 
         let mut message = MessageMilleGrille::new();
         message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
-        message.set_serializable("contenu_String", &String::from("J'ai du contenu"));
+        message.set_serializable("contenu_String", &String::from("J'ai du contenu")).expect("contenu_int");
         message.set_int("contenu_int", 22);
         message.set_float("contenu_float", 22.89);
         message.set_bool("contenu_bool", true);
@@ -1398,7 +1397,7 @@ mod serialization_tests {
     #[should_panic]
     fn creer_message_panic_set() {
         setup("creer_message_panic_set");
-        let (validateur, enveloppe_privee) = charger_enveloppe_privee_env();
+        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
 
         // Creer et signer le message
         let mut message = MessageMilleGrille::new();

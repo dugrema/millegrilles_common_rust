@@ -24,7 +24,7 @@ use openssl::stack::{Stack, StackRef};
 use openssl::x509::{X509, X509Ref, X509Req, X509ReqRef, X509StoreContext};
 use openssl::x509::store::{X509Store, X509StoreBuilder};
 use openssl::x509::verify::X509VerifyFlags;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use x509_parser::parse_x509_certificate;
 use blake2::{Blake2s256, Digest};
@@ -49,7 +49,7 @@ const TAILLE_CACHE_NETTOYER: usize = 50;  // Trigger un nettoyage regulier du ca
 
 struct CacheCertificat {
     enveloppe: Arc<EnveloppeCertificat>,
-    date_creation: DateTime<Utc>,
+    //date_creation: DateTime<Utc>,
     dernier_acces: DateTime<Utc>,
     compte_acces: usize,
 }
@@ -58,7 +58,7 @@ impl CacheCertificat {
     fn new(enveloppe: Arc<EnveloppeCertificat>) -> Self {
         Self {
             enveloppe,
-            date_creation: Utc::now(),
+            //date_creation: Utc::now(),
             dernier_acces: Utc::now(),
             compte_acces: 0
         }
@@ -1472,7 +1472,7 @@ JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
 
         let value = serde_json::to_value(collection_pems).expect("json");
 
-        // println!("Value certificats : {:?}", value);
+        println!("Value certificats : {:?}", value);
     }
 
     #[tokio::test]

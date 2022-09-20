@@ -1,17 +1,18 @@
 use std::collections::HashMap;
-use log::debug;
+
 use blake2::{Blake2s256, Digest};
+use log::debug;
 use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use crate::bson::Document;
-use crate::chiffrage::{CleSecrete, FormatChiffrage};
 
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::bson::Document;
 use crate::certificats::ordered_map;
+use crate::chiffrage::{CleSecrete, FormatChiffrage};
 use crate::constantes::*;
-use crate::recepteur_messages::TypeMessage;
 use crate::formatteur_messages::MessageMilleGrille;
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::recepteur_messages::TypeMessage;
 use crate::signatures::{signer_message, verifier_message};
 
 /// Effectue une requete pour charger des cles a partir du maitre des cles
@@ -230,9 +231,12 @@ impl IdentiteCle {
 #[cfg(test)]
 mod test {
     use std::error::Error;
+
     use log::debug;
     use openssl::pkey::{Id, PKey};
+
     use crate::test_setup::setup;
+
     use super::*;
 
     fn produire_commande() -> CommandeSauvegarderCle {

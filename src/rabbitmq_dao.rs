@@ -4,27 +4,26 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::{Date, DateTime, Utc};
+use chrono::{DateTime, Utc};
 use futures::stream::FuturesUnordered;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, Queue, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
 use log::{debug, error, info, warn};
-use serde_json::json;
 use tokio::{sync, task};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
 use tokio_amqp::*;
 use tokio_stream::StreamExt;
 
-use crate::certificats::{EnveloppeCertificat, ValidateurX509};
+use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
-use crate::formatteur_messages::MessageSerialise;
 use crate::formatteur_messages::MessageMilleGrille;
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::formatteur_messages::MessageSerialise;
+use crate::generateur_messages::GenerateurMessages;
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
-use crate::recepteur_messages::{intercepter_message, RequeteCertificatInterne, traiter_delivery, TypeMessage};
+use crate::recepteur_messages::{intercepter_message, traiter_delivery, TypeMessage};
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 const FLAG_TTL: &str = "x-message-ttl";
@@ -302,12 +301,10 @@ pub struct RabbitMqExecutor {
     // TX
     pub tx_out: Sender<MessageOut>,
     pub tx_reply: Sender<MessageInterne>,
-    pub tx_certificats_manquants: Sender<RequeteCertificatInterne>,
 
     // RX holder
     rx_out: Mutex<Option<Receiver<MessageOut>>>,
     rx_reply: Mutex<Option<Receiver<MessageInterne>>>,
-    rx_certificats_manquants: Mutex<Option<Receiver<RequeteCertificatInterne>>>,
 }
 
 impl RabbitMqExecutor {
@@ -317,7 +314,6 @@ impl RabbitMqExecutor {
         // Creer channels communication mpsc
         let (tx_out, rx_out) = mpsc::channel(3);
         let (tx_reply, rx_reply) = mpsc::channel(1);
-        let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(1);
 
         // Securite default = 1.public
         let securite = match securite {
@@ -337,12 +333,10 @@ impl RabbitMqExecutor {
             // TX
             tx_out,
             tx_reply,
-            tx_certificats_manquants,
 
             // RX
             rx_out: Mutex::new(Some(rx_out)),
             rx_reply: Mutex::new(Some(rx_reply)),
-            rx_certificats_manquants: Mutex::new(Some(rx_certificats_manquants)),
         }
     }
 
@@ -518,7 +512,7 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
         let channel = match rabbitmq.create_channel().await {
             Ok(c) => c,
             Err(e) => {
-                error!("Erreur ouverture channel, reessayer plus tard");
+                error!("Erreur ouverture channel, reessayer plus tard : {:?}", e);
                 continue
             }
         };
@@ -554,7 +548,6 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
         debug!("Message reply q : {:?}", message);
         let resultat = match message {
             MessageInterne::Delivery(delivery, routing) => {
-                let tx_certificats_manquants = rabbitmq.tx_certificats_manquants.clone();
                 let nom_queue = match rabbitmq.reply_q.lock().expect("lock").clone() {
                     Some(q) => q,
                     None => "_reply".into()
@@ -734,8 +727,7 @@ impl NamedQueue {
     }
 
     fn is_running(&self) -> bool {
-        let mut guard = self.rx.lock().expect("lock");
-        guard.is_none()  // Si rx est None, la thread est running
+        self.rx.lock().expect("lock").is_none()  // Si rx est None, la thread est running
     }
 
     fn get_futures<M>(&self, middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>) -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
@@ -817,7 +809,7 @@ pub async fn named_queue_traiter_messages<M>(
 {
     let nom_queue = match queue {
         QueueType::ExchangeQueue(config) => config.nom_queue.clone(),
-        QueueType::Triggers(nom, securite) => nom,
+        QueueType::Triggers(nom, _securite) => nom,
         _ => panic!("named_queue_traiter_messages Type de queue non supporte")
     };
     debug!("named_queue_traiter_messages Demarrage queue {}", nom_queue);
@@ -1359,7 +1351,7 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                     channel_opt = Some(c);
                 },
                 Err(e) => {
-                    warn!("Erreur ouverture channel, reessayer plus tard");
+                    warn!("Erreur ouverture channel, reessayer plus tard : {:?}", e);
                     continue
                 }
             }

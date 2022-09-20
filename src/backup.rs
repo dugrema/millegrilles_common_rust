@@ -1,14 +1,14 @@
+use core::str::FromStr;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::error::Error;
+use std::ffi::OsStr;
 use std::io::{BufWriter, Write};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use core::str::FromStr;
-use std::ffi::OsStr;
 
 use async_std::fs::File;
 use async_std::io::BufReader;
@@ -51,7 +51,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::{hacher_bytes, hacher_serializable};
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::{MongoDao, CurseurIntoIter, CurseurStream, convertir_bson_deserializable, CurseurMongo};
+use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
@@ -966,24 +966,25 @@ struct ReponseCertificat {
 #[cfg(test)]
 mod backup_tests {
     use std::io::ErrorKind;
-    use async_std::fs;
-    use serde_json::json;
 
-    use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
-    use crate::fichiers::CompresseurBytes;
-    use crate::fichiers::fichiers_tests::ChiffreurDummy;
-    use crate::test_setup::setup;
+    use async_std::fs;
     use chrono::TimeZone;
     use futures::io::BufReader;
     use mongodb::Database;
     use openssl::x509::store::X509Store;
     use openssl::x509::X509;
+    use serde_json::json;
+
     use crate::backup_restoration::TransactionReader;
     use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
+    use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
     // use crate::middleware_db::preparer_middleware_db;
     use crate::chiffrage::{ChiffrageFactoryImpl, CipherMgsCurrent, CleChiffrageHandler, MgsCipherData, MgsCipherKeysCurrent};
+    use crate::fichiers::CompresseurBytes;
+    use crate::fichiers::fichiers_tests::ChiffreurDummy;
     use crate::generateur_messages::RoutageMessageReponse;
     use crate::mongo_dao::convertir_to_bson;
+    use crate::test_setup::setup;
 
     use super::*;
 

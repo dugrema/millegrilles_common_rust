@@ -12,8 +12,8 @@ use openssl::symm::{Cipher, Crypter, Mode};
 use crate::certificats::FingerprintCertPublicKey;
 use crate::chiffrage::{CipherMgs, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree};
-use crate::hachages::Hacheur;
 use crate::chiffrage_rsa::*;
+use crate::hachages::Hacheur;
 
 pub struct CipherMgs2 {
     encrypter: Crypter,
@@ -344,6 +344,7 @@ mod chiffrage_tests {
     use openssl::pkey::{PKey, Private, Public};
     use openssl::rsa::Rsa;
     use openssl::x509::X509;
+
     use crate::test_setup::setup;
 
     use super::*;
