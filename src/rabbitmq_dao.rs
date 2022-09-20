@@ -46,6 +46,7 @@ pub struct ConfigQueue {
     pub routing_keys: Vec<ConfigRoutingExchange>,
     pub ttl: Option<u32>,
     pub durable: bool,
+    pub autodelete: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1076,10 +1077,18 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
     let domaine_split = nom_domaine.replace(".", "/");
     let nom_queue = format!("{}/triggers", domaine_split);
 
+    let options = QueueDeclareOptions {
+        passive: false,
+        durable: false,
+        exclusive: false,
+        auto_delete: true,
+        nowait: false,
+    };
+
     let trigger_queue = channel
         .queue_declare(
             nom_queue.as_str(),
-            QueueDeclareOptions::default(),
+            options,
             params,
         ).await.unwrap();
 
@@ -1179,7 +1188,7 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
                 passive: false,
                 durable: c.durable,
                 exclusive: false,
-                auto_delete: false,
+                auto_delete: c.autodelete,
                 nowait: false,
             };
 

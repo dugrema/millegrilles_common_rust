@@ -163,7 +163,8 @@ mod rabbitmq_dao_tests {
                         },
                     ],
                     ttl: None,
-                    durable: false
+                    durable: false,
+                    autodelete: true,
                 }
             ),
             tx_certificat.clone(),
@@ -189,7 +190,8 @@ mod rabbitmq_dao_tests {
                         },
                     ],
                     ttl: None,
-                    durable: false
+                    durable: false,
+                    autodelete: true,
                 }
             ),
             tx_certificat.clone(),
