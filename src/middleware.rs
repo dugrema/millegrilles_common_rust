@@ -28,13 +28,18 @@ use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware_db::MiddlewareMessagesHooks;
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl, verifier_erreur_duplication_mongo};
-use crate::rabbitmq_dao::{Callback, EventMq, NamedQueue, QueueType, RabbitMqExecutor, TypeMessageOut};
+use crate::rabbitmq_dao::{Callback, EventMq, NamedQueue, QueueType, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 use crate::recepteur_messages::{MessageValideAction, recevoir_messages, /*task_requetes_certificats, */ TypeMessage};
+
+/// Structure avec hooks interne de preparation du middleware
+pub struct MiddlewareHooks {
+    pub middleware: Arc<MiddlewareMessage>,
+    pub futures: FuturesUnordered<JoinHandle<()>>,
+}
 
 pub trait RedisTrait {
     fn get_redis(&self) -> &RedisDao;
@@ -61,14 +66,14 @@ pub trait IsConfigurationPki {
 }
 
 pub struct MiddlewareRessources {
-    pub configuration: Arc<ConfigurationMessagesDb>,
+    pub configuration: Arc<Box<ConfigurationMessagesDb>>,
     pub validateur: Arc<ValidateurX509Impl>,
     pub rabbitmq: Arc<RabbitMqExecutor>,
     pub generateur_messages: Arc<GenerateurMessagesImpl>
 }
 
 pub fn configurer() -> MiddlewareRessources {
-    let configuration = Arc::new(charger_configuration_avec_db().expect("charger_configuration_avec_db"));
+    let configuration = Arc::new(Box::new(charger_configuration_avec_db().expect("charger_configuration_avec_db")));
 
     let pki = configuration.get_configuration_pki();
     let securite = match pki.get_enveloppe_privee().get_exchanges().expect("exchanges") {
@@ -157,9 +162,7 @@ pub fn configurer() -> MiddlewareRessources {
 
 // Middleware de base avec validateur et generateur de messages
 pub struct MiddlewareMessage {
-    configuration: Arc<ConfigurationMessages>,
-    validateur: Arc<ValidateurX509Impl>,
-    generateur_messages: Arc<GenerateurMessagesImpl>,
+    ressources: MiddlewareRessources,
     redis: RedisDao,
     chiffrage_factory: Arc<ChiffrageFactoryImpl>,
 }
@@ -175,7 +178,7 @@ impl RedisTrait for MiddlewareMessage {
 #[async_trait]
 impl ValidateurX509 for MiddlewareMessage {
     async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
-        let enveloppe = self.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await?;
+        let enveloppe = self.ressources.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await?;
 
         // Conserver dans redis (reset TTL)
         match self.redis.save_certificat(&enveloppe).await {
@@ -187,7 +190,7 @@ impl ValidateurX509 for MiddlewareMessage {
     }
 
     async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
-        let (enveloppe, compteur) = self.validateur.cacher(certificat).await;
+        let (enveloppe, compteur) = self.ressources.validateur.cacher(certificat).await;
         if compteur == 0 {
             // Le certificat n'etait pas dans le cache, on s'assure qu'il existe dans redis
             match self.redis.save_certificat(enveloppe.as_ref()).await {
@@ -200,7 +203,7 @@ impl ValidateurX509 for MiddlewareMessage {
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-        match self.validateur.get_certificat(fingerprint).await {
+        match self.ressources.validateur.get_certificat(fingerprint).await {
             Some(c) => Some(c),
             None => {
                 // Tenter de le charger de redis
@@ -216,27 +219,27 @@ impl ValidateurX509 for MiddlewareMessage {
     }
 
     fn idmg(&self) -> &str {
-        self.validateur.idmg()
+        self.ressources.validateur.idmg()
     }
 
     fn ca_pem(&self) -> &str {
-        self.validateur.ca_pem()
+        self.ressources.validateur.ca_pem()
     }
 
     fn ca_cert(&self) -> &X509 {
-        self.validateur.ca_cert()
+        self.ressources.validateur.ca_cert()
     }
 
     fn store(&self) -> &X509Store {
-        self.validateur.store()
+        self.ressources.validateur.store()
     }
 
     fn store_notime(&self) -> &X509Store {
-        self.validateur.store_notime()
+        self.ressources.validateur.store_notime()
     }
 
     async fn entretien_validateur(&self) {
-        self.validateur.entretien_validateur().await;
+        self.ressources.validateur.entretien_validateur().await;
     }
 }
 
@@ -272,7 +275,7 @@ pub async fn charger_certificat_redis<M>(middleware: &M, fingerprint: &str) -> O
 
 impl IsConfigurationPki for MiddlewareMessage {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-        self.configuration.get_configuration_pki().get_enveloppe_privee()
+        self.ressources.configuration.get_configuration_pki().get_enveloppe_privee()
     }
 }
 
@@ -285,64 +288,64 @@ impl GenerateurMessages for MiddlewareMessage {
         -> Result<(), String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.emettre_evenement( routage, message).await
+        self.ressources.generateur_messages.emettre_evenement( routage, message).await
     }
 
     async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
         -> Result<TypeMessage, String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.transmettre_requete(routage, message).await
+        self.ressources.generateur_messages.transmettre_requete(routage, message).await
     }
 
     async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
         -> Result<Option<TypeMessage>, String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.soumettre_transaction(routage, message, blocking).await
+        self.ressources.generateur_messages.soumettre_transaction(routage, message, blocking).await
     }
 
     async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
         -> Result<Option<TypeMessage>, String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.transmettre_commande(routage, message, blocking).await
+        self.ressources.generateur_messages.transmettre_commande(routage, message, blocking).await
     }
 
     async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
-        self.generateur_messages.repondre(routage, message).await
+        self.ressources.generateur_messages.repondre(routage, message).await
     }
 
     async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
         -> Result<Option<TypeMessage>, String>
     {
-        self.generateur_messages.emettre_message(routage, type_message, message,  blocking).await
+        self.ressources.generateur_messages.emettre_message(routage, type_message, message,  blocking).await
     }
 
     async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
         -> Result<Option<TypeMessage>, String>
     {
-        self.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
+        self.ressources.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
     }
 
     fn mq_disponible(&self) -> bool {
-        self.generateur_messages.mq_disponible()
+        self.ressources.generateur_messages.mq_disponible()
     }
 
     fn set_regeneration(&self) {
-        self.generateur_messages.set_regeneration();
+        self.ressources.generateur_messages.set_regeneration();
     }
 
     fn reset_regeneration(&self) {
-        self.generateur_messages.reset_regeneration();
+        self.ressources.generateur_messages.reset_regeneration();
     }
 
     fn get_mode_regeneration(&self) -> bool {
-        self.generateur_messages.as_ref().get_mode_regeneration()
+        self.ressources.generateur_messages.as_ref().get_mode_regeneration()
     }
 
     fn get_securite(&self) -> &Securite {
-        self.generateur_messages.get_securite()
+        self.ressources.generateur_messages.get_securite()
     }
 }
 
@@ -488,24 +491,24 @@ impl GenerateurMessages for MiddlewareMessage {
 
 impl ConfigMessages for MiddlewareMessage {
     fn get_configuration_mq(&self) -> &ConfigurationMq {
-        self.configuration.get_configuration_mq()
+        self.ressources.configuration.get_configuration_mq()
     }
 
     fn get_configuration_pki(&self) -> &ConfigurationPki {
-        self.configuration.get_configuration_pki()
+        self.ressources.configuration.get_configuration_pki()
     }
 }
 
 impl IsConfigNoeud for MiddlewareMessage {
     fn get_configuration_noeud(&self) -> &ConfigurationNoeud {
-        self.configuration.get_configuration_noeud()
+        self.ressources.configuration.get_configuration_noeud()
     }
 }
 
 #[async_trait]
 impl EmetteurCertificat for MiddlewareMessage {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
-        let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+        let enveloppe_privee = self.ressources.configuration.get_configuration_pki().get_enveloppe_privee();
         let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
         let message = formatter_message_certificat(enveloppe_certificat)?;
         let exchanges: Vec<Securite> = securite_cascade_public(
@@ -1107,6 +1110,54 @@ pub fn map_serializable_to_bson<S>(val_serializable: &S) -> Result<Document, Box
 //         futures
 //     }
 // }
+
+pub fn preparer_middleware_message() -> MiddlewareHooks {
+    let ressources = configurer();
+
+    let configuration = ressources.configuration.clone();
+
+    // Extraire le cert millegrille comme base pour chiffrer les cles secretes
+    let chiffrage_factory = {
+        let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
+        let cert_local = env_privee.enveloppe.as_ref();
+        let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+        let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+        fp_certs.extend(list_fp_ca);
+
+        let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
+        for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
+            map.insert(f.fingerprint.clone(), f);
+        }
+
+        debug!("Map cles chiffrage : {:?}", map);
+
+        Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
+    };
+
+    let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
+
+    let middleware = Arc::new(MiddlewareMessage {
+        ressources,
+        redis: redis_dao,
+        chiffrage_factory,
+    });
+
+//     let middleware = Arc::new(MiddlewareMessage {
+//         configuration,
+//         validateur: validateur.clone(),
+//         generateur_messages: generateur_messages_arc.clone(),
+//         // cles_chiffrage: Mutex::new(cles_chiffrage),
+//         redis: redis_dao,
+//         chiffrage_factory,
+//     });
+
+    // Preparer threads execution
+    let rabbitmq = middleware.ressources.rabbitmq.clone();
+    let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
+    futures.push(tokio::spawn(run_rabbitmq(middleware.clone(), rabbitmq, configuration)));
+
+    MiddlewareHooks { middleware, futures }
+}
 
 /// Requete pour obtenir un certificat a partir du domaine PKI
 pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<Option<Arc<EnveloppeCertificat>>, Box<dyn Error>>
