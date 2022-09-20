@@ -755,6 +755,41 @@ pub struct MessageSerialise {
     pub millegrille: Option<Arc<EnveloppeCertificat>>,
 }
 
+impl TryFrom<&str> for MessageSerialise {
+    type Error = String;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let msg_parsed: MessageMilleGrille = match serde_json::from_str(value) {
+            Ok(m) => m,
+            Err(e) => Err(format!("MessageSerialise.TryFrom Erreur from_str : {:?}", e))?
+        };
+
+        Ok(Self {
+            message: value.to_owned(),
+            entete: msg_parsed.entete.clone(),
+            parsed: msg_parsed,
+            certificat: Default::default(),
+            millegrille: Default::default(),
+        })
+    }
+}
+
+impl TryFrom<String> for MessageSerialise {
+    type Error = String;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let msg_parsed: MessageMilleGrille = match serde_json::from_str(value.as_str()) {
+            Ok(m) => m,
+            Err(e) => Err(format!("MessageSerialise.TryFrom Erreur from_str : {:?}", e))?
+        };
+        Ok(Self {
+            message: value,
+            entete: msg_parsed.entete.clone(),
+            parsed: msg_parsed,
+            certificat: None,
+            millegrille: None,
+        })
+    }
+}
+
 impl MessageSerialise {
     pub fn from_parsed(msg: MessageMilleGrille) -> Result<Self, Box<dyn std::error::Error>> {
         let msg_str = serde_json::to_string(&msg)?;
@@ -768,19 +803,11 @@ impl MessageSerialise {
     }
 
     pub fn from_str(msg: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        MessageSerialise::from_string(msg.to_owned())
+        Ok(MessageSerialise::try_from(msg)?)
     }
 
     pub fn from_string(msg: String) -> Result<Self, Box<dyn std::error::Error>> {
-        let msg_parsed: MessageMilleGrille = serde_json::from_str(&msg)?;
-        // debug!("Comparaison message original:\n{}\nParsed\n{:?}", msg, msg_parsed);
-        Ok(MessageSerialise {
-            message: msg,
-            entete: msg_parsed.entete.clone(),
-            parsed: msg_parsed,
-            certificat: None,
-            millegrille: None,
-        })
+        Ok(MessageSerialise::try_from(msg)?)
     }
 
     pub fn from_serializable<T>(value: T) -> Result<MessageSerialise, Box<dyn Error>>

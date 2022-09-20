@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error;
+use std::fmt::{Display, Formatter};
+use std::io::Stderr;
 use std::sync::Arc;
 
 use lapin::message::Delivery;
@@ -58,7 +60,7 @@ pub async fn recevoir_messages<M>(
         };
 
         // Extraire le contenu du message
-        let mut contenu = match parse(&delivery.data) {
+        let mut contenu = match parse(delivery.data) {
             Ok(c) => c,
             Err(e) => {
                 error!("Erreur parsing message : {:?}", e);
@@ -96,44 +98,9 @@ pub async fn recevoir_messages<M>(
         };
 
         // Valider le message. Si on a deja le certificat, on fait juste l'extraire du Option.
-        match valider_message(middleware.as_ref(), &mut contenu).await {
-            Ok(t) => t,
-            Err(e) => {
-                debug!("Message invalide, faire traitements divers, erreur : {:?}", e);
-                // NOTE : le message de certificat est intercepte par le ValidateurX509 et mis en
-                //        cache directement. Aucun traitement explicite n'est requis.
-
-                if let ErreurVerification::CertificatInconnu(fingerprint) = e {
-                    // Verifier si le message contient le certificat (vieille approche)
-                    if let Some(chaine_pem) = contenu.get_msg().contenu.get("chaine_pem") {
-                        if let Some(fingerprint_dans_message) = contenu.get_msg().contenu.get("fingerprint") {
-                            let chaine_pem_vec = match chaine_pem.as_array() {
-                                Some(chaine_values) => {
-                                    let mut vec = Vec::new();
-                                    for v in chaine_values {
-                                        vec.push(String::from(v.as_str().expect("vec pem")));
-                                    }
-                                    Ok(vec)
-                                },
-                                None => Err("Chaine pem n'est pas un array")
-                            }.expect("Chaine pem n'est pas un array");
-                            debug!("Certificat inconnu, message invalide mais contient chaine_pem, on l'extrait");
-                            match middleware.charger_enveloppe(&chaine_pem_vec, Some(fingerprint_dans_message.as_str().expect("fingerprint")), None).await {
-                                Ok(_enveloppe) => (),
-                                Err(e) => error!("Erreur chargemnet certificat dans (message est aussi invalide) : {:?}", e),
-                            };
-                        }
-                    } else {
-                        tx_certificats_manquants.send(RequeteCertificatInterne { fingerprint: fingerprint.clone(), delivery })
-                            .await.unwrap_or_else(
-                            |_e| error!("Erreur emission requete cert pour {}", fingerprint)
-                        );
-                    }
-                }
-
-                // Il n'y a plus rien a faire pour recuperer le message, on l'abandonne.
-                continue
-            },
+        if let Err(e) = valider_message(middleware.as_ref(), &mut contenu).await {
+            error!("Erreur validation message : {:?}", e);
+            continue;  // Skip
         }
 
         let exchange = {
@@ -216,7 +183,6 @@ pub async fn recevoir_messages<M>(
 /// Traitement d'un message Delivery. Convertit en MessageMillegrille, valide le certificat
 pub async fn traiter_delivery<M,S>(
     middleware: &M,
-    tx_certificats_manquants: Sender<RequeteCertificatInterne>,
     nom_queue: S,
     delivery: Delivery,
 )
@@ -229,7 +195,7 @@ pub async fn traiter_delivery<M,S>(
     debug!("recepteur_messages.traiter_delivery sur Q {}", nom_q);
 
     // Extraire le contenu du message
-    let mut contenu = parse(&delivery.data)?;
+    let mut contenu = parse(delivery.data)?;
     let entete = contenu.get_entete().clone();
     debug!("Traiter message {:?}", entete);
 
@@ -258,43 +224,8 @@ pub async fn traiter_delivery<M,S>(
         }
     };
 
-    // Valider le message. Si on a deja le certificat, on fait juste l'extraire du Option.
-    if let Err(e) = valider_message(middleware, &mut contenu).await {
-        debug!("Message invalide, faire traitements divers, erreur : {:?}", e);
-        // NOTE : le message de certificat est intercepte par le ValidateurX509 et mis en
-        //        cache directement. Aucun traitement explicite n'est requis.
-
-        if let ErreurVerification::CertificatInconnu(fingerprint) = &e {
-            // Verifier si le message contient le certificat (vieille approche)
-            if let Some(chaine_pem) = contenu.get_msg().contenu.get("chaine_pem") {
-                if let Some(fingerprint_dans_message) = contenu.get_msg().contenu.get("fingerprint") {
-                    let chaine_pem_vec = match chaine_pem.as_array() {
-                        Some(chaine_values) => {
-                            let mut vec = Vec::new();
-                            for v in chaine_values {
-                                vec.push(String::from(v.as_str().expect("vec pem")));
-                            }
-                            Ok(vec)
-                        },
-                        None => Err("Chaine pem n'est pas un array")
-                    }.expect("Chaine pem n'est pas un array");
-                    debug!("Certificat inconnu, message invalide mais contient chaine_pem, on l'extrait");
-                    match middleware.charger_enveloppe(&chaine_pem_vec, Some(fingerprint_dans_message.as_str().expect("fingerprint")), None).await {
-                        Ok(_enveloppe) => (),
-                        Err(e) => Err(format!("Erreur chargemnet certificat dans (message est aussi invalide) : {:?}", e))?
-                    };
-                }
-            } else {
-                tx_certificats_manquants.send(RequeteCertificatInterne { fingerprint: fingerprint.clone(), delivery: delivery.clone() })
-                    .await.unwrap_or_else(
-                    |_e| error!("Erreur emission requete cert pour {}", fingerprint)
-                );
-            }
-        }
-
-        // Il n'y a plus rien a faire pour recuperer le message, on l'abandonne.
-        Err(format!("Erreur de verification du message : {:?}", e))?;
-    }
+    // Valider le message. Lance une Err si le message est invalide ou certificat inconnu.
+    valider_message(middleware, &mut contenu).await?;
 
     let exchange = {
         let ex = delivery.exchange.as_str();
@@ -363,40 +294,40 @@ pub struct RequeteCertificatInterne {
 }
 
 /// Task de requete et attente de reception de certificat
-pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>, skip_requete: bool) {
-    info!("recepteur_messages.task_requetes_certificats : Demarrage thread");
-    while let Some(req_cert) = rx.recv().await {
-        let delivery = req_cert.delivery;
-        let fingerprint = req_cert.fingerprint;
-
-        // todo Verifier dans redis si le certificat est deja en cache
-
-
-        if !skip_requete {
-            debug!("Faire une requete pour charger le certificat {}", fingerprint);
-            let requete = json!({"fingerprint": fingerprint});
-            // let domaine_action = format!("certificat.{}", fingerprint);
-            // let message = MessageJson::new(requete);
-            let routage = RoutageMessageAction::new("certificat", fingerprint.as_str());
-            match middleware.transmettre_requete(routage, &requete).await {
-                Ok(_r) => {
-                    tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
-                        .await.expect("resend delivery avec certificat");
-                    continue  // Ok
-                },
-                Err(e) => {
-                    error!("Erreur / timeout sur demande certificat {} : {}", fingerprint, e);
-                }
-            }
-        }
-
-        // Certificat inconnu
-        tx.send(MessageInterne::CancelDemandeReponse(fingerprint))
-            .await.expect("cancel demande certificat sur timeout");
-    }
-
-    info!("recepteur_messages.task_requetes_certificats : Fin thread");
-}
+// pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>, skip_requete: bool) {
+//     info!("recepteur_messages.task_requetes_certificats : Demarrage thread");
+//     while let Some(req_cert) = rx.recv().await {
+//         let delivery = req_cert.delivery;
+//         let fingerprint = req_cert.fingerprint;
+//
+//         // todo Verifier dans redis si le certificat est deja en cache
+//
+//
+//         if !skip_requete {
+//             debug!("Faire une requete pour charger le certificat {}", fingerprint);
+//             let requete = json!({"fingerprint": fingerprint});
+//             // let domaine_action = format!("certificat.{}", fingerprint);
+//             // let message = MessageJson::new(requete);
+//             let routage = RoutageMessageAction::new("certificat", fingerprint.as_str());
+//             match middleware.transmettre_requete(routage, &requete).await {
+//                 Ok(_r) => {
+//                     tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
+//                         .await.expect("resend delivery avec certificat");
+//                     continue  // Ok
+//                 },
+//                 Err(e) => {
+//                     error!("Erreur / timeout sur demande certificat {} : {}", fingerprint, e);
+//                 }
+//             }
+//         }
+//
+//         // Certificat inconnu
+//         tx.send(MessageInterne::CancelDemandeReponse(fingerprint))
+//             .await.expect("cancel demande certificat sur timeout");
+//     }
+//
+//     info!("recepteur_messages.task_requetes_certificats : Fin thread");
+// }
 
 pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
     where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
@@ -575,17 +506,19 @@ async fn preparer_reponse_certificats<M>(
 //     Ok(enveloppe)
 // }
 
-fn parse(data: &Vec<u8>) -> Result<MessageSerialise, String> {
-    let data = match String::from_utf8(data.to_owned()) {
+fn parse<D>(data: D) -> Result<MessageSerialise, String>
+    where D: Into<Vec<u8>>
+{
+    let data = match String::from_utf8(data.into()) {
         Ok(data) => data,
         Err(e) => {
             return Err(format!("Erreur message n'est pas UTF-8 : {:?}", e))
         }
     };
 
-    let message_serialise = match MessageSerialise::from_str(data.as_str()) {
+    let message_serialise = match MessageSerialise::try_from(data) {
         Ok(m) => m,
-        Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}\n{}", e, data))?,
+        Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}", e))?,
     };
 
     Ok(message_serialise)
@@ -679,6 +612,27 @@ pub enum TypeMessage {
     Regeneration,
 }
 
+#[derive(Debug)]
+struct ErreurValidation {
+    verification: ErreurVerification,
+}
+
+impl ErreurValidation {
+    fn new(verification: ErreurVerification) -> Self {
+        Self {
+            verification
+        }
+    }
+}
+
+impl Display for ErreurValidation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("ErreurValidation dans verification {:?}", self.verification).as_str())
+    }
+}
+
+impl Error for ErreurValidation {}
+
 #[derive(Clone, Debug)]
 pub enum ErreurVerification {
     HachageInvalide,
@@ -698,7 +652,7 @@ impl VerificateurPermissions for MessageValideAction {
 pub async fn valider_message<M>(
     middleware: &M,
     message: &mut MessageSerialise
-) -> Result<(), ErreurVerification>
+) -> Result<(), ErreurValidation>
 where
     M: ValidateurX509 + GenerateurMessages + IsConfigurationPki,
 {
@@ -722,7 +676,7 @@ where
                         },
                         Err(e) => {
                             error!("Erreur chargement certificat {:?}", e);
-                            Err(ErreurVerification::ErreurGenerique)?
+                            return Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))
                         }
                     }
                 },
@@ -731,7 +685,7 @@ where
                         Some(e) => {
                             Ok(e)
                         },
-                        None => Err(ErreurVerification::CertificatInconnu(fingerprint.into()))?,
+                        None => {return Err(ErreurValidation::new(ErreurVerification::CertificatInconnu(fingerprint.into())))}
                     }
                 }
             }?;
@@ -749,7 +703,7 @@ where
                         },
                         Err(e) => {
                             error!("Erreur chargement certificat {:?}", e);
-                            Err(ErreurVerification::ErreurGenerique)?
+                            Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))?
                         }
                     }
                 },
@@ -764,22 +718,22 @@ where
                 Ok(())
             } else if v.signature_valide == false {
                 error!("verifier_message Signature invalide : {:?}", message);
-                Err(ErreurVerification::SignatureInvalide)
+                Err(ErreurValidation::new(ErreurVerification::SignatureInvalide))
             } else if v.certificat_valide == false {
-                Err(ErreurVerification::CertificatInvalide)
+                Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))
             } else if let Some(hachage_valide) = v.hachage_valide {
                 if hachage_valide == false {
-                    Err(ErreurVerification::HachageInvalide)
+                    Err(ErreurValidation::new(ErreurVerification::HachageInvalide))
                 } else {
-                    Err(ErreurVerification::SignatureInvalide)
+                    Err(ErreurValidation::new(ErreurVerification::SignatureInvalide))
                 }
             } else {
-                Err(ErreurVerification::ErreurGenerique)
+                Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))
             }
         },
         Err(e) => {
             warn!("Validation message est invalide : {:?}", e);
-            Err(ErreurVerification::ErreurGenerique)
+            Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))
         },
     }
 

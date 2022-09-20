@@ -23,12 +23,10 @@ use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, Configuratio
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{
-    /*configurer,*/
-    EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, RedisTrait, ChiffrageFactoryTrait};
+use crate::middleware::{EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, RedisTrait, ChiffrageFactoryTrait, charger_certificat_redis};
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
-use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, task_requetes_certificats, TypeMessage};
+use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, /* task_requetes_certificats, */ TypeMessage};
 use crate::redis_dao::RedisDao;
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
@@ -85,28 +83,13 @@ impl ValidateurX509 for MiddlewareDb {
         match self.validateur.get_certificat(fingerprint).await {
             Some(c) => Some(c),
             None => {
-                // Cas special, certificat inconnu a PKI. Tenter de le charger de redis
-                let redis_certificat = match self.redis.get_certificat(fingerprint).await {
-                    Ok(c) => match c {
-                        Some(c) => c,
-                        None => return None
-                    },
-                    Err(e) => {
-                        warn!("MiddlewareDbPki.get_certificat (2) Erreur acces certificat via redis : {:?}", e);
-                        return None
-                    }
-                };
-
-                // Le certificat est dans redis, on le sauvegarde localement en chargeant l'enveloppe
-                let ca_pem = match &redis_certificat.ca {
-                    Some(c) => Some(c.as_str()),
-                    None => None
-                };
-                match self.validateur.charger_enveloppe(&redis_certificat.pems, None, ca_pem).await {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        warn!("MiddlewareDbPki.get_certificat (1) Erreur acces certificat via redis : {:?}", e);
-                        None
+                // Tenter de le charger de redis
+                match charger_certificat_redis(self, fingerprint).await {
+                    Some(c) => Some(c),
+                    None => {
+                        // Certificat absent de redis, charger directement de
+                        // la base de donnees MongoDB
+                        todo!("Charger certificat via mongodb - et si absent, charger avec broadcast MQ")
                     }
                 }
             }

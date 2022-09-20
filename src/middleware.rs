@@ -33,7 +33,7 @@ use crate::rabbitmq_dao::{Callback, EventMq, /*executer_mq,*/ QueueType, /*Rabbi
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
-use crate::recepteur_messages::{MessageValideAction, recevoir_messages, task_requetes_certificats, TypeMessage};
+use crate::recepteur_messages::{MessageValideAction, recevoir_messages, /*task_requetes_certificats, */ TypeMessage};
 
 pub trait RedisTrait {
     fn get_redis(&self) -> &RedisDao;
@@ -160,28 +160,12 @@ impl ValidateurX509 for MiddlewareMessage {
         match self.validateur.get_certificat(fingerprint).await {
             Some(c) => Some(c),
             None => {
-                // Cas special, certificat inconnu a PKI. Tenter de le charger de redis
-                let redis_certificat = match self.redis.get_certificat(fingerprint).await {
-                    Ok(c) => match c {
-                        Some(c) => c,
-                        None => return None
-                    },
-                    Err(e) => {
-                        warn!("MiddlewareDbPki.get_certificat (2) Erreur acces certificat via redis : {:?}", e);
-                        return None
-                    }
-                };
-
-                // Le certificat est dans redis, on le sauvegarde localement en chargeant l'enveloppe
-                let ca_pem = match &redis_certificat.ca {
-                    Some(c) => Some(c.as_str()),
-                    None => None
-                };
-                match self.validateur.charger_enveloppe(&redis_certificat.pems, None, ca_pem).await {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        warn!("MiddlewareDbPki.get_certificat (1) Erreur acces certificat via redis : {:?}", e);
-                        None
+                // Tenter de le charger de redis
+                match charger_certificat_redis(self, fingerprint).await {
+                    Some(c) => Some(c),
+                    None => {
+                        // Dernier recours, tenter de charger certificat via MQ
+                        todo!("charger certificat via MQ")
                     }
                 }
             }
@@ -210,6 +194,36 @@ impl ValidateurX509 for MiddlewareMessage {
 
     async fn entretien_validateur(&self) {
         self.validateur.entretien_validateur().await;
+    }
+}
+
+pub async fn charger_certificat_redis<M>(middleware: &M, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>
+    where M: RedisTrait + ValidateurX509
+{
+    let redis = middleware.get_redis();
+    let redis_certificat = match redis.get_certificat(fingerprint).await {
+        Ok(c) => match c {
+            Some(c) => c,
+            None => return None
+        },
+        Err(e) => {
+            warn!("MiddlewareDbPki.get_certificat (2) Erreur acces certificat via redis : {:?}", e);
+            return None
+        }
+    };
+
+    // Le certificat est dans redis, on le sauvegarde localement en chargeant l'enveloppe
+    let ca_pem = match &redis_certificat.ca {
+        Some(c) => Some(c.as_str()),
+        None => None
+    };
+
+    match middleware.charger_enveloppe(&redis_certificat.pems, None, ca_pem).await {
+        Ok(c) => Some(c),
+        Err(e) => {
+            warn!("MiddlewareDbPki.get_certificat (1) Erreur acces certificat via redis : {:?}", e);
+            None
+        }
     }
 }
 
