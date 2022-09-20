@@ -273,7 +273,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Methode qui peut etre re-implementee dans une impl
     async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>), Box<dyn Error>>
+        -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
         where M: Middleware + 'static
     {
         self.preparer_threads_super(middleware).await
@@ -281,7 +281,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Initialise le domaine.
     async fn preparer_threads_super<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<(HashMap<String, Sender<TypeMessage>>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>), Box<dyn Error>>
+        -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
         where M: Middleware + 'static
     {
         // Attendre pour eviter echec immedia sur connexion (note to do : ajouter event wait sur MQ)
@@ -291,44 +291,26 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         // Preparer les index MongoDB
         self.preparer_index_mongodb(middleware.as_ref()).await?;
 
-        // Channels pour traiter messages
-        let (tx_messages, rx_messages) = mpsc::channel::<TypeMessage>(3);
-        let (tx_triggers, rx_triggers) = mpsc::channel::<TypeMessage>(10);
-
-        // Routing map pour le domaine
-        let mut routing: HashMap<String, Sender<TypeMessage>> = HashMap::new();
+        let mut futures = FuturesUnordered::new();
 
         // Mapping par Q nommee
         let qs = self.preparer_queues();
         for q in qs {
-            match q {
-                QueueType::ExchangeQueue(c) => {
-                    debug!("Ajout mapping tx_messages {:?}", c);
-                    routing.insert(c.nom_queue.clone(), tx_messages.clone());
-                },
-                QueueType::Triggers(t, _s) => {
-                    debug!("Ajout mapping tx_triggers {:?}", t);
-                    routing.insert(String::from(format!("{}/triggers", &t)), tx_triggers.clone());
-                }
-                QueueType::ReplyQueue(_) => (),
-            }
+            let (tx, rx) = mpsc::channel::<TypeMessage>(1);
+            let queue_name = match &q {
+                QueueType::ExchangeQueue(q) => q.nom_queue.clone(),
+                QueueType::ReplyQueue(q) => { continue; }  // Skip
+                QueueType::Triggers(d, s) => format!("{}.{:?}", d, s)
+            };
+            let named_queue = NamedQueue::new(q, tx, Some(1));
+            middleware.ajouter_named_queue(queue_name, named_queue);
+            futures.push(spawn(self.consommer_messages(middleware.clone(), rx)));
         }
 
-        // Mapping par domaine (routing key)
-        routing.insert(String::from(self.get_nom_domaine()), tx_messages.clone());
-
-        info!("Domaine {} routing mpsc (interne) : {:?}", self.get_nom_domaine(), routing);
-
-        // Thread consommation
-        let futures = FuturesUnordered::new();
-        futures.push(spawn(self.consommer_messages(middleware.clone(), rx_messages)));
-        futures.push(spawn(self.consommer_messages(middleware.clone(), rx_triggers)));
-
-        // Thread entretien
         futures.push(spawn(self.entretien(middleware.clone())));
         futures.push(spawn(thread_emettre_presence_domaine(middleware.clone(), self.get_nom_domaine())));
 
-        Ok((routing, futures, tx_messages, tx_triggers))
+        Ok(futures)
     }
 
     async fn consommer_messages<M>(self: &'static Self, middleware: Arc<M>, mut rx: Receiver<TypeMessage>)
