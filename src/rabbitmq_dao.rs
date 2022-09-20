@@ -137,7 +137,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
 
     if attente {
         // Attendre 5 secondes et reessayer la connexion
-        tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+        tokio::time::sleep(ATTENTE_RECONNEXION).await;
     }
 
     // Reessayer la connexion (meme si erreur - regenerer l'erreur d'auth)
@@ -439,7 +439,7 @@ async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
             },
             Err(e) => {
                 error!("thread_connexion Erreur connexion : {:?}", e);
-                tokio::time::sleep(tokio::time::Duration::new(30, 0)).await;
+                tokio::time::sleep(ATTENTE_RECONNEXION).await;
                 continue;
             }
         };
@@ -453,7 +453,7 @@ async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
 
         warn!("rabbit mq deconnecte, reconnexion dans 30 secondes");
         rabbitmq.cleanup_connexion();
-        tokio::time::sleep(tokio::time::Duration::new(30, 0)).await;
+        tokio::time::sleep(ATTENTE_RECONNEXION).await;
     }
 }
 
@@ -474,7 +474,7 @@ async fn thread_reply_q<M, C>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor
 /// Retire les "attentes" de reply expirees
 async fn thread_entretien_attente(rabbitmq: Arc<RabbitMqExecutor>) {
     loop {
-        tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+        tokio::time::sleep(ATTENTE_RECONNEXION).await;
         {
             // Purger toutes les attentes expirees
             let mut guard = rabbitmq.map_attente.lock().expect("lock");
@@ -505,7 +505,7 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
         if first_run {
             first_run = false;
         } else {
-            tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+            tokio::time::sleep(ATTENTE_RECONNEXION).await;
         }
 
         // Reply Q
@@ -547,7 +547,7 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
     while let Some(message) = rx.recv().await {
         debug!("Message reply q : {:?}", message);
         let resultat = match message {
-            MessageInterne::Delivery(delivery, routing) => {
+            MessageInterne::Delivery(delivery, _routing) => {
                 let nom_queue = match rabbitmq.reply_q.lock().expect("lock").clone() {
                     Some(q) => q,
                     None => "_reply".into()
@@ -734,10 +734,10 @@ impl NamedQueue {
         where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
     {
         info!("Demarrage thread named queue {:?}", self.queue);
-        let mut futures = FuturesUnordered::new();
+        let futures = FuturesUnordered::new();
 
         // Extraire le receiver
-        let mut rx = {
+        let rx = {
             let mut guard = self.rx.lock().expect("lock");
             let rx = match guard.take() {
                 Some(rx) => rx,
@@ -749,7 +749,7 @@ impl NamedQueue {
         let tx_traitement = self.tx_traite.clone();
 
         futures.push(task::spawn(named_queue_consume(rabbitmq.clone(), self.tx.clone(), self.queue.clone())));
-        futures.push(task::spawn(named_queue_traiter_messages(middleware, rabbitmq, rx, self.queue.clone(), tx_traitement)));
+        futures.push(task::spawn(named_queue_traiter_messages(middleware, rx, self.queue.clone(), tx_traitement)));
 
         // futures.next().await.expect("run await").expect("run await resultat");
         Ok(futures)
@@ -762,7 +762,7 @@ pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<Mes
 
     loop {
         if ! first_run {
-            tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
+            tokio::time::sleep(ATTENTE_RECONNEXION).await;
         } else {
             first_run = false;
         }
@@ -798,9 +798,8 @@ pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<Mes
     }
 }
 
-pub async fn named_queue_traiter_messages<M>(
+async fn named_queue_traiter_messages<M>(
     middleware: Arc<M>,
-    rabbitmq: Arc<RabbitMqExecutor>,
     mut rx: Receiver<MessageInterne>,
     queue: QueueType,
     tx_traite: Sender<TypeMessage>
@@ -818,7 +817,7 @@ pub async fn named_queue_traiter_messages<M>(
     while let Some(message) = rx.recv().await {
         debug!("NamedQueue.run Message recu : {:?}", message);
         let resultat = match message {
-            MessageInterne::Delivery(delivery, routing) => {
+            MessageInterne::Delivery(delivery, _routing) => {
                 match traiter_delivery(
                     middleware.as_ref(),
                     nom_queue.as_str(),

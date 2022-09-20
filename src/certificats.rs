@@ -1437,7 +1437,7 @@ JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
     fn collection_pems_1cert() {
         let certificat = prep_enveloppe(CERT_CORE);
         let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(&certificat);
+        collection_pems.ajouter_certificat(&certificat).expect("ajouter_certificat");
 
         // println!("!!! Collection pems {:?}", collection_pems);
         assert_eq!(collection_pems.certificats.len(), 1);

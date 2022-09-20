@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use mongodb::Database;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
-use serde_json::json;
 use tokio::sync::{mpsc, mpsc::Sender};
 use tokio::task::JoinHandle;
 

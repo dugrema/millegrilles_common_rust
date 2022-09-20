@@ -1,61 +1,44 @@
-use core::str::FromStr;
-use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::error::Error;
-use std::ffi::OsStr;
-use std::io::{BufWriter, Write};
-use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use async_std::fs::File;
 use async_std::io::BufReader;
-use async_std::prelude::Stream;
 use async_trait::async_trait;
-use bytes::buf::Writer;
-use chrono::{DateTime, Duration, Timelike, Utc};
-use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use futures::TryStream;
-use futures_util::TryStreamExt;
+use chrono::{DateTime, Duration, Utc};
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use log::{debug, error, info, warn};
 use mongodb::bson::{doc, Document};
-use mongodb::Cursor;
-use mongodb::options::{AggregateOptions, FindOptions, Hint};
-use multibase::{Base, decode, encode};
+use mongodb::options::{FindOptions, Hint};
+use multibase::{Base, encode};
 use multihash::Code;
-use redis::transaction;
-use reqwest::{Body, Response};
+use reqwest::Body;
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tempfile::{TempDir, tempdir, tempfile};
+use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
 use tokio::sync::mpsc::Sender;
-use tokio_stream::{Iter, StreamExt};
 use tokio_util::codec::{BytesCodec, FramedRead};
 use uuid::Uuid;
-use xz2::stream;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{ChiffrageFactory, Chiffreur, CipherMgsCurrent, Dechiffreur, DecipherMgs, MgsCipherDataCurrent, MgsCipherKeys, MgsCipherKeysCurrent};
+use crate::chiffrage::{Chiffreur, CipherMgsCurrent, MgsCipherDataCurrent, MgsCipherKeys, MgsCipherKeysCurrent};
 // use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
-use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherKeys};
-use crate::configuration::{ConfigMessages, IsConfigNoeud};
+use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
+use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
-use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse_tar, TraiterFichier};
+use crate::fichiers::FichierWriter;
 use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::hachages::{hacher_bytes, hacher_serializable};
+use crate::hachages::hacher_bytes;
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
+use crate::mongo_dao::{CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
-use crate::transactions::{regenerer, sauvegarder_batch};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 // Max size des transactions, on tente de limiter la taille finale du message
@@ -296,7 +279,6 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 
         if resultat_verification.valide() {
             let fingerprint_certificat = entete.fingerprint_certificat.as_str();
-            let estampille = &entete.estampille;
             let certificat = match middleware.get_certificat(fingerprint_certificat).await {
                 Some(c) => c,
                 None => {
@@ -327,7 +309,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 }
 
 async fn sauvegarder_catalogue<M>(
-    middleware: &M, workir_path: &Path, mut fichiers_generes: &mut Vec<PathBuf>, mut builder: CatalogueBackupBuilder, path_fichier: &mut PathBuf, writer: TransactionWriter)
+    middleware: &M, workir_path: &Path, fichiers_generes: &mut Vec<PathBuf>, mut builder: CatalogueBackupBuilder, path_fichier: &mut PathBuf, writer: TransactionWriter)
     -> Result<PathBuf, Box<dyn Error>>
     where M: FormatteurMessage
 {
@@ -342,7 +324,7 @@ async fn sauvegarder_catalogue<M>(
     if hachage != builder.data_hachage_bytes {
         Err(format!("sauvegarder_catalogue Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon", hachage, builder.data_hachage_bytes))?;
     }
-    let mut catalogue = builder.build();
+    let catalogue = builder.build();
     let mut path_catalogue = PathBuf::new();
     path_catalogue.push(workir_path);
     path_catalogue.push(format!("catalogue_{}.json", fichiers_generes.len()));
@@ -373,7 +355,7 @@ fn nouveau_catalogue<P>(workdir: P, info_backup: &BackupInformation, compteur: u
     let workdir_path = workdir.as_ref();
 
     let date_transaction = DateEpochSeconds::now();
-    let mut builder = CatalogueBackupBuilder::new(
+    let builder = CatalogueBackupBuilder::new(
         date_transaction,
         info_backup.domaine.clone(),
         info_backup.partition.clone(),
@@ -613,7 +595,8 @@ impl CatalogueBackupBuilder {
             let file = File::open(path_fichier).await?;
             let mut reader = BufReader::new(file);
             let mut buffer = [0u8; 64 * 1024];
-            while let read_len = reader.read(&mut buffer).await? {
+            loop {
+                let read_len = reader.read(&mut buffer).await?;
                 if read_len == 0 { break; }
                 data.extend(&buffer[..read_len]);
                 if data.len() > TRANSACTIONS_MAX_SIZE {
@@ -798,7 +781,7 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
         // Charger fichier de backup
         let (message_backup, uuid_transactions) = {
             let fichier_fp = std::fs::File::open(fichier)?;
-            let mut fichier_reader = std::io::BufReader::new(fichier_fp);
+            let fichier_reader = std::io::BufReader::new(fichier_fp);
 
             let mut message_backup: MessageMilleGrille = serde_json::from_reader(fichier_reader)?;
             debug!("emettre_backup_transactions Message backup a emettre : {:?}", message_backup);
@@ -835,7 +818,7 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
                     continue;
                 }
             },
-            Err(e) => {
+            Err(_) => {
                 error!("emettre_backup_transactions Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
                 continue;
             }
@@ -969,7 +952,6 @@ mod backup_tests {
 
     use async_std::fs;
     use chrono::TimeZone;
-    use futures::io::BufReader;
     use mongodb::Database;
     use openssl::x509::store::X509Store;
     use openssl::x509::X509;
@@ -977,13 +959,10 @@ mod backup_tests {
 
     use crate::backup_restoration::TransactionReader;
     use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
-    use crate::certificats::certificats_tests::{CERT_CORE, CERT_FICHIERS, charger_enveloppe_privee_env, prep_enveloppe};
+    use crate::certificats::certificats_tests::{CERT_CORE, charger_enveloppe_privee_env, prep_enveloppe};
     // use crate::middleware_db::preparer_middleware_db;
     use crate::chiffrage::{ChiffrageFactoryImpl, CipherMgsCurrent, CleChiffrageHandler, MgsCipherData, MgsCipherKeysCurrent};
-    use crate::fichiers::CompresseurBytes;
-    use crate::fichiers::fichiers_tests::ChiffreurDummy;
     use crate::generateur_messages::RoutageMessageReponse;
-    use crate::mongo_dao::convertir_to_bson;
     use crate::test_setup::setup;
 
     use super::*;
@@ -1012,14 +991,14 @@ mod backup_tests {
             self.cles_chiffrage.clone()
         }
 
-        async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>)
+        async fn charger_certificats_chiffrage<M>(&self, _middleware: &M, _cert_local: &EnveloppeCertificat, _env_privee: Arc<EnveloppePrivee>)
             -> Result<(), Box<dyn Error>>
             where M: GenerateurMessages
         {
             Ok(())  // Rien a faire
         }
 
-        async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+        async fn recevoir_certificat_chiffrage<M>(&self, _middleware: &M, _message: &MessageSerialise) -> Result<(), String>
             where M: ConfigMessages
         {
             Ok(())  // Rien a faire
@@ -1036,15 +1015,15 @@ mod backup_tests {
 
     #[async_trait]
     impl ValidateurX509 for TestChiffreurMgs4 {
-        async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+        async fn charger_enveloppe(&self, _chaine_pem: &Vec<String>, _fingerprint: Option<&str>, _ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
             todo!()
         }
 
-        async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
+        async fn cacher(&self, _certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
             todo!()
         }
 
-        async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
+        async fn get_certificat(&self, _fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
             Some(self.enveloppe_privee.enveloppe.clone())
         }
 
@@ -1080,7 +1059,7 @@ mod backup_tests {
     }
 
     impl VerificateurMessage for TestChiffreurMgs4 {
-        fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
+        fn verifier_message(&self, _message: &mut MessageSerialise, _options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
             Ok(ResultatValidation {
                 signature_valide: true,
                 hachage_valide: Some(true),
@@ -1100,31 +1079,31 @@ mod backup_tests {
 
     #[async_trait]
     impl GenerateurMessages for TestChiffreurMgs4 {
-        async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<(), String> where M: Serialize + Send + Sync {
+        async fn emettre_evenement<M>(&self, _routage: RoutageMessageAction, _message: &M) -> Result<(), String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<TypeMessage, String> where M: Serialize + Send + Sync {
+        async fn transmettre_requete<M>(&self, _routage: RoutageMessageAction, _message: &M) -> Result<TypeMessage, String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
+        async fn soumettre_transaction<M>(&self, _routage: RoutageMessageAction, _message: &M, _blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
+        async fn transmettre_commande<M>(&self, _routage: RoutageMessageAction, _message: &M, _blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
             todo!()
         }
 
-        async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
+        async fn repondre(&self, _routage: RoutageMessageReponse, _message: MessageMilleGrille) -> Result<(), String> {
             todo!()
         }
 
-        async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool) -> Result<Option<TypeMessage>, String> {
+        async fn emettre_message(&self, _routage: RoutageMessageAction, _type_message: TypeMessageOut, _message: &str, _blocking: bool) -> Result<Option<TypeMessage>, String> {
             todo!()
         }
 
-        async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
+        async fn emettre_message_millegrille(&self, _routage: RoutageMessageAction, _blocking: bool, _type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
             let json_message = match serde_json::to_string(&message) {
                 Ok(j) => j,
                 Err(e) => Err(format!("emettre_message_millegrille Erreur conversion json : {:?}", e))?
@@ -1356,7 +1335,7 @@ mod backup_tests {
         let enveloppe = Arc::new(enveloppe);
 
         let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.mgs");
-        let fp_certs = vec!(FingerprintCertPublicKey::new(
+        let _fp_certs = vec!(FingerprintCertPublicKey::new(
             String::from("dummy"),
             enveloppe.certificat().public_key().clone().expect("cle"),
             true
@@ -1371,7 +1350,7 @@ mod backup_tests {
 
         let (mh_reference, doc_bson) = get_doc_reference();
         writer.write_bson_line(&doc_bson).await.expect("write chiffre");
-        let (mh, mut decipher_data_option) = writer.fermer().await.expect("fermer");
+        let (mh, decipher_data_option) = writer.fermer().await.expect("fermer");
 
         // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
         assert_ne!(mh.as_str(), &mh_reference);
@@ -1437,7 +1416,7 @@ mod backup_tests {
 
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
         let enveloppe = Arc::new(enveloppe);
-        let (fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
+        let (_fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
 
         // Generer transactions dummy
         let mut transactions_vec = Vec::new();
@@ -1457,7 +1436,7 @@ mod backup_tests {
 
             transactions_vec.push( m_bson );
         }
-        let mut transactions = CurseurIntoIter { data: transactions_vec.into_iter() };
+        let transactions = CurseurIntoIter { data: transactions_vec.into_iter() };
 
         let resultat = generer_fichiers_backup(&m, transactions, temp_dir, &info_backup)
             .await.expect("generer_fichiers_backup");
@@ -1471,7 +1450,7 @@ mod backup_tests {
         // Setup
         let (validateur, enveloppe) = charger_enveloppe_privee_env();
         let enveloppe = Arc::new(enveloppe);
-        let (fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
+        let (_fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
 
         //let temp_dir = tempdir().expect("tempdir");
         let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));

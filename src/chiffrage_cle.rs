@@ -233,7 +233,6 @@ mod test {
     use std::error::Error;
 
     use log::debug;
-    use openssl::pkey::{Id, PKey};
 
     use crate::test_setup::setup;
 

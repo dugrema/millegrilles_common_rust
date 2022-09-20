@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
 
-use chacha20poly1305::{aead::{Aead, AeadCore, KeyInit, OsRng}, ChaCha20Poly1305, Nonce};
+use chacha20poly1305::{aead::{Aead, KeyInit}, ChaCha20Poly1305};
 use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
 use log::debug;
 use multihash::Code;
@@ -95,7 +95,7 @@ pub fn chiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_publique: &PKey<Pub
     debug!("Cle peer public : {:?}", cle_peer_public_raw);
 
     // Utiliser chacha20poly1305 pour dechiffrer la cle secrete
-    let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
+    let aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
 
     // Note : on utilise la cle publique du peer (valeur random) hachee en blake2s comme nonce (12 bytes) pour le chiffrage
     let nonce = hacher_bytes_vu8(&cle_peer_public_raw[..], Some(Code::Blake2s256));
@@ -138,7 +138,7 @@ pub fn dechiffrer_asymmetrique_ed25519(cle_secrete: &[u8], cle_privee: &PKey<Pri
         // Trouver cle secrete de dechiffrage de la cle privee
         let cle_secrete_intermediaire = deriver_asymetrique_ed25519_peer(&cle_peer_intermediaire, &cle_privee)?;
         // Utiliser chacha20poly1305 pour dechiffrer la cle secrete
-        let mut aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
+        let aead = ChaCha20Poly1305::new(cle_secrete_intermediaire.0[..].into());
         // Note : on utilise la cle publique du peer (valeur random) comme nonce pour le chiffrage
 
         let nonce = hacher_bytes_vu8(&cle_peer_public_raw[..], Some(Code::Blake2s256));

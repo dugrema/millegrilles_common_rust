@@ -637,7 +637,7 @@ where
     }
 
     // Creer curseur sur les transactions en ordre de traitement
-    let mut resultat_transactions = {
+    let resultat_transactions = {
         let filtre = doc! {
             TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
         };
@@ -691,19 +691,13 @@ async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Do
         };
 
         let fingerprint_certificat = entete.fingerprint_certificat.as_str();
-        let certificat = match middleware.get_certificat(fingerprint_certificat).await {
-            Some(c) => c,
-            None => {
-                debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
-                match requete_certificat(middleware, fingerprint_certificat).await? {
-                    Some(c) => c,
-                    None => {
-                        warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
-                        continue;
-                    }
-                }
+        if middleware.get_certificat(fingerprint_certificat).await.is_none() {
+            debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
+            if requete_certificat(middleware, fingerprint_certificat).await?.is_none() {
+                warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
+                continue;
             }
-        };
+        }
     }
 
     Ok(())

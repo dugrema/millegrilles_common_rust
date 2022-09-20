@@ -3,7 +3,6 @@ use std::error::Error;
 use log::{debug, info};
 use redis::aio::Connection;
 use redis::Client;
-use redis::RedisResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;

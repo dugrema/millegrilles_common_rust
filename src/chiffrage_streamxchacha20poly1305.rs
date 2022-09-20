@@ -16,7 +16,7 @@ use multihash::Code;
 use openssl::pkey::{PKey, Private};
 
 use crate::certificats::FingerprintCertPublicKey;
-use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
 use crate::hachages::Hacheur;
@@ -72,7 +72,7 @@ impl CipherMgs4 {
 
         let mut state = State::new();
         let mut header = Header::default();
-        let mut key = Key::from(cle_derivee.secret.0);
+        let key = Key::from(cle_derivee.secret.0);
         crypto_secretstream_xchacha20poly1305_init_push(&mut state, &mut header, &key);
 
         let hacheur = Hacheur::builder()
@@ -116,7 +116,7 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
 
             // Verifier si on fait un output
             if self.position_buffer == TAILLE_BLOCK_DATA {
-                let mut slice_output = &mut out[position_output..position_output+CONST_TAILLE_BLOCK_MGS4];
+                let slice_output = &mut out[position_output..position_output+CONST_TAILLE_BLOCK_MGS4];
 
                 let result = crypto_secretstream_xchacha20poly1305_push(
                     &mut self.state, slice_output, &self.buffer, None, CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE);
@@ -142,7 +142,7 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
         debug!("CipherMgs4.finalize Output buffer len {}", out.len());
 
         {
-            let mut slice_output = &mut out[..taille_output];
+            let slice_output = &mut out[..taille_output];
 
             let resultat = crypto_secretstream_xchacha20poly1305_push(
                 &mut self.state,
@@ -223,7 +223,7 @@ impl DecipherMgs<Mgs4CipherData> for DecipherMgs4 {
             // Verifier si on fait un output
             if self.position_buffer == CONST_TAILLE_BLOCK_MGS4 {
                 const TAILLE_OUTPUT: usize = CONST_TAILLE_BLOCK_MGS4 - CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
-                let mut slice_output = &mut out[position_output..position_output+TAILLE_OUTPUT];
+                let slice_output = &mut out[position_output..position_output+TAILLE_OUTPUT];
                 let mut output_tag = 0u8;
 
                 let result = crypto_secretstream_xchacha20poly1305_pull(
@@ -454,7 +454,7 @@ mod test {
         let cipher = CipherMgs4::new(&fpkeys)?;
         debug!("Nouveau cipher info : Cles chiffrees: {:?}", cipher.cles_chiffrees);
         let mut output_chiffrage_final = [0u8; 17];
-        let (out_len, info_keys) = cipher.finalize(&mut output_chiffrage_final)?;
+        let (_out_len, info_keys) = cipher.finalize(&mut output_chiffrage_final)?;
         debug!("Output header: keys : {:?}, output final : {:?}", info_keys, output_chiffrage_final);
 
         let mut out_dechiffre = [0u8; 0];

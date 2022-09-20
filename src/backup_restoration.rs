@@ -1,48 +1,13 @@
-use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::error::Error;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use async_std::fs::File;
-use async_trait::async_trait;
-use chrono::{DateTime, Duration, Timelike, Utc};
-use futures::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
-use log::{debug, error, info, warn};
-use mongodb::bson::{doc, Document};
-use mongodb::Cursor;
-use mongodb::options::{AggregateOptions, FindOptions, Hint};
-use reqwest::{Body, Response};
-use reqwest::multipart::Part;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use tempfile::{TempDir, tempdir};
-use tokio::fs::File as File_tokio;
-use tokio::sync::mpsc::Sender;
-use tokio_stream::StreamExt;
-use tokio_util::codec::{BytesCodec, FramedRead};
-use uuid::Uuid;
+use futures::io::{AsyncRead, AsyncReadExt};
+use log::{debug, error};
+use serde_json::Value;
 use xz2::stream;
 
-use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{Chiffreur, Dechiffreur, DecipherMgs, MgsCipherKeys};
+use crate::chiffrage::DecipherMgs;
 use crate::chiffrage_streamxchacha20poly1305::{DecipherMgs4, Mgs4CipherData};
-// use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
-use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::constantes::*;
-use crate::constantes::Securite::L3Protege;
-use crate::fichiers::{CompresseurBytes, DecompresseurBytes, FichierWriter, parse_tar, TraiterFichier};
-use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::hachages::hacher_serializable;
-use crate::middleware::IsConfigurationPki;
-use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::MongoDao;
-use crate::rabbitmq_dao::TypeMessageOut;
-use crate::recepteur_messages::TypeMessage;
-use crate::tokio::sync::mpsc::Receiver;
-use crate::transactions::{regenerer, sauvegarder_batch, TraiterTransaction};
-use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 pub struct TransactionReader<'a> {
     data: Box<dyn AsyncRead + Unpin + 'a>,
@@ -55,7 +20,7 @@ impl<'a> TransactionReader<'a> {
 
     const BUFFER_SIZE: usize = 65535;
 
-    pub fn new(data: Box<impl AsyncRead + Unpin + 'a>, decipher_data: Option<&Mgs4CipherData>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(_data: Box<impl AsyncRead + Unpin + 'a>, _decipher_data: Option<&Mgs4CipherData>) -> Result<Self, Box<dyn Error>> {
         todo!("fix me")
         // let xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
         //
