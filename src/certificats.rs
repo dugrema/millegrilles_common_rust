@@ -44,6 +44,24 @@ const OID_USERID: &str = "1.2.3.4.3";
 const OID_DELEGATION_GLOBALE: &str = "1.2.3.4.4";
 const OID_DELEGATION_DOMAINES: &str = "1.2.3.4.5";
 
+struct CacheCertificat {
+    enveloppe: Arc<EnveloppeCertificat>,
+    date_creation: DateTime<Utc>,
+    dernier_acces: DateTime<Utc>,
+    compte_acces: usize,
+}
+
+impl CacheCertificat {
+    fn new(enveloppe: Arc<EnveloppeCertificat>) -> Self {
+        Self {
+            enveloppe,
+            date_creation: Utc::now(),
+            dernier_acces: Utc::now(),
+            compte_acces: 0
+        }
+    }
+}
+
 pub fn charger_certificat(pem: &str) -> X509 {
     let cert_x509 = X509::from_pem(pem.as_bytes()).unwrap();
     cert_x509
@@ -676,7 +694,7 @@ pub trait ValidateurX509: Send + Sync {
 
     async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String>;
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat>;
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize);
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>;
 
@@ -760,13 +778,13 @@ pub struct ValidateurX509Impl {
     idmg: String,
     ca_pem: String,
     ca_cert: X509,
-    cache_certificats: Mutex<HashMap<String, Arc<EnveloppeCertificat>>>,
+    cache_certificats: Mutex<HashMap<String, CacheCertificat>>,
 }
 
 impl ValidateurX509Impl {
 
     pub fn new(store: X509Store, store_notime: X509Store, idmg: String, ca_pem: String, ca_cert: X509) -> ValidateurX509Impl {
-        let cache_certificats: Mutex<HashMap<String, Arc<EnveloppeCertificat>>> = Mutex::new(HashMap::new());
+        let cache_certificats: Mutex<HashMap<String, CacheCertificat>> = Mutex::new(HashMap::new());
         ValidateurX509Impl {store, store_notime, idmg, ca_pem, ca_cert, cache_certificats}
     }
 
@@ -782,7 +800,9 @@ impl ValidateurX509Impl {
 #[async_trait]
 impl ValidateurX509 for ValidateurX509Impl {
 
-    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>)
+        -> Result<Arc<EnveloppeCertificat>, String>
+    {
 
         let fp: String = match fingerprint {
             Some(fp) => Ok(String::from(fp)),
@@ -816,13 +836,13 @@ impl ValidateurX509 for ValidateurX509Impl {
                         let idmg_local = self.idmg.as_str();
                         if e.est_ca()? {
                             // Certificat CA, probablement d'une millegrille tierce. Accepter inconditionnellement.
-                            Ok(self.cacher(e).await)
+                            Ok(self.cacher(e).await.0)
                         } else {
                             // Verifier si le certificat est local (CA n'est pas requis)
                             // Pour tiers, le CA doit etre inclus dans l'enveloppe.
                             let idmg_certificat = e.idmg()?;
                             if idmg_local == idmg_certificat.as_str() || e.millegrille.is_some() {
-                                Ok(self.cacher(e).await)
+                                Ok(self.cacher(e).await.0)
                             } else {
                                 Err(format!("Erreur chargement certificat : certificat CA manquant pour millegrille tierce"))
                             }
@@ -834,26 +854,40 @@ impl ValidateurX509 for ValidateurX509Impl {
         }
     }
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat> {
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
 
-        let fingerprint = certificat.fingerprint().to_owned();
+        let fingerprint = certificat.fingerprint().clone();
 
-        // Creer reference atomique pour l'enveloppe
-        let enveloppe_arc = Arc::new(certificat);
+        let mut mutex = self.cache_certificats.lock().expect("lock");
+        match mutex.get_mut(fingerprint.as_str()) {
+            Some(e) => {
+                // Incrementer compteur, maj date acces
+                e.compte_acces = e.compte_acces + 1;
+                e.dernier_acces = Utc::now();
 
-        // Conserver dans le cache
-        let mut mutex = self.cache_certificats.lock().unwrap();
-        mutex.insert(fingerprint.to_owned(), enveloppe_arc.clone());
+                (e.enveloppe.clone(), e.compte_acces)
+            },
+            None => {
+                // Certificat inconnu, sauvegarder dans le cache
+                let enveloppe = Arc::new(certificat);
+                let cache_entry = CacheCertificat::new(enveloppe.clone());
+                mutex.insert(fingerprint, cache_entry);
 
-        debug!("Certificat {} ajoute au cache ({:} entrees)", fingerprint, mutex.len());
-
-        // Retourner la nouvelle reference
-        enveloppe_arc
+                (enveloppe, 0)
+            }
+        }
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-        match self.cache_certificats.lock().unwrap().get(fingerprint) {
-            Some(e) => Some(e.clone()),
+        match self.cache_certificats.lock().unwrap().get_mut(fingerprint) {
+            Some(e) => {
+                // Incrementer compteur, maj date acces
+                e.compte_acces = e.compte_acces + 1;
+                e.dernier_acces = Utc::now();
+
+                // Retourner clone de l'enveloppe
+                Some(e.enveloppe.clone())
+            },
             None => None,
         }
     }
@@ -868,7 +902,11 @@ impl ValidateurX509 for ValidateurX509Impl {
 
     fn store_notime(&self) -> &X509Store { &self.store_notime }
 
-    async fn entretien_validateur(&self) { debug!("Entretien cache certificats"); }
+    async fn entretien_validateur(&self) {
+        debug!("Entretien cache certificats");
+        let mut mutex = self.cache_certificats.lock().expect("lock");
+        todo!("fix me")
+    }
 
 }
 

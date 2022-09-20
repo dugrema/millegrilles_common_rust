@@ -4,6 +4,7 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::{bson::{Bson, Document, doc, to_bson}, Collection};
 use mongodb::bson as bson;
@@ -148,12 +149,17 @@ impl ValidateurX509 for MiddlewareMessage {
         Ok(enveloppe)
     }
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat> {
-        match self.redis.save_certificat(&certificat).await {
-            Ok(()) => debug!("Certificat {} sauvegarde dans redis", &certificat.fingerprint),
-            Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", certificat.fingerprint(), e)
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
+        let (enveloppe, compteur) = self.validateur.cacher(certificat).await;
+        if compteur == 0 {
+            // Le certificat n'etait pas dans le cache, on s'assure qu'il existe dans redis
+            match self.redis.save_certificat(enveloppe.as_ref()).await {
+                Ok(()) => debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint()),
+                Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint(), e)
+            }
         }
-        self.validateur.cacher(certificat).await
+
+        (enveloppe, compteur)
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {

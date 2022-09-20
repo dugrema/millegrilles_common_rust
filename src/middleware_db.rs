@@ -71,12 +71,18 @@ impl ValidateurX509 for MiddlewareDb {
         Ok(enveloppe)
     }
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat> {
-        match self.redis.save_certificat(&certificat).await {
-            Ok(()) => debug!("Certificat {} sauvegarde dans redis", &certificat.fingerprint),
-            Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", certificat.fingerprint(), e)
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
+        let (enveloppe, compteur) = self.validateur.cacher(certificat).await;
+
+        // Donner une chance de sauvegarder le certificat dans redis 2 fois (e.g. si cache durant reception _certificat)
+        if compteur < 2 {
+            match self.redis.save_certificat(enveloppe.as_ref()).await {
+                Ok(()) => debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint),
+                Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint, e)
+            }
         }
-        self.validateur.cacher(certificat).await
+
+        (enveloppe, compteur)
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {

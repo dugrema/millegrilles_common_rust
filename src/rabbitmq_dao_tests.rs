@@ -218,7 +218,7 @@ mod rabbitmq_dao_tests {
             todo!()
         }
 
-        async fn cacher(&self, certificat: EnveloppeCertificat) -> Arc<EnveloppeCertificat> {
+        async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
             todo!()
         }
 
