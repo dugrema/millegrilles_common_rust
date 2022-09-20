@@ -30,7 +30,7 @@ use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageS
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware_db::MiddlewareMessagesHooks;
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl, verifier_erreur_duplication_mongo};
-use crate::rabbitmq_dao::{Callback, EventMq, /*executer_mq,*/ QueueType, /*RabbitMqExecutorConfig,*/ TypeMessageOut};
+use crate::rabbitmq_dao::{Callback, EventMq, NamedQueue, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
@@ -58,6 +58,44 @@ pub trait Middleware:
 
 pub trait IsConfigurationPki {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
+}
+
+pub struct MiddlewareRessources {
+    pub configuration: Arc<ConfigurationMessagesDb>,
+    pub validateur: Arc<ValidateurX509Impl>,
+    pub rabbitmq: Arc<RabbitMqExecutor>,
+    pub generateur_messages: Arc<GenerateurMessagesImpl>
+}
+
+pub fn configurer() -> MiddlewareRessources {
+    let configuration = Arc::new(charger_configuration_avec_db().expect("charger_configuration_avec_db"));
+
+    let pki = configuration.get_configuration_pki();
+    let securite = match pki.get_enveloppe_privee().get_exchanges().expect("exchanges") {
+        Some(exchanges) => {
+            if exchanges.contains(&SECURITE_4_SECURE.to_string()) { Securite::L4Secure }
+            else if exchanges.contains(&SECURITE_3_PROTEGE.to_string()) { Securite::L3Protege }
+            else if exchanges.contains(&SECURITE_2_PRIVE.to_string()) { Securite::L2Prive }
+            else if exchanges.contains(&SECURITE_1_PUBLIC.to_string()) { Securite::L1Public }
+            else {
+                panic!("Niveau de securite non-supporte")
+            }
+        },
+        None => panic!("Certificat sans exchanges, aucun acces a MQ")
+    };
+
+    // Preparer instances utils
+    let validateur = pki.get_validateur();
+
+    // Connecter au middleware mongo et MQ
+    let rabbitmq = Arc::new(RabbitMqExecutor::new(securite.into()));
+
+    let generateur_messages = Arc::new(GenerateurMessagesImpl::new(
+        configuration.get_configuration_pki(),
+        rabbitmq.clone()
+    ));
+
+    MiddlewareRessources { configuration, validateur, rabbitmq, generateur_messages }
 }
 
 // pub fn configurer_messages(

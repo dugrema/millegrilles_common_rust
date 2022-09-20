@@ -22,7 +22,7 @@ use crate::configuration::{charger_configuration_avec_db, ConfigMessages, Config
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, RedisTrait, ChiffrageFactoryTrait, charger_certificat_redis};
+use crate::middleware::{configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, RedisTrait, ChiffrageFactoryTrait, charger_certificat_redis, MiddlewareRessources};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{Callback, EventMq, QueueType, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::{recevoir_messages, RequeteCertificatInterne, /* task_requetes_certificats, */ TypeMessage};
@@ -31,10 +31,7 @@ use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMes
 
 // Middleware avec MongoDB
 pub struct MiddlewareDb {
-    configuration: Arc<ConfigurationMessagesDb>,
-    mongo: Arc<MongoDaoImpl>,
-    validateur: Arc<ValidateurX509Impl>,
-    generateur_messages: Arc<GenerateurMessagesImpl>,
+    ressources: MiddlewareDbRessources,
     redis: RedisDao,
     tx_backup: Sender<CommandeBackup>,
     chiffrage_factory: Arc<ChiffrageFactoryImpl>,
@@ -45,12 +42,12 @@ impl Middleware for MiddlewareDb {}
 impl FormatteurMessage for MiddlewareDb {}
 
 impl IsConfigurationPki for MiddlewareDb {
-    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> { self.configuration.get_configuration_pki().get_enveloppe_privee() }
+    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> { self.ressources.ressources.configuration.get_configuration_pki().get_enveloppe_privee() }
 }
 
 impl ConfigMessages for MiddlewareDb {
-    fn get_configuration_mq(&self) -> &ConfigurationMq { self.configuration.get_configuration_mq() }
-    fn get_configuration_pki(&self) -> &ConfigurationPki { self.configuration.get_configuration_pki() }
+    fn get_configuration_mq(&self) -> &ConfigurationMq { self.ressources.ressources.configuration.get_configuration_mq() }
+    fn get_configuration_pki(&self) -> &ConfigurationPki { self.ressources.ressources.configuration.get_configuration_pki() }
 }
 
 impl RedisTrait for MiddlewareDb {
@@ -58,12 +55,12 @@ impl RedisTrait for MiddlewareDb {
 }
 
 impl IsConfigNoeud for MiddlewareDb {
-    fn get_configuration_noeud(&self) -> &ConfigurationNoeud { self.configuration.get_configuration_noeud() }
+    fn get_configuration_noeud(&self) -> &ConfigurationNoeud { self.ressources.ressources.configuration.get_configuration_noeud() }
 }
 
 #[async_trait]
 impl MongoDao for MiddlewareDb {
-    fn get_database(&self) -> Result<Database, String> { self.mongo.get_database() }
+    fn get_database(&self) -> Result<Database, String> { self.ressources.mongo.get_database() }
 }
 
 #[async_trait]
@@ -80,7 +77,7 @@ impl VerificateurMessage for MiddlewareDb {
 #[async_trait]
 impl ValidateurX509 for MiddlewareDb {
     async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
-        let enveloppe = self.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await?;
+        let enveloppe = self.ressources.ressources.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await?;
 
         // Conserver dans redis (reset TTL)
         match self.redis.save_certificat(&enveloppe).await {
@@ -92,7 +89,7 @@ impl ValidateurX509 for MiddlewareDb {
     }
 
     async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
-        let (enveloppe, compteur) = self.validateur.cacher(certificat).await;
+        let (enveloppe, compteur) = self.ressources.ressources.validateur.cacher(certificat).await;
 
         // Donner une chance de sauvegarder le certificat dans redis 2 fois (e.g. si cache durant reception _certificat)
         if compteur < 2 {
@@ -106,7 +103,7 @@ impl ValidateurX509 for MiddlewareDb {
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-        match self.validateur.get_certificat(fingerprint).await {
+        match self.ressources.ressources.validateur.get_certificat(fingerprint).await {
             Some(c) => Some(c),
             None => {
                 // Tenter de le charger de redis
@@ -122,17 +119,17 @@ impl ValidateurX509 for MiddlewareDb {
         }
     }
 
-    fn idmg(&self) -> &str { self.validateur.idmg() }
+    fn idmg(&self) -> &str { self.ressources.ressources.validateur.idmg() }
 
-    fn ca_pem(&self) -> &str { self.validateur.ca_pem() }
+    fn ca_pem(&self) -> &str { self.ressources.ressources.validateur.ca_pem() }
 
-    fn ca_cert(&self) -> &X509 { self.validateur.ca_cert() }
+    fn ca_cert(&self) -> &X509 { self.ressources.ressources.validateur.ca_cert() }
 
-    fn store(&self) -> &X509Store { self.validateur.store() }
+    fn store(&self) -> &X509Store { self.ressources.ressources.validateur.store() }
 
-    fn store_notime(&self) -> &X509Store { self.validateur.store_notime() }
+    fn store_notime(&self) -> &X509Store { self.ressources.ressources.validateur.store_notime() }
 
-    async fn entretien_validateur(&self) { self.validateur.entretien_validateur().await; }
+    async fn entretien_validateur(&self) { self.ressources.ressources.validateur.entretien_validateur().await; }
 }
 
 #[async_trait]
@@ -142,55 +139,55 @@ impl GenerateurMessages for MiddlewareDb {
         -> Result<(), String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.emettre_evenement( routage, message).await
+        self.ressources.ressources.generateur_messages.emettre_evenement( routage, message).await
     }
 
     async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
         -> Result<TypeMessage, String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.transmettre_requete(routage, message).await
+        self.ressources.ressources.generateur_messages.transmettre_requete(routage, message).await
     }
 
     async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
         -> Result<Option<TypeMessage>, String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.soumettre_transaction(routage, message, blocking).await
+        self.ressources.ressources.generateur_messages.soumettre_transaction(routage, message, blocking).await
     }
 
     async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
         -> Result<Option<TypeMessage>, String>
         where M: Serialize + Send + Sync
     {
-        self.generateur_messages.transmettre_commande(routage, message, blocking).await
+        self.ressources.ressources.generateur_messages.transmettre_commande(routage, message, blocking).await
     }
 
     async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
-        self.generateur_messages.repondre(routage, message).await
+        self.ressources.ressources.generateur_messages.repondre(routage, message).await
     }
 
     async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
         -> Result<Option<TypeMessage>, String>
     {
-        self.generateur_messages.emettre_message(routage, type_message, message,  blocking).await
+        self.ressources.ressources.generateur_messages.emettre_message(routage, type_message, message,  blocking).await
     }
 
     async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
         -> Result<Option<TypeMessage>, String>
     {
-        self.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
+        self.ressources.ressources.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
     }
 
-    fn mq_disponible(&self) -> bool { self.generateur_messages.mq_disponible() }
+    fn mq_disponible(&self) -> bool { self.ressources.ressources.generateur_messages.mq_disponible() }
 
-    fn set_regeneration(&self) { self.generateur_messages.set_regeneration(); }
+    fn set_regeneration(&self) { self.ressources.ressources.generateur_messages.set_regeneration(); }
 
-    fn reset_regeneration(&self) { self.generateur_messages.reset_regeneration(); }
+    fn reset_regeneration(&self) { self.ressources.ressources.generateur_messages.reset_regeneration(); }
 
-    fn get_mode_regeneration(&self) -> bool { self.generateur_messages.as_ref().get_mode_regeneration() }
+    fn get_mode_regeneration(&self) -> bool { self.ressources.ressources.generateur_messages.as_ref().get_mode_regeneration() }
 
-    fn get_securite(&self) -> &Securite { self.generateur_messages.get_securite() }
+    fn get_securite(&self) -> &Securite { self.ressources.ressources.generateur_messages.get_securite() }
 }
 
 #[async_trait]
@@ -344,7 +341,7 @@ impl CleChiffrageHandler for MiddlewareDb {
 #[async_trait]
 impl EmetteurCertificat for MiddlewareDb {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
-        let enveloppe_privee = self.configuration.get_configuration_pki().get_enveloppe_privee();
+        let enveloppe_privee = self.ressources.ressources.configuration.get_configuration_pki().get_enveloppe_privee();
         let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
         let message = formatter_message_certificat(enveloppe_certificat)?;
         let exchanges: Vec<Securite> = securite_cascade_public(
@@ -405,11 +402,6 @@ pub struct MiddlewareMessagesHooks {
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
     pub middleware: Arc<MiddlewareDb>,
-    pub mq_executor: RabbitMqExecutor,
-    pub rx_messages_verifies: Receiver<TypeMessage>,
-    pub rx_messages_verif_reply: Receiver<TypeMessage>,
-    pub rx_triggers: Receiver<TypeMessage>,
-    pub tx_certificats_manquants: Sender<RequeteCertificatInterne>,
     pub futures: FuturesUnordered<JoinHandle<()>>,
 }
 
@@ -514,150 +506,99 @@ pub struct MiddlewareHooks {
 //     }
 // }
 
-pub struct MiddlewareRessources {
-    configuration: Arc<ConfigurationMessagesDb>,
-    validateur: Arc<ValidateurX509Impl>,
+pub struct MiddlewareDbRessources {
+    ressources: MiddlewareRessources,
     mongo: Arc<MongoDaoImpl>,
-    rabbitmq: Arc<RabbitMqExecutor>,
-    generateur_messages: GenerateurMessagesImpl
 }
 
-pub fn configurer(queues: Vec<QueueType>) -> MiddlewareRessources
+pub fn configurer() -> MiddlewareDbRessources
 {
-    let configuration = Arc::new(charger_configuration_avec_db().expect("charger_configuration_avec_db"));
-
-    let pki = configuration.get_configuration_pki();
-    let securite = match pki.get_enveloppe_privee().get_exchanges().expect("exchanges") {
-        Some(exchanges) => {
-            if exchanges.contains(&SECURITE_4_SECURE.to_string()) { Securite::L4Secure }
-            else if exchanges.contains(&SECURITE_3_PROTEGE.to_string()) { Securite::L3Protege }
-            else if exchanges.contains(&SECURITE_2_PRIVE.to_string()) { Securite::L2Prive }
-            else if exchanges.contains(&SECURITE_1_PUBLIC.to_string()) { Securite::L1Public }
-            else {
-                panic!("Niveau de securite non-supporte")
-            }
-        },
-        None => panic!("Certificat sans exchanges, aucun acces a MQ")
-    };
-
-    // Preparer instances utils
-    let validateur = pki.get_validateur();
+    let middeware_ressources = configurer_messages();
+    let configuration = middeware_ressources.configuration.as_ref();
 
     // Connecter au middleware mongo et MQ
-    let mongo= Arc::new(initialiser_mongodb(configuration.as_ref()).expect("initialiser_mongodb"));
-    let rabbitmq = Arc::new(RabbitMqExecutor::new(securite.into()));
-    // let rabbitmq = executer_mq(
-    //     configuration.clone(),
-    //     Some(queues),
-    //     listeners,
-    //     Securite::L3Protege
-    // ).expect("executer_mq");
+    let mongo= Arc::new(initialiser_mongodb(configuration).expect("initialiser_mongodb"));
 
-    let generateur_messages = GenerateurMessagesImpl::new(
-        configuration.get_configuration_pki(),
-        rabbitmq.clone()
-    );
-
-    MiddlewareRessources { configuration, validateur, mongo, rabbitmq, generateur_messages }
+    MiddlewareDbRessources { ressources: middeware_ressources, mongo }
 }
 
-// /// Version speciale du middleware avec un acces a MongoDB
-// pub fn preparer_middleware_db(
-//     queues: Vec<QueueType>,
-//     listeners: Option<Mutex<Callback<'static, EventMq>>>
-// ) -> MiddlewareHooks {
-//     let (
-//         configuration,
-//         validateur,
-//         mongo,
-//         mq_executor_config,
-//         generateur_messages
-//     ) = configurer(queues, listeners);
-//
-//     let generateur_messages_arc = Arc::new(generateur_messages);
-//
-//     // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-//     let chiffrage_factory = {
-//         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
-//         let cert_local = env_privee.enveloppe.as_ref();
-//         let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-//         let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-//         fp_certs.extend(list_fp_ca);
-//
-//         let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
-//         for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-//             map.insert(f.fingerprint.clone(), f);
-//         }
-//
-//         debug!("Map cles chiffrage : {:?}", map);
-//
-//         Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
-//     };
-//
-//     // let redis_url = match configuration.get_configuration_noeud().redis_url.as_ref() {
-//     //     Some(u) => Some(u.as_str()),
-//     //     None => None,
-//     // };
-//     let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
-//
-//     let (tx_backup, rx_backup) = mpsc::channel::<CommandeBackup>(5);
-//
-//     let middleware = Arc::new(MiddlewareDb {
-//         configuration,
-//         mongo,
-//         validateur: validateur.clone(),
-//         generateur_messages: generateur_messages_arc.clone(),
-//         // cles_chiffrage: Mutex::new(cles_chiffrage),
-//         redis: redis_dao,
-//         tx_backup,
-//         chiffrage_factory,
-//     });
-//
-//     let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);
-//     let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
-//     let (tx_triggers, rx_triggers) = mpsc::channel(1);
-//
-//     let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(10);
-//
-//     let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-//
-//     let mq_executor = mq_executor_config.executor;  // Move
-//     let mq_executor_rx = mq_executor_config.rx_queues;
-//
-//     futures.push(tokio::spawn(recevoir_messages(
-//         middleware.clone(),
-//         mq_executor_rx.rx_messages,
-//         tx_messages_verifies.clone(),
-//         tx_certificats_manquants.clone()
-//     )));
-//
-//     futures.push(tokio::spawn(recevoir_messages(
-//         middleware.clone(),
-//         mq_executor_rx.rx_reply,
-//         tx_messages_verif_reply.clone(),
-//         tx_certificats_manquants.clone()
-//     )));
-//
-//     futures.push(tokio::spawn(recevoir_messages(
-//         middleware.clone(),
-//         mq_executor_rx.rx_triggers,
-//         tx_triggers,
-//         tx_certificats_manquants.clone()
-//     )));
-//
-//     // Thread requete certificats manquants
-//     futures.push(tokio::spawn(task_requetes_certificats(
-//         middleware.clone(),
-//         rx_certificats_manquants,
-//         mq_executor.tx_reply.clone(),
-//         false
-//     )));
-//
-//     futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
-//
-//     MiddlewareHooks {
-//         middleware, mq_executor,
-//         rx_messages_verifies, rx_messages_verif_reply, rx_triggers, tx_certificats_manquants,
-//         futures
-//     }
-// }
+/// Version speciale du middleware avec un acces a MongoDB
+pub fn preparer_middleware_db() -> MiddlewareHooks {
+    let ressources = configurer();
+
+    let configuration = ressources.ressources.configuration.as_ref();
+
+    // Extraire le cert millegrille comme base pour chiffrer les cles secretes
+    let chiffrage_factory = {
+        let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
+        let cert_local = env_privee.enveloppe.as_ref();
+        let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+        let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+        fp_certs.extend(list_fp_ca);
+
+        let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
+        for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
+            map.insert(f.fingerprint.clone(), f);
+        }
+
+        debug!("Map cles chiffrage : {:?}", map);
+
+        Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
+    };
+
+    let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
+
+    let (tx_backup, rx_backup) = mpsc::channel::<CommandeBackup>(5);
+
+    let middleware = Arc::new(MiddlewareDb {
+        ressources,
+        redis: redis_dao,
+        tx_backup,
+        chiffrage_factory,
+    });
+
+    // let (tx_messages_verifies, rx_messages_verifies) = mpsc::channel(1);
+    // let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
+    // let (tx_triggers, rx_triggers) = mpsc::channel(1);
+    // let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(10);
+
+    let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
+
+    // let mq_executor = mq_executor_config.executor;  // Move
+    // let mq_executor_rx = mq_executor_config.rx_queues;
+
+    todo!("fix me");
+
+    // futures.push(tokio::spawn(recevoir_messages(
+    //     middleware.clone(),
+    //     mq_executor_rx.rx_messages,
+    //     tx_messages_verifies.clone(),
+    //     tx_certificats_manquants.clone()
+    // )));
+    //
+    // futures.push(tokio::spawn(recevoir_messages(
+    //     middleware.clone(),
+    //     mq_executor_rx.rx_reply,
+    //     tx_messages_verif_reply.clone(),
+    //     tx_certificats_manquants.clone()
+    // )));
+    //
+    // futures.push(tokio::spawn(recevoir_messages(
+    //     middleware.clone(),
+    //     mq_executor_rx.rx_triggers,
+    //     tx_triggers,
+    //     tx_certificats_manquants.clone()
+    // )));
+    //
+    // // Thread requete certificats manquants
+    // futures.push(tokio::spawn(task_requetes_certificats(
+    //     middleware.clone(),
+    //     rx_certificats_manquants,
+    //     mq_executor.tx_reply.clone(),
+    //     false
+    // )));
+    //
+    // futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
+
+    MiddlewareHooks { middleware, futures }
+}

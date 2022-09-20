@@ -44,7 +44,9 @@ impl MongoDao for MongoDaoImpl {
     }
 }
 
-pub fn initialiser(configuration: &(impl ConfigMessages + ConfigDb)) -> Result<MongoDaoImpl, String> {
+pub fn initialiser<C>(configuration: &C) -> Result<MongoDaoImpl, String>
+    where C: ConfigMessages + ConfigDb
+{
     debug!("Initialiser connexion a MongoDB");
 
     let pki = configuration.get_configuration_pki();
