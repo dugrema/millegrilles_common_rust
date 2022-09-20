@@ -257,7 +257,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         where M: Middleware + 'static;
 
     /// Thread d'entretien specifique a chaque gestionnaire
-    async fn entretien<M>(&self, middleware: Arc<M>)
+    async fn entretien<M>(self: &'static Self, middleware: Arc<M>)
        where M: Middleware + 'static;
 
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
