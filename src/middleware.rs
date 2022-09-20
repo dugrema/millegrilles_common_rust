@@ -122,7 +122,6 @@ pub struct MiddlewareMessage {
     configuration: Arc<ConfigurationMessages>,
     validateur: Arc<ValidateurX509Impl>,
     generateur_messages: Arc<GenerateurMessagesImpl>,
-    // pub cles_chiffrage: Mutex<HashMap<String, FingerprintCertPublicKey>>,
     redis: RedisDao,
     chiffrage_factory: Arc<ChiffrageFactoryImpl>,
 }
