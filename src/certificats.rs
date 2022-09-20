@@ -44,6 +44,9 @@ const OID_USERID: &str = "1.2.3.4.3";
 const OID_DELEGATION_GLOBALE: &str = "1.2.3.4.4";
 const OID_DELEGATION_DOMAINES: &str = "1.2.3.4.5";
 
+const TAILLE_CACHE_MAX: usize = 250;      // Limite a ne pas depasser dans le cache
+const TAILLE_CACHE_NETTOYER: usize = 50;  // Trigger un nettoyage regulier du cache
+
 struct CacheCertificat {
     enveloppe: Arc<EnveloppeCertificat>,
     date_creation: DateTime<Utc>,
@@ -754,6 +757,8 @@ pub trait ValidateurX509: Send + Sync {
             // La date n'est pas dans le range du certificat
             debug!("Pas inclus, date {:?} n'est pas entre {:?} et {:?}", date, before, after);
         }
+
+        todo!("Fix valider pour date");
         Ok(inclus)
 
         // // let resultat_notime = verifier_certificat(enveloppe.certificat(), enveloppe.intermediaire(), validateur.store_notime());
@@ -868,10 +873,15 @@ impl ValidateurX509 for ValidateurX509Impl {
                 (e.enveloppe.clone(), e.compte_acces)
             },
             None => {
-                // Certificat inconnu, sauvegarder dans le cache
                 let enveloppe = Arc::new(certificat);
-                let cache_entry = CacheCertificat::new(enveloppe.clone());
-                mutex.insert(fingerprint, cache_entry);
+
+                if mutex.len() < TAILLE_CACHE_MAX {
+                    // Certificat inconnu, sauvegarder dans le cache
+                    let cache_entry = CacheCertificat::new(enveloppe.clone());
+                    mutex.insert(fingerprint, cache_entry);
+                } else {
+                    debug!("Cache certificat plein, on ne conserve pas le certificat en memoire");
+                }
 
                 (enveloppe, 0)
             }
@@ -904,8 +914,20 @@ impl ValidateurX509 for ValidateurX509Impl {
 
     async fn entretien_validateur(&self) {
         debug!("Entretien cache certificats");
-        let mut mutex = self.cache_certificats.lock().expect("lock");
-        todo!("fix me")
+
+        {
+            let mut mutex = self.cache_certificats.lock().expect("lock");
+            if mutex.len() > TAILLE_CACHE_NETTOYER {
+                // Retirer tous les certificats avec une date d'acces expiree (cache mode MRU)
+                let expiration = Utc::now() - chrono::Duration::minutes(30);
+                mutex.retain(|_, val| val.dernier_acces < expiration);
+
+                if mutex.len() > TAILLE_CACHE_MAX {
+                    // Meme apres nettoyage d'expiration, le cache est plus grand que la limite max
+                    mutex.clear();  // On fait juste clearer le cache. TODO faire un menage correct
+                }
+            }
+        }
     }
 
 }
