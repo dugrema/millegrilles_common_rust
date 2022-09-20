@@ -14,6 +14,7 @@ use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
+use tokio::sync::Notify;
 
 use crate::backup::BackupStarter;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
@@ -26,7 +27,7 @@ use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{MongoDao, verifier_erreur_duplication_mongo};
-use crate::rabbitmq_dao::{RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
+use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
@@ -46,11 +47,17 @@ pub trait ChiffrageFactoryTrait: CleChiffrageHandler {
     fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl;
 }
 
+pub trait RabbitMqTrait {
+    fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String>;
+    fn est_connecte(&self) -> bool;
+    fn notify_attendre_connexion(&self)-> Arc<Notify>;
+}
+
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait MiddlewareMessages:
     ValidateurX509 + GenerateurMessages + ConfigMessages + IsConfigurationPki +
     IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
-    VerificateurMessage + RedisTrait + ChiffrageFactoryTrait
+    VerificateurMessage + RedisTrait + ChiffrageFactoryTrait + RabbitMqTrait
     // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
 
@@ -108,6 +115,15 @@ pub struct MiddlewareMessage {
 }
 
 impl MiddlewareMessages for MiddlewareMessage {}
+
+impl RabbitMqTrait for MiddlewareMessage {
+    fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String> {
+        self.ressources.rabbitmq.ajouter_named_queue(queue_name, named_queue)
+    }
+
+    fn est_connecte(&self) -> bool { self.ressources.rabbitmq.est_connecte() }
+    fn notify_attendre_connexion(&self) -> Arc<Notify> { self.ressources.rabbitmq.notify_attendre_connexion() }
+}
 
 impl RedisTrait for MiddlewareMessage {
     fn get_redis(&self) -> &RedisDao {

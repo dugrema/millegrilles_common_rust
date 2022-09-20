@@ -396,10 +396,10 @@ impl RabbitMqExecutor {
         }
     }
 
+    pub fn notify_attendre_connexion(&self)-> Arc<Notify> { self.notify_connexion_ready.clone() }
+
     /// Methode d'attente de connexion
-    pub async fn attendre_connexion(&self) {
-        self.notify_connexion_ready.clone().notified().await
-    }
+    pub async fn attendre_connexion(&self) { self.notify_connexion_ready.clone().notified().await }
 
 }
 

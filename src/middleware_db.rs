@@ -9,7 +9,7 @@ use mongodb::Database;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
-use tokio::sync::{mpsc, mpsc::Sender};
+use tokio::sync::{mpsc, mpsc::Sender, Notify};
 use tokio::task::JoinHandle;
 
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
@@ -21,9 +21,9 @@ use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, 
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RedisTrait};
+use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
-use crate::rabbitmq_dao::{run_rabbitmq, TypeMessageOut};
+use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 use crate::redis_dao::RedisDao;
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
@@ -39,6 +39,15 @@ pub struct MiddlewareDb {
 impl MiddlewareMessages for MiddlewareDb {}
 impl Middleware for MiddlewareDb {}
 impl FormatteurMessage for MiddlewareDb {}
+
+impl RabbitMqTrait for MiddlewareDb {
+    fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String> {
+        self.ressources.ressources.rabbitmq.ajouter_named_queue(queue_name, named_queue)
+    }
+
+    fn est_connecte(&self) -> bool { self.ressources.ressources.rabbitmq.est_connecte() }
+    fn notify_attendre_connexion(&self) -> Arc<Notify> { self.ressources.ressources.rabbitmq.notify_attendre_connexion() }
+}
 
 impl IsConfigurationPki for MiddlewareDb {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> { self.ressources.ressources.configuration.get_configuration_pki().get_enveloppe_privee() }
