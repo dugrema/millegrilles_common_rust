@@ -147,7 +147,8 @@ mod rabbitmq_dao_tests {
         let named_queue_triggers = NamedQueue::new(
             QueueType::Triggers("CorePki".into(), Securite::L4Secure),
             tx_certificat.clone(),
-            Some(5)
+            Some(5),
+            None
         );
         rabbitmq_arc.ajouter_named_queue("Triggers.CorePki", named_queue_triggers);
 
@@ -166,7 +167,8 @@ mod rabbitmq_dao_tests {
                 }
             ),
             tx_certificat.clone(),
-            Some(1)
+            Some(1),
+            None
         );
         rabbitmq_arc.ajouter_named_queue("CorePki/test1", named_queue_test1);
 
@@ -191,7 +193,8 @@ mod rabbitmq_dao_tests {
                 }
             ),
             tx_certificat.clone(),
-            Some(1)
+            Some(1),
+            None
         );
 
         rabbitmq_arc.ajouter_named_queue("CorePki/test2", named_queue_test2);

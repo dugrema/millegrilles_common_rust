@@ -714,16 +714,19 @@ pub struct NamedQueue {
     pub tx: Sender<MessageInterne>,
     rx: Mutex<Option<Receiver<MessageInterne>>>,  // Conserve rx jusqu'au demarrage de la thread
     tx_traite: Sender<TypeMessage>, // Receiver message traite
+    support_threads: Mutex<Option<FuturesUnordered<JoinHandle<()>>>>,
 }
 
 impl NamedQueue {
-    pub fn new(queue: QueueType, tx: Sender<TypeMessage>, buffer_size: Option<usize>) -> Self {
+    pub fn new(queue: QueueType, tx: Sender<TypeMessage>, buffer_size: Option<usize>, consumers: Option<FuturesUnordered<JoinHandle<()>>>)
+        -> Self
+    {
         let buffer = match buffer_size {
             Some(b) => b,
             None => 1
         };
         let (tx_interne, rx_interne) = mpsc::channel(buffer);
-        Self { queue, tx: tx_interne, rx: Mutex::new(Some(rx_interne)), tx_traite: tx }
+        Self { queue, tx: tx_interne, rx: Mutex::new(Some(rx_interne)), tx_traite: tx, support_threads: Mutex::new(consumers) }
     }
 
     fn is_running(&self) -> bool {
@@ -734,7 +737,7 @@ impl NamedQueue {
         where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
     {
         info!("Demarrage thread named queue {:?}", self.queue);
-        let futures = FuturesUnordered::new();
+        let mut futures = FuturesUnordered::new();
 
         // Extraire le receiver
         let rx = {
@@ -745,6 +748,15 @@ impl NamedQueue {
             };
             rx
         };
+
+        // Ajouter consumers si presents
+        {
+            let mut guard = self.support_threads.lock().expect("lock");
+            let consumers_option = guard.take();
+            if let Some(consumers) = consumers_option {
+                futures.extend(consumers)
+            }
+        }
 
         let tx_traitement = self.tx_traite.clone();
 

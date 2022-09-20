@@ -83,7 +83,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
                 QueueType::ReplyQueue(q) => { continue; }  // Skip
                 QueueType::Triggers(d, s) => format!("{}.{:?}", d, s)
             };
-            let named_queue = NamedQueue::new(q, tx, Some(1));
+            let named_queue = NamedQueue::new(q, tx, Some(1), None);
             middleware.ajouter_named_queue(queue_name, named_queue);
             futures.push(spawn(self.consommer_messages(middleware.clone(), rx)));
         }
@@ -302,7 +302,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 QueueType::ReplyQueue(q) => { continue; }  // Skip
                 QueueType::Triggers(d, s) => format!("{}.{:?}", d, s)
             };
-            let named_queue = NamedQueue::new(q, tx, Some(1));
+            let named_queue = NamedQueue::new(q, tx, Some(1), None);
             middleware.ajouter_named_queue(queue_name, named_queue);
             futures.push(spawn(self.consommer_messages(middleware.clone(), rx)));
         }
