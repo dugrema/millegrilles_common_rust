@@ -24,7 +24,7 @@ use crate::formatteur_messages::MessageSerialise;
 use crate::formatteur_messages::MessageMilleGrille;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
-use crate::recepteur_messages::{RequeteCertificatInterne, traiter_delivery, TypeMessage};
+use crate::recepteur_messages::{intercepter_message, RequeteCertificatInterne, traiter_delivery, TypeMessage};
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 const FLAG_TTL: &str = "x-message-ttl";
@@ -604,9 +604,19 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
                 TypeMessage::Regeneration => None  // Ignorer
             };
 
-            if let Some(attente) = attente_reponse {
-                if let Err(e) = attente.sender.send(message_traite) {
-                    error!("thread_traiter_reply_q Erreur transmission reponse attente correlation {} : {:?}", attente.correlation, e);
+            match attente_reponse {
+                Some(a) => {
+                    // On a une correlation, rediriger le message en attente
+                    if let Err(e) = a.sender.send(message_traite) {
+                        error!("thread_traiter_reply_q Erreur transmission reponse attente correlation {} : {:?}", a.correlation, e);
+                    }
+                },
+                None => {
+                    // Aucune correlation (message non sollicite). Voir si on intercepte le message
+                    // pour le passer a une chaine de traitement differente.
+                    if intercepter_message(middleware.as_ref(), &message_traite).await == false {
+                        info!("Message sur reply_q sans attente et non intercepte, on skip : {:?}", message_traite);
+                    }
                 }
             }
         }

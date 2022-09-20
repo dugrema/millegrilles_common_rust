@@ -274,18 +274,8 @@ pub async fn traiter_delivery<M,S>(
         }
     };
 
-    // Voir si on intercepte le message pour le passer a une chaine de traitement
-    // differente.
-    let intercepte = intercepter_message(middleware, &message).await;
-
-    // Passer le message pour traitement habituel
-    if intercepte == false {
-        debug!("Message valide, soumettre a tx_verifie : {:?}", &entete);
-        Ok(Some(message))
-    } else {
-        debug!("Message valide et intercepte, pas soumis a tx_verifie : {:?}", &entete);
-        Ok(None)
-    }
+    debug!("Message valide : {:?}", &entete);
+    Ok(Some(message))
 }
 
 pub struct RequeteCertificatInterne {
@@ -390,18 +380,6 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                     false // pas intercepte
                 }
             }
-            // if inner.type_message == TypeMessageIn::Evenement && inner.action == "infoCertificat" {
-            //     // Message deja intercepte par ValidateurX509, plus rien a faire.
-            //     debug!("Evenement certificat {}, message intercepte", inner.routing_key);
-            //     traiter_certificatintercepter_message(middleware, inner).await;
-            //     true  // Intercepte
-            // } else if inner.type_message == TypeMessageIn::Requete && inner.domaine == "certificat" {
-            //     // Requete pour notre certificat, on l'emet
-            //     emettre_certificat(middleware, message, inner).await;
-            //     true
-            // } else {
-            //     false  // Pas intercepte
-            // }
         },
         TypeMessage::Certificat(_inner) => {
             // Rien a faire, le certificat a deja ete intercepte par ValidateurX509
