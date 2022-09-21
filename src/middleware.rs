@@ -635,39 +635,39 @@ pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageVal
     Ok(reponse)
 }
 
-pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValideAction, nom_collection: C) -> Result<(), String>
-    where
-        M: ValidateurX509 + GenerateurMessages + MongoDao,
-        C: AsRef<str>
-{
-    let entete = m.message.get_entete();
-
-    match sauvegarder_transaction(middleware, &m, nom_collection.as_ref()).await {
-        Ok(_) => (),
-        Err(e) => Err(format!("Erreur sauvegarde transaction : {:?}", e))?
-    }
-
-    if let Some(domaine) = entete.domaine.as_ref() {
-        if let Some(action) = entete.action.as_ref() {
-
-            if let Some(c) = m.correlation_id.as_ref() {
-                debug!("Transaction recue, trigger qui va repondre vers : {:?}/{:?}", m.reply_q.as_ref(), c);
-            }
-
-            transmettre_evenement_persistance(
-                middleware,
-                entete.uuid_transaction.as_str(),
-                domaine.as_str(),
-                action.as_str(),
-                entete.partition.as_ref(),
-                m.reply_q.as_ref(),
-                m.correlation_id.as_ref()
-            ).await?;
-        }
-    }
-
-    Ok(())
-}
+// pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValideAction, nom_collection: C) -> Result<(), String>
+//     where
+//         M: ValidateurX509 + GenerateurMessages + MongoDao,
+//         C: AsRef<str>
+// {
+//     let entete = m.message.get_entete();
+//
+//     match sauvegarder_transaction(middleware, &m, nom_collection.as_ref()).await {
+//         Ok(_) => (),
+//         Err(e) => Err(format!("Erreur sauvegarde transaction : {:?}", e))?
+//     }
+//
+//     if let Some(domaine) = entete.domaine.as_ref() {
+//         if let Some(action) = entete.action.as_ref() {
+//
+//             if let Some(c) = m.correlation_id.as_ref() {
+//                 debug!("Transaction recue, trigger qui va repondre vers : {:?}/{:?}", m.reply_q.as_ref(), c);
+//             }
+//
+//             transmettre_evenement_persistance(
+//                 middleware,
+//                 entete.uuid_transaction.as_str(),
+//                 domaine.as_str(),
+//                 action.as_str(),
+//                 entete.partition.as_ref(),
+//                 m.reply_q.as_ref(),
+//                 m.correlation_id.as_ref()
+//             ).await?;
+//         }
+//     }
+//
+//     Ok(())
+// }
 
 pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction, nom_collection: &str) -> Result<Document, Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
