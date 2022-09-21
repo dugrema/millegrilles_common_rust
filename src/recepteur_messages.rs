@@ -625,9 +625,9 @@ impl VerificateurPermissions for MessageValideAction {
 pub async fn valider_message<M>(
     middleware: &M,
     message: &mut MessageSerialise
-) -> Result<(), ErreurValidation>
-where
-    M: ValidateurX509 + GenerateurMessages + IsConfigurationPki,
+)
+    -> Result<(), ErreurValidation>
+    where M: ValidateurX509 + GenerateurMessages
 {
 
     match &message.certificat {
