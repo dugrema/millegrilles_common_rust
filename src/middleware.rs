@@ -235,7 +235,15 @@ impl IsConfigurationPki for MiddlewareMessage {
     }
 }
 
-impl FormatteurMessage for MiddlewareMessage {}
+impl FormatteurMessage for MiddlewareMessage {
+    fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
+        self.ressources.generateur_messages.get_enveloppe_signature()
+    }
+
+    fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
+        self.ressources.generateur_messages.set_enveloppe_signature(enveloppe)
+    }
+}
 
 #[async_trait]
 impl GenerateurMessages for MiddlewareMessage {

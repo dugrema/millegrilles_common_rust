@@ -38,7 +38,15 @@ pub struct MiddlewareDb {
 
 impl MiddlewareMessages for MiddlewareDb {}
 impl Middleware for MiddlewareDb {}
-impl FormatteurMessage for MiddlewareDb {}
+impl FormatteurMessage for MiddlewareDb {
+    fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
+        self.ressources.ressources.generateur_messages.get_enveloppe_signature()
+    }
+
+    fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
+        self.ressources.ressources.generateur_messages.set_enveloppe_signature(enveloppe)
+    }
+}
 
 impl RabbitMqTrait for MiddlewareDb {
     fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String> {

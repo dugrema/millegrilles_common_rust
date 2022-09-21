@@ -255,7 +255,13 @@ mod rabbitmq_dao_tests {
     }
 
     impl FormatteurMessage for MiddlewareStub {
+        fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
+            todo!()
+        }
 
+        fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
+            todo!()
+        }
     }
 
     #[async_trait]

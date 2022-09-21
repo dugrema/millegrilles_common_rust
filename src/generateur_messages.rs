@@ -203,7 +203,7 @@ pub struct GenerateurMessagesImpl {
     // tx_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
     // tx_reply: Sender<MessageInterne>,
     rabbitmq: Arc<RabbitMqExecutor>,
-    enveloppe_privee: Arc<EnveloppePrivee>,
+    enveloppe_privee: Mutex<Arc<EnveloppePrivee>>,
     mode_regeneration: Mutex<bool>,
     securite: Securite,
 }
@@ -214,7 +214,7 @@ impl GenerateurMessagesImpl {
         let securite = rabbitmq.securite.clone();
         Self {
             rabbitmq,
-            enveloppe_privee: config.get_enveloppe_privee(),
+            enveloppe_privee: Mutex::new(config.get_enveloppe_privee()),
             mode_regeneration: Mutex::new(false),
             securite,
         }
@@ -501,10 +501,18 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 }
 
 impl FormatteurMessage for GenerateurMessagesImpl {
-}
+    fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
+        self.enveloppe_privee.lock().expect("enveloppe").clone()
+    }
 
-impl IsConfigurationPki for GenerateurMessagesImpl {
-    fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-        self.enveloppe_privee.clone()
+    fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
+        let mut guard = self.enveloppe_privee.lock().expect("lock");
+        *guard = enveloppe;
     }
 }
+
+// impl IsConfigurationPki for GenerateurMessagesImpl {
+//     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
+//         self.enveloppe_privee.clone()
+//     }
+// }

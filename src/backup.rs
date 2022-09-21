@@ -1069,7 +1069,15 @@ mod backup_tests {
         }
     }
 
-    impl FormatteurMessage for TestChiffreurMgs4 {}
+    impl FormatteurMessage for TestChiffreurMgs4 {
+        fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
+            todo!()
+        }
+
+        fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
+            todo!()
+        }
+    }
 
     impl MongoDao for TestChiffreurMgs4 {
         fn get_database(&self) -> Result<Database, String> {

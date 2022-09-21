@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::Formatter;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use log::{debug, warn};
@@ -22,9 +22,12 @@ use crate::bson::{Document, Bson};
 use std::convert::{TryFrom, TryInto};
 use crate::mongo_dao::convertir_to_bson;
 
-pub trait FormatteurMessage: IsConfigurationPki {
-    // /// Retourne l'enveloppe privee utilisee pour signer le message
-    // fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
+pub trait FormatteurMessage {
+    /// Retourne l'enveloppe privee utilisee pour signer le message
+    fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee>;
+
+    /// Permet de modifier l'enveloppe utilisee pour la signature de messages
+    fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>);
 
     /// Implementation de formattage et signature d'un message de MilleGrille
     fn formatter_message<S, T>(
@@ -40,7 +43,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
         S: Serialize,
         T: AsRef<str>
     {
-        let enveloppe = self.get_enveloppe_privee();
+        let enveloppe = self.get_enveloppe_signature();
         MessageMilleGrille::new_signer(enveloppe.as_ref(), contenu, domaine, action, partition, version, ajouter_ca)
     }
 
@@ -52,7 +55,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
     where
         S: Serialize,
     {
-        let enveloppe = self.get_enveloppe_privee();
+        let enveloppe = self.get_enveloppe_signature();
         MessageMilleGrille::new_signer(enveloppe.as_ref(), &contenu, None::<&str>, None::<&str>, None::<&str>, version, false)
     }
 
@@ -67,7 +70,7 @@ pub trait FormatteurMessage: IsConfigurationPki {
         if message.signature.is_some() {
             Err(format!("Message {} est deja signe", message.entete.uuid_transaction))?
         }
-        message.signer(self.get_enveloppe_privee().as_ref(), domaine, action, partition, version)
+        message.signer(self.get_enveloppe_signature().as_ref(), domaine, action, partition, version)
     }
 
     fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {

@@ -388,7 +388,7 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
 async fn emettre_certificat<M>(middleware: &M, message: &TypeMessage, inner: &MessageValideAction)
     where M: GenerateurMessages
 {
-    let enveloppe_privee = middleware.get_enveloppe_privee();
+    let enveloppe_privee = middleware.get_enveloppe_signature();
     let fingerprint = enveloppe_privee.fingerprint();
 
     // Determiner si le message correspond a notre certificat (return immediatement sinon)
