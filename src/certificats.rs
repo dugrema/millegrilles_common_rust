@@ -758,21 +758,16 @@ pub trait ValidateurX509: Send + Sync {
             debug!("Pas inclus, date {:?} n'est pas entre {:?} et {:?}", date, before, after);
         }
 
-        todo!("Fix valider pour date");
-        Ok(inclus)
-
-        // // let resultat_notime = verifier_certificat(enveloppe.certificat(), enveloppe.intermediaire(), validateur.store_notime());
-        //
-        // let certificat = &enveloppe.certificat;
-        // let chaine = &enveloppe.intermediaire;
-        // let store = self.store_notime();
-        // match verifier_certificat(certificat, chaine, store) {
-        //     Ok(b) => {
-        //         debug!("Verifier certificat result apres check date OK : {}", b);
-        //         Ok(b)
-        //     },
-        //     Err(e) => Err(format!("Erreur verification certificat avec no time : {:?}", e)),
-        // }
+        let certificat = &enveloppe.certificat;
+        let chaine = &enveloppe.intermediaire;
+        let store = self.store_notime();
+        match verifier_certificat(certificat, chaine, store) {
+            Ok(b) => {
+                debug!("Verifier certificat result apres check date OK : {}", b);
+                Ok(b)
+            },
+            Err(e) => Err(format!("Erreur verification certificat avec no time : {:?}", e)),
+        }
     }
 
 }

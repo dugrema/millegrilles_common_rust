@@ -30,10 +30,10 @@ use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMes
 
 // Middleware avec MongoDB
 pub struct MiddlewareDb {
-    ressources: MiddlewareDbRessources,
-    redis: Option<RedisDao>,
+    pub ressources: MiddlewareDbRessources,
+    pub redis: Option<RedisDao>,
     tx_backup: Sender<CommandeBackup>,
-    chiffrage_factory: Arc<ChiffrageFactoryImpl>,
+    pub chiffrage_factory: Arc<ChiffrageFactoryImpl>,
 }
 
 impl MiddlewareMessages for MiddlewareDb {}

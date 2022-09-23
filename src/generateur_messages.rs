@@ -418,7 +418,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         -> Result<Option<TypeMessage>, String>
     {
         let attendre = match &type_message_out {
-            TypeMessageOut::Requete => true,
+            TypeMessageOut::Requete => match routage.blocking {Some(b) => b || blocking, None => blocking},
             TypeMessageOut::Commande => match routage.blocking {Some(b) => b || blocking, None => blocking},
             TypeMessageOut::Transaction => match routage.blocking {Some(b) => b || blocking, None => blocking},
             TypeMessageOut::Reponse => false,
