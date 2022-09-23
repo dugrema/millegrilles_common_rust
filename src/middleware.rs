@@ -40,7 +40,7 @@ pub struct MiddlewareHooks {
 }
 
 pub trait RedisTrait {
-    fn get_redis(&self) -> &RedisDao;
+    fn get_redis(&self) -> Option<&RedisDao>;
 }
 
 pub trait ChiffrageFactoryTrait: CleChiffrageHandler {
@@ -110,7 +110,7 @@ pub fn configurer() -> MiddlewareRessources {
 // Middleware de base avec validateur et generateur de messages
 pub struct MiddlewareMessage {
     ressources: MiddlewareRessources,
-    redis: RedisDao,
+    redis: Option<RedisDao>,
     chiffrage_factory: Arc<ChiffrageFactoryImpl>,
 }
 
@@ -126,8 +126,8 @@ impl RabbitMqTrait for MiddlewareMessage {
 }
 
 impl RedisTrait for MiddlewareMessage {
-    fn get_redis(&self) -> &RedisDao {
-        &self.redis
+    fn get_redis(&self) -> Option<&RedisDao> {
+        self.redis.as_ref()
     }
 }
 
@@ -136,10 +136,15 @@ impl ValidateurX509 for MiddlewareMessage {
     async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
         let enveloppe = self.ressources.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await?;
 
-        // Conserver dans redis (reset TTL)
-        match self.redis.save_certificat(&enveloppe).await {
-            Ok(()) => (),
-            Err(e) => warn!("MiddlewareDbPki.charger_enveloppe Erreur sauvegarde certificat dans redis : {:?}", e)
+        match self.redis.as_ref() {
+            Some(redis) => {
+                // Conserver dans redis (reset TTL)
+                match redis.save_certificat(&enveloppe).await {
+                    Ok(()) => (),
+                    Err(e) => warn!("MiddlewareDbPki.charger_enveloppe Erreur sauvegarde certificat dans redis : {:?}", e)
+                }
+            },
+            None => ()
         }
 
         Ok(enveloppe)
@@ -149,9 +154,14 @@ impl ValidateurX509 for MiddlewareMessage {
         let (enveloppe, compteur) = self.ressources.validateur.cacher(certificat).await;
         if compteur == 0 {
             // Le certificat n'etait pas dans le cache, on s'assure qu'il existe dans redis
-            match self.redis.save_certificat(enveloppe.as_ref()).await {
-                Ok(()) => debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint()),
-                Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint(), e)
+            match self.redis.as_ref() {
+                Some(redis) => {
+                    match redis.save_certificat(enveloppe.as_ref()).await {
+                        Ok(()) => debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint()),
+                        Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint(), e)
+                    }
+                },
+                None => ()
             }
         }
 
@@ -202,16 +212,18 @@ impl ValidateurX509 for MiddlewareMessage {
 pub async fn charger_certificat_redis<M>(middleware: &M, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>
     where M: RedisTrait + ValidateurX509
 {
-    let redis = middleware.get_redis();
-    let redis_certificat = match redis.get_certificat(fingerprint).await {
-        Ok(c) => match c {
-            Some(c) => c,
-            None => return None
+    let redis_certificat = match middleware.get_redis() {
+        Some(redis) => match redis.get_certificat(fingerprint).await {
+            Ok(c) => match c {
+                Some(c) => c,
+                None => return None
+            },
+            Err(e) => {
+                warn!("MiddlewareDbPki.get_certificat (2) Erreur acces certificat via redis : {:?}", e);
+                return None
+            }
         },
-        Err(e) => {
-            warn!("MiddlewareDbPki.get_certificat (2) Erreur acces certificat via redis : {:?}", e);
-            return None
-        }
+        None => return None
     };
 
     // Le certificat est dans redis, on le sauvegarde localement en chargeant l'enveloppe
@@ -344,9 +356,14 @@ impl EmetteurCertificat for MiddlewareMessage {
             .build();
 
         // Sauvegarder dans redis
-        match self.redis.save_certificat(enveloppe_certificat).await {
-            Ok(()) => (),
-            Err(e) => warn!("MiddlewareDb.emettre_certificat Erreur sauvegarde certificat local sous redis : {:?}", e)
+        match self.redis.as_ref() {
+            Some(redis) => {
+                match redis.save_certificat(enveloppe_certificat).await {
+                    Ok(()) => (),
+                    Err(e) => warn!("MiddlewareDb.emettre_certificat Erreur sauvegarde certificat local sous redis : {:?}", e)
+                }
+            },
+            None => ()
         }
 
         match generateur_message.emettre_evenement(routage, &message).await {
@@ -805,7 +822,11 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
         Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
     };
 
-    let redis_dao = RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis");
+    // Charger redis (optionnel)
+    let redis_dao = match configuration.get_configuration_noeud().redis_desactive {
+        Some(_) => None,
+        None => Some(RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis"))
+    };
 
     let middleware = Arc::new(MiddlewareMessage {
         ressources,
