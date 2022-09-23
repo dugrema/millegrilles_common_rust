@@ -421,7 +421,7 @@ pub fn preparer_middleware_db() -> MiddlewareHooks {
     };
 
     // Charger redis (optionnel)
-    let redis_dao = match configuration.get_configuration_noeud().redis_desactive {
+    let redis_dao = match configuration.get_configuration_noeud().redis_password {
         Some(_) => None,
         None => Some(RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis"))
     };
