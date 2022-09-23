@@ -824,8 +824,14 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
 
     // Charger redis (optionnel)
     let redis_dao = match configuration.get_configuration_noeud().redis_password {
-        Some(_) => None,
-        None => Some(RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis"))
+        Some(_) => {
+            info!("Initialisation Redis");
+            Some(RedisDao::new(configuration.get_configuration_noeud().clone()).expect("connexion redis"))
+        },
+        None => {
+            info!("Redis desactive");
+            None
+        }
     };
 
     let middleware = Arc::new(MiddlewareMessage {
