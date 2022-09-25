@@ -111,7 +111,9 @@ where
                         }
                     }  // IDMG tiers, on va devoir batir un nouveau store
                 };
-                validateur.valider_chaine(certificat, certificat_millegrille)?
+                let resultat = validateur.valider_chaine(certificat, certificat_millegrille)?;
+                debug!("verifier_message Resultat valider chaine : {}", resultat);
+                resultat
             } else {
                 false
             }
@@ -200,7 +202,7 @@ mod verificateur_tests {
     use crate::test_setup::setup;
 
     const CATALOGUE_1: &str = "{\"dependances\": [{\"certificat\": {\"domaines\": [\"MaitreDesCles\"], \"exchanges\": [\"4.secure\", \"3.protege\", \"2.prive\", \"1.public\"], \"roles\": [\"maitredescles\", \"maitrecles\"]}, \"configs\": [{\"current\": \"cert\", \"filename\": \"/run/secrets/cert.pem\", \"name\": \"pki.maitredescles\"}, {\"filename\": \"/run/secrets/millegrille.cert.pem\", \"name\": \"pki.millegrille\"}], \"constraints\": [\"node.labels.millegrilles.maitredescles == true\"], \"env\": {\"CAFILE\": \"/run/secrets/millegrille.cert.pem\", \"CERTFILE\": \"/run/secrets/cert.pem\", \"KEYFILE\": \"/run/secrets/key.pem\", \"MG_MAITREDESCLES_MODE\": \"partition\", \"MG_MONGO_HOST\": \"mongo\", \"MG_MQ_AUTH_CERT\": \"on\", \"MG_MQ_HOST\": \"mq\", \"MG_MQ_PORT\": \"5673\", \"MG_MQ_SSL\": \"on\", \"MG_REDIS_PASSWORD_FILE\": \"/run/secrets/passwd.redis.txt\", \"MG_REDIS_URL\": \"rediss://client_rust@redis:6379#insecure\", \"RUST_LOG\": \"warn\"}, \"image\": \"docker.maceroc.com/millegrilles_maitredescles:2022.6.0\", \"mode\": {\"mode\": \"replicated\", \"replicas\": 1}, \"name\": \"maitredescles\", \"networks\": [{\"target\": \"millegrille_net\"}], \"resources\": {\"cpu_limit\": 1000000000, \"mem_limit\": 250000000}, \"restart_policy\": {\"condition\": \"on-failure\", \"delay\": 60000000000, \"max_attempts\": 2}, \"secrets\": [{\"current\": \"key\", \"filename\": \"key.pem\", \"name\": \"pki.maitredescles\"}, {\"current\": \"password\", \"filename\": \"passwd.redis.txt\", \"name\": \"passwd.redis\"}]}], \"nom\": \"maitredescles\", \"securite\": \"4.secure\", \"version\": \"2022.6.0\", \"en-tete\": {\"idmg\": \"zeYncRqEqZ6eTEmUZ8whJFuHG796eSvCTWE4M432izXrp22bAtwGm7Jf\", \"uuid_transaction\": \"c1698a20-39f1-11ed-9d27-37d984004598\", \"estampille\": 1663794601, \"version\": 1, \"domaine\": \"CoreCatalogues\", \"action\": \"catalogueApplication\", \"hachage_contenu\": \"m4OQCIJ5oAjz5IWrM1ABTEdu2s5FwOPz9KOWDzW3QewNuck4Y\", \"fingerprint_certificat\": \"z2i3XjxATYCJd5Lns3yTDWPAE4VYsbosQ6CUzSAR43EJCETUKGx\"}, \"_signature\": \"mAnk7YPHkuZxky86cijr136stv6jGni09AfCdzKev+Bf1fH4R3sLlzfgfxA+lGuG/hMgk7xAZ9lDZUw1xnOfxrAU\", \"_certificat\": [\"-----BEGIN CERTIFICATE-----\\nMIIClDCCAkagAwIBAgIUfJOwAg7KNg3EWTT+JB5BkJTzDHMwBQYDK2VwMHIxLTAr\\nBgNVBAMTJDI2Yzc0YmYwLWE1NWUtNDBjYi04M2U2LTdlYTgxOGUyZDQxNjFBMD8G\\nA1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6\\nWHJwMjJiQXR3R203SmYwHhcNMjIwOTE2MTA0MzI2WhcNMjIxMDE3MTA0MzQ2WjCB\\ngTEtMCsGA1UEAwwkMjZjNzRiZjAtYTU1ZS00MGNiLTgzZTYtN2VhODE4ZTJkNDE2\\nMQ0wCwYDVQQLDARjb3JlMUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpG\\ndUhHNzk2ZVN2Q1RXRTRNNDMyaXpYcnAyMmJBdHdHbTdKZjAqMAUGAytlcAMhAOqv\\neCTQlPtt1FyQjY6l6opfqkrkUEl4nuP1hIOdUdmVo4HdMIHaMCsGBCoDBAAEIzQu\\nc2VjdXJlLDMucHJvdGVnZSwyLnByaXZlLDEucHVibGljMAwGBCoDBAEEBGNvcmUw\\nTAYEKgMEAgREQ29yZUJhY2t1cCxDb3JlQ2F0YWxvZ3VlcyxDb3JlTWFpdHJlRGVz\\nQ29tcHRlcyxDb3JlUGtpLENvcmVUb3BvbG9naWUwDwYDVR0RBAgwBoIEY29yZTAf\\nBgNVHSMEGDAWgBQD9vRntL7qirUyHq9zmcG45Z47gzAdBgNVHQ4EFgQUQL5Qblu0\\n6QOndvsWEtt/4P1pMqIwBQYDK2VwA0EAVySc4PByHK4EDggd2e+vmMgsWTUaBDJk\\nvH06j7z3tq6IMNTAfVEJkyo0hWk/j6Sj6nsQVFl3L4e8DC5ONksDDg==\\n-----END CERTIFICATE-----\", \"-----BEGIN CERTIFICATE-----\\r\\nMIIBozCCAVWgAwIBAgIKEUVzkzZwaSQpWDAFBgMrZXAwFjEUMBIGA1UEAxMLTWls\\r\\nbGVHcmlsbGUwHhcNMjIwOTE2MTA0MzM1WhcNMjQwMzI3MTA0MzM1WjByMS0wKwYD\\r\\nVQQDEyQyNmM3NGJmMC1hNTVlLTQwY2ItODNlNi03ZWE4MThlMmQ0MTYxQTA/BgNV\\r\\nBAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy\\r\\ncDIyYkF0d0dtN0pmMCowBQYDK2VwAyEAFEBEdYuof2APUzJCq75LwIrPK71xO6OW\\r\\n/yS7q6/dQkqjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G\\r\\nA1UdDgQWBBQD9vRntL7qirUyHq9zmcG45Z47gzAfBgNVHSMEGDAWgBTTiP/MFw4D\\r\\nDwXqQ/J2LLYPRUkkETAFBgMrZXADQQD3h5RSRWUsRZ157odrEaDllF0zIVIYtRL8\\r\\na+mLFw+8ZO7uqwZXbTvfaj4x6uvobeMmUQpV4rIedDHRFxZoJn4C\\n-----END CERTIFICATE-----\"], \"_millegrille\": \"-----BEGIN CERTIFICATE-----\\nMIIBQzCB9qADAgECAgoHBykXJoaCCWAAMAUGAytlcDAWMRQwEgYDVQQDEwtNaWxs\\nZUdyaWxsZTAeFw0yMjAxMTMyMjQ3NDBaFw00MjAxMTMyMjQ3NDBaMBYxFDASBgNV\\nBAMTC01pbGxlR3JpbGxlMCowBQYDK2VwAyEAnnixameVCZAzfx4dO+L63DOk/34I\\n/TC4fIA1Rxn19+KjYDBeMA8GA1UdEwEB/wQFMAMBAf8wCwYDVR0PBAQDAgLkMB0G\\nA1UdDgQWBBTTiP/MFw4DDwXqQ/J2LLYPRUkkETAfBgNVHSMEGDAWgBTTiP/MFw4D\\nDwXqQ/J2LLYPRUkkETAFBgMrZXADQQBSb0vXhw3pw25qrWoMjqROjawe7/kMlu7p\\nMJyb/Ppa2C6PraSVPgJGWKl+/5S5tBr58KFNg+0H94CH4d1VCPwI\\n-----END CERTIFICATE-----\\n\"}";
-    // const CATALOGUE_1: &str = "{\"val\": 1}";
+    const CATALOGUE_2: &str = "{\"dependances\": [{\"certificat\": {\"domaines\": [\"MaitreDesCles\"], \"exchanges\": [\"4.secure\", \"3.protege\", \"2.prive\", \"1.public\"], \"roles\": [\"maitredescles\", \"maitrecles\"]}, \"configs\": [{\"current\": \"cert\", \"filename\": \"/run/secrets/cert.pem\", \"name\": \"pki.maitredescles\"}, {\"filename\": \"/run/secrets/millegrille.cert.pem\", \"name\": \"pki.millegrille\"}], \"constraints\": [\"node.labels.millegrilles.maitredescles == true\"], \"env\": {\"CAFILE\": \"/run/secrets/millegrille.cert.pem\", \"CERTFILE\": \"/run/secrets/cert.pem\", \"KEYFILE\": \"/run/secrets/key.pem\", \"MG_MAITREDESCLES_MODE\": \"partition\", \"MG_MONGO_HOST\": \"mongo\", \"MG_MQ_AUTH_CERT\": \"on\", \"MG_MQ_HOST\": \"mq\", \"MG_MQ_PORT\": \"5673\", \"MG_MQ_SSL\": \"on\", \"MG_REDIS_PASSWORD_FILE\": \"/run/secrets/passwd.redis.txt\", \"MG_REDIS_URL\": \"rediss://client_rust@redis:6379#insecure\", \"RUST_LOG\": \"warn\"}, \"image\": \"docker.maceroc.com/millegrilles_maitredescles:2022.6.0\", \"mode\": {\"mode\": \"replicated\", \"replicas\": 1}, \"name\": \"maitredescles\", \"networks\": [{\"target\": \"millegrille_net\"}], \"resources\": {\"cpu_limit\": 1000000000, \"mem_limit\": 250000000}, \"restart_policy\": {\"condition\": \"on-failure\", \"delay\": 60000000000, \"max_attempts\": 2}, \"secrets\": [{\"current\": \"key\", \"filename\": \"key.pem\", \"name\": \"pki.maitredescles\"}, {\"current\": \"password\", \"filename\": \"passwd.redis.txt\", \"name\": \"passwd.redis\"}]}], \"nom\": \"maitredescles\", \"securite\": \"4.secure\", \"version\": \"2022.6.0\", \"en-tete\": {\"idmg\": \"zeYncRqEqZ6eTEmUZ8whJFuHG796eSvCTWE4M432izXrp22bAtwGm7Jf\", \"uuid_transaction\": \"c1698a20-39f1-11ed-9d27-37d984004598\", \"estampille\": 1663794601, \"version\": 1, \"domaine\": \"CoreCatalogues\", \"action\": \"catalogueApplication\", \"hachage_contenu\": \"m4OQCIJ5oAjz5IWrM1ABTEdu2s5FwOPz9KOWDzW3QewNuck4Y\", \"fingerprint_certificat\": \"z2i3XjxATYCJd5Lns3yTDWPAE4VYsbosQ6CUzSAR43EJCETUKGx\"}, \"_signature\": \"mAnk7YPHkuZxky86cijr136stv6jGni09AfCdzKev+Bf1fH4R3sLlzfgfxA+lGuG/hMgk7xAZ9lDZUw1xnOfxrAU\", \"_certificat\": [\"-----BEGIN CERTIFICATE-----\\nMIIClDCCAkagAwIBAgIUfJOwAg7KNg3EWTT+JB5BkJTzDHMwBQYDK2VwMHIxLTAr\\nBgNVBAMTJDI2Yzc0YmYwLWE1NWUtNDBjYi04M2U2LTdlYTgxOGUyZDQxNjFBMD8G\\nA1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6\\nWHJwMjJiQXR3R203SmYwHhcNMjIwOTE2MTA0MzI2WhcNMjIxMDE3MTA0MzQ2WjCB\\ngTEtMCsGA1UEAwwkMjZjNzRiZjAtYTU1ZS00MGNiLTgzZTYtN2VhODE4ZTJkNDE2\\nMQ0wCwYDVQQLDARjb3JlMUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpG\\ndUhHNzk2ZVN2Q1RXRTRNNDMyaXpYcnAyMmJBdHdHbTdKZjAqMAUGAytlcAMhAOqv\\neCTQlPtt1FyQjY6l6opfqkrkUEl4nuP1hIOdUdmVo4HdMIHaMCsGBCoDBAAEIzQu\\nc2VjdXJlLDMucHJvdGVnZSwyLnByaXZlLDEucHVibGljMAwGBCoDBAEEBGNvcmUw\\nTAYEKgMEAgREQ29yZUJhY2t1cCxDb3JlQ2F0YWxvZ3VlcyxDb3JlTWFpdHJlRGVz\\nQ29tcHRlcyxDb3JlUGtpLENvcmVUb3BvbG9naWUwDwYDVR0RBAgwBoIEY29yZTAf\\nBgNVHSMEGDAWgBQD9vRntL7qirUyHq9zmcG45Z47gzAdBgNVHQ4EFgQUQL5Qblu0\\n6QOndvsWEtt/4P1pMqIwBQYDK2VwA0EAVySc4PByHK4EDggd2e+vmMgsWTUaBDJk\\nvH06j7z3tq6IMNTAfVEJkyo0hWk/j6Sj6nsQVFl3L4e8DC5ONksDDg==\\n-----END CERTIFICATE-----\", \"-----BEGIN CERTIFICATE-----\\r\\nMIIBozCCAVWgAwIBAgIKEUVzkzZwaSQpWDAFBgMrZXAwFjEUMBIGA1UEAxMLTWls\\r\\nbGVHcmlsbGUwHhcNMjIwOTE2MTA0MzM1WhcNMjQwMzI3MTA0MzM1WjByMS0wKwYD\\r\\nVQQDEyQyNmM3NGJmMC1hNTVlLTQwY2ItODNlNi03ZWE4MThlMmQ0MTYxQTA/BgNV\\r\\nBAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy\\r\\ncDIyYkF0d0dtN0pmMCowBQYDK2VwAyEAFEBEdYuof2APUzJCq75LwIrPK71xO6OW\\r\\n/yS7q6/dQkqjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G\\r\\nA1UdDgQWBBQD9vRntL7qirUyHq9zmcG45Z47gzAfBgNVHSMEGDAWgBTTiP/MFw4D\\r\\nDwXqQ/J2LLYPRUkkETAFBgMrZXADQQD3h5RSRWUsRZ157odrEaDllF0zIVIYtRL8\\r\\na+mLFw+8ZO7uqwZXbTvfaj4x6uvobeMmUQpV4rIedDHRFxZoJn4C\\n-----END CERTIFICATE-----\"], \"_millegrille\": \"-----BEGIN CERTIFICATE-----\\nMIIBQzCB9qADAgECAgoJCXgQCXBSIyGXMAUGAytlcDAWMRQwEgYDVQQDEwtNaWxs\\nZUdyaWxsZTAeFw0yMjA5MjUxNzI2MTFaFw00MjA5MjUxNzI2MTFaMBYxFDASBgNV\\nBAMTC01pbGxlR3JpbGxlMCowBQYDK2VwAyEAjnhGdFu7+cxMnjGDyeJJ780GrLzy\\nbqnBqWd8zVRNvvijYDBeMA8GA1UdEwEB/wQFMAMBAf8wCwYDVR0PBAQDAgLkMB0G\\nA1UdDgQWBBTjl7ksVf5vyrK65FmsvmnzmUvMUTAfBgNVHSMEGDAWgBTjl7ksVf5v\\nyrK65FmsvmnzmUvMUTAFBgMrZXADQQCUJI3AiLHKqVZrzJEewaEx+wyrbXw56O10\\nCuDlqpxzKtb1JF7kb6ouveLdLi5UzRi8d0C4d5FlYzD0zws1rA0L\\n-----END CERTIFICATE-----\"}";
 
     struct ValidateurX509Impl {
         idmg: String,
@@ -208,7 +210,7 @@ mod verificateur_tests {
 
     #[tokio::test]
     async fn verification_1() {
-        setup("verification_1");
+        setup("verification bon CA");
 
         let (validateur, enveloppe_privee) = charger_enveloppe_privee_env();
 
@@ -238,6 +240,41 @@ mod verificateur_tests {
         assert_eq!(true, resultat.regles_valides);
         assert_eq!(true, resultat.signature_valide);
         assert_eq!(true, resultat.certificat_valide, "Certificat valide");
+
+    }
+
+    #[tokio::test]
+    async fn verification_2() {
+        setup("verification mauvais CA");
+
+        let (validateur, enveloppe_privee) = charger_enveloppe_privee_env();
+
+        let options = ValidationOptions::new(true, true, true);
+        let mut message = MessageSerialise::from_str(CATALOGUE_2).expect("message serialise");
+
+        let millegrille = message.get_msg().millegrille.as_ref().expect("millegrille").clone();
+        let certificat = message.get_msg().certificat.as_ref().expect("certificat");
+        let enveloppe = validateur.charger_enveloppe(certificat, None, Some(millegrille.as_str())).await
+            .expect("charger_enveloppe");
+        message.set_certificat(enveloppe);
+
+        let enveloppe_millegrille = validateur.charger_enveloppe(&vec![millegrille], None, None).await
+            .expect("charger_enveloppe");
+        message.set_millegrille(enveloppe_millegrille);
+
+        let resultat = verifier_message(
+            &mut message,
+            validateur.as_ref(),
+            Some(&options)
+        );
+
+        debug!("Resultat : {:?}", resultat);
+
+        let resultat = resultat.expect("resultat");
+        assert_eq!(Some(true), resultat.hachage_valide);
+        assert_eq!(true, resultat.regles_valides);
+        assert_eq!(true, resultat.signature_valide);
+        assert_eq!(false, resultat.certificat_valide, "Certificat invalide");
 
     }
 }

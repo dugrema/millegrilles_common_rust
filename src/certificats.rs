@@ -722,7 +722,7 @@ pub trait ValidateurX509: Send + Sync {
         let chaine = &enveloppe.intermediaire;
         match certificat_millegrille {
             Some(cm) => {
-                // Idmg tiers, on bati un store on the fly
+                debug!("Idmg tiers, on bati un store on the fly : CA {:?}", cm.chaine);
                 let cert_ca = &cm.certificat;
                 // let cert_ca = chaine[chaine.len()-1].to_owned();
                 let store = match build_store(cert_ca, false) {
@@ -731,7 +731,7 @@ pub trait ValidateurX509: Send + Sync {
                 };
                 match verifier_certificat(certificat, chaine, &store) {
                     Ok(b) => {
-                        debug!("Verifier certificat result {:?} = {}", certificat, b);
+                        debug!("Verifier certificat result : valide = {}, cert {:?}", b, certificat);
                         Ok(b)
                     },
                     Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat idmg {:?} : {:?}", certificat, e)),
@@ -752,22 +752,25 @@ pub trait ValidateurX509: Send + Sync {
     fn valider_pour_date(&self, enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
         let before = enveloppe.not_valid_before()?;
         let after = enveloppe.not_valid_after()?;
-        let inclus = date >= &before && date <= &after;
-        if inclus == false {
-            // La date n'est pas dans le range du certificat
-            debug!("Pas inclus, date {:?} n'est pas entre {:?} et {:?}", date, before, after);
-        }
+        Ok(date >= &before && date <= &after)
 
-        let certificat = &enveloppe.certificat;
-        let chaine = &enveloppe.intermediaire;
-        let store = self.store_notime();
-        match verifier_certificat(certificat, chaine, store) {
-            Ok(b) => {
-                debug!("Verifier certificat result apres check date OK : {}", b);
-                Ok(b)
-            },
-            Err(e) => Err(format!("Erreur verification certificat avec no time : {:?}", e)),
-        }
+        // let inclus = date >= &before && date <= &after;
+        // if inclus == false {
+        //     // La date n'est pas dans le range du certificat
+        //     debug!("Pas inclus, date {:?} n'est pas entre {:?} et {:?}", date, before, after);
+        //     return Ok(false)
+        // }
+
+        // let certificat = &enveloppe.certificat;
+        // let chaine = &enveloppe.intermediaire;
+        // let store = self.store_notime();
+        // match verifier_certificat(certificat, chaine, store) {
+        //     Ok(b) => {
+        //         debug!("Verifier certificat result apres check date OK : {}", b);
+        //         Ok(b)
+        //     },
+        //     Err(e) => Err(format!("Erreur verification certificat avec no time : {:?}", e)),
+        // }
     }
 
 }
