@@ -83,10 +83,6 @@ where
         Some(c) => c.as_ref(),
         None => Err("Verificateur.verifier_message Certificat manquant")?,
     };
-    // let signature = match &message.get_msg().signature {
-    //     Some(s) => s.as_str(),
-    //     None => Err("Signature manquante")?,
-    // };
 
     // Verifier les regles de validation custom du certificat
     let regles_ok = match verificateur {
@@ -133,25 +129,11 @@ where
     let message_date_valide = estampille <= &certificat.not_valid_after()? &&
         estampille >= &certificat.not_valid_before()?;
 
-    // if message_date_valide == false {
-    //     Err(format!("Message invalide, date estampille {} n'est pas entre {:?} et {:?}",
-    //         estampille, certificat.not_valid_before(), certificat.not_valid_after()))?;
-    // }
-
     // On verifie la signature - si valide, court-circuite le reste de la validation.
     let public_key = match certificat.certificat().public_key() {
         Ok(p) => Ok(p),
         Err(e) => Err(format!("Erreur extraction public_key du certificat : {:?}", e)),
     }?;
-
-    // debug!("Contenu message complte pour verification signature :\n{:?}", message);
-
-    // let contenu_string = MessageMilleGrille::preparer_pour_signature(entete, &message.get_msg().contenu)?;
-    //
-    // let resultat_verifier_signature = match verifier_signature_str(&public_key, signature, contenu_string.as_str()) {
-    //     Ok(r) => Ok(r),
-    //     Err(e) => Err(format!("Erreur verification signature message : {:?}", e)),
-    // }?;
 
     let resultat_verifier_signature = message.parsed.verifier_signature(&public_key)?;
 
@@ -183,58 +165,8 @@ where
     })
 }
 
-// pub fn verifier_hachage(message: &MessageMilleGrille) -> Result<bool, Box<dyn Error>> {
-//     let entete = &message.entete;
-//     let hachage_str = &entete.hachage_contenu;
-//     let contenu_string = MessageMilleGrille::preparer_pour_hachage(&message.contenu)?;
-//
-//     verifier_multihash(hachage_str, contenu_string.as_bytes())
-// }
-
-// pub fn verifier_signature(public_key: &PKey<Public>, message: &MessageSerialise) -> Result<bool, ErrorStack> {
-//     // let (mut message_modifie, _): (BTreeMap<String, Value>, _) = nettoyer_message(message);
-//
-//     // let signature = message.get_message().get("_signature").unwrap().as_str().unwrap();
-//     // debug!("Signature : {}", signature);
-//
-//     // let contenu_str: String = serde_json::to_string(&message_modifie).unwrap();
-//
-//     debug!("Message a verifier (signature)\n{}", contenu_str);
-//
-//     let signature_bytes: (Base, Vec<u8>) = decode(signature).unwrap();
-//     let version_signature = signature_bytes.1[0];
-//     assert_eq!(VERSION_1, version_signature);
-//
-//     let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key).unwrap();
-//     verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
-//     verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
-//     verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
-//     verifier.update(contenu_str.as_bytes())?;
-//
-//     // Retourner la reponse
-//     verifier.verify(&signature_bytes.1[1..])
-// }
-
 pub fn verifier_signature_str(public_key: &PKey<Public>, signature: &str, message: &str) -> Result<bool, Box<dyn Error>> {
-    // let contenu_str = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
-    // debug!("verifier_signature_str (signature: {}, public key: {:?})\n{}", signature, public_key, message);
-
     ref_verifier_message(public_key, message.as_bytes(), signature)
-
-    // let signature_bytes: (Base, Vec<u8>) = decode(signature).unwrap();
-    // let version_signature = signature_bytes.1[0];
-    // if version_signature != VERSION_2 {
-    //     Err(format!("La version de la signature n'est pas 1"))?;
-    // }
-    //
-    // let mut verifier = Verifier::new(MessageDigest::sha512(), &public_key).unwrap();
-    // verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
-    // verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
-    // verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
-    // verifier.update(message.as_bytes())?;
-    //
-    // // Retourner la reponse
-    // Ok(verifier.verify(&signature_bytes.1[1..])?)
 }
 
 pub fn verifier_signature_serialize<S>(public_key: &PKey<Public>, signature: &str, message: &S)
