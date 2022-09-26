@@ -749,28 +749,12 @@ pub trait ValidateurX509: Send + Sync {
         }
     }
 
+    /// Valider le certificat pour une fourchette de date.
+    /// Note : ne valide pas la chaine
     fn valider_pour_date(&self, enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
         let before = enveloppe.not_valid_before()?;
         let after = enveloppe.not_valid_after()?;
         Ok(date >= &before && date <= &after)
-
-        // let inclus = date >= &before && date <= &after;
-        // if inclus == false {
-        //     // La date n'est pas dans le range du certificat
-        //     debug!("Pas inclus, date {:?} n'est pas entre {:?} et {:?}", date, before, after);
-        //     return Ok(false)
-        // }
-
-        // let certificat = &enveloppe.certificat;
-        // let chaine = &enveloppe.intermediaire;
-        // let store = self.store_notime();
-        // match verifier_certificat(certificat, chaine, store) {
-        //     Ok(b) => {
-        //         debug!("Verifier certificat result apres check date OK : {}", b);
-        //         Ok(b)
-        //     },
-        //     Err(e) => Err(format!("Erreur verification certificat avec no time : {:?}", e)),
-        // }
     }
 
 }
