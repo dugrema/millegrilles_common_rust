@@ -226,9 +226,11 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
             guard.clear();
 
             // Reinserer certificat de millegrille
-            let fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+            let mut fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
             let fingerprint = fingerprint_cert[0].fingerprint.clone();
-            guard.insert(fingerprint, fingerprint_cert[0].clone());
+            let mut fpcert = fingerprint_cert.remove(0);
+            fpcert.est_cle_millegrille = true;  // S'assurer d'avoir le flag CA
+            guard.insert(fingerprint, fpcert);
         }
 
         emettre_commande_certificat_maitredescles(middleware).await?;
