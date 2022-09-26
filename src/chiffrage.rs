@@ -116,7 +116,7 @@ pub trait CleChiffrageHandler {
     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey>;
 
     /// Recycle les certificats de chiffrage - fait une requete pour obtenir les certs courants
-    async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>)
+    async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
         -> Result<(), Box<dyn Error>>
         where M: GenerateurMessages;
 
@@ -213,7 +213,7 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
         vals
     }
 
-    async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>)
+    async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
         -> Result<(), Box<dyn Error>>
         where M: GenerateurMessages
     {
@@ -221,16 +221,17 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
 
         // Reset certificats maitredescles. Reinserer cert millegrille immediatement.
         {
-            // let fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
             let mut guard = self.cles_chiffrage.lock().expect("lock");
             guard.clear();
 
             // Reinserer certificat de millegrille
-            let mut fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-            let fingerprint = fingerprint_cert[0].fingerprint.clone();
-            let mut fpcert = fingerprint_cert.remove(0);
-            fpcert.est_cle_millegrille = true;  // S'assurer d'avoir le flag CA
-            guard.insert(fingerprint, fpcert);
+            let env_privee = middleware.get_enveloppe_signature();
+            let mut fingerprint_cert = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA").pop().expect("fingerprint key CA");
+            fingerprint_cert.est_cle_millegrille = true;  // S'assurer d'avoir le flag CA
+            let fingerprint = fingerprint_cert.fingerprint.clone();
+            guard.insert(fingerprint, fingerprint_cert);
+
+            debug!("charger_certificats_chiffrage Reload certificats maitre des cles, presentement CA : {:?}", *guard);
         }
 
         emettre_commande_certificat_maitredescles(middleware).await?;
@@ -291,7 +292,8 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
                 Ok(p) => p,
                 Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
             }.pop();
-            if let Some(pk_ca) = public_keys_ca {
+            if let Some(mut pk_ca) = public_keys_ca {
+                pk_ca.est_cle_millegrille = true;
                 guard.insert(pk_ca.fingerprint.clone(), pk_ca);
             }
 

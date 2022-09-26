@@ -391,11 +391,11 @@ impl CleChiffrageHandler for MiddlewareMessage {
         self.chiffrage_factory.get_publickeys_chiffrage()
     }
 
-    async fn charger_certificats_chiffrage<M>(&self, middleware: &M, cert_local: &EnveloppeCertificat, env_privee: Arc<EnveloppePrivee>)
+    async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
         -> Result<(), Box<dyn Error>>
         where M: GenerateurMessages
     {
-        self.chiffrage_factory.charger_certificats_chiffrage(middleware, cert_local, env_privee).await
+        self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
     }
 
     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
