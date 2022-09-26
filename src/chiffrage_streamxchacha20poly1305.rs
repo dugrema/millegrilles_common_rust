@@ -46,7 +46,10 @@ impl CipherMgs4 {
                 .filter(|k| k.est_cle_millegrille).collect();
             match cle_millegrille_v.pop() {
                 Some(c) => c,
-                None => Err(format!("CipherMgs3::new Cle de millegrille manquante"))?
+                None => {
+                    debug!("CipherMgs3::new Cle de millegrille manquante, cles presentes : {:?}", public_keys);
+                    Err(format!("CipherMgs3::new Cle de millegrille manquante"))?
+                }
             }
         };
         // Deriver cle secrete

@@ -878,11 +878,14 @@ pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &
             TRANSACTION_CHAMP_TRANSACTION_RESTAUREE: true,
         },
     };
+    debug!("reset_backup_flag Filtre update flags sur {} : {:?}, ops: {:?}", nom_collection_transactions, filtre, ops);
     let reponse = match collection.update_many(filtre, ops, None).await {
         Ok(r) => {
+            debug!("reset_backup_flag Update result {} : {:?}", nom_collection_transactions, r);
             middleware.formatter_reponse(json!({"ok": true, "count": r.modified_count}), None)?
         },
         Err(e) => {
+            error!("reset_backup_flag Erreur sur {} : {:?}", nom_collection_transactions, e);
             middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?
         }
     };
