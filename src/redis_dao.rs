@@ -74,6 +74,10 @@ impl RedisDao {
         // let resultat: String = redis::cmd("GET").arg("certificat:zQmYZfSGuY86wTDBPM6MdYzRGWSqrYtWdbXfquMVG5buxrm").query_async(&mut con).await?;
         let resultat: Vec<String> = redis::cmd("KEYS").arg(format!("{}:*", CLE_CERTIFICAT)).query_async(&mut con).await?;
         debug!("Resultat : {:?}", resultat);
+
+        // Conserver fingerprint, retirer version
+        let resultat: Vec<String> = resultat.into_iter().map(|f| f.split(":").last().expect("fingerprint").to_string()).collect();
+
         Ok(resultat)
     }
 
