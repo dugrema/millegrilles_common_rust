@@ -809,7 +809,10 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
         let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
         let cert_local = env_privee.enveloppe.as_ref();
         let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
+
+        // Charger cle de millegrille
         let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+        if list_fp_ca.is_empty() { panic!("Cle de millegrille absente de env_privee.enveloppe_ca"); }
         fp_certs.extend(list_fp_ca);
 
         let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
