@@ -344,7 +344,7 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
             match inner.type_message {
                 TypeMessageIn::Evenement => {
                     match inner.action.as_str() {
-                        "infoCertificat" => {
+                        PKI_REQUETE_CERTIFICAT => {
                             debug!("intercepter_messageEvenement certificat {}, message intercepte", inner.routing_key);
                             traiter_certificatintercepter_message(middleware, inner).await;
                             true  // Intercepte
@@ -432,7 +432,9 @@ async fn traiter_certificatintercepter_message<M>(middleware: &M, inner: &Messag
                 None => None,
             };
             match middleware.charger_enveloppe(&chaine_pem, fingerprint, None).await {
-                Ok(_) => (),
+                Ok(e) => {
+                    debug!("traiter_certificatintercepter_message Certificat intercepte {}", e.fingerprint);
+                },
                 Err(e) => info!("Erreur chargement message certificat.infoCertificat : {:?}", e)
             }
         },

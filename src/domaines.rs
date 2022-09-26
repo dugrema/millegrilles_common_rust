@@ -522,7 +522,20 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         _ => self.consommer_evenement(middleware.as_ref(), message).await
                     }
                 },
-                false => self.consommer_evenement(middleware.as_ref(), message).await
+                false => {
+                    match message.verifier_exchanges(vec!(Securite::L1Public)) {
+                        true => match message.domaine.as_str() {
+                            PKI_DOCUMENT_CHAMP_CERTIFICAT => match message.action.as_str() {
+                                PKI_REQUETE_CERTIFICAT => {
+                                    todo!("Traiter evenement info certificat");
+                                },
+                                _ => self.consommer_evenement(middleware.as_ref(), message).await
+                            },
+                            _ => self.consommer_evenement(middleware.as_ref(), message).await
+                        },
+                        false => self.consommer_evenement(middleware.as_ref(), message).await
+                    }
+                }
             }
         }
     }
