@@ -327,7 +327,7 @@ mod rabbitmq_dao_tests {
             todo!()
         }
 
-        async fn charger_certificats_chiffrage<M>(&self, _middleware: &M, _cert_local: &EnveloppeCertificat, _env_privee: Arc<EnveloppePrivee>) -> Result<(), Box<dyn Error>> where M: GenerateurMessages {
+        async fn charger_certificats_chiffrage<M>(&self, _middleware: &M) -> Result<(), Box<dyn Error>> where M: GenerateurMessages {
             todo!()
         }
 

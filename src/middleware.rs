@@ -177,7 +177,13 @@ impl ValidateurX509 for MiddlewareMessage {
                     Some(c) => Some(c),
                     None => {
                         // Dernier recours, tenter de charger certificat via MQ
-                        todo!("charger certificat via MQ")
+                        match requete_certificat(self, fingerprint).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!("ValidateurX509.get_certificat Erreur chargement certificat {} : {:?}", fingerprint, e);
+                                None
+                            }
+                        }
                     }
                 }
             }

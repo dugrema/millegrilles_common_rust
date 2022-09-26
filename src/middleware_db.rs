@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use mongodb::Database;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
@@ -21,7 +21,7 @@ use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, 
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait};
+use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
@@ -136,9 +136,14 @@ impl ValidateurX509 for MiddlewareDb {
                 match charger_certificat_redis(self, fingerprint).await {
                     Some(c) => Some(c),
                     None => {
-                        // Certificat absent de redis, charger directement de
-                        // la base de donnees MongoDB
-                        todo!("Charger certificat via mongodb - et si absent, charger avec broadcast MQ")
+                        // Certificat absent de redis, via MQ
+                        match requete_certificat(self, fingerprint).await {
+                            Ok(c) => c,
+                            Err(e) => {
+                                error!("ValidateurX509.get_certificat Erreur chargement certificat {} : {:?}", fingerprint, e);
+                                None
+                            }
+                        }
                     }
                 }
             }
