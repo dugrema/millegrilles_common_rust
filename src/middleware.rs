@@ -150,22 +150,32 @@ impl ValidateurX509 for MiddlewareMessage {
         Ok(enveloppe)
     }
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
-        let (enveloppe, compteur) = self.ressources.validateur.cacher(certificat).await;
-        if compteur == 0 {
-            // Le certificat n'etait pas dans le cache, on s'assure qu'il existe dans redis
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
+        let (enveloppe, persiste) = self.ressources.validateur.cacher(certificat).await;
+
+        let persiste = if ! persiste {
             match self.redis.as_ref() {
                 Some(redis) => {
                     match redis.save_certificat(enveloppe.as_ref()).await {
-                        Ok(()) => debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint()),
-                        Err(e) => warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint(), e)
+                        Ok(()) => {
+                            debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint);
+                            //self.ressources.validateur.set_flag_persiste(enveloppe.fingerprint.as_str());
+                            true
+                        },
+                        Err(e) => {
+                            warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint, e);
+                            false
+                        }
                     }
                 },
-                None => ()
+                None => false
             }
-        }
+        } else {
+            persiste
+        };
 
-        (enveloppe, compteur)
+        /// Retourne le certificat et indicateur qu'il a ete persiste
+        (enveloppe, persiste)
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {

@@ -47,11 +47,16 @@ const OID_DELEGATION_DOMAINES: &str = "1.2.3.4.5";
 const TAILLE_CACHE_MAX: usize = 250;      // Limite a ne pas depasser dans le cache
 const TAILLE_CACHE_NETTOYER: usize = 50;  // Trigger un nettoyage regulier du cache
 
+/// Conserve un certificat dans le cache en memoire
 struct CacheCertificat {
+    /// Certificat
     enveloppe: Arc<EnveloppeCertificat>,
-    //date_creation: DateTime<Utc>,
+    /// Date du dernier acces (pour mode MRU)
     dernier_acces: DateTime<Utc>,
+    /// Nombre d'acces depuis mise en cache (pour mode LFU)
     compte_acces: usize,
+    /// True si le certificat a ete persiste localement (redis ou mongodb)
+    persiste: bool,
 }
 
 impl CacheCertificat {
@@ -60,7 +65,8 @@ impl CacheCertificat {
             enveloppe,
             //date_creation: Utc::now(),
             dernier_acces: Utc::now(),
-            compte_acces: 0
+            compte_acces: 0,
+            persiste: false,
         }
     }
 }
@@ -697,7 +703,9 @@ pub trait ValidateurX509: Send + Sync {
 
     async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String>;
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize);
+    /// Conserve un certificat dans le cache
+    /// retourne le certificat et un bool qui indique si le certificat a deja ete persiste (true)
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool);
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>;
 
@@ -841,7 +849,7 @@ impl ValidateurX509 for ValidateurX509Impl {
         }
     }
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
 
         let fingerprint = certificat.fingerprint().clone();
 
@@ -852,7 +860,7 @@ impl ValidateurX509 for ValidateurX509Impl {
                 e.compte_acces = e.compte_acces + 1;
                 e.dernier_acces = Utc::now();
 
-                (e.enveloppe.clone(), e.compte_acces)
+                (e.enveloppe.clone(), e.persiste)
             },
             None => {
                 let enveloppe = Arc::new(certificat);
@@ -865,7 +873,8 @@ impl ValidateurX509 for ValidateurX509Impl {
                     debug!("Cache certificat plein, on ne conserve pas le certificat en memoire");
                 }
 
-                (enveloppe, 0)
+                // Retourne l'enveloppe et indicateur que le certificat n'est pas persiste
+                (enveloppe, false)
             }
         }
     }
