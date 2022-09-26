@@ -119,7 +119,7 @@ impl ValidateurX509 for MiddlewareDb {
                     match redis.save_certificat(enveloppe.as_ref()).await {
                         Ok(()) => {
                             debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint);
-                            //self.ressources.ressources.validateur.set_flag_persiste(enveloppe.fingerprint.as_str());
+                            self.ressources.ressources.validateur.set_flag_persiste(enveloppe.fingerprint.as_str());
                             true
                         },
                         Err(e) => {
@@ -136,6 +136,10 @@ impl ValidateurX509 for MiddlewareDb {
 
         /// Retourne le certificat et indicateur qu'il a ete persiste
         (enveloppe, persiste)
+    }
+
+    fn set_flag_persiste(&self, fingerprint: &str) {
+        self.ressources.ressources.validateur.set_flag_persiste(fingerprint)
     }
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {

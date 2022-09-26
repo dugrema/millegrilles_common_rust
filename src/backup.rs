@@ -1022,7 +1022,11 @@ mod backup_tests {
             todo!()
         }
 
-        async fn cacher(&self, _certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, usize) {
+        async fn cacher(&self, _certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
+            todo!()
+        }
+
+        fn set_flag_persiste(&self, fingerprint: &str) {
             todo!()
         }
 

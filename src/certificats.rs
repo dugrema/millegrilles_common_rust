@@ -707,6 +707,9 @@ pub trait ValidateurX509: Send + Sync {
     /// retourne le certificat et un bool qui indique si le certificat a deja ete persiste (true)
     async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool);
 
+    /// Set le flag persiste a true pour le certificat correspondant a fingerprint
+    fn set_flag_persiste(&self, fingerprint: &str);
+
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>;
 
     fn idmg(&self) -> &str;
@@ -876,6 +879,13 @@ impl ValidateurX509 for ValidateurX509Impl {
                 // Retourne l'enveloppe et indicateur que le certificat n'est pas persiste
                 (enveloppe, false)
             }
+        }
+    }
+
+    fn set_flag_persiste(&self, fingerprint: &str) {
+        let mut mutex = self.cache_certificats.lock().expect("lock");
+        if let Some(certificat) = mutex.get_mut(fingerprint) {
+            certificat.persiste = true;
         }
     }
 
