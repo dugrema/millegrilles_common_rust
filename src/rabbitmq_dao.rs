@@ -541,7 +541,7 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
         let mut guard = rabbitmq.rx_reply.lock().expect("lock");
         match guard.take() {
             Some(rx) => rx,
-            None => panic!("thread_consumer_reply_queue rx reply non disponible")
+            None => panic!("thread_traiter_reply_q rx reply non disponible")
         }
     };
 
@@ -560,13 +560,13 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
                 ).await {
                     Ok(m) => m,
                     Err(e) => {
-                        error!("named_queue_traiter_messages Erreur traitement message : {:?}", e);
+                        error!("thread_traiter_reply_q Erreur traitement message : {:?}", e);
                         None
                     }
                 }
             },
             _ => {
-                debug!("named_queue_traiter_messages Type de message non-supporte, on l'ignore");
+                debug!("thread_traiter_reply_q Type de message non-supporte, on l'ignore");
                 None
             }
         };
@@ -839,6 +839,19 @@ async fn named_queue_traiter_messages<M>(
                     Ok(m) => m,
                     Err(e) => {
                         error!("named_queue_traiter_messages Erreur traitement message : {:?}", e);
+                        None
+                    }
+                }
+            },
+            MessageInterne::Trigger(delivery, nom_queue) => {
+                match traiter_delivery(
+                    middleware.as_ref(),
+                    nom_queue.as_str(),
+                    delivery
+                ).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("named_queue_traiter_messages Erreur traitement trigger : {:?}", e);
                         None
                     }
                 }

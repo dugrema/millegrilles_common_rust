@@ -172,7 +172,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
         debug!("Consommer evenement trait : {:?}", &message.message);
         // Autorisation : les evenements (triggers) globaux sont de niveau 4
         // Fallback sur les evenements specifiques au domaine
-        match message.verifier_exchanges(vec!(Securite::L4Secure)) {
+        match message.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure)) {
             true => {
                 match message.action.as_str() {
                     EVENEMENT_CEDULE => {
