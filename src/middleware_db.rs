@@ -164,6 +164,10 @@ impl ValidateurX509 for MiddlewareDb {
         }
     }
 
+    fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
+        self.ressources.ressources.validateur.certificats_persister()
+    }
+
     fn idmg(&self) -> &str { self.ressources.ressources.validateur.idmg() }
 
     fn ca_pem(&self) -> &str { self.ressources.ressources.validateur.ca_pem() }
@@ -174,7 +178,20 @@ impl ValidateurX509 for MiddlewareDb {
 
     fn store_notime(&self) -> &X509Store { self.ressources.ressources.validateur.store_notime() }
 
-    async fn entretien_validateur(&self) { self.ressources.ressources.validateur.entretien_validateur().await; }
+    async fn entretien_validateur(&self) {
+        if let Some(redis) = self.redis.as_ref() {
+            // Conserver les certificats qui n'ont pas encore ete persistes
+            for certificat in self.ressources.ressources.validateur.certificats_persister().iter() {
+                debug!("entretien_validateur Persister {}", certificat.fingerprint());
+                match redis.save_certificat(certificat).await {
+                    Ok(()) => self.set_flag_persiste(certificat.fingerprint.as_str()),
+                    Err(e) => warn!("entretien_validateur Erreur sauvegarde certificat {:?}", e)
+                }
+            }
+        }
+
+        self.ressources.ressources.validateur.entretien_validateur().await;
+    }
 }
 
 #[async_trait]

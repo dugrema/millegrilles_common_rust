@@ -1034,6 +1034,10 @@ mod backup_tests {
             Some(self.enveloppe_privee.enveloppe.clone())
         }
 
+        fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
+            todo!()
+        }
+
         fn idmg(&self) -> &str {
             todo!()
         }

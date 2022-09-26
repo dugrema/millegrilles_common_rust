@@ -712,6 +712,9 @@ pub trait ValidateurX509: Send + Sync {
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>;
 
+    /// Retourne une liste de certificats qui n'ont pas encore ete persiste.
+    fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>>;
+
     fn idmg(&self) -> &str;
 
     fn ca_pem(&self) -> &str;
@@ -901,6 +904,15 @@ impl ValidateurX509 for ValidateurX509Impl {
             },
             None => None,
         }
+    }
+
+    /// Retourne une liste de certificats qui n'ont pas encore ete persiste.
+    fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
+        let mut mutex = self.cache_certificats.lock().expect("lock");
+        mutex.iter()
+            .filter(|(_,c)| !c.persiste)
+            .map(|e| e.1.enveloppe.clone())
+            .collect()
     }
 
     fn idmg(&self) -> &str { self.idmg.as_str() }

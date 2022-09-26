@@ -233,6 +233,10 @@ mod rabbitmq_dao_tests {
             todo!()
         }
 
+        fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
+            todo!()
+        }
+
         fn idmg(&self) -> &str {
             todo!()
         }
