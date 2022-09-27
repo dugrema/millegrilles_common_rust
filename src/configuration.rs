@@ -86,7 +86,7 @@ fn charger_configuration_mq(pki: &ConfigurationPki) -> Result<ConfigurationMq, S
     // Generer fichier p12 avec cle et certificat pour la connexion ssl
     let (p12_keycert, p12_password) = pki.exporter_p12_certfile();
 
-    let _ = pki.exporter_clecert()?;
+    // let _ = pki.exporter_clecert()?;
 
     let port: u16 = match std::env::var("MG_MQ_PORT") {
         Ok(p) => p.parse().unwrap(),
