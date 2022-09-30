@@ -50,8 +50,10 @@ pub struct InformationCle {
     pub format: String,
     pub hachage_bytes: String,
     pub identificateurs_document: Option<HashMap<String, String>>,
-    pub iv: String,
+    pub iv: Option<String>,
     pub tag: Option<String>,
+    pub header: Option<String>,
+    pub signature_identite: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -60,8 +62,10 @@ pub struct MetaInformationCle {
     pub format: String,
     pub hachage_bytes: String,
     pub identificateurs_document: Option<HashMap<String, String>>,
-    pub iv: String,
+    pub iv: Option<String>,
     pub tag: Option<String>,
+    pub header: Option<String>,
+    pub signature_identite: String,
 }
 
 impl From<InformationCle> for MetaInformationCle {
@@ -73,6 +77,8 @@ impl From<InformationCle> for MetaInformationCle {
             identificateurs_document: value.identificateurs_document,
             iv: value.iv,
             tag: value.tag,
+            header: value.header,
+            signature_identite: value.signature_identite,
         }
     }
 }
