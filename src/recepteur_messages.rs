@@ -541,6 +541,23 @@ impl MessageValideAction {
         }
     }
 
+    pub fn from_message_millegrille(message: MessageMilleGrille, type_message: TypeMessageIn) -> Result<Self, Box<dyn Error>> {
+        let entete = message.entete.clone();
+        let message_serialize = MessageSerialise::from_parsed(message)?;
+
+        let domaine = match &entete.domaine {
+            Some(d) => d.as_str(),
+            None => Err(format!("MessageValideAction.from_message_millegrille Domaine None"))?
+        };
+
+        let action = match &entete.action {
+            Some(d) => d.as_str(),
+            None => Err(format!("MessageValideAction.from_message_millegrille Action None"))?
+        };
+
+        Ok(Self::new(message_serialize, "interne", "interne", domaine, action, type_message))
+    }
+
     pub fn get_reply_info(&self) -> Result<(String, String), String> {
         let reply_q = match &self.reply_q {
             Some(r) => r.to_owned(),
