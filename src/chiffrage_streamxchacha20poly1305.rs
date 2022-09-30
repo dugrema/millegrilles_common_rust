@@ -16,8 +16,8 @@ use multihash::Code;
 use openssl::pkey::{PKey, Private};
 
 use crate::certificats::FingerprintCertPublicKey;
-use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, MgsCipherData, MgsCipherKeys};
-use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree};
+use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree, IdentiteCle};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
 use crate::hachages::Hacheur;
 
@@ -343,29 +343,31 @@ impl MgsCipherKeys for Mgs4CipherKeys {
 
     fn get_commande_sauvegarder_cles(
         &self,
+        cle_secrete: &CleSecrete,
         domaine: &str,
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>
-    ) -> CommandeSauvegarderCle {
+    ) -> Result<CommandeSauvegarderCle, String> {
 
         let fingerprint_partitions = self.get_fingerprint_partitions();
 
-        todo!("Fix me - signature identite")
+        let mut commande = CommandeSauvegarderCle {
+            hachage_bytes: self.hachage_bytes.clone(),
+            domaine: domaine.to_owned(),
+            identificateurs_document,
+            signature_identite: "".into(),
+            cles: self.cles_to_map(),
+            iv: None,
+            tag: None,
+            header: Some(self.header.clone()),
+            format: FormatChiffrage::mgs4,
+            partition,
+            fingerprint_partitions: Some(fingerprint_partitions),
+        };
 
-        // CommandeSauvegarderCle {
-        //     hachage_bytes: self.hachage_bytes.clone(),
-        //     domaine: domaine.to_owned(),
-        //     identificateurs_document,
-        //     user_id: self.user_id.clone(),
-        //     signature_identite: self.signature_identite.clone(),
-        //     cles: self.cles_to_map(),
-        //     iv: Some(self.iv.clone()),
-        //     tag: Some(self.tag.clone()),
-        //     header: None,
-        //     format: FormatChiffrage::mgs4,
-        //     partition,
-        //     fingerprint_partitions: Some(fingerprint_partitions),
-        // }
+        commande.signer_identite(cle_secrete)?;
+
+        Ok(commande)
     }
 
     fn get_cle_millegrille(&self) -> Option<String> {

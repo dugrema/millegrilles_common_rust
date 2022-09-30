@@ -88,10 +88,11 @@ pub trait MgsCipherData {
 pub trait MgsCipherKeys {
     fn get_commande_sauvegarder_cles(
         &self,
+        cle_secrete: &CleSecrete,
         domaine: &str,
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>,
-    ) -> CommandeSauvegarderCle;
+    ) -> Result<CommandeSauvegarderCle, String>;
 
     /// Retourne la valeur chiffree de la cle de millegrille
     /// Note : pour Ed25519, retourne la cle peer publique.

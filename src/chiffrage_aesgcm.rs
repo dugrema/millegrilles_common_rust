@@ -10,7 +10,7 @@ use openssl::pkey::{PKey, Private};
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use crate::certificats::FingerprintCertPublicKey;
-use crate::chiffrage::{CipherMgs, DecipherMgs, MgsCipherData, MgsCipherKeys};
+use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree};
 use crate::chiffrage_rsa::*;
 use crate::hachages::Hacheur;
@@ -253,10 +253,11 @@ impl MgsCipherKeys for Mgs2CipherKeys {
 
     fn get_commande_sauvegarder_cles(
         &self,
+        cle_secrete: &CleSecrete,
         domaine: &str,
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>
-    ) -> CommandeSauvegarderCle {
+    ) -> Result<CommandeSauvegarderCle, String> {
 
         let fingerprint_partitions = self.get_fingerprint_partitions();
 
