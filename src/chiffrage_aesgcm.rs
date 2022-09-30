@@ -253,7 +253,6 @@ impl MgsCipherKeys for Mgs2CipherKeys {
 
     fn get_commande_sauvegarder_cles(
         &self,
-        cle_secrete: &CleSecrete,
         domaine: &str,
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>

@@ -2,7 +2,7 @@ use core::fmt::Formatter;
 use std::cmp::min;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::Debug;
+use std::fmt::{Debug, Write};
 
 use dryoc::classic::crypto_secretstream_xchacha20poly1305::*;
 use dryoc::constants::{
@@ -33,6 +33,7 @@ pub struct CipherMgs4 {
     hachage_bytes: Option<String>,
     buffer: [u8; CONST_TAILLE_BLOCK_MGS4-CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES],  // Buffer de chiffrage
     position_buffer: usize,
+    cle_secrete: CleSecrete,
 }
 
 impl CipherMgs4 {
@@ -77,6 +78,7 @@ impl CipherMgs4 {
         let mut header = Header::default();
         let key = Key::from(cle_derivee.secret.0);
         crypto_secretstream_xchacha20poly1305_init_push(&mut state, &mut header, &key);
+        let cle_secrete = CleSecrete(key);
 
         let hacheur = Hacheur::builder()
             .digester(Code::Blake2b512)
@@ -92,6 +94,7 @@ impl CipherMgs4 {
             hachage_bytes: None,
             buffer: [0u8; CONST_TAILLE_BLOCK_MGS4-CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES],
             position_buffer: 0,
+            cle_secrete
         })
     }
 }
@@ -171,6 +174,7 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
             self.cles_chiffrees.clone(),
             self.header.clone(),
             hachage_bytes,
+            Some(self.cle_secrete),
         );
         cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
 
@@ -282,17 +286,35 @@ impl DecipherMgs<Mgs4CipherData> for DecipherMgs4 {
 
 }
 
-#[derive(Clone, Debug)]
 pub struct Mgs4CipherKeys {
     cles_chiffrees: Vec<FingerprintCleChiffree>,
     pub header: String,
     pub fingerprint_cert_millegrille: Option<String>,
     pub hachage_bytes: String,
+    cle_secrete: Option<CleSecrete>,
+}
+
+impl Debug for Mgs4CipherKeys {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(format!("Mgs4CipherKeys {}", self.hachage_bytes).as_str())
+    }
+}
+
+impl Clone for Mgs4CipherKeys {
+    fn clone(&self) -> Self {
+        Self {
+            cles_chiffrees: self.cles_chiffrees.clone(),
+            header: self.header.clone(),
+            fingerprint_cert_millegrille: self.fingerprint_cert_millegrille.clone(),
+            hachage_bytes: self.hachage_bytes.clone(),
+            cle_secrete: None,  // Retirer cle secrete
+        }
+    }
 }
 
 impl Mgs4CipherKeys {
-    pub fn new(cles_chiffrees: Vec<FingerprintCleChiffree>, header: String, hachage_bytes: String) -> Self {
-        Mgs4CipherKeys { cles_chiffrees, header, fingerprint_cert_millegrille: None, hachage_bytes }
+    pub fn new(cles_chiffrees: Vec<FingerprintCleChiffree>, header: String, hachage_bytes: String, cle_secrete: Option<CleSecrete>) -> Self {
+        Mgs4CipherKeys { cles_chiffrees, header, fingerprint_cert_millegrille: None, hachage_bytes, cle_secrete }
     }
 
     pub fn set_fingerprint_cert_millegrille(&mut self, fingerprint_cert_millegrille: &str) {
@@ -343,11 +365,15 @@ impl MgsCipherKeys for Mgs4CipherKeys {
 
     fn get_commande_sauvegarder_cles(
         &self,
-        cle_secrete: &CleSecrete,
         domaine: &str,
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>
     ) -> Result<CommandeSauvegarderCle, String> {
+
+        let cle_secrete = match &self.cle_secrete {
+            Some(c) => c,
+            None => Err(format!("Mgs4CipherKeys.get_commande_sauvegarder_cles CleSecrete None"))?
+        };
 
         let fingerprint_partitions = self.get_fingerprint_partitions();
 
