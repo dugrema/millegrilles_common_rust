@@ -524,7 +524,7 @@ pub struct MessageValideAction {
     pub type_message: TypeMessageIn,
 }
 impl MessageValideAction {
-    pub fn new<S>(message: MessageSerialise, q: S, routing_key: S, domaine: S, action: S, type_message: TypeMessageIn)
+    pub fn new<'a,S>(message: MessageSerialise, q: S, routing_key: S, domaine: S, action: S, type_message: TypeMessageIn)
         -> Self
         where S: Into<String>
     {
@@ -553,6 +553,16 @@ impl MessageValideAction {
 
         Ok((reply_q, correlation_id))
     }
+
+    pub fn get_partition(&self) -> Option<&str> {
+        let routing_key: Vec<&str> = self.routing_key.split(".").collect();
+        if routing_key.len() == 4 {
+            Some(*routing_key.get(2).expect("get"))
+        } else {
+            None
+        }
+    }
+
 }
 impl TryInto<TransactionImpl> for MessageValideAction {
     type Error = Box<dyn Error>;
