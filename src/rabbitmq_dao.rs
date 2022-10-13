@@ -26,6 +26,7 @@ use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 use crate::recepteur_messages::{intercepter_message, traiter_delivery, TypeMessage};
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
+const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(400);
 const FLAG_TTL: &str = "x-message-ttl";
 
 // pub struct RabbitMq {
@@ -475,10 +476,13 @@ async fn thread_reply_q<M, C>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor
 /// Retire les "attentes" de reply expirees
 async fn thread_entretien_attente(rabbitmq: Arc<RabbitMqExecutor>) {
     loop {
-        tokio::time::sleep(ATTENTE_RECONNEXION).await;
+        tokio::time::sleep(INTERVALLE_ENTRETIEN_ATTENTE).await;
         {
             // Purger toutes les attentes expirees
             let mut guard = rabbitmq.map_attente.lock().expect("lock");
+            if guard.len() == 0 {
+                continue;  // Rien a faire
+            }
             let date_now = Utc::now();
             debug!("Attentes de reponse pre-cleanup: {}", guard.len());
             guard.retain(|_, attente| attente.expiration > date_now);
@@ -664,7 +668,7 @@ impl MqMessageSendInformation for RabbitMqExecutor {
                         // Creer channel de reception one-shot
                         let (tx, rx) = sync::oneshot::channel();
 
-                        debug!("send_out Attente pour correlation {}", c);
+                        debug!("send_out Attente pour correlation {} timeout {:?}", c, expiration);
 
                         // Ajouter attente pour correlation
                         let attente = AttenteReponse {

@@ -257,31 +257,6 @@ impl GenerateurMessagesImpl {
         }
 
         self.rabbitmq.send_out(message).await
-
-        // // Faire un clone du sender
-        // let sender = {
-        //     match self.tx_out.lock().unwrap().as_ref() {
-        //         Some(sender_ref) => Some(sender_ref.clone()),
-        //         None => None,
-        //     }
-        // };
-        //
-        // match sender {
-        //     Some(s) => {
-        //         debug!("Emettre message out : {:?}", &message);
-        //         let resultat = s.send(message).await;
-        //         match resultat {
-        //             Ok(()) => {
-        //                 debug!("Message emis");
-        //                 Ok(())
-        //             },
-        //             Err(e) => {
-        //                 Err(format!("Erreur send message {:?}", e.to_string()))
-        //             }
-        //         }
-        //     },
-        //     None => Err("Err, MQ n'est pas pret a emettre des messages".into())
-        // }
     }
 }
 
