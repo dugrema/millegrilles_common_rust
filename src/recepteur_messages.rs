@@ -19,162 +19,162 @@ use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, TypeMessageOut};
 use crate::transactions::TransactionImpl;
 use crate::verificateur::verifier_message;
 
-/// Thread de traitement des messages
-pub async fn recevoir_messages<M>(
-    middleware: Arc<M>,
-    mut rx: Receiver<MessageInterne>,
-    tx_verifie: Sender<TypeMessage>,
-)
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages
-{
-    debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
-
-    let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
-
-    while let Some(mi) = rx.recv().await {
-        trace!("recevoir_messages: Message recu : {:?}", mi);
-
-        let (delivery, nom_q, tx) = match mi {
-            MessageInterne::Delivery(d, q) => {
-                debug!("recevoir_messages Delivery via {}", q);
-                (d, q, &tx_verifie)
-            },
-            MessageInterne::AttenteReponse(a) => {
-                debug!("recevoir_messages AttenteReponse {:?}", a);
-                map_attente.insert(a.correlation.clone(), a);
-                continue
-            },
-            MessageInterne::CancelDemandeReponse(fp) => {
-                debug!("recevoir_messages CancelDemandeReponse : {}", fp);
-                map_attente.remove(&fp);
-                continue
-            },
-            MessageInterne::Trigger(d, q) => {
-                debug!("recevoir_messages Trigger via {}", q);
-                (d, q, &tx_verifie)
-            },
-        };
-
-        // Extraire le contenu du message
-        let mut contenu = match parse(delivery.data) {
-            Ok(c) => c,
-            Err(e) => {
-                error!("Erreur parsing message : {:?}", e);
-                continue
-            }
-        };
-
-        let entete = contenu.get_entete().clone();
-        // let fingerprint_certificat = entete.fingerprint_certificat.as_str();
-        debug!("Traiter message {:?}", entete);
-
-        // Extraire routing key pour gerer messages qui ne requierent pas de validation
-        let (routing_key, type_message, domaine, action) = {
-            let rk = delivery.routing_key.as_str();
-            let ex = delivery.exchange.as_str();
-            if ex == "" {
-                debug!("Reponse recue pour {:?}", entete.uuid_transaction);
-                (None, Some(TypeMessageIn::Reponse), None, None)
-            } else {
-                let copie_rk = rk.to_owned();
-                let mut rk_split = copie_rk.split(".");
-                let type_str = rk_split.next().expect("Type message manquant de la RK");
-                let domaine: Option<String> = Some(rk_split.next().expect("Domaine manquant de la RK").into());
-                let action: Option<String> = Some(rk_split.last().expect("Action manquante de la RK").into());
-                let type_message = match type_str {
-                    "requete" => Some(TypeMessageIn::Requete),
-                    "evenement" => Some(TypeMessageIn::Evenement),
-                    "commande" => Some(TypeMessageIn::Commande),
-                    "transaction" => Some(TypeMessageIn::Transaction),
-                    _ => None
-                };
-
-                (Some(String::from(rk)), type_message, domaine, action)
-            }
-        };
-
-        // Valider le message. Si on a deja le certificat, on fait juste l'extraire du Option.
-        if let Err(e) = valider_message(middleware.as_ref(), &mut contenu).await {
-            error!("Erreur validation message : {:?}", e);
-            continue;  // Skip
-        }
-
-        let exchange = {
-            let ex = delivery.exchange.as_str();
-            if ex == "" {
-                None
-            } else {
-                Some(String::from(ex))
-            }
-        };
-        let properties = delivery.properties;
-        let correlation_id = match properties.correlation_id() {
-            Some(c) => Some(String::from(c.as_str())),
-            None => None,
-        };
-        let reply_q = match properties.reply_to() {
-            Some(q) => Some(String::from(q.as_str())),
-            None => None,
-        };
-
-        debug!("Message valide {:?}, passer a la prochaine etape (correlation: {:?})", &entete, correlation_id);
-        let message = match action {
-            Some(inner_action) => {
-                TypeMessage::ValideAction(MessageValideAction {
-                    message: contenu,
-                    q: nom_q,
-                    reply_q,
-                    correlation_id: correlation_id.clone(),
-                    routing_key: routing_key.expect("routing key inconnue"),
-                    domaine: domaine.expect("domaine inconnu"),
-                    action: inner_action,
-                    exchange,
-                    type_message: type_message.clone().expect("type message inconnu"),
-                })
-            },
-            None => {
-                TypeMessage::Valide(MessageValide {
-                    message: contenu,
-                    q: nom_q,
-                    reply_q,
-                    correlation_id: correlation_id.clone(),
-                    routing_key,
-                    domaine,
-                    exchange,
-                    type_message: type_message.clone(),
-                })
-            }
-        };
-
-        // Verifier si le message est une reponse a une requete connue
-        if let Some(tm) = type_message {
-            if tm == TypeMessageOut::Reponse {
-                if let Some(cid) = &correlation_id {
-                    debug!("Recu type message valide ... c'est une reponse? {}", cid);
-                    if let Some(ma) = map_attente.remove(cid) {
-                        debug!("Recu reponse pour message en attente sur {}", cid);
-                        ma.sender.send(message).unwrap_or_else(|_e| error!("Erreur traitement reponse"));
-                        continue
-                    }
-                }
-            }
-        }
-
-        // Voir si on intercepte le message pour le passer a une chaine de traitement
-        // differente.
-        let intercepte = intercepter_message(middleware.as_ref(), &message).await;
-
-        // Passer le message pour traitement habituel
-        if intercepte == false {
-            debug!("Message valide, soumettre a tx_verifie : {:?}", &entete);
-            tx.send(message).await.expect("tx_verifie");
-        } else {
-            debug!("Message valide et intercepte, pas soumis a tx_verifie : {:?}", &entete);
-        }
-
-    }
-    info!("recepteur_messages.recevoir_messages : Fin thread traiter_messages");
-}
+// /// Thread de traitement des messages
+// pub async fn recevoir_messages<M>(
+//     middleware: Arc<M>,
+//     mut rx: Receiver<MessageInterne>,
+//     tx_verifie: Sender<TypeMessage>,
+// )
+//     where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages
+// {
+//     debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
+//
+//     let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
+//
+//     while let Some(mi) = rx.recv().await {
+//         trace!("recevoir_messages: Message recu : {:?}", mi);
+//
+//         let (delivery, nom_q, tx) = match mi {
+//             MessageInterne::Delivery(d, q) => {
+//                 debug!("recevoir_messages Delivery via {}", q);
+//                 (d, q, &tx_verifie)
+//             },
+//             MessageInterne::AttenteReponse(a) => {
+//                 debug!("recevoir_messages AttenteReponse {:?}", a);
+//                 map_attente.insert(a.correlation.clone(), a);
+//                 continue
+//             },
+//             MessageInterne::CancelDemandeReponse(fp) => {
+//                 debug!("recevoir_messages CancelDemandeReponse : {}", fp);
+//                 map_attente.remove(&fp);
+//                 continue
+//             },
+//             MessageInterne::Trigger(d, q) => {
+//                 debug!("recevoir_messages Trigger via {}", q);
+//                 (d, q, &tx_verifie)
+//             },
+//         };
+//
+//         // Extraire le contenu du message
+//         let mut contenu = match parse(delivery.data) {
+//             Ok(c) => c,
+//             Err(e) => {
+//                 error!("Erreur parsing message : {:?}", e);
+//                 continue
+//             }
+//         };
+//
+//         let entete = contenu.get_entete().clone();
+//         // let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+//         debug!("Traiter message {:?}", entete);
+//
+//         // Extraire routing key pour gerer messages qui ne requierent pas de validation
+//         let (routing_key, type_message, domaine, action) = {
+//             let rk = delivery.routing_key.as_str();
+//             let ex = delivery.exchange.as_str();
+//             if ex == "" {
+//                 debug!("Reponse recue pour {:?}", entete.uuid_transaction);
+//                 (None, Some(TypeMessageIn::Reponse), None, None)
+//             } else {
+//                 let copie_rk = rk.to_owned();
+//                 let mut rk_split = copie_rk.split(".");
+//                 let type_str = rk_split.next().expect("Type message manquant de la RK");
+//                 let domaine: Option<String> = Some(rk_split.next().expect("Domaine manquant de la RK").into());
+//                 let action: Option<String> = Some(rk_split.last().expect("Action manquante de la RK").into());
+//                 let type_message = match type_str {
+//                     "requete" => Some(TypeMessageIn::Requete),
+//                     "evenement" => Some(TypeMessageIn::Evenement),
+//                     "commande" => Some(TypeMessageIn::Commande),
+//                     "transaction" => Some(TypeMessageIn::Transaction),
+//                     _ => None
+//                 };
+//
+//                 (Some(String::from(rk)), type_message, domaine, action)
+//             }
+//         };
+//
+//         // Valider le message. Si on a deja le certificat, on fait juste l'extraire du Option.
+//         if let Err(e) = valider_message(middleware.as_ref(), &mut contenu).await {
+//             error!("Erreur validation message : {:?}", e);
+//             continue;  // Skip
+//         }
+//
+//         let exchange = {
+//             let ex = delivery.exchange.as_str();
+//             if ex == "" {
+//                 None
+//             } else {
+//                 Some(String::from(ex))
+//             }
+//         };
+//         let properties = delivery.properties;
+//         let correlation_id = match properties.correlation_id() {
+//             Some(c) => Some(String::from(c.as_str())),
+//             None => None,
+//         };
+//         let reply_q = match properties.reply_to() {
+//             Some(q) => Some(String::from(q.as_str())),
+//             None => None,
+//         };
+//
+//         debug!("Message valide {:?}, passer a la prochaine etape (correlation: {:?})", &entete, correlation_id);
+//         let message = match action {
+//             Some(inner_action) => {
+//                 TypeMessage::ValideAction(MessageValideAction {
+//                     message: contenu,
+//                     q: nom_q,
+//                     reply_q,
+//                     correlation_id: correlation_id.clone(),
+//                     routing_key: routing_key.expect("routing key inconnue"),
+//                     domaine: domaine.expect("domaine inconnu"),
+//                     action: inner_action,
+//                     exchange,
+//                     type_message: type_message.clone().expect("type message inconnu"),
+//                 })
+//             },
+//             None => {
+//                 TypeMessage::Valide(MessageValide {
+//                     message: contenu,
+//                     q: nom_q,
+//                     reply_q,
+//                     correlation_id: correlation_id.clone(),
+//                     routing_key,
+//                     domaine,
+//                     exchange,
+//                     type_message: type_message.clone(),
+//                 })
+//             }
+//         };
+//
+//         // Verifier si le message est une reponse a une requete connue
+//         if let Some(tm) = type_message {
+//             if tm == TypeMessageOut::Reponse {
+//                 if let Some(cid) = &correlation_id {
+//                     debug!("Recu type message valide ... c'est une reponse? {}", cid);
+//                     if let Some(ma) = map_attente.remove(cid) {
+//                         debug!("Recu reponse pour message en attente sur {}", cid);
+//                         ma.sender.send(message).unwrap_or_else(|_e| error!("Erreur traitement reponse"));
+//                         continue
+//                     }
+//                 }
+//             }
+//         }
+//
+//         // Voir si on intercepte le message pour le passer a une chaine de traitement
+//         // differente.
+//         let intercepte = intercepter_message(middleware.as_ref(), &message).await;
+//
+//         // Passer le message pour traitement habituel
+//         if intercepte == false {
+//             debug!("Message valide, soumettre a tx_verifie : {:?}", &entete);
+//             tx.send(message).await.expect("tx_verifie");
+//         } else {
+//             debug!("Message valide et intercepte, pas soumis a tx_verifie : {:?}", &entete);
+//         }
+//
+//     }
+//     info!("recepteur_messages.recevoir_messages : Fin thread traiter_messages");
+// }
 
 /// Traitement d'un message Delivery. Convertit en MessageMillegrille, valide le certificat
 pub async fn traiter_delivery<M,S>(
