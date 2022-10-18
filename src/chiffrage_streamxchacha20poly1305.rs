@@ -138,6 +138,10 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
 
         }
 
+        if position_output > 0 {
+            self.hacheur.update(&out[..position_output]);
+        }
+
         Ok(position_output)
     }
 
@@ -161,6 +165,8 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
             if let Err(e) = resultat {
                 Err(format!("CipherMgs4.finalize Erreur crypto_secretstream_xchacha20poly1305_push {:?}", e))?
             }
+
+            self.hacheur.update(slice_output);
         }
 
         if self.hachage_bytes.is_some() {
