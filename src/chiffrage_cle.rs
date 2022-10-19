@@ -53,6 +53,7 @@ pub struct InformationCle {
     pub iv: Option<String>,
     pub tag: Option<String>,
     pub header: Option<String>,
+    pub signature_identite: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,6 +65,7 @@ pub struct MetaInformationCle {
     pub iv: Option<String>,
     pub tag: Option<String>,
     pub header: Option<String>,
+    pub signature_identite: String,
 }
 
 impl From<InformationCle> for MetaInformationCle {
@@ -76,6 +78,7 @@ impl From<InformationCle> for MetaInformationCle {
             iv: value.iv,
             tag: value.tag,
             header: value.header,
+            signature_identite: value.signature_identite,
         }
     }
 }

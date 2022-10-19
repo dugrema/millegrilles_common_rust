@@ -91,7 +91,7 @@ pub trait MgsCipherKeys {
         domaine: &str,
         partition: Option<String>,
         identificateurs_document: HashMap<String, String>,
-    ) -> CommandeSauvegarderCle;
+    ) -> Result<CommandeSauvegarderCle, String>;
 
     /// Retourne la valeur chiffree de la cle de millegrille
     /// Note : pour Ed25519, retourne la cle peer publique.

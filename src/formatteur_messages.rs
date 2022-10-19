@@ -731,7 +731,7 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
                                     // Float fini par .0, on transforme en i64
                                     Value::from(int_num)
                                 },
-                                false => Value::from(float_num),  // partie fractionnaire presente
+                                false => Value::from(float_num as f32),  // partie fractionnaire presente, f32 match python/javascript
                             }
                         },
                         None => Value::Number(o)
