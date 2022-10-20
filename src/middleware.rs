@@ -765,7 +765,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction,
     // let mut contenu_doc_mut = contenu_doc.as_document_mut().expect("mut");
     contenu_doc.insert("_evenements", params_evenements);
 
-    contenu_doc.remove("_certificat");
+    // contenu_doc.remove("_certificat");
 
     debug!("Inserer nouvelle transaction\n:{:?}", contenu_doc);
 
