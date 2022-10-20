@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
 use tokio::sync::mpsc::Sender;
 use tokio_util::codec::{BytesCodec, FramedRead};
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
@@ -35,7 +37,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::hacher_bytes;
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::{CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
+use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
@@ -99,6 +101,9 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 {
     let nom_coll_str = nom_collection_transactions.as_ref();
     let nom_domaine_str = nom_domaine.as_ref();
+
+    // Persister et retirer les certificats des transactions recentes.
+    persister_certificats(middleware, nom_coll_str).await?;
 
     if complet {
         debug!("Backup complet, on emet commande de rotation des fichiers");
@@ -891,6 +896,80 @@ pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &
     };
 
     Ok(Some(reponse))
+}
+
+pub async fn persister_certificats<M>(middleware: &M, nom_collection_transactions: &str)
+    -> Result<(), Box<dyn Error>>
+    where M: MongoDao + GenerateurMessages,
+{
+    debug!("persister_certificats Debut");
+
+    let collection = middleware.get_collection(nom_collection_transactions)?;
+    let mut curseur = {
+        let filtre = doc! {"_certificat": {"$exists": true}};
+        let projection = doc! {"en-tete.fingerprint_certificat": 1, "_certificat": 1};
+        let find_opts = FindOptions::builder()
+            .projection(projection)
+            .build();
+
+        collection.find(filtre, Some(find_opts)).await?
+    };
+
+    let mut fingerprint_traites_set = HashSet::new();
+
+    while let Some(row_cert) = curseur.next().await {
+        let row_cert = row_cert?;
+        let row_cert_mappe: TransactionCertRow = match convertir_bson_deserializable(row_cert) {
+            Ok(inner) => inner,
+            Err(e) => {
+                warn!("Erreur mapping row : {:?}", e);
+                continue;
+            }
+        };
+
+        let fingerprint = row_cert_mappe.entete.fingerprint;
+
+        if ! fingerprint_traites_set.contains(fingerprint.as_str()) {
+            debug!("Sauvegarder certificat {}", fingerprint);
+
+            // Conserver marqueur pour indiquer que le certificat a ete traite
+            fingerprint_traites_set.insert(fingerprint);
+        }
+
+    }
+
+    if fingerprint_traites_set.len() > 0 {
+        // Cleanup de tous les certificats traites dans les transaction
+        let fingerprint_traites: Vec<String> = fingerprint_traites_set.into_iter().collect();
+        let filtre = doc! {
+            "_certificat": {"$exists": true},
+            "en-tete.fingerprint_certificat": {"$in": fingerprint_traites}
+        };
+        debug!("persister_certificats Filtre nettoyage certificats : {:?}", filtre);
+        let ops = doc! {
+            "$unset": {"_certificat": 1},
+            "$currentDate": {CHAMP_MODIFICATION: 1}
+        };
+        collection.update_many(filtre, ops, None).await?;
+    }
+
+    debug!("persister_certificats Fin");
+
+    Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct TransactionCertRow {
+    #[serde(rename = "en-tete")]
+    entete: EnteteCertificatRow,
+    #[serde(rename = "_certificat")]
+    certificat: Vec<String>
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct EnteteCertificatRow {
+    #[serde(rename = "fingerprint_certificat")]
+    fingerprint: String
 }
 
 pub async fn emettre_evenement_backup<M>(
