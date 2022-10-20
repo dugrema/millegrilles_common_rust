@@ -35,6 +35,7 @@ use std::error::Error;
 use crate::constantes::Securite::L1Public;
 use std::convert::TryInto;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::recepteur_messages::TypeMessage;
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -1244,8 +1245,18 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
 {
     debug!("Charger les certificats de maitre des cles pour chiffrage");
     let requete = json!({});
-    let routage = RoutageMessageAction::new(DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES);
-    middleware.transmettre_commande(routage, &requete, false).await?;
+    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES)
+        .exchanges(vec![Securite::L3Protege])
+        .timeout_blocking(2000)
+        .build();
+    match middleware.transmettre_commande(routage, &requete, true).await {
+        Ok(reponse) => {
+            if let Some(TypeMessage::Valide(mva)) = reponse {
+                info!("Reponse certificat maitredescles : {:?}", mva);
+            }
+        },
+        Err(e) => info!("Timeout transmettre_commande maitredescles (OK, reponse en evenement) : {}", e)
+    }
     Ok(())
 }
 
