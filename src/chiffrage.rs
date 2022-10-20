@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, error, info};
 use multibase::Base;
 use openssl::pkey::{Id, PKey, Private, Public};
 use rand::Rng;
@@ -256,16 +256,19 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
         let cert_chiffrage = match &message.certificat {
             Some(c) => c.clone(),
             None => {
+                error!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait");
                 Err(format!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait"))?
             }
         };
 
         // Valider le certificat
         if ! cert_chiffrage.presentement_valide {
+            error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete");
             Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
         }
 
         if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
+            error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete");
             Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
         }
 
