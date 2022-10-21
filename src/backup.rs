@@ -916,6 +916,10 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
     };
 
     let mut fingerprint_traites_set = HashSet::new();
+    let routage = RoutageMessageAction::builder(DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT)
+        .exchanges(vec![Securite::L3Protege])
+        .timeout_blocking(3000)
+        .build();
 
     while let Some(row_cert) = curseur.next().await {
         let row_cert = row_cert?;
@@ -932,8 +936,18 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
         if ! fingerprint_traites_set.contains(fingerprint.as_str()) {
             debug!("Sauvegarder certificat {}", fingerprint);
 
-            // Conserver marqueur pour indiquer que le certificat a ete traite
-            fingerprint_traites_set.insert(fingerprint);
+            let commande_sauvegarde = json!({
+                "chaine_pem": row_cert_mappe.certificat,
+                // "ca": ...
+            });
+
+            match middleware.transmettre_commande(routage.clone(), &commande_sauvegarde, true).await {
+                Ok(_) => {
+                    // Conserver marqueur pour indiquer que le certificat a ete traite
+                    fingerprint_traites_set.insert(fingerprint);
+                },
+                Err(e) => warn!("Erreur sauvegarde certificat : {:?}", e)
+            }
         }
 
     }
