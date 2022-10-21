@@ -962,7 +962,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
         debug!("persister_certificats Filtre nettoyage certificats : {:?}", filtre);
         let ops = doc! {
             "$unset": {"_certificat": 1},
-            "$currentDate": {CHAMP_MODIFICATION: 1}
+            "$currentDate": {CHAMP_MODIFICATION: true}
         };
         collection.update_many(filtre, ops, None).await?;
     }
