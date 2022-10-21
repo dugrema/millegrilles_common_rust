@@ -201,6 +201,7 @@ pub const COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS: &str = "commande.global.restau
 pub const COMMANDE_GLOBAL_RESET_BACKUP: &str = "commande.global.resetBackup";
 pub const COMMANDE_GLOBAL_REGENERER: &str = "commande.global.regenerer";
 pub const COMMANDE_BACKUP_ROTATION: &str = "rotationBackupTransactions";
+pub const COMMANDE_SAUVEGARDER_CERTIFICAT: &str = "certificat";
 
 // Evenements
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";

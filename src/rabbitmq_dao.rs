@@ -592,7 +592,13 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
                     }
                 },
                 TypeMessage::ValideAction(message) => {
-                    warn!("thread_traiter_reply_q Recu message ValideAction, ignorer : {:?}", message);
+                    if message.action.as_str() == PKI_REQUETE_CERTIFICAT {
+                        if let Some(cert) = message.message.certificat.as_ref() {
+                            debug!("Certificat recu - {}", cert.fingerprint)
+                        }
+                    } else {
+                        warn!("thread_traiter_reply_q Recu message ValideAction, ignorer : {:?}", message);
+                    }
                     None
                 },
                 TypeMessage::Certificat(certificat) => {
