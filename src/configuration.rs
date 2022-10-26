@@ -171,26 +171,31 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
 
     Ok(ConfigurationNoeud{
         instance_id,
-        fichiers_url: Some(fichiers_url),
-        redis_url: Some(redis_url),
+        fichiers_url,
+        redis_url,
         redis_username: Some(redis_username),
         redis_password,
-        elastic_search_url: Some(elastic_search_url),
-        certissuer_url: Some(certissuer_url),
+        elastic_search_url,
+        certissuer_url,
         sqlite_path: Some(sqlite_path),
-        tor_proxy: Some(tor_proxy),
+        tor_proxy,
     })
 }
 
-fn charger_url<S, T>(nom_variable: S, valeur_defaut: T) -> Result<Url, String>
+fn charger_url<S, T>(nom_variable: S, valeur_defaut: T) -> Result<Option<Url>, String>
     where S: AsRef<str>, T: AsRef<str>
 {
     let var_str = nom_variable.as_ref();
     let url = match std::env::var(var_str) {
         Ok(url_str) => {
-            match Url::parse(url_str.as_str()) {
-                Ok(url) => url,
-                Err(e) => Err(format!("configuration.charger_configuration_noeud  Erreur parse url fichiers : {} ({:?})", url_str, e))?,
+            if "" == url_str {
+                // Desactiver url par defaut
+                return Ok(None)
+            } else {
+                match Url::parse(url_str.as_str()) {
+                    Ok(url) => url,
+                    Err(e) => Err(format!("configuration.charger_configuration_noeud  Erreur parse url fichiers : {} ({:?})", url_str, e))?,
+                }
             }
         },
         Err(_) => {
@@ -200,7 +205,8 @@ fn charger_url<S, T>(nom_variable: S, valeur_defaut: T) -> Result<Url, String>
             }
         },
     };
-    Ok(url)
+
+    Ok(Some(url))
 }
 
 #[derive(Clone, Debug)]
