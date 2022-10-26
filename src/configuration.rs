@@ -167,7 +167,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let redis_url = charger_url("MG_REDIS_URL", "rediss://client_rust@redis:6379#insecure")?;
     let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
     let certissuer_url = charger_url("MG_CERTISSUER_URL", "http://certissuer:80")?;
-    let tor_proxy = charger_url("TOR_PROXY", "socks5://onionize:9050")?;
+    let tor_proxy = charger_url("TOR_PROXY", "socks5h://onionize:9050")?;  // proxy tor socks5 + (h = socks dns resolver)
 
     Ok(ConfigurationNoeud{
         instance_id,
