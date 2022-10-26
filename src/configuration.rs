@@ -167,6 +167,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let redis_url = charger_url("MG_REDIS_URL", "rediss://client_rust@redis:6379#insecure")?;
     let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
     let certissuer_url = charger_url("MG_CERTISSUER_URL", "http://certissuer:80")?;
+    let tor_proxy = charger_url("TOR_PROXY", "socks5://onionize:9050")?;
 
     Ok(ConfigurationNoeud{
         instance_id,
@@ -177,6 +178,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         elastic_search_url: Some(elastic_search_url),
         certissuer_url: Some(certissuer_url),
         sqlite_path: Some(sqlite_path),
+        tor_proxy: Some(tor_proxy),
     })
 }
 
@@ -227,6 +229,7 @@ pub struct ConfigurationNoeud {
     pub elastic_search_url: Option<Url>,
     pub certissuer_url: Option<Url>,
     pub sqlite_path: Option<String>,
+    pub tor_proxy: Option<Url>,
 }
 
 #[derive(Debug)]
