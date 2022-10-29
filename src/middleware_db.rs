@@ -3,6 +3,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use futures::stream::FuturesUnordered;
 use log::{debug, error, info, warn};
 use mongodb::Database;
@@ -21,7 +22,7 @@ use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, 
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat};
+use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
@@ -179,6 +180,14 @@ impl ValidateurX509 for MiddlewareDb {
     fn store_notime(&self) -> &X509Store { self.ressources.ressources.validateur.store_notime() }
 
     async fn entretien_validateur(&self) {
+        {
+            let enveloppe_privee = self.get_enveloppe_privee();
+            let certificat_local = self.get_enveloppe_signature();
+            if verifier_expiration_certs(enveloppe_privee.as_ref(), certificat_local.as_ref()) == true {
+                panic!("Certificat expire");
+            }
+        }
+
         if let Some(redis) = self.redis.as_ref() {
             // Conserver les certificats qui n'ont pas encore ete persistes
             for certificat in self.ressources.ressources.validateur.certificats_persister().iter() {
@@ -191,12 +200,6 @@ impl ValidateurX509 for MiddlewareDb {
         }
 
         self.ressources.ressources.validateur.entretien_validateur().await;
-
-        // Valider le certificat local
-        let certificat_local = self.get_enveloppe_signature();
-        if ! certificat_local.presentement_valide() {
-            panic!("Certificat local expire");
-        }
     }
 }
 

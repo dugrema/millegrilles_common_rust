@@ -4,6 +4,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use log::{debug, error, info, warn};
 use mongodb::{bson::{Bson, Document, doc, to_bson}, Collection};
 use mongodb::bson as bson;
@@ -229,6 +230,14 @@ impl ValidateurX509 for MiddlewareMessage {
     }
 
     async fn entretien_validateur(&self) {
+        {
+            let enveloppe_privee = self.get_enveloppe_privee();
+            let certificat_local = self.get_enveloppe_signature();
+            if verifier_expiration_certs(enveloppe_privee.as_ref(), certificat_local.as_ref()) == true {
+                panic!("Certificat expire");
+            }
+        }
+
         if let Some(redis) = self.redis.as_ref() {
             // Conserver les certificats qui n'ont pas encore ete persistes
             for certificat in self.ressources.validateur.certificats_persister().iter() {
@@ -241,14 +250,32 @@ impl ValidateurX509 for MiddlewareMessage {
         }
 
         self.ressources.validateur.entretien_validateur().await;
-
-        // Valider le certificat local
-        let certificat_local = self.get_enveloppe_signature();
-        if ! certificat_local.presentement_valide() {
-            panic!("Certificat local expire");
-        }
     }
 }
+
+
+pub fn verifier_expiration_certs(enveloppe_privee: &EnveloppePrivee, certificat_local: &EnveloppePrivee) -> bool {
+    // Valider le certificat local
+    let date_courante = Utc::now();
+
+    debug!("Verifier expiration enveloppe privee : {:?}", enveloppe_privee.enveloppe.not_valid_after());
+    if let Ok(exp_prive) = enveloppe_privee.enveloppe.not_valid_after() {
+        if exp_prive < date_courante {
+            error!("Certificat local expire (enveloppe privee)");
+            return true;
+        }
+    }
+    debug!("Verifier expiration enveloppe signature : {:?}", certificat_local.enveloppe.not_valid_after());
+    if let Ok(exp_sign) = certificat_local.not_valid_after() {
+        if exp_sign < date_courante {
+            error!("Certificat local expire (enveloppe signature)");
+            return true;
+        }
+    }
+
+    false
+}
+
 
 pub async fn charger_certificat_redis<M>(middleware: &M, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>
     where M: RedisTrait + ValidateurX509
