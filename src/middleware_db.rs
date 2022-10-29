@@ -191,6 +191,12 @@ impl ValidateurX509 for MiddlewareDb {
         }
 
         self.ressources.ressources.validateur.entretien_validateur().await;
+
+        // Valider le certificat local
+        let certificat_local = self.get_enveloppe_signature();
+        if ! certificat_local.presentement_valide() {
+            panic!("Certificat local expire");
+        }
     }
 }
 
