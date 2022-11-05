@@ -164,3 +164,14 @@ pub struct ReponseSignatureCertificat {
     pub ok: Option<bool>,
     pub certificat: Option<Vec<String>>
 }
+
+/// Message d'information du mecanisme de consignation principal de fichiers
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReponseInformationConsignationFichiers {
+    pub instance_id: String,
+    pub consignation_url: String,
+    pub type_store: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_download: Option<String>,
+    pub ok: Option<bool>,
+}
