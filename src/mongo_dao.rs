@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, info};
 use mongodb::{bson::doc, Client, Collection, Cursor, Database};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
@@ -121,7 +121,14 @@ async fn create_index(database: &Database, nom_collection: &str, champs_index: V
 
     match database.run_command(commande_pki, None).await {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!("Erreur creation index : {:?}", e))
+        Err(e) => {
+            info!("Erreur connexion Mongo DB, tenter l'inscription du compte");
+            // if let Err(e) = emettre_certificat_compte().await {
+            //     error!("create_index Erreur inscription a midcompte : {:?}", e);
+            // }
+
+            Err(format!("Erreur connexion MongoDB (initial, creation index) : {:?}", e))
+        }
     }
 }
 

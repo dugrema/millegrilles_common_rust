@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use url::Url;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -150,14 +151,18 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     ).await
 }
 
-async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn Error>>
+pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn Error>>
     where C: ConfigMessages
 {
     const PORT: u16 = 444;
     const COMMANDE: &str = "administration/ajouterCompte";
 
     let config_mq = configuration.get_configuration_mq();
-    let hosts = vec!["nginx", config_mq.host.as_str()];
+    let url_midcompte = Url::parse("https://mdicompte:443")?;
+    let url_nginx = Url::parse(format!("https://nginx:{}", PORT).as_str())?;
+    let url_mq = Url::parse(format!("https://{}:{}", config_mq.host.as_str(), PORT).as_str())?;
+    // let hosts = vec!["midcompte", "nginx", config_mq.host.as_str()];
+    let hosts = vec![url_midcompte, url_nginx, url_mq];
     debug!("Tenter creer compte MQ avec hosts {:?}", hosts);
 
     let config_pki = configuration.get_configuration_pki();
@@ -187,7 +192,7 @@ async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn E
 
             .build()?;
 
-        let url = format!("https://{}:{}/{}", host, PORT, COMMANDE);
+        let url = format!("{}/{}", host, COMMANDE);
         info!("Utiliser URL de creation de compte MQ : {:?}", url);
         match client.post(url).send().await {
             Ok(r) => {
