@@ -158,11 +158,14 @@ pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<d
     const COMMANDE: &str = "administration/ajouterCompte";
 
     let config_mq = configuration.get_configuration_mq();
-    let url_midcompte = Url::parse("https://mdicompte:443")?;
-    let url_nginx = Url::parse(format!("https://nginx:{}", PORT).as_str())?;
-    let url_mq = Url::parse(format!("https://{}:{}", config_mq.host.as_str(), PORT).as_str())?;
-    // let hosts = vec!["midcompte", "nginx", config_mq.host.as_str()];
-    let hosts = vec![url_midcompte, url_nginx, url_mq];
+    let mut hosts = Vec::new();
+    if let Some(midcompte) = configuration.get_configuration_noeud().midcompte_url.as_ref() {
+        hosts.push(midcompte.clone());
+    }
+    hosts.push(Url::parse("https://midcompte:443")?);
+    hosts.push(Url::parse(format!("https://nginx:{}", PORT).as_str())?);
+    hosts.push(Url::parse(format!("https://{}:{}", config_mq.host.as_str(), PORT).as_str())?);
+
     debug!("Tenter creer compte MQ avec hosts {:?}", hosts);
 
     let config_pki = configuration.get_configuration_pki();

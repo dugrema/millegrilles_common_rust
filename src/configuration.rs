@@ -168,6 +168,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
     let certissuer_url = charger_url("MG_CERTISSUER_URL", "http://certissuer:80")?;
     let tor_proxy = charger_url("TOR_PROXY", "socks5h://onionize:9050")?;  // proxy tor socks5 + (h = socks dns resolver)
+    let midcompte_url = charger_url("MG_MIDCOMPTE_URL", "dummy")?;
 
     Ok(ConfigurationNoeud{
         instance_id,
@@ -179,6 +180,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         certissuer_url,
         sqlite_path: Some(sqlite_path),
         tor_proxy,
+        midcompte_url,
     })
 }
 
@@ -236,6 +238,7 @@ pub struct ConfigurationNoeud {
     pub certissuer_url: Option<Url>,
     pub sqlite_path: Option<String>,
     pub tor_proxy: Option<Url>,
+    pub midcompte_url: Option<Url>,
 }
 
 #[derive(Debug)]
