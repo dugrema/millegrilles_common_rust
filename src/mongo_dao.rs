@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, error, info};
 use mongodb::{bson::doc, Client, Collection, Cursor, Database};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
@@ -18,6 +18,7 @@ use serde::de::DeserializeOwned;
 use std::error::Error;
 use std::time::Duration;
 use std::vec::IntoIter;
+use crate::rabbitmq_dao::emettre_certificat_compte;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
@@ -27,9 +28,12 @@ pub trait MongoDao: Send + Sync {
         Ok(database.collection(nom_collection))
     }
 
-    async fn create_index(&self, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>) -> Result<(), String> {
+    async fn create_index<C>(&self, configuration: &C, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>)
+        -> Result<(), String>
+        where C: ConfigMessages
+    {
         let database = self.get_database()?;
-        create_index(&database, nom_collection, champs_index, options).await
+        create_index(configuration, &database, nom_collection, champs_index, options).await
     }
 }
 
@@ -96,7 +100,10 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
     Client::with_options(options)
 }
 
-async fn create_index(database: &Database, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>) -> Result<(), String> {
+async fn create_index<C>(configuration: &C, database: &Database, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>)
+    -> Result<(), String>
+    where C: ConfigMessages
+{
 
     let mut champs = doc! {};
     for champ in champs_index {
@@ -123,9 +130,9 @@ async fn create_index(database: &Database, nom_collection: &str, champs_index: V
         Ok(_) => Ok(()),
         Err(e) => {
             info!("Erreur connexion Mongo DB, tenter l'inscription du compte");
-            // if let Err(e) = emettre_certificat_compte().await {
-            //     error!("create_index Erreur inscription a midcompte : {:?}", e);
-            // }
+            if let Err(e) = emettre_certificat_compte(configuration).await {
+                error!("create_index Erreur inscription a midcompte : {:?}", e);
+            }
 
             Err(format!("Erreur connexion MongoDB (initial, creation index) : {:?}", e))
         }
