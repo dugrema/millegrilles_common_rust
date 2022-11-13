@@ -195,7 +195,7 @@ pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<d
 
             .build()?;
 
-        let url = format!("{}/{}", host, COMMANDE);
+        let url = format!("{}{}", host, COMMANDE);
         info!("Utiliser URL de creation de compte MQ : {:?}", url);
         match client.post(url).send().await {
             Ok(r) => {
