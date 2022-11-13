@@ -199,9 +199,14 @@ pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<d
         info!("Utiliser URL de creation de compte MQ : {:?}", url);
         match client.post(url).send().await {
             Ok(r) => {
+                let status_code = r.status().as_u16();
                 if r.status().is_success() {
-                    debug!("emettre_certificat_compte Reponse OK : {:?}", r);
-                    return Ok(())
+                    if status_code == 201 {
+                        debug!("emettre_certificat_compte Reponse OK : {:?}", r);
+                        return Ok(())
+                    } else {
+                        info!("Compte cree (reponse {}), on poursuit", status_code);
+                    }
                 }
                 warn!("emettre_certificat_compte Response creation compte MQ status {:?} error : {:?}", r.status(), r);
             },
