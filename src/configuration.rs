@@ -163,12 +163,12 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     };
     let sqlite_path: String = std::env::var("MG_SQLITE_PATH").unwrap_or_else(|_| "/var/opt/millegrilles/sqlite".into());
 
-    let fichiers_url = charger_url("MG_FICHIERS_URL", "https://fichiers:443")?;
-    let redis_url = charger_url("MG_REDIS_URL", "rediss://client_rust@redis:6379#insecure")?;
-    let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", "http://elasticsearch:9200")?;
-    let certissuer_url = charger_url("MG_CERTISSUER_URL", "http://certissuer:80")?;
-    let tor_proxy = charger_url("TOR_PROXY", "socks5h://onionize:9050")?;  // proxy tor socks5 + (h = socks dns resolver)
-    let midcompte_url = charger_url("MG_MIDCOMPTE_URL", "dummy")?;
+    let fichiers_url = charger_url("MG_FICHIERS_URL", Some("https://fichiers:443"))?;
+    let redis_url = charger_url("MG_REDIS_URL", Some("rediss://client_rust@redis:6379#insecure"))?;
+    let elastic_search_url = charger_url("MG_ELASTICSEARCH_URL", Some("http://elasticsearch:9200"))?;
+    let certissuer_url = charger_url("MG_CERTISSUER_URL", Some("http://certissuer:80"))?;
+    let tor_proxy = charger_url("TOR_PROXY", Some("socks5h://onionize:9050"))?;  // proxy tor socks5 + (h = socks dns resolver)
+    let midcompte_url = charger_url("MG_MIDCOMPTE_URL", None::<&str>)?;
 
     Ok(ConfigurationNoeud{
         instance_id,
@@ -184,8 +184,9 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     })
 }
 
-fn charger_url<S, T>(nom_variable: S, valeur_defaut: T) -> Result<Option<Url>, String>
-    where S: AsRef<str>, T: AsRef<str>
+fn charger_url<S,T>(nom_variable: S, valeur_defaut: Option<T>) -> Result<Option<Url>, String>
+    where S: AsRef<str>,
+          T: AsRef<str>
 {
     let var_str = nom_variable.as_ref();
     let url = match std::env::var(var_str) {
@@ -201,9 +202,12 @@ fn charger_url<S, T>(nom_variable: S, valeur_defaut: T) -> Result<Option<Url>, S
             }
         },
         Err(_) => {
-            match Url::parse(valeur_defaut.as_ref()) {
-                Ok(u)=>u,
-                Err(e) => Err(format!("configuration.charger_configuration_noeud Erreur : {:?}", e))?
+            match valeur_defaut {
+                Some(url) => match Url::parse(url.as_ref()) {
+                    Ok(u)=> u,
+                    Err(e) => Err(format!("configuration.charger_configuration_noeud Erreur : {:?}", e))?
+            },
+                None => return Ok(None)
             }
         },
     };
