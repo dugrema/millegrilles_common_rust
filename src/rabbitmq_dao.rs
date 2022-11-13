@@ -203,7 +203,7 @@ pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<d
                     debug!("emettre_certificat_compte Reponse OK : {:?}", r);
                     return Ok(())
                 }
-                warn!("emettre_certificat_compte Response creation compte MQ status error : {:?}", r);
+                warn!("emettre_certificat_compte Response creation compte MQ status {:?} error : {:?}", r.status(), r);
             },
             Err(e) => {
                 warn!("emettre_certificat_compte Response creation compte MQ error : {:?}", e);
