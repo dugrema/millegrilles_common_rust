@@ -628,6 +628,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     // Commandes standard
                     COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref(), m).await,
                     // COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
+                    COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), m).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
                     COMMANDE_RESET_BACKUP => {
                         let nom_collection_transactions = match self.get_collection_transactions() {
