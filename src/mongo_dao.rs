@@ -18,6 +18,7 @@ use serde::de::DeserializeOwned;
 use std::error::Error;
 use std::time::Duration;
 use std::vec::IntoIter;
+use crate::bson::Array;
 use crate::rabbitmq_dao::emettre_certificat_compte;
 
 #[async_trait]
@@ -177,6 +178,15 @@ pub fn convertir_to_bson<S>(valeur: S)
     let bson_doc: Document = serde_json::from_value(serde_json::to_value(valeur)?)?;
     Ok(bson_doc)
 }
+
+pub fn convertir_to_bson_array<S>(valeur: S)
+    -> Result<Array, Box<dyn Error>>
+    where S: Serialize
+{
+    let bson_array: Array = serde_json::from_value(serde_json::to_value(valeur)?)?;
+    Ok(bson_array)
+}
+
 
 /// Return true si l'erreur est une duplication sur insert
 pub fn verifier_erreur_duplication_mongo(kind: &ErrorKind) -> bool {
