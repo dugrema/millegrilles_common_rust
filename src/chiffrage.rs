@@ -10,6 +10,7 @@ use openssl::pkey::{Id, PKey, Private, Public};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
+use crate::bson::Bson;
 
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, VerificateurPermissions};
 use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherKeys};
@@ -26,6 +27,16 @@ use crate::middleware::IsConfigurationPki;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage { mgs2, mgs3, mgs4 }
+
+impl Into<Bson> for FormatChiffrage {
+    fn into(self) -> Bson {
+        match self {
+            Self::mgs2 => Bson::String("mgs2".to_string()),
+            Self::mgs3 => Bson::String("mgs3".to_string()),
+            Self::mgs4 => Bson::String("mgs4".to_string()),
+        }
+    }
+}
 
 /// Struct qui efface la cle secrete en memoire sur drop
 #[derive(Zeroize)]

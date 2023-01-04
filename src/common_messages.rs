@@ -9,6 +9,7 @@ use crate::chiffrage::CleSecrete;
 use crate::chiffrage_cle::IdentiteCle;
 use crate::hachages::verifier_multihash;
 use crate::formatteur_messages::DateEpochSeconds;
+use crate::recepteur_messages::TypeMessage;
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
 // pub struct TransactionCle {
@@ -174,4 +175,26 @@ pub struct ReponseInformationConsignationFichiers {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_download: Option<String>,
     pub ok: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MessageConfirmation {
+    ok: Option<bool>,
+}
+
+pub fn verifier_reponse_ok(message: &TypeMessage) -> bool {
+    match message {
+        TypeMessage::Valide(m) => {
+            match m.message.parsed.map_contenu::<MessageConfirmation>(None) {
+                Ok(r) => {
+                    match r.ok {
+                        Some(r) => r,
+                        None => false
+                    }
+                },
+                Err(_) => false
+            }
+        },
+        _ => false
+    }
 }
