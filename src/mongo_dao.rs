@@ -19,6 +19,7 @@ use std::error::Error;
 use std::time::Duration;
 use std::vec::IntoIter;
 use crate::bson::Array;
+use crate::formatteur_messages::DateEpochSeconds;
 use crate::rabbitmq_dao::emettre_certificat_compte;
 
 #[async_trait]
@@ -240,5 +241,31 @@ impl CurseurStream for CurseurMongo {
             },
             None => None
         }
+    }
+}
+
+pub fn convertir_value_mongodate(date: Value) -> Result<DateEpochSeconds, String> {
+    match date.as_object() {
+        Some(inner) => match inner.get("$date") {
+            Some(inner) => match inner.as_object() {
+                Some(inner) => match inner.get("$numberLong") {
+                    Some(inner) => match inner.as_str() {
+                        Some(inner) => {
+                            match inner.parse::<i64>() {
+                                Ok(ms) => {
+                                    Ok(DateEpochSeconds::from_i64(ms/1000))
+                                },
+                                Err(e) => Err(format!("convertir_value_mongodate {:?}", e))
+                            }
+                        },
+                        None => Err("convertir_value_mongodate Format n'est str".to_string())
+                    },
+                    None => Err("convertir_value_mongodate $date.$numberLong absent".to_string()),
+                },
+                None => Err("convertir_value_mongodate format $date n'est pas object".to_string()),
+            },
+            None => Err("convertir_value_mongodate $date absent".to_string()),
+        },
+        None => Err("convertir_value_mongodate top level n'est pas object".to_string()),
     }
 }
