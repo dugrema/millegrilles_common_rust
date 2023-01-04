@@ -29,9 +29,9 @@ pub mod chiffrage_aesgcm;
 pub mod chiffrage_cle;
 pub mod backup_restoration;
 pub mod chiffrage_streamxchacha20poly1305;
+pub mod math;
 
 mod rabbitmq_dao_tests;
-mod math;
 
 // Re-exports
 pub use async_trait;
