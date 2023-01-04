@@ -720,25 +720,31 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
         },
         Value::Bool(o) => Value::Bool(o),
         Value::Number(o) => {
-            match o.is_f64() {
-                true => {
-                    // Traiter un float, on converti en i64 si le nombre fini en .0
-                    match o.as_f64() {
-                        Some(float_num) => {
-                            let int_num = float_num.floor() as i64;
-                            match int_num as f64 == float_num {
-                                true => {
-                                    // Float fini par .0, on transforme en i64
-                                    Value::from(int_num)
-                                },
-                                // partie fractionnaire presente. Note : parfois f32 match javascript
-                                false => Value::from(float_num as f64),
-                            }
-                        },
-                        None => Value::Number(o)
-                    }
-                },
-                false => Value::Number(o)
+            // Return entiers immediatement
+            if o.is_i64() || o.is_u64() { Value::Number(o) }
+            else {
+                debug!("Number pas int/uint : {:?}", o);
+                // Correctif pour 0.0
+                match o.is_f64() {
+                    true => {
+                        // Traiter un float, on converti en i64 si le nombre fini en .0
+                        match o.as_f64() {
+                            Some(float_num) => {
+                                let int_num = float_num.floor() as i64;
+                                match int_num as f64 == float_num {
+                                    true => {
+                                        // Float fini par .0, on transforme en i64
+                                        Value::from(int_num)
+                                    },
+                                    // partie fractionnaire presente. Note : parfois f32 match javascript
+                                    false => Value::Number(o),
+                                }
+                            },
+                            None => Value::Number(o)
+                        }
+                    },
+                    false => Value::Number(o)
+                }
             }
         },
         Value::String(o) => Value::String(o),
@@ -761,6 +767,7 @@ pub struct MessageSerialise {
 impl TryFrom<&str> for MessageSerialise {
     type Error = String;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
+
         let msg_parsed: MessageMilleGrille = match serde_json::from_str(value) {
             Ok(m) => m,
             Err(e) => Err(format!("MessageSerialise.TryFrom Erreur from_str : {:?}", e))?
