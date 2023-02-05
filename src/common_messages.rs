@@ -170,6 +170,7 @@ pub struct ReponseSignatureCertificat {
 pub struct RequeteConsignationFichiers {
     pub instance_id: Option<String>,
     pub hostname: Option<String>,
+    pub primaire: Option<bool>,
     pub stats: Option<bool>,
 }
 
