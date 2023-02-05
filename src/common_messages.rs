@@ -166,6 +166,13 @@ pub struct ReponseSignatureCertificat {
     pub certificat: Option<Vec<String>>
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RequeteConsignationFichiers {
+    pub instance_id: Option<String>,
+    pub hostname: Option<String>,
+    pub stats: Option<bool>,
+}
+
 /// Message d'information du mecanisme de consignation principal de fichiers
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReponseInformationConsignationFichiers {
@@ -174,6 +181,20 @@ pub struct ReponseInformationConsignationFichiers {
     pub type_store: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_download: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostnames: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primaire: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fichiers_taille: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fichiers_nombre: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corbeille_taille: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corbeille_nombre: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub espace_disponible: Option<usize>,
     pub ok: Option<bool>,
 }
 
