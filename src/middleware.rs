@@ -684,6 +684,30 @@ pub struct ReponseEnveloppe {
     pub ca_pem: Option<String>,
 }
 
+pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
+    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao,
+        G: GestionnaireDomaine,
+        S: Serialize
+{
+
+    let transaction = middleware.formatter_message(
+        valeur,
+        Some(domaine),
+        Some(action),
+        None,
+        None,
+        false
+    )?;
+
+    // Sauvegarder la transation
+    let msg = MessageSerialise::from_parsed(transaction)?;
+    let msg_action = MessageValideAction::new(msg, "", "", domaine, action, TypeMessageOut::Transaction);
+
+    Ok(sauvegarder_traiter_transaction(middleware, msg_action, gestionnaire).await?)
+}
+
 /// Sauvegarde une nouvelle transaction et de la traite immediatement
 pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageValideAction, gestionnaire: &G)
     -> Result<Option<MessageMilleGrille>, String>
