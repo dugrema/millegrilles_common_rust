@@ -180,10 +180,21 @@ pub struct ReponseInformationConsignationFichiers {
     pub instance_id: String,
     pub consignation_url: String,
     pub type_store: String,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_download: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hostnames: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname_sftp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username_sftp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_path_sftp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_type_sftp: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primaire: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
