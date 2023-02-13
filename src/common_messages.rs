@@ -180,6 +180,9 @@ pub struct ReponseInformationConsignationFichiers {
     pub instance_id: String,
     pub consignation_url: String,
     pub type_store: String,
+    pub sync_intervalle: Option<i64>,
+    pub sync_actif: Option<bool>,
+    pub data_chiffre: Option<DataChiffre>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url_download: Option<String>,
@@ -196,6 +199,19 @@ pub struct ReponseInformationConsignationFichiers {
     pub key_type_sftp: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    type_backup: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hostname_sftp_backup: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    port_sftp_backup: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username_sftp_backup: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote_path_sftp_backup: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_type_sftp_backup: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub primaire: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fichiers_taille: Option<usize>,
@@ -207,6 +223,7 @@ pub struct ReponseInformationConsignationFichiers {
     pub corbeille_nombre: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub espace_disponible: Option<usize>,
+
     pub ok: Option<bool>,
 }
 
