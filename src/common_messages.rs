@@ -5,7 +5,7 @@ use serde_json::Value;
 use multibase;
 use multihash::Code;
 
-use crate::chiffrage::CleSecrete;
+use crate::chiffrage::{CleSecrete, FormatChiffrage};
 use crate::chiffrage_cle::IdentiteCle;
 use crate::hachages::verifier_multihash;
 use crate::formatteur_messages::DateEpochSeconds;
@@ -208,6 +208,15 @@ pub struct ReponseInformationConsignationFichiers {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub espace_disponible: Option<usize>,
     pub ok: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataChiffre {
+    pub ref_hachage_bytes: Option<String>,
+    pub data_chiffre: String,
+    pub format: FormatChiffrage,
+    pub header: Option<String>,
+    pub tag: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
