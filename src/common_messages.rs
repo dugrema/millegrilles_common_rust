@@ -238,10 +238,13 @@ pub struct ReponseInformationConsignationFichiers {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DataChiffre {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ref_hachage_bytes: Option<String>,
     pub data_chiffre: String,
     pub format: FormatChiffrage,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
 }
 
