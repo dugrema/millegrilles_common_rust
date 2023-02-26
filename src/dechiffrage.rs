@@ -73,10 +73,12 @@ pub async fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<Da
 
     // Dechiffrer message
     let mut output_vec = Vec::new();
-    let data_chiffre_vec = decode(data.data_chiffre)?.1;
+    let data_chiffre_vec: Vec<u8> = decode(data.data_chiffre)?.1;
+    debug!("dechiffrer_data Dechiffrer {:?}", data_chiffre_vec);
     output_vec.reserve(data_chiffre_vec.len());
-    let len = decipher.update(&data_chiffre_vec.as_slice(), &mut output_vec[..])?;
+    let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
     let out_len = decipher.finalize(&mut output_vec[len..])?;
+    debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
 
     let mut data_dechiffre = Vec::new();
     data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
