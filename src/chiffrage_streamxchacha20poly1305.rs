@@ -444,7 +444,7 @@ impl TryFrom<CleDechiffree> for Mgs4CipherData {
         let cle_chiffree_bytes: Vec<u8> = decode(value.cle)?.1;
         let header_bytes: Vec<u8> = match value.header {
             Some(inner) => decode(inner)?.1,
-            None => Vec::new()
+            None => Err(format!("TryFrom<CleDechiffree> header manquant de la cle"))?
         };
         Ok(Self {
             cle_chiffree: cle_chiffree_bytes,
