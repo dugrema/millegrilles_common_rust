@@ -297,7 +297,7 @@ pub struct Mgs4CipherKeys {
     pub header: String,
     pub fingerprint_cert_millegrille: Option<String>,
     pub hachage_bytes: String,
-    cle_secrete: Option<CleSecrete>,
+    pub cle_secrete: Option<CleSecrete>,
 }
 
 impl Debug for Mgs4CipherKeys {

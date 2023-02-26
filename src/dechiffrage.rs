@@ -27,7 +27,7 @@ pub async fn dechiffrer_documents<M>(middleware: &M, liste_data_chiffre: Vec<Dat
     for d in liste_data_chiffre {
         if let Some(hachage_bytes) = d.ref_hachage_bytes.as_ref() {
             if let Some(cle) = cles_dechiffrees.remove(hachage_bytes) {
-                let data = dechiffrer_data(cle, d).await?;
+                let data = dechiffrer_data(cle, d)?;
                 data_dechiffre.push(data);
             }
         }
@@ -67,7 +67,7 @@ pub async fn get_cles_dechiffrees<M,S>(middleware: &M, liste_hachage_bytes: Vec<
     Ok(cles)
 }
 
-pub async fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDechiffre, Box<dyn Error>> {
+pub fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDechiffre, Box<dyn Error>> {
     let decipher_data = Mgs4CipherData::try_from(cle)?;
     let mut decipher = DecipherMgs4::new(&decipher_data)?;
 
@@ -75,7 +75,8 @@ pub async fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<Da
     let mut output_vec = Vec::new();
     let data_chiffre_vec: Vec<u8> = decode(data.data_chiffre)?.1;
     debug!("dechiffrer_data Dechiffrer {:?}", data_chiffre_vec);
-    output_vec.reserve(data_chiffre_vec.len());
+    // output_vec.reserve(data_chiffre_vec.len());
+    output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
     let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
     let out_len = decipher.finalize(&mut output_vec[len..])?;
     debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
@@ -87,4 +88,96 @@ pub async fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<Da
         ref_hachage_bytes: data.ref_hachage_bytes,
         data_dechiffre,
     })
+}
+
+#[cfg(test)]
+mod test {
+    use dryoc::constants::CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
+    use log::debug;
+    use multibase::{Base, encode};
+    use openssl::pkey::{Id, PKey, Private};
+    use crate::certificats::FingerprintCertPublicKey;
+    use crate::chiffrage::{CipherMgs, CleSecrete, FormatChiffrage};
+    use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherKeys};
+
+    use crate::test_setup::setup;
+
+    use super::*;
+
+    #[test]
+    fn test_decipher_court() -> Result<(), Box<dyn Error>> {
+        setup("test_cipher4_vide");
+
+        let (cle, fps) = generer_cles()?;
+        const MESSAGE_COURT: &[u8] = b"Ceci est un msg";  // Message 15 bytes
+        let (ciphertext, cles) = chiffrer(fps, MESSAGE_COURT)?;
+        debug!("Message chiffre : {:?}", ciphertext);
+        let ciphertext_string = encode(Base::Base64, ciphertext);
+        debug!("Message chiffre string : {:?}", ciphertext_string);
+
+        let cle_secrete = cles.cle_secrete.as_ref().expect("cle secrete");
+        let cle_bytes = cle_secrete.0;
+        let cle_secrete = CleSecrete ( cle_bytes );
+
+        let cle_dechiffree = CleDechiffree {
+            cle: String::from("mXoCusx6NjjuVRI4Rjb4Y/8/wJtQAIWCxT3ykEDA2VS0"),
+            cle_secrete: CleSecrete ( cle_bytes ),
+            domaine: String::from("DUMMY"),
+            format: cles.get_format(),
+            hachage_bytes: cles.hachage_bytes.clone(),
+            identificateurs_document: None,
+            iv: None,
+            tag: None,
+            header: Some(cles.header.clone()),
+            signature_identite: String::from("DUMMY"),
+        };
+
+        let data_chiffre = DataChiffre {
+            ref_hachage_bytes: Some(cles.hachage_bytes),
+            data_chiffre: ciphertext_string,
+            format: FormatChiffrage::mgs4,
+            header: Some(cles.header),
+            tag: None,
+        };
+
+        let resultat = dechiffrer_data(cle_dechiffree, data_chiffre)?;
+        let resultat_string = String::from_utf8(resultat.data_dechiffre);
+        debug!("Data dechiffre : {:?}", resultat_string);
+
+        Ok(())
+    }
+
+    fn generer_cles() -> Result<(PKey<Private>, Vec<FingerprintCertPublicKey>), Box<dyn Error>> {
+        // Generer cle
+        let cle_millegrille = PKey::generate_ed25519()?;
+        let cle_millegrille_public = PKey::public_key_from_raw_bytes(
+            &cle_millegrille.raw_public_key()?, Id::ED25519)?;
+
+        let mut fpkeys = Vec::new();
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "CleMillegrille".into(),
+            public_key: cle_millegrille_public,
+            est_cle_millegrille: true,
+        });
+
+        Ok((cle_millegrille, fpkeys))
+    }
+
+    fn chiffrer(fpkeys: Vec<FingerprintCertPublicKey>, message: &[u8]) -> Result<(Vec<u8>, Mgs4CipherKeys), Box<dyn Error>>{
+        let mut ciphertext = Vec::new();
+
+        // Extend pour taille du message + ABYTES
+        ciphertext.extend(std::iter::repeat(0).take(message.len() + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES));
+
+        let mut cipher = CipherMgs4::new(&fpkeys)?;
+        debug!("Chiffrer message de {} bytes", message.len());
+
+        let mut output_buffer = ciphertext.as_mut_slice();
+        let taille_chiffree = cipher.update(message, &mut output_buffer)?;
+        debug!("Output taille message chiffree (update) : {}", taille_chiffree);
+        let (out_len, info_keys) = cipher.finalize(&mut output_buffer[taille_chiffree..])?;
+        debug!("Output chiffrage (confirmation taille: {}): {:?}.", out_len, output_buffer);
+
+        Ok((ciphertext, info_keys))
+    }
 }
