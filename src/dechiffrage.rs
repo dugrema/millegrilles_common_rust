@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::error::Error;
 use log::debug;
+use multibase::decode;
 use serde_json::json;
+use crate::chiffrage::{DecipherMgs, MgsCipherData};
 use crate::chiffrage_cle::{CleDechiffree, ReponseDechiffrageCles};
+use crate::chiffrage_streamxchacha20poly1305::{DecipherMgs4, Mgs4CipherData};
 use crate::common_messages::{DataChiffre, DataDechiffre};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::constantes::*;
@@ -18,12 +21,12 @@ pub async fn dechiffrer_documents<M>(middleware: &M, liste_data_chiffre: Vec<Dat
             liste_hachage_bytes.push(inner.as_str())
         }
     }
-    let cles_dechiffrees = get_cles_dechiffrees(middleware, liste_hachage_bytes).await?;
+    let mut cles_dechiffrees = get_cles_dechiffrees(middleware, liste_hachage_bytes).await?;
 
     let mut data_dechiffre = Vec::new();
     for d in liste_data_chiffre {
         if let Some(hachage_bytes) = d.ref_hachage_bytes.as_ref() {
-            if let Some(cle) = cles_dechiffrees.get(hachage_bytes) {
+            if let Some(cle) = cles_dechiffrees.remove(hachage_bytes) {
                 let data = dechiffrer_data(cle, d).await?;
                 data_dechiffre.push(data);
             }
@@ -64,7 +67,22 @@ pub async fn get_cles_dechiffrees<M,S>(middleware: &M, liste_hachage_bytes: Vec<
     Ok(cles)
 }
 
-pub async fn dechiffrer_data(cle: &CleDechiffree, data: DataChiffre) -> Result<DataDechiffre, Box<dyn Error>> {
+pub async fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDechiffre, Box<dyn Error>> {
+    let decipher_data = Mgs4CipherData::try_from(cle)?;
+    let mut decipher = DecipherMgs4::new(&decipher_data)?;
 
-    todo!("fix me")
+    // Dechiffrer message
+    let mut output_vec = Vec::new();
+    let data_chiffre_vec = decode(data.data_chiffre)?.1;
+    output_vec.reserve(data_chiffre_vec.len());
+    let len = decipher.update(&data_chiffre_vec.as_slice(), &mut output_vec[..])?;
+    let out_len = decipher.finalize(&mut output_vec[len..])?;
+
+    let mut data_dechiffre = Vec::new();
+    data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
+
+    Ok(DataDechiffre {
+        ref_hachage_bytes: data.ref_hachage_bytes,
+        data_dechiffre,
+    })
 }

@@ -17,7 +17,7 @@ use openssl::pkey::{PKey, Private};
 
 use crate::certificats::FingerprintCertPublicKey;
 use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
-use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree, IdentiteCle};
+use crate::chiffrage_cle::{CleDechiffree, CommandeSauvegarderCle, FingerprintCleChiffree, IdentiteCle};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
 use crate::hachages::Hacheur;
 
@@ -432,6 +432,23 @@ impl Mgs4CipherData {
         Ok(Mgs4CipherData {
             cle_chiffree: cle_chiffree_bytes,
             cle_dechiffree: None,
+            header: header_bytes,
+        })
+    }
+}
+
+impl TryFrom<CleDechiffree> for Mgs4CipherData {
+    type Error = Box<dyn Error>;
+
+    fn try_from(value: CleDechiffree) -> Result<Self, Self::Error> {
+        let cle_chiffree_bytes: Vec<u8> = decode(value.cle)?.1;
+        let header_bytes: Vec<u8> = match value.header {
+            Some(inner) => decode(inner)?.1,
+            None => Vec::new()
+        };
+        Ok(Self {
+            cle_chiffree: cle_chiffree_bytes,
+            cle_dechiffree: Some(value.cle_secrete),
             header: header_bytes,
         })
     }
