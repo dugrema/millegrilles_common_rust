@@ -64,6 +64,10 @@ pub async fn get_cles_dechiffrees<M,S>(middleware: &M, liste_hachage_bytes: Vec<
         }
     }
 
+    if cles.len() != liste_hachage_bytes.len() {
+        Err(format!("Certaines cles refusees, liste recue : {:?}", cles.keys()))?;
+    }
+
     Ok(cles)
 }
 
