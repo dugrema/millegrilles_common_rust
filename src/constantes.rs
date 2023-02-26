@@ -273,6 +273,7 @@ pub const MAITREDESCLES_REQUETE_DECHIFFRAGE: &str = "dechiffrage";
 
 pub const MAITREDESCLES_CHAMP_HACHAGE_BYTES: &str = "hachage_bytes";
 pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
+pub const MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: &str = "liste_hachage_bytes";
 
 pub const COMMANDE_SAUVEGARDER_CLE: &str = "sauvegarderCle";
 pub const COMMANDE_CERT_MAITREDESCLES: &str = "certMaitreDesCles";
