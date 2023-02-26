@@ -421,7 +421,7 @@ impl MgsCipherKeys for Mgs4CipherKeys {
 pub struct Mgs4CipherData {
     cle_chiffree: Vec<u8>,
     cle_dechiffree: Option<CleSecrete>,
-    header: Vec<u8>,
+    pub header: Vec<u8>,
 }
 
 impl Mgs4CipherData {

@@ -72,7 +72,14 @@ pub async fn get_cles_dechiffrees<M,S>(middleware: &M, liste_hachage_bytes: Vec<
 }
 
 pub fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDechiffre, Box<dyn Error>> {
-    let decipher_data = Mgs4CipherData::try_from(cle)?;
+    let mut decipher_data = Mgs4CipherData::try_from(cle)?;
+
+    // Remplacer le header par celui du data (requis lors de reutilisation de cles)
+    match &data.header {
+        Some(inner) => decipher_data.header = decode(inner) ?.1,
+        None => ()
+    }
+
     let mut decipher = DecipherMgs4::new(&decipher_data)?;
 
     // Dechiffrer message
