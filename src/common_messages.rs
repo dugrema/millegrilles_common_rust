@@ -269,3 +269,8 @@ pub fn verifier_reponse_ok(message: &TypeMessage) -> bool {
         _ => false
     }
 }
+
+pub struct DataDechiffre {
+    pub ref_hachage_bytes: Option<String>,
+    pub data_dechiffre: Vec<u8>,
+}

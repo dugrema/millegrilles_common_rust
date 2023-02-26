@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::error::Error;
 
 use blake2::{Blake2s256, Digest};
 use log::debug;
@@ -7,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::bson::Document;
-use crate::certificats::ordered_map;
+use crate::certificats::{EnveloppePrivee, ordered_map};
 use crate::chiffrage::{CleSecrete, FormatChiffrage};
+use crate::chiffrage_ed25519::dechiffrer_asymmetrique_ed25519;
 use crate::constantes::*;
 use crate::formatteur_messages::MessageMilleGrille;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
@@ -232,6 +234,39 @@ impl IdentiteCle {
         }
     }
 
+}
+
+pub struct CleDechiffree {
+    pub cle: String,
+    pub cle_secrete: CleSecrete,
+    pub domaine: String,
+    pub format: String,
+    pub hachage_bytes: String,
+    pub identificateurs_document: Option<HashMap<String, String>>,
+    pub iv: Option<String>,
+    pub tag: Option<String>,
+    pub header: Option<String>,
+    pub signature_identite: String,
+}
+
+impl CleDechiffree {
+    pub fn dechiffrer_information_cle(enveloppe_privee: &EnveloppePrivee, information_cle: InformationCle) -> Result<Self, Box<dyn Error>> {
+        let (_, cle_bytes) = multibase::decode(&information_cle.cle)?;
+        let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes[..], enveloppe_privee.cle_privee())?;
+
+        Ok(Self {
+            cle: information_cle.cle,
+            cle_secrete,
+            domaine: information_cle.domaine,
+            format: information_cle.format,
+            hachage_bytes: information_cle.hachage_bytes,
+            identificateurs_document: information_cle.identificateurs_document,
+            iv: information_cle.iv,
+            tag: information_cle.tag,
+            header: information_cle.header,
+            signature_identite: information_cle.signature_identite,
+        })
+    }
 }
 
 #[cfg(test)]

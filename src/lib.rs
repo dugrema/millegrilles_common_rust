@@ -16,6 +16,7 @@ pub mod verificateur;
 pub mod transactions;
 pub mod backup;
 pub mod chiffrage;
+pub mod dechiffrage;
 pub mod fichiers;
 pub mod messages_generiques;
 pub mod domaines;
