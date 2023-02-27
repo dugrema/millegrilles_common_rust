@@ -44,13 +44,8 @@ pub async fn get_cles_rechiffrees<M,S>(middleware: &M, liste_hachage_bytes: &Vec
     let requete_cles = match certificat_rechiffrage_pem {
         Some(inner) => {
             // Utiliser certificat du message client (requete) pour demande de rechiffrage
-            let pem_rechiffrage: Vec<String> = match inner {
-                Some(c) => {
-                    let fp_certs = c.get_pem_vec();
-                    fp_certs.into_iter().map(|cert| cert.pem).collect()
-                },
-                None => Err(format!("Erreur formattage certificat en PEM"))?
-            };
+            let fp_certs = inner.get_pem_vec();
+            let pem_rechiffrage: Vec<String> = fp_certs.into_iter().map(|cert| cert.pem).collect();
 
             json!({
                 MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
