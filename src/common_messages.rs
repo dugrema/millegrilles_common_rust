@@ -274,3 +274,9 @@ pub struct DataDechiffre {
     pub ref_hachage_bytes: Option<String>,
     pub data_dechiffre: Vec<u8>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionRetirerSubscriptionWebpush {
+    pub endpoint: String,
+    pub user_id: Option<String>,
+}

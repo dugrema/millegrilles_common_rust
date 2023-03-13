@@ -268,6 +268,9 @@ pub const PKI_DOCUMENT_CHAMP_FINGERPRINT: &str = "fingerprint";
 // pub const PKI_DOCUMENT_CHAMP_FINGERPRINT_PK: &str = "fingerprint_pk";
 pub const PKI_DOCUMENT_CHAMP_CERTIFICAT: &str = "certificat";
 
+// Maitre des comptes
+pub const DOMAINE_NOM_MAITREDESCOMPTES: &str = "CoreMaitreDesComptes";
+pub const ACTION_GET_LISTE_PROPRIETAIRES: &str = "getListeProprietaires";
 
 // Maitre des cles
 pub const DOMAINE_NOM_MAITREDESCLES: &str = "MaitreDesCles";
