@@ -4,12 +4,15 @@ use std::fmt::{Debug, Formatter};
 use chacha20poly1305::{aead::{Aead, KeyInit}, ChaCha20Poly1305};
 use dryoc::classic::{crypto_sign_ed25519, crypto_sign_ed25519::{PublicKey, SecretKey}};
 use log::debug;
+use multibase::Base;
 use multihash::Code;
 use openssl::derive::Deriver;
 use openssl::pkey::{Id, PKey, Private, Public};
+use crate::certificats::FingerprintCertPublicKey;
 
 // use crate::chacha20poly1305_incremental::ChaCha20Poly1305;
 use crate::chiffrage::CleSecrete;
+use crate::chiffrage_cle::FingerprintCleChiffree;
 use crate::hachages::hacher_bytes_vu8;
 
 pub struct CleDerivee {
@@ -183,6 +186,44 @@ fn convertir_private_ed25519_to_x25519(ca_key: &PKey<Private>) -> Result<PKey<Pr
     );
 
     Ok(PKey::private_key_from_raw_bytes(&cle_privee_ca_x25519, Id::X25519)?)
+}
+
+/// Rechiffre une cle derivee pour chaque cle publique
+pub fn rechiffrer_cles(cle_derivee: &CleDerivee, public_keys: &Vec<FingerprintCertPublicKey>)
+    -> Result<Vec<FingerprintCleChiffree>, Box<dyn Error>>
+{
+    let mut fp_cles = Vec::new();
+
+    let cle_millegrille = {
+        let mut cle_millegrille_v: Vec<&FingerprintCertPublicKey> = public_keys.iter()
+            .filter(|k| k.est_cle_millegrille).collect();
+        match cle_millegrille_v.pop() {
+            Some(c) => c,
+            None => {
+                debug!("chiffrage_ed25519::rechiffrer_cles Cle de millegrille manquante, cles presentes : {:?}", public_keys);
+                Err(format!("chiffrage_ed25519::rechiffrer_cles Cle de millegrille manquante"))?
+            }
+        }
+    };
+
+    // Rechiffrer la cle derivee pour toutes les cles publiques
+    for fp_pk in public_keys {
+        if fp_pk.est_cle_millegrille {
+            fp_cles.push(FingerprintCleChiffree {
+                fingerprint: cle_millegrille.fingerprint.clone(),
+                cle_chiffree: multibase::encode(Base::Base64, cle_derivee.public_peer)
+            });
+        } else {
+            let cle_chiffree = chiffrer_asymmetrique_ed25519(&cle_derivee.secret.0, &fp_pk.public_key)?;
+            let cle_str = multibase::encode(Base::Base64, cle_chiffree);
+            fp_cles.push(FingerprintCleChiffree {
+                fingerprint: fp_pk.fingerprint.clone(),
+                cle_chiffree: cle_str
+            });
+        }
+    }
+
+    Ok(fp_cles)
 }
 
 #[cfg(test)]

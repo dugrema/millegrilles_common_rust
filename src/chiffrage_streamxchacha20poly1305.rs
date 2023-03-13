@@ -18,7 +18,7 @@ use openssl::pkey::{PKey, Private};
 use crate::certificats::FingerprintCertPublicKey;
 use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_cle::{CleDechiffree, CommandeSauvegarderCle, FingerprintCleChiffree, IdentiteCle};
-use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519};
+use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, CleDerivee, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, rechiffrer_cles};
 use crate::hachages::Hacheur;
 
 const CONST_TAILLE_BLOCK_MGS4: usize = 64 * 1024;
@@ -27,13 +27,13 @@ const CONST_TAILLE_BLOCK_MGS4: usize = 64 * 1024;
 pub struct CipherMgs4 {
     state: State,
     header: String,
-    cles_chiffrees: Vec<FingerprintCleChiffree>,
+    cles_chiffrees: Option<Vec<FingerprintCleChiffree>>,
     fp_cle_millegrille: Option<String>,
     hacheur: Hacheur,
     hachage_bytes: Option<String>,
     buffer: [u8; CONST_TAILLE_BLOCK_MGS4-CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES],  // Buffer de chiffrage
     position_buffer: usize,
-    cle_secrete: CleSecrete,
+    cle_derivee: CleDerivee,
 }
 
 impl CipherMgs4 {
@@ -41,38 +41,21 @@ impl CipherMgs4 {
     pub fn new(public_keys: &Vec<FingerprintCertPublicKey>) -> Result<Self, Box<dyn Error>> {
 
         // Deriver une cle secrete avec la cle publique de millegrille
-        let mut fp_cles = Vec::new();
         let cle_millegrille = {
             let mut cle_millegrille_v: Vec<&FingerprintCertPublicKey> = public_keys.iter()
                 .filter(|k| k.est_cle_millegrille).collect();
             match cle_millegrille_v.pop() {
                 Some(c) => c,
                 None => {
-                    debug!("CipherMgs3::new Cle de millegrille manquante, cles presentes : {:?}", public_keys);
-                    Err(format!("CipherMgs3::new Cle de millegrille manquante"))?
+                    debug!("CipherMgs4::new Cle de millegrille manquante, cles presentes : {:?}", public_keys);
+                    Err(format!("CipherMgs4::new Cle de millegrille manquante"))?
                 }
             }
         };
         // Deriver cle secrete
         let cle_derivee = deriver_asymetrique_ed25519(&cle_millegrille.public_key)?;
 
-        // Conserver cle peer pour la cle de millegrille. Permet de deriver a nouveau la cle
-        // secrete en utilisant la cle privee du certificat de millegrille.
-        fp_cles.push(FingerprintCleChiffree {
-            fingerprint: cle_millegrille.fingerprint.clone(),
-            cle_chiffree: multibase::encode(Base::Base64, cle_derivee.public_peer)
-        });
-
-        // Rechiffrer la cle derivee pour toutes les cles publiques
-        for fp_pk in public_keys {
-            if fp_pk.est_cle_millegrille { continue; }  // Skip cle de millegrille, deja faite
-            let cle_chiffree = chiffrer_asymmetrique_ed25519(&cle_derivee.secret.0, &fp_pk.public_key)?;
-            let cle_str = multibase::encode(Base::Base64, cle_chiffree);
-            fp_cles.push(FingerprintCleChiffree {
-                fingerprint: fp_pk.fingerprint.clone(),
-                cle_chiffree: cle_str
-            });
-        }
+        let fp_cles = rechiffrer_cles(&cle_derivee, public_keys)?;
 
         let mut state = State::new();
         let mut header = Header::default();
@@ -88,14 +71,115 @@ impl CipherMgs4 {
         Ok(Self {
             state,
             header: encode(Base::Base64, header),
-            cles_chiffrees: fp_cles,
+            cles_chiffrees: Some(fp_cles),
             fp_cle_millegrille: Some(cle_millegrille.fingerprint.clone()),
             hacheur,
             hachage_bytes: None,
             buffer: [0u8; CONST_TAILLE_BLOCK_MGS4-CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES],
             position_buffer: 0,
-            cle_secrete
+            cle_derivee
         })
+    }
+
+    pub fn new_avec_secret(cle_derivee: &CleDerivee) -> Result<Self, Box<dyn Error>> {
+        let mut state = State::new();
+        let mut header = Header::default();
+        let key = Key::from(cle_derivee.secret.0);
+        crypto_secretstream_xchacha20poly1305_init_push(&mut state, &mut header, &key);
+
+        let hacheur = Hacheur::builder()
+            .digester(Code::Blake2b512)
+            .base(Base::Base58Btc)
+            .build();
+
+        Ok(Self {
+            state,
+            header: encode(Base::Base64, header),
+            cles_chiffrees: None,
+            fp_cle_millegrille: None,
+            hacheur,
+            hachage_bytes: None,
+            buffer: [0u8; CONST_TAILLE_BLOCK_MGS4-CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES],
+            position_buffer: 0,
+            cle_derivee: CleDerivee {
+                secret: CleSecrete(cle_derivee.secret.0),
+                public_peer: cle_derivee.public_peer.clone()
+            }
+        })
+    }
+
+    pub fn get_header(&self) -> &str {
+        self.header.as_ref()
+    }
+
+    fn finalize_keep(&mut self, out: &mut [u8]) -> Result<usize, String> {
+
+        let taille_output = self.position_buffer + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
+
+        debug!("CipherMgs4.finalize_keep Output buffer len {}", out.len());
+
+        {
+            let slice_output = &mut out[..taille_output];
+
+            let resultat = crypto_secretstream_xchacha20poly1305_push(
+                &mut self.state,
+                slice_output,
+                &self.buffer[..self.position_buffer],
+                None,
+                CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL,
+            );
+
+            if let Err(e) = resultat {
+                Err(format!("CipherMgs4.finalize Erreur crypto_secretstream_xchacha20poly1305_push {:?}", e))?
+            }
+
+            self.hacheur.update(slice_output);
+        }
+
+        if self.hachage_bytes.is_some() {
+            Err("Deja finalise")?;
+        }
+
+        // Calculer et conserver hachage
+        let hachage_bytes = self.hacheur.finalize();
+        self.hachage_bytes = Some(hachage_bytes);
+
+        Ok(taille_output)
+    }
+
+    fn get_cipher_keys(&self, public_keys: &Vec<FingerprintCertPublicKey>)
+        -> Result<Mgs4CipherKeys, Box<dyn Error>>
+    {
+        let hachage_bytes = match self.hachage_bytes.as_ref() {
+            Some(inner) => inner.clone(),
+            None => Err(format!("CipherMgs4.get_cipher_keys Cipher non finalize"))?
+        };
+
+        let fp_cle_millegrille = match self.fp_cle_millegrille.as_ref() {
+            Some(inner) => inner.to_owned(),
+            None => {
+                let mut cle_millegrille_v: Vec<&FingerprintCertPublicKey> = public_keys.iter()
+                    .filter(|k| k.est_cle_millegrille).collect();
+                match cle_millegrille_v.pop() {
+                    Some(c) => c.fingerprint.clone(),
+                    None => {
+                        debug!("CipherMgs4::get_cipher_keys Cle de millegrille manquante, cles presentes : {:?}", public_keys);
+                        Err(format!("CipherMgs4::get_cipher_keys Cle de millegrille manquante"))?
+                    }
+                }
+            }
+        };
+
+        let fp_cles = rechiffrer_cles(&self.cle_derivee, public_keys)?;
+        let mut cipher_keys = Mgs4CipherKeys::new(
+            fp_cles,
+            self.header.clone(),
+            hachage_bytes,
+            Some(CleSecrete(self.cle_derivee.secret.0)),
+        );
+        cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
+
+        Ok(cipher_keys)
     }
 }
 
@@ -147,40 +231,22 @@ impl CipherMgs<Mgs4CipherKeys> for CipherMgs4 {
 
     fn finalize(mut self, out: &mut [u8]) -> Result<(usize, Mgs4CipherKeys), String> {
 
-        let taille_output = self.position_buffer + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
-
-        debug!("CipherMgs4.finalize Output buffer len {}", out.len());
-
-        {
-            let slice_output = &mut out[..taille_output];
-
-            let resultat = crypto_secretstream_xchacha20poly1305_push(
-                &mut self.state,
-                slice_output,
-                &self.buffer[..self.position_buffer],
-                None,
-                CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL,
-            );
-
-            if let Err(e) = resultat {
-                Err(format!("CipherMgs4.finalize Erreur crypto_secretstream_xchacha20poly1305_push {:?}", e))?
-            }
-
-            self.hacheur.update(slice_output);
+        if self.cles_chiffrees.is_none() {
+            Err(format!("cles_chiffrees absente - utiliser methode finalize_keep()"))?
         }
 
-        if self.hachage_bytes.is_some() {
-            Err("Deja finalise")?;
-        }
+        let taille_output = self.finalize_keep(out)?.clone();
 
-        // Calculer et conserver hachage
-        let hachage_bytes = self.hacheur.finalize();
+        let hachage_bytes = match self.hachage_bytes {
+            Some(inner) => inner,
+            None => Err(format!("CipherMgs4.finalize Cipher non finalize"))?
+        };
 
         let mut cipher_keys = Mgs4CipherKeys::new(
-            self.cles_chiffrees.clone(),
-            self.header.clone(),
+            self.cles_chiffrees.expect("cles_chiffrees"),
+            self.header,
             hachage_bytes,
-            Some(self.cle_secrete),
+            Some(self.cle_derivee.secret),
         );
         cipher_keys.fingerprint_cert_millegrille = self.fp_cle_millegrille.clone();
 
@@ -475,6 +541,7 @@ impl Debug for Mgs4CipherData {
 mod test {
     use log::debug;
     use openssl::pkey::{Id, PKey};
+    use x509_parser::signature_algorithm::SignatureAlgorithm::ED25519;
 
     use crate::test_setup::setup;
 
@@ -666,6 +733,75 @@ mod test {
                 assert_eq!(&message, output_vec.as_slice());
             }
 
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cipher4_clederivee_externe() -> Result<(), Box<dyn Error>> {
+        setup("test_cipher4_vide");
+
+        // Generer deux cles
+        let cle_millegrille = PKey::generate_ed25519()?;
+        let cle_millegrille_public = PKey::public_key_from_raw_bytes(
+            &cle_millegrille.raw_public_key()?, Id::ED25519)?;
+        let cle_maitrecles1 = PKey::generate_ed25519()?;
+        let cle_maitrecles1_public = PKey::public_key_from_raw_bytes(
+            &cle_maitrecles1.raw_public_key()?, Id::ED25519)?;
+
+        let mut fpkeys = Vec::new();
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "CleMillegrille".into(),
+            public_key: cle_millegrille_public.clone(),
+            est_cle_millegrille: true,
+        });
+        fpkeys.push(FingerprintCertPublicKey {
+            fingerprint: "MaitreCles1".into(),
+            public_key: cle_maitrecles1_public,
+            est_cle_millegrille: false,
+        });
+
+        // Calculer une cle derivee
+        let cle_derivee = deriver_asymetrique_ed25519(&cle_millegrille_public)?;
+
+        // Chiffrer contenu "vide"
+        let mut cipher = CipherMgs4::new_avec_secret(&cle_derivee)?;
+        let mut output_chiffrage_final = [0u8; 17];
+        let _out_len = cipher.finalize_keep(&mut output_chiffrage_final)?;
+        debug!("Output header: output final : {:?}", output_chiffrage_final);
+
+        let mut out_dechiffre = [0u8; 0];
+
+        // Preparer cles
+        let info_keys = cipher.get_cipher_keys(&fpkeys)?;
+
+        // Dechiffrer contenu "vide"
+        for key in &info_keys.cles_chiffrees {
+
+            if key.fingerprint.as_str() == "CleMillegrille" {
+                // Test dechiffrage avec cle de millegrille (cle chiffree est 32 bytes)
+                debug!("Test dechiffrage avec CleMillegrille");
+                let mut decipher_data = Mgs4CipherData::new(
+                    key.cle_chiffree.as_str(), info_keys.header.as_str())?;
+                decipher_data.dechiffrer_cle(&cle_millegrille)?;
+                let mut decipher = DecipherMgs4::new(&decipher_data)?;
+                decipher.update(&output_chiffrage_final, &mut out_dechiffre)?;
+                let out_len = decipher.finalize(&mut [0u8])?;
+                debug!("Output len dechiffrage CleMillegrille : {}.", out_len);
+                assert_eq!(0, out_len);
+            } else if key.fingerprint.as_str() == "MaitreCles1" {
+                // Test dechiffrage avec cle de MaitreDesCles (cle chiffree est 80 bytes : 32 bytes peer public, 32 bytes chiffre, 16 bytes tag)
+                debug!("Test dechiffrage avec MaitreCles1");
+                let mut decipher_data = Mgs4CipherData::new(
+                    key.cle_chiffree.as_str(), info_keys.header.as_str())?;
+                decipher_data.dechiffrer_cle(&cle_maitrecles1)?;
+                let mut decipher = DecipherMgs4::new(&decipher_data)?;
+                decipher.update(&output_chiffrage_final, &mut out_dechiffre)?;
+                let out_len = decipher.finalize(&mut [0u8])?;
+                debug!("Output len dechiffrage MaitreCles1 : {}", out_len);
+                assert_eq!(0, out_len);
+            }
         }
 
         Ok(())

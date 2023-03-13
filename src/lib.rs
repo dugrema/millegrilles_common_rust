@@ -31,6 +31,7 @@ pub mod chiffrage_cle;
 pub mod backup_restoration;
 pub mod chiffrage_streamxchacha20poly1305;
 pub mod math;
+pub mod notifications;
 
 mod rabbitmq_dao_tests;
 
