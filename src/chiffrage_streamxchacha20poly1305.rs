@@ -112,7 +112,11 @@ impl CipherMgs4 {
         self.header.as_ref()
     }
 
-    fn finalize_keep(&mut self, out: &mut [u8]) -> Result<usize, String> {
+    pub fn get_hachage(&self) -> Option<&String> {
+        self.hachage_bytes.as_ref()
+    }
+
+    pub fn finalize_keep(&mut self, out: &mut [u8]) -> Result<usize, String> {
 
         let taille_output = self.position_buffer + CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
 
