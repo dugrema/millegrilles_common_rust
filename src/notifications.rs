@@ -197,7 +197,7 @@ impl EmetteurNotifications {
         debug!("emettre_notification_proprietaire Notification a transmettre {:?}", notification);
 
         let routage = RoutageMessageAction::builder(DOMAINE_NOM_MESSAGERIE, ACTION_NOTIFIER)
-            .exchanges(vec![Securite::L2Prive])
+            .exchanges(vec![Securite::L1Public])
             .build();
 
         let reponse = middleware.transmettre_commande(routage, &notification, true).await?;
