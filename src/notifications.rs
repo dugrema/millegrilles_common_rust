@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Mutex;
-use log::debug;
+use log::{debug, warn};
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use flate2::write::GzEncoder;
@@ -88,7 +88,7 @@ impl EmetteurNotifications {
     ) -> Result<(), Box<dyn Error>>
     where M: GenerateurMessages + ValidateurX509
     {
-        let commande_transmise = *self.commande_cle_transmise.lock().expect("lock");
+        let commande_transmise = self.commande_cle_transmise.lock().expect("lock").clone();
 
         // Creer cipher pour chiffrer contenu du message
         let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
@@ -199,7 +199,22 @@ impl EmetteurNotifications {
         let routage = RoutageMessageAction::builder(DOMAINE_NOM_MESSAGERIE, ACTION_NOTIFIER)
             .exchanges(vec![Securite::L2Prive])
             .build();
-        middleware.transmettre_commande(routage, &notification, true).await?;
+
+        let reponse = middleware.transmettre_commande(routage, &notification, true).await?;
+        match reponse {
+            Some(r) => match r {
+                TypeMessage::Valide(m) => {
+                    let ok: bool = m.message.parsed.map_contenu(Some("ok"))?;
+                    if ok == true {
+                        // Marquer cle comme transmise
+                        let mut guard = self.commande_cle_transmise.lock().expect("lock");
+                        *guard = true;
+                    }
+                },
+                _ => Err(format!("notifications.emettre_notification_proprietaire Mauvais type de reponse sur notification"))?
+            },
+            None => warn!("emettre_notification_proprietaire Aucune reponse")
+        }
 
         Ok(())
     }
@@ -247,6 +262,27 @@ mod test {
             None,
             None
         ).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_2_notifications() -> Result<(), Box<dyn Error>> {
+        setup("test_2_notifications");
+
+        let generateur = preparer_generateur_dummy()?;
+
+        // Test
+        let emetteur = EmetteurNotifications::new(generateur.enveloppe_ca.as_ref(), None)?;
+
+        let notification_interne = NotificationMessageInterne {
+            from: None,
+            subject: None,
+            content: "".to_string()
+        };
+
+        emetteur.emettre_notification_proprietaire(&generateur, notification_interne.clone(), "info", None, None).await?;
+        emetteur.emettre_notification_proprietaire(&generateur, notification_interne, "info", None, None).await?;
 
         Ok(())
     }
