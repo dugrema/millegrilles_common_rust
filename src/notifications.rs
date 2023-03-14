@@ -19,7 +19,7 @@ use crate::chiffrage_cle::CommandeSauvegarderCle;
 use crate::chiffrage_ed25519::{CleDerivee, deriver_asymetrique_ed25519};
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::constantes::*;
-use crate::formatteur_messages::DateEpochSeconds;
+use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
 
@@ -53,14 +53,15 @@ struct Notification {
     expiration: Option<DateEpochSeconds>,
     message: NotificationContenu,
     #[serde(rename = "_cle", skip_serializing_if = "Option::is_none")]
-    cle: Option<CommandeSauvegarderCle>,
+    cle: Option<MessageMilleGrille>,
 }
 
 pub struct EmetteurNotifications {
     from: Option<String>,
     cle_derivee_proprietaire: CleDerivee,
-    commande_cle_proprietaire: Mutex<Option<CommandeSauvegarderCle>>,
+    commande_cle_proprietaire: Mutex<Option<MessageMilleGrille>>,
     commande_cle_transmise: Mutex<bool>,
+    ref_hachage_bytes: Mutex<Option<String>>,
 }
 
 impl EmetteurNotifications {
@@ -73,8 +74,9 @@ impl EmetteurNotifications {
         Ok(EmetteurNotifications {
             from: champ_from,
             cle_derivee_proprietaire,
-            commande_cle_proprietaire: Mutex::new(None::<CommandeSauvegarderCle>),
+            commande_cle_proprietaire: Mutex::new(None::<MessageMilleGrille>),
             commande_cle_transmise: Mutex::new(false),
+            ref_hachage_bytes: Mutex::new(None),
         })
     }
 
@@ -123,11 +125,11 @@ impl EmetteurNotifications {
         let cle = match commande_transmise {
             true => {
                 // Remplacer ref_hachage_bytes
-                match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
+                match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
                     Some(c) => {
-                        message.ref_hachage_bytes = c.hachage_bytes.clone();
+                        message.ref_hachage_bytes = c.clone();
                     },
-                    None => panic!("emettre_notification_proprietaire commande_transmise == true, commande None")
+                    None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
                 };
                 None
             },
@@ -177,10 +179,22 @@ impl EmetteurNotifications {
                     let commande = cles_rechiffrees.get_commande_sauvegarder_cles(
                         "Messagerie", None, identificateurs_document)?;
 
-                    let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
-                    guard.replace(commande.clone());
+                    // Signer commande
+                    let commande_signee = middleware.formatter_message(
+                        &commande, Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE), None, None, false)?;
 
-                    commande_outer = Some(commande);
+                    {
+                        // Conserver ref_hachage_bytes
+                        let mut guard = self.ref_hachage_bytes.lock().expect("lock");
+                        guard.replace(commande.hachage_bytes.clone());
+                    }
+
+                    // Conserver commande signee
+                    let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
+                    guard.replace(commande_signee.clone());
+
+                    // Retourner commande signee
+                    commande_outer = Some(commande_signee);
                 }
 
                 commande_outer
