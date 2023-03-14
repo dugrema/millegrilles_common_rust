@@ -146,7 +146,7 @@ impl EmetteurNotifications {
                         .exchanges(vec![Securite::L1Public])
                         .build();
 
-                    let public_keys = {
+                    let (public_keys, partition) = {
                         let enveloppe_maitredescles = match middleware.transmettre_requete(routage, &json!({})).await? {
                             TypeMessage::Valide(m) => {
                                 let certificat_pem: Vec<String> = m.message.parsed.map_contenu(Some("certificat"))?;
@@ -170,7 +170,7 @@ impl EmetteurNotifications {
                             est_cle_millegrille: false,
                         });
 
-                        fpkeys
+                        (fpkeys, enveloppe_maitredescles.fingerprint.clone())
                     };
 
                     let mut identificateurs_document = HashMap::new();
@@ -181,7 +181,7 @@ impl EmetteurNotifications {
 
                     // Signer commande
                     let commande_signee = middleware.formatter_message(
-                        &commande, Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE), None, None, false)?;
+                        &commande, Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE), Some(partition.as_str()), None, false)?;
 
                     {
                         // Conserver ref_hachage_bytes

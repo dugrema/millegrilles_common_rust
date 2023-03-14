@@ -288,7 +288,7 @@ pub const COMMANDE_TRANSFERT_CLE: &str = "transfertCle";
 
 // Messagerie
 pub const DOMAINE_NOM_MESSAGERIE: &str = "Messagerie";
-pub const ACTION_NOTIFIER: &str = "Notifier";
+pub const ACTION_NOTIFIER: &str = "notifier";
 
 // Backup
 pub const BACKUP_NOM_DOMAINE: &str = "CoreBackup";
