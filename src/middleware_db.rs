@@ -22,8 +22,9 @@ use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, 
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
+use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
+use crate::notifications::NotificationMessageInterne;
 use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 use crate::redis_dao::RedisDao;
@@ -39,6 +40,19 @@ pub struct MiddlewareDb {
 
 impl MiddlewareMessages for MiddlewareDb {}
 impl Middleware for MiddlewareDb {}
+
+#[async_trait]
+impl EmetteurNotificationsTrait for MiddlewareDb {
+    async fn emettre_notification_proprietaire(
+        &self, contenu: NotificationMessageInterne, niveau: &str, expiration: Option<i64>, destinataires: Option<Vec<String>>
+    )
+        -> Result<(), Box<dyn Error>>
+    {
+        self.ressources.ressources.emetteur_notifications.emettre_notification_proprietaire(
+            self, contenu, niveau, expiration, destinataires).await
+    }
+}
+
 impl FormatteurMessage for MiddlewareDb {
     fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
         self.ressources.ressources.generateur_messages.get_enveloppe_signature()

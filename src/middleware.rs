@@ -28,6 +28,7 @@ use crate::domaines::GestionnaireDomaine;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{MongoDao, verifier_erreur_duplication_mongo};
+use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
 use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
@@ -54,11 +55,23 @@ pub trait RabbitMqTrait {
     fn notify_attendre_connexion(&self)-> Arc<Notify>;
 }
 
+#[async_trait]
+pub trait EmetteurNotificationsTrait: GenerateurMessages + ValidateurX509 {
+    async fn emettre_notification_proprietaire(
+        &self,
+        contenu: NotificationMessageInterne,
+        niveau: &str,
+        expiration: Option<i64>,
+        destinataires: Option<Vec<String>>
+    ) -> Result<(), Box<dyn Error>>;
+}
+
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait MiddlewareMessages:
     ValidateurX509 + GenerateurMessages + ConfigMessages + IsConfigurationPki +
     IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
-    VerificateurMessage + RedisTrait + ChiffrageFactoryTrait + RabbitMqTrait
+    VerificateurMessage + RedisTrait + ChiffrageFactoryTrait + RabbitMqTrait +
+    EmetteurNotificationsTrait
     // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
 
@@ -74,7 +87,8 @@ pub struct MiddlewareRessources {
     pub configuration: Arc<Box<ConfigurationMessagesDb>>,
     pub validateur: Arc<ValidateurX509Impl>,
     pub rabbitmq: Arc<RabbitMqExecutor>,
-    pub generateur_messages: Arc<GenerateurMessagesImpl>
+    pub generateur_messages: Arc<GenerateurMessagesImpl>,
+    pub emetteur_notifications: Arc<EmetteurNotifications>,
 }
 
 pub fn configurer() -> MiddlewareRessources {
@@ -105,7 +119,23 @@ pub fn configurer() -> MiddlewareRessources {
         rabbitmq.clone()
     ));
 
-    MiddlewareRessources { configuration, validateur, rabbitmq, generateur_messages }
+    let enveloppe_privee = pki.get_enveloppe_privee();
+    let roles = enveloppe_privee.enveloppe.get_roles().expect("get_roles");
+    let identitie_from = match roles {
+        Some(r) => format!("{:?}", roles),
+        None => {
+            let subject = enveloppe_privee.subject().expect("subject");
+            match subject.get("commonName") {
+                Some(cn) => cn.to_owned(),
+                None => enveloppe_privee.fingerprint().to_owned()
+            }
+        }
+    };
+
+    let emetteur_notifications = Arc::new(EmetteurNotifications::new(
+        &enveloppe_privee.enveloppe_ca, Some(identitie_from)).expect("EmetteurNotifications.new"));
+
+    MiddlewareRessources { configuration, validateur, rabbitmq, generateur_messages, emetteur_notifications }
 }
 
 // Middleware de base avec validateur et generateur de messages
@@ -116,6 +146,18 @@ pub struct MiddlewareMessage {
 }
 
 impl MiddlewareMessages for MiddlewareMessage {}
+
+#[async_trait]
+impl EmetteurNotificationsTrait for MiddlewareMessage {
+    async fn emettre_notification_proprietaire(
+        &self, contenu: NotificationMessageInterne, niveau: &str, expiration: Option<i64>, destinataires: Option<Vec<String>>
+    )
+        -> Result<(), Box<dyn Error>>
+    {
+        self.ressources.emetteur_notifications.emettre_notification_proprietaire(
+            self, contenu, niveau, expiration, destinataires).await
+    }
+}
 
 impl RabbitMqTrait for MiddlewareMessage {
     fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String> {
