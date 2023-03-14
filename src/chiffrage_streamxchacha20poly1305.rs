@@ -151,7 +151,7 @@ impl CipherMgs4 {
         Ok(taille_output)
     }
 
-    fn get_cipher_keys(&self, public_keys: &Vec<FingerprintCertPublicKey>)
+    pub fn get_cipher_keys(&self, public_keys: &Vec<FingerprintCertPublicKey>)
         -> Result<Mgs4CipherKeys, Box<dyn Error>>
     {
         let hachage_bytes = match self.hachage_bytes.as_ref() {
