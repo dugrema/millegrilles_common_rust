@@ -97,7 +97,13 @@ impl EmetteurNotifications {
 
         // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
         let message_chiffre: String = {
-            let contenu = serde_json::to_string(&contenu)?;
+
+            let mut message_signe = middleware.formatter_message(
+                &contenu, None::<&str>, None::<&str>, None::<&str>, Some(1), false)?;
+
+            message_signe.certificat = None;  // Retirer certificat, redondant
+
+            let contenu = serde_json::to_string(&message_signe)?;
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(contenu.as_bytes())?;
             let contenu = encoder.finish()?;
