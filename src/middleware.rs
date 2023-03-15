@@ -457,12 +457,9 @@ impl EmetteurCertificat for MiddlewareMessage {
         let enveloppe_privee = self.ressources.configuration.get_configuration_pki().get_enveloppe_privee();
         let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
         let message = formatter_message_certificat(enveloppe_certificat)?;
-        let exchanges: Vec<Securite> = securite_cascade_public(
-            generateur_message.get_securite()).iter().map(|s| s.to_owned())
-            .collect();
 
-        let routage = RoutageMessageAction::builder("certificat", "infoCertificat")
-            .exchanges(exchanges)
+        let routage = RoutageMessageAction::builder("certificat", PKI_REQUETE_CERTIFICAT)
+            .exchanges(vec![Securite::L1Public])
             .build();
 
         // Sauvegarder dans redis
@@ -995,7 +992,9 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     debug!("requete_certificat {}", fingerprint_str);
 
     let requete = json!({"fingerprint": fingerprint_str});
-    let routage = RoutageMessageAction::builder(PKI_DOMAINE_NOM, "infoCertificat").build();
+    let routage = RoutageMessageAction::builder(PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT)
+        .exchanges(vec![Securite::L1Public])
+        .build();
     let reponse_requete = middleware.transmettre_requete(routage, &requete).await?;
     debug!("requete_certificat Reponse : {:?}", reponse_requete);
     let reponse: ReponseEnveloppe = match reponse_requete {
