@@ -166,6 +166,7 @@ impl ValidateurX509 for MiddlewareDb {
                     Some(c) => Some(c),
                     None => {
                         // Certificat absent de redis, via MQ
+                        debug!("get_certificat Certificat inconnu, effectuer requete pour fingerprint {:?}", fingerprint);
                         match requete_certificat(self, fingerprint).await {
                             Ok(c) => c,
                             Err(e) => {
