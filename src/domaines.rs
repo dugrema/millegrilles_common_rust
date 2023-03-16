@@ -547,6 +547,10 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
     {
+        if middleware.get_mode_regeneration() == true {
+            warn!("demarrer_backup Backup annule, regeneration en cours");
+            return Ok(None);
+        }
 
         let message_backup: MessageBackupTransactions = message.message.parsed.map_contenu(None)?;
         let complet = match message_backup.complet.as_ref() { Some(v) => v.to_owned(), None => false };
