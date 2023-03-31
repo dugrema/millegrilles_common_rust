@@ -317,3 +317,7 @@ pub const BACKUP_EVENEMENT_MAJ: &str = "backupMaj";
 
 pub const TOPOLOGIE_NOM_DOMAINE: &str = DOMAINE_TOPOLOGIE;
 // pub const EVENEMENT_PRESENCE_DOMAINE: &str = "presenceDomaine";
+
+
+// Messages tiers
+pub const COMMANDE_FICHIERS_REACTIVER: &str = "reactiverFuuids";
