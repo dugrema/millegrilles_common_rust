@@ -106,13 +106,13 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
     persister_certificats(middleware, nom_coll_str).await?;
 
     if complet {
-        debug!("Backup complet, on emet commande de rotation des fichiers");
-        let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, COMMANDE_BACKUP_ROTATION)
-            .exchanges(vec![Securite::L2Prive])
-            .build();
-        let commande = json!({"domaine": nom_domaine_str});
-        let reponse_rotation = middleware.transmettre_commande(routage, &commande, true).await?;
-        debug!("Reponse rotation : {:?}", reponse_rotation);
+        debug!("Backup complet");
+    //     let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, COMMANDE_BACKUP_ROTATION)
+    //         .exchanges(vec![Securite::L2Prive])
+    //         .build();
+    //     let commande = json!({"domaine": nom_domaine_str});
+    //     let reponse_rotation = middleware.transmettre_commande(routage, &commande, true).await?;
+    //     debug!("Reponse rotation : {:?}", reponse_rotation);
 
         // Reset le flag de backup de toutes les transactions dans mongodb
         reset_backup_flag(middleware, nom_coll_str).await?;
