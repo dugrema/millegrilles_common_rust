@@ -182,6 +182,7 @@ pub struct ReponseInformationConsignationFichiers {
     pub type_store: String,
     pub sync_intervalle: Option<i64>,
     pub sync_actif: Option<bool>,
+    pub supporte_archives: Option<bool>,
     pub data_chiffre: Option<DataChiffre>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
