@@ -178,8 +178,8 @@ pub struct RequeteConsignationFichiers {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReponseInformationConsignationFichiers {
     pub instance_id: String,
-    pub consignation_url: String,
-    pub type_store: String,
+    pub consignation_url: Option<String>,
+    pub type_store: Option<String>,
     pub sync_intervalle: Option<i64>,
     pub sync_actif: Option<bool>,
     pub supporte_archives: Option<bool>,
