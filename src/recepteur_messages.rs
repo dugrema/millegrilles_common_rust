@@ -192,15 +192,15 @@ pub async fn traiter_delivery<M,S>(
 
     // Extraire le contenu du message
     let mut contenu = parse(delivery.data)?;
-    let entete = contenu.get_entete().clone();
-    debug!("Traiter message {:?}", entete);
+    let correlation = contenu.parsed.id.clone();
+    debug!("Traiter message {:?}", correlation);
 
     // Extraire routing key pour gerer messages qui ne requierent pas de validation
     let (routing_key, type_message, domaine, action) = {
         let rk = delivery.routing_key.as_str();
         let ex = delivery.exchange.as_str();
         if ex == "" {
-            debug!("Reponse recue pour {:?}", entete.uuid_transaction);
+            debug!("Reponse recue pour {:?}", correlation);
             (None, Some(TypeMessageIn::Reponse), None, None)
         } else {
             let copie_rk = rk.to_owned();
@@ -241,7 +241,7 @@ pub async fn traiter_delivery<M,S>(
         None => None,
     };
 
-    debug!("Message valide {:?}, passer a la prochaine etape (correlation: {:?})", &entete, correlation_id);
+    debug!("Message valide {:?}, passer a la prochaine etape (correlation: {:?})", &correlation, correlation_id);
     let message = match action {
         Some(inner_action) => {
             TypeMessage::ValideAction(MessageValideAction {
@@ -270,7 +270,7 @@ pub async fn traiter_delivery<M,S>(
         }
     };
 
-    debug!("Message valide : {:?}", &entete);
+    debug!("Message valide : {:?}", &correlation);
     Ok(Some(message))
 }
 
@@ -417,7 +417,7 @@ async fn traiter_certificatintercepter_message<M>(middleware: &M, inner: &Messag
     debug!("Evenement certificat {}, message intercepte", inner.routing_key);
 
     // Charger / mettre certificat en cache au besoin.
-    let m: MessageInfoCertificat = match inner.message.get_msg().map_contenu::<MessageInfoCertificat>(None) {
+    let m: MessageInfoCertificat = match inner.message.get_msg().map_contenu() {
         Ok(m) => m,
         Err(e) => {
             info!("Erreur lecture message infoCertificat : {:?}", e);
@@ -542,20 +542,23 @@ impl MessageValideAction {
     }
 
     pub fn from_message_millegrille(message: MessageMilleGrille, type_message: TypeMessageIn) -> Result<Self, Box<dyn Error>> {
-        let entete = message.entete.clone();
+        let (domaine, action) = match message.routage.as_ref() {
+            Some(inner) => {
+                if inner.domaine.is_none() {
+                    Err(format!("MessageValideAction.from_message_millegrille Domaine None"))?;
+                }
+                if inner.action.is_none() {
+                    Err(format!("MessageValideAction.from_message_millegrille Action None"))?;
+                }
+                (inner.domaine.as_ref().expect("domaine").to_owned(), inner.action.as_ref().expect("action").to_owned())
+            },
+            None => Err(format!("MessageValideAction.from_message_millegrille Routage absent"))?
+        };
+
         let message_serialize = MessageSerialise::from_parsed(message)?;
 
-        let domaine = match &entete.domaine {
-            Some(d) => d.as_str(),
-            None => Err(format!("MessageValideAction.from_message_millegrille Domaine None"))?
-        };
-
-        let action = match &entete.action {
-            Some(d) => d.as_str(),
-            None => Err(format!("MessageValideAction.from_message_millegrille Action None"))?
-        };
-
-        Ok(Self::new(message_serialize, "interne", "interne", domaine, action, type_message))
+        Ok(Self::new(message_serialize, "interne", "interne",
+                     domaine.as_str(), action.as_str(), type_message))
     }
 
     pub fn get_reply_info(&self) -> Result<(String, String), String> {
@@ -662,8 +665,8 @@ pub async fn valider_message<M>(
     match &message.certificat {
         Some(_) => (),
         None => {
-            let entete = message.get_entete();
-            let fingerprint = entete.fingerprint_certificat.as_str();
+            // let entete = message.get_entete();
+            let fingerprint = message.parsed.pubkey.as_str();
             let certificat = match &message.get_msg().certificat {
                 Some(c) => {
                     // Utiliser certificat attache au besoin

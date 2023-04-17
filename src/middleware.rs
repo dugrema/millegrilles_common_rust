@@ -833,21 +833,20 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction,
     debug!("Transaction en format bson : {:?}", contenu_doc);
 
     let date_courante = chrono::Utc::now();
-    let entete = &msg.entete;
-    let uuid_transaction = entete.uuid_transaction.as_str();
-    let estampille = &entete.estampille;
-    let _ = match entete.domaine.as_ref() {
-        Some(d) => d.as_str(),
-        None => Err(format!("Domaine absent de la transaction {}", uuid_transaction))?,
-    };
-    let _ = match entete.action.as_ref() {
-        Some(a) => a.as_str(),
-        None => Err(format!("Action absente de la transaction {}", uuid_transaction))?,
-    };
-    let _ = match entete.partition.as_ref() {
-        Some(p) => Some(p.as_str()),
-        None => None,
-    };
+    let uuid_transaction = msg.id.as_str();
+    let estampille = &msg.estampille;
+    let routage = msg.routage.as_ref();
+    match routage {
+        Some(inner) => {
+            if inner.domaine.is_none() {
+                Err(format!("Domaine absent de la transaction {}", uuid_transaction))?;
+            };
+            if inner.action.is_none() {
+                Err(format!("Action absente de la transaction {}", uuid_transaction))?;
+            };
+        },
+        None => Err(format!("Routage absent de la transaction {}", uuid_transaction))?,
+    }
 
     let params_evenements = doc! {
         "document_persiste": date_courante,
@@ -1000,7 +999,7 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     debug!("requete_certificat Reponse : {:?}", reponse_requete);
     let reponse: ReponseEnveloppe = match reponse_requete {
         TypeMessage::Valide(m) => {
-            match m.message.parsed.map_contenu(None) {
+            match m.message.parsed.map_contenu() {
                 Ok(m) => m,
                 Err(e) => {
                     error!("requete_certificat Erreur requete certificat {} : mauvais type reponse ou inconnu : {:?}", fingerprint_str, e);

@@ -63,7 +63,7 @@ pub async fn get_cles_rechiffrees<M,S>(middleware: &M, liste_hachage_bytes: &Vec
     debug!("dechiffrer_documents Requete cles config notifications : {:?}", requete_cles);
     let reponse_cles: ReponseDechiffrageCles = match middleware.transmettre_requete(routage, &requete_cles).await? {
         TypeMessage::Valide(inner) => {
-            inner.message.parsed.map_contenu(None)?
+            inner.message.parsed.map_contenu()?
         },
         _ => Err(format!("dechiffrage.get_cles_dechiffrees Message reponse invalide"))?
     };

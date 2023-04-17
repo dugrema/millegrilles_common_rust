@@ -176,7 +176,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
             true => {
                 match message.action.as_str() {
                     EVENEMENT_CEDULE => {
-                        let trigger: MessageCedule = message.message.get_msg().map_contenu(None)?;
+                        let trigger: MessageCedule = message.message.get_msg().map_contenu()?;
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
                     },
@@ -388,9 +388,13 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     async fn traiter_transaction<M>(self: &'static Self, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao
     {
-        let trigger = match serde_json::from_value::<TriggerTransaction>(Value::Object(m.message.get_msg().contenu.clone())) {
-            Ok(t) => t,
-            Err(e) => Err(format!("Erreur conversion message vers Trigger {:?} : {:?}", m, e))?,
+        // let trigger = match serde_json::from_value::<TriggerTransaction>(Value::Object(m.message.get_msg().contenu.clone())) {
+        //     Ok(t) => t,
+        //     Err(e) => Err(format!("Erreur conversion message vers Trigger {:?} : {:?}", m, e))?,
+        // };
+        let trigger: TriggerTransaction = match m.message.parsed.map_contenu() {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("Erreur conversion message vers Trigger {:?} : {:?}", m, e))?
         };
 
         let nom_collection_transactions = match self.get_collection_transactions() {
@@ -507,7 +511,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         Ok(reponse)
                     },
                     EVENEMENT_CEDULE => {
-                        let trigger: MessageCedule = message.message.get_msg().map_contenu(None)?;
+                        let trigger: MessageCedule = message.message.get_msg().map_contenu()?;
                         // self.verifier_backup_cedule(middleware.as_ref(), &trigger).await?;
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
@@ -552,7 +556,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             return Ok(None);
         }
 
-        let message_backup: MessageBackupTransactions = message.message.parsed.map_contenu(None)?;
+        let message_backup: MessageBackupTransactions = message.message.parsed.map_contenu()?;
         let complet = match message_backup.complet.as_ref() { Some(v) => v.to_owned(), None => false };
 
         if let Some(nom_collection_transactions) = self.get_collection_transactions() {
@@ -577,11 +581,11 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             Some(n) => n,
             None => Err(format!("domaines.restaurer_transaction Tentative de restauration sur domaine sans collection de transactions"))?
         };
-        let message_restauration: MessageRestaurerTransaction = message.message.parsed.map_contenu(None)?;
+        let message_restauration: MessageRestaurerTransaction = message.message.parsed.map_contenu()?;
         let transaction = message_restauration.transaction;
         let mut message_serialise = MessageSerialise::from_parsed(transaction)?;
 
-        let fingerprint_certificat = message_serialise.get_entete().fingerprint_certificat.as_str();
+        let fingerprint_certificat = message_serialise.parsed.pubkey.as_str();
         let certificat: &Vec<String> = match &message_serialise.parsed.certificat {
             Some(c) => c,
             None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?

@@ -179,7 +179,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
 
         // Verifier la transaction - doit etre completement valide, certificat connu
         let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
-        let fingerprint_certificat = transaction.get_entete().fingerprint_certificat.as_str();
+        let fingerprint_certificat = transaction.parsed.pubkey.as_str();
         match middleware.get_certificat(fingerprint_certificat).await {
             Some(c) => transaction.set_certificat(c),
             None => {
@@ -189,29 +189,31 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
                     .exchanges(vec![Securite::L3Protege])
                     .build();
 
-                let entete = transaction.get_entete();
+                // let entete = transaction.get_entete();
+                let fingerprint_certificat = transaction.parsed.pubkey.as_str();
+                let message_id = transaction.parsed.id.as_str();
 
                 let reponse = match middleware.transmettre_requete(routage, &requete).await {
                     Ok(c) => match c {
                         TypeMessage::Valide(c) => {
-                            match c.message.get_msg().map_contenu::<ReponseCertificat>(None) {
+                            match c.message.get_msg().map_contenu::<ReponseCertificat>() {
                                 Ok(r) => r,
                                 Err(e) => {
                                     error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: {:?}) *** SKIPPED ***",
-                                        entete.fingerprint_certificat, entete.uuid_transaction, e);
+                                        fingerprint_certificat, message_id, e);
                                     continue;
                                 }
                             }
                         },
                         _ => {
                             error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: Mauvais type reponse) *** SKIPPED ***",
-                                    entete.fingerprint_certificat, entete.uuid_transaction);
+                                    fingerprint_certificat, message_id);
                             continue;
                         }
                     },
                     Err(e) => {
                         error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: {:?}) *** SKIPPED ***",
-                                            entete.fingerprint_certificat, entete.uuid_transaction, e);
+                                            fingerprint_certificat, message_id, e);
                         continue;
                     }
                 };
@@ -219,7 +221,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
                 if let Some(ok) = reponse.ok {
                     if ok == false {
                         error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: Reponse CorePki: Certificat inconnu) *** SKIPPED ***",
-                            entete.fingerprint_certificat, entete.uuid_transaction);
+                            fingerprint_certificat, message_id);
                         continue;
                     }
                 }
@@ -231,14 +233,14 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
                             Ok(e) => transaction.set_certificat(e),  // OK, certificat recu
                             Err(e) => {
                                 error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: {:?}) *** SKIPPED ***",
-                                    entete.fingerprint_certificat, entete.uuid_transaction, e);
+                                    fingerprint_certificat, message_id, e);
                                 continue;
                             }
                         }
                     },
                     None => {
                         error!("generer_fichiers_backup Certificat inconnu {}, transaction {} (err: Reponse CorePki: chaine_pem vide) *** SKIPPED ***",
-                            entete.fingerprint_certificat, entete.uuid_transaction);
+                            fingerprint_certificat, message_id);
                         continue;
                     }
                 }
@@ -252,8 +254,9 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
         let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
         debug!("generer_fichiers_backup Resultat verification transaction : {:?}", resultat_verification);
 
-        let entete = transaction.get_entete();
-        let uuid_transaction = entete.uuid_transaction.as_str();
+        // let entete = transaction.get_entete();
+        let message_id = transaction.parsed.id.as_str();
+        // let uuid_transaction = entete.uuid_transaction.as_str();
         let date_traitement_transaction = match doc_transaction.get("_evenements") {
             Some(d) => match d.as_document() {
                 Some(e) => match e.get("transaction_traitee") {
@@ -262,43 +265,43 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
                             DateEpochSeconds::from_i64(d.timestamp_millis()/1000)
                         },
                         None => {
-                            debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
-                            entete.estampille.clone()
+                            debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", message_id);
+                            transaction.parsed.estampille.clone()
                         }
                     },
                     None => {
-                        debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
-                        entete.estampille.clone()
+                        debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", message_id);
+                        transaction.parsed.estampille.clone()
                     }
                 },
                 None => {
-                    debug!("Mauvais type d'element _evenements pour {} transaction. Utiliser estampille.", entete.uuid_transaction);
-                    entete.estampille.clone()
+                    debug!("Mauvais type d'element _evenements pour {} transaction. Utiliser estampille.", message_id);
+                    transaction.parsed.estampille.clone()
                 }
             },
             None => {
                 debug!("Aucune information d'evenements (_eveneemnts) pour une transaction. Utiliser estampille.");
-                entete.estampille.clone()
+                transaction.parsed.estampille.clone()
             }
         };
 
         if resultat_verification.valide() {
-            let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+            let fingerprint_certificat = transaction.parsed.pubkey.as_str();
             let certificat = match middleware.get_certificat(fingerprint_certificat).await {
                 Some(c) => c,
                 None => {
-                    error!("Certificat introuvable pour transaction {}, ** SKIP TRANSACTION **", uuid_transaction);
+                    error!("Certificat introuvable pour transaction {}, ** SKIP TRANSACTION **", message_id);
                     continue;
                 }
             };
             builder.ajouter_certificat(certificat.as_ref());
-            builder.ajouter_transaction(uuid_transaction, &date_traitement_transaction);
+            builder.ajouter_transaction(message_id, &date_traitement_transaction);
 
             let len_message = writer.write_bson_line(&doc_transaction).await?;
             len_written += len_message;
             nb_transactions_written += 1;
         } else {
-            error!("Transaction {} invalide ({:?}), ** SKIPPED **", uuid_transaction, resultat_verification);
+            error!("Transaction {} invalide ({:?}), ** SKIPPED **", message_id, resultat_verification);
             continue;
         }
     }
@@ -341,7 +344,8 @@ async fn sauvegarder_catalogue<M>(
     // Conserver les uuid_transactions separement (ne sont pas inclues dans la signature)
     match catalogue.uuid_transactions {
         Some(u) => {
-            catalogue_signe.contenu.insert("_uuid_transactions".into(), serde_json::to_value(&u)?);
+            todo!("fix me");
+            //catalogue_signe.contenu.insert("_uuid_transactions".into(), serde_json::to_value(&u)?);
         },
         None => ()
     }
@@ -784,58 +788,59 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
         debug!("emettre_backup_transactions Traitement fichier {:?}", fichier);
 
         // Charger fichier de backup
-        let (message_backup, uuid_transactions) = {
-            let fichier_fp = std::fs::File::open(fichier)?;
-            let fichier_reader = std::io::BufReader::new(fichier_fp);
-
-            let mut message_backup: MessageMilleGrille = serde_json::from_reader(fichier_reader)?;
-            debug!("emettre_backup_transactions Message backup a emettre : {:?}", message_backup);
-
-            // Conserver liste de transactions, retirer du message a emettre
-            let uuid_transactions: Vec<String> = message_backup.map_contenu(Some("_uuid_transactions"))?;
-            message_backup.contenu.remove("_uuid_transactions");
-
-            (message_backup, uuid_transactions)
-        };
-
-        let uuid_message_backup = message_backup.entete.uuid_transaction.clone();
-        debug!("emettre_backup_transactions Emettre transactions dans le backup {} : {:?}", uuid_message_backup, uuid_transactions);
-
-        let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
-            .exchanges(vec![Securite::L2Prive])
-            // .correlation_id(uuid_message_backup.clone())
-            .timeout_blocking(90_000)
-            .build();
-        let reponse = middleware.emettre_message_millegrille(
-            routage, true, TypeMessageOut::Commande, message_backup).await;
-
-        let reponse = match reponse {
-            Ok(result) => match result {
-                Some(r) => match r {
-                    TypeMessage::Valide(r) => r,
-                    _ => {
-                        error!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup);
-                        continue;
-                    }
-                },
-                None => {
-                    error!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
-                    continue;
-                }
-            },
-            Err(_) => {
-                error!("emettre_backup_transactions Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
-                continue;
-            }
-        };
-
-        debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse);
-
-        // Marquer transactions comme etant completees
-        marquer_transaction_backup_complete(
-            middleware,
-            nom_collection_transactions.as_ref(),
-            &uuid_transactions).await?;
+        todo!("fix me");
+        // let (message_backup, uuid_transactions) = {
+        //     let fichier_fp = std::fs::File::open(fichier)?;
+        //     let fichier_reader = std::io::BufReader::new(fichier_fp);
+        //
+        //     let mut message_backup: MessageMilleGrille = serde_json::from_reader(fichier_reader)?;
+        //     debug!("emettre_backup_transactions Message backup a emettre : {:?}", message_backup);
+        //
+        //     // Conserver liste de transactions, retirer du message a emettre
+        //     let uuid_transactions: Vec<String> = message_backup.map_contenu(Some("_uuid_transactions"))?;
+        //     message_backup.contenu.remove("_uuid_transactions");
+        //
+        //     (message_backup, uuid_transactions)
+        // };
+        //
+        // let uuid_message_backup = message_backup.id.clone();
+        // debug!("emettre_backup_transactions Emettre transactions dans le backup {} : {:?}", uuid_message_backup, uuid_transactions);
+        //
+        // let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
+        //     .exchanges(vec![Securite::L2Prive])
+        //     // .correlation_id(uuid_message_backup.clone())
+        //     .timeout_blocking(90_000)
+        //     .build();
+        // let reponse = middleware.emettre_message_millegrille(
+        //     routage, true, TypeMessageOut::Commande, message_backup).await;
+        //
+        // let reponse = match reponse {
+        //     Ok(result) => match result {
+        //         Some(r) => match r {
+        //             TypeMessage::Valide(r) => r,
+        //             _ => {
+        //                 error!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup);
+        //                 continue;
+        //             }
+        //         },
+        //         None => {
+        //             error!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
+        //             continue;
+        //         }
+        //     },
+        //     Err(_) => {
+        //         error!("emettre_backup_transactions Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
+        //         continue;
+        //     }
+        // };
+        //
+        // debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse);
+        //
+        // // Marquer transactions comme etant completees
+        // marquer_transaction_backup_complete(
+        //     middleware,
+        //     nom_collection_transactions.as_ref(),
+        //     &uuid_transactions).await?;
     }
 
     Ok(())

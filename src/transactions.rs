@@ -175,24 +175,36 @@ impl TryFrom<MessageSerialise> for TransactionImpl {
     type Error = Box<dyn Error>;
 
     fn try_from(value: MessageSerialise) -> Result<Self, Self::Error> {
-        let entete = value.get_entete();
-        let domaine = match &entete.domaine {
-            Some(d) => d.to_owned(),
-            None => Err(format!("Domaine absent"))?
+        let (domaine, action) = match value.parsed.routage.as_ref() {
+            Some(inner) => {
+                if inner.domaine.is_none() {
+                    Err(format!("TryFrom<MessageSerialise> Domaine absent"))?;
+                }
+                if inner.action.is_none() {
+                    Err(format!("TryFrom<MessageSerialise> Action absent"))?;
+                }
+                (inner.domaine.as_ref().expect("domaine").to_owned(), inner.action.as_ref().expect("action").to_owned())
+            },
+            None => Err(format!("TryFrom<MessageSerialise> Routage (domaine, action) absent"))?
         };
-        let action = match &entete.action {
-            Some(a) => a.to_owned(),
-            None => Err(format!("Action absente"))?
-        };
+        // let entete = value.get_entete();
+        // let domaine = match &entete.domaine {
+        //     Some(d) => d.to_owned(),
+        //     None => Err(format!("Domaine absent"))?
+        // };
+        // let action = match &entete.action {
+        //     Some(a) => a.to_owned(),
+        //     None => Err(format!("Action absente"))?
+        // };
 
-        let contenu: Document = value.get_msg().map_contenu(None)?;
+        let contenu: Document = value.get_msg().map_contenu()?;
 
         Ok(TransactionImpl {
             contenu,
             domaine,
             action,
-            uuid_transaction: entete.uuid_transaction.clone(),
-            estampille: entete.estampille.get_datetime().to_owned(),
+            uuid_transaction: value.parsed.id,
+            estampille: value.parsed.estampille.get_datetime().to_owned(),
             enveloppe_certificat: value.certificat,
         })
     }
@@ -484,7 +496,7 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
         let mut uuid_transactions = HashSet::new();
         let mut curseur = {
             for t in &transactions {
-                uuid_transactions.insert(t.entete.uuid_transaction.clone());
+                uuid_transactions.insert(t.id.clone());
             }
             let projection = doc! {"en-tete.uuid_transaction": 1};
             let vec_uuid_transactions = uuid_transactions.iter().collect::<Vec<&String>>();
@@ -514,11 +526,11 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
         // Serialiser les transactions vers le format bson
         while let Some(t) = transactions.pop() {
             debug!("sauvegarder_batch Message a serialiser en bson : {:?}", t);
-            if uuid_transactions.contains(&t.entete.uuid_transaction) {
+            if uuid_transactions.contains(&t.id) {
                 let bson_doc = bson::to_document(&t).expect("serialiser bson");
                 transactions_bson.push(bson_doc);
             } else {
-                debug!("sauvegarder_batch Skip transaction existante : {}", t.entete.uuid_transaction.as_str());
+                debug!("sauvegarder_batch Skip transaction existante : {}", t.id);
             }
         }
 

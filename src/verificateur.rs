@@ -75,10 +75,10 @@ where
         None => (false, false, false, None),
     };
 
-    let entete = message.get_entete().clone();
-    let idmg = entete.idmg.as_str();
-    let estampille = entete.estampille.get_datetime();
-    let uuid_transaction = &entete.uuid_transaction;
+    // let entete = message.get_entete().clone();
+    // let idmg = entete.idmg.as_str();
+    let estampille = message.parsed.estampille.get_datetime();
+    let uuid_transaction = &message.parsed.id;
     let certificat = match &message.certificat {
         Some(c) => c.as_ref(),
         None => Err("Verificateur.verifier_message Certificat manquant")?,
@@ -97,7 +97,8 @@ where
     let certificat_idmg_valide = match utiliser_idmg_message {
         true => {
             let idmg_cert = certificat.idmg()?;
-            let msg_match_certificat = idmg == idmg_cert.as_str();
+            // let msg_match_certificat = idmg == idmg_cert.as_str();
+            let msg_match_certificat = true;  // Le idmg n'est plus dans le message
             if msg_match_certificat {
                 // Verifier si le IDMG est local ou celui d'un tiers
                 let idmg_validateur = validateur.idmg();
@@ -118,7 +119,7 @@ where
                 false
             }
         },
-        false => idmg == validateur.idmg()
+        false => true  // idmg == validateur.idmg()  ** Idmg n'est plus un champ du message
     };
     let certificat_date_valide = match utiliser_date_message {
         true => {
@@ -132,39 +133,40 @@ where
         estampille >= &certificat.not_valid_before()?;
 
     // On verifie la signature - si valide, court-circuite le reste de la validation.
-    let public_key = match certificat.certificat().public_key() {
-        Ok(p) => Ok(p),
-        Err(e) => Err(format!("Erreur extraction public_key du certificat : {:?}", e)),
-    }?;
+    // let public_key = match certificat.certificat().public_key() {
+    //     Ok(p) => Ok(p),
+    //     Err(e) => Err(format!("Erreur extraction public_key du certificat : {:?}", e)),
+    // }?;
 
-    let resultat_verifier_signature = message.parsed.verifier_signature(&public_key)?;
+    // let resultat_verifier_signature = message.parsed.verifier_signature(&public_key)?;
+    let resultat_verifier_message = message.parsed.verifier_contenu()?;
 
-    if resultat_verifier_signature == true && toujours_verifier_hachage == false {
+    // if resultat_verifier_signature == true && toujours_verifier_hachage == false {
         // La signature est valide, on court-circuite le hachage.
         return Ok(ResultatValidation{
-            signature_valide: true,
-            hachage_valide: None,
+            signature_valide: resultat_verifier_message,
+            hachage_valide: Some(resultat_verifier_message),
             certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
             regles_valides: regles_ok,
         })
-    } else if resultat_verifier_signature == false {
-        debug!("Signature invalide pour message {}", uuid_transaction);
-    }
-
-    // La signature n'est pas valide, on verifie le hachage (troubleshooting)
-    let hachage_valide = match message.parsed.verifier_hachage() {
-        Ok(h) => Ok(h),
-        Err(e) => Err(format!("Erreur verification du message : {:?}", e)),
-    }?;
-
-    debug!("Certificat {} idmg: {}, cert date {}, msg date {}", certificat.fingerprint, certificat_idmg_valide, certificat_date_valide, message_date_valide);
-
-    Ok(ResultatValidation{
-        signature_valide: resultat_verifier_signature,
-        hachage_valide: Some(hachage_valide),
-        certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
-        regles_valides: regles_ok,
-    })
+    // } else if resultat_verifier_signature == false {
+    //     debug!("Signature invalide pour message {}", uuid_transaction);
+    // }
+    //
+    // // La signature n'est pas valide, on verifie le hachage (troubleshooting)
+    // let hachage_valide = match message.parsed.verifier_hachage() {
+    //     Ok(h) => Ok(h),
+    //     Err(e) => Err(format!("Erreur verification du message : {:?}", e)),
+    // }?;
+    //
+    // debug!("Certificat {} idmg: {}, cert date {}, msg date {}", certificat.fingerprint, certificat_idmg_valide, certificat_date_valide, message_date_valide);
+    //
+    // Ok(ResultatValidation{
+    //     signature_valide: resultat_verifier_signature,
+    //     hachage_valide: Some(hachage_valide),
+    //     certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
+    //     regles_valides: regles_ok,
+    // })
 }
 
 pub fn verifier_signature_str(public_key: &PKey<Public>, signature: &str, message: &str) -> Result<bool, Box<dyn Error>> {

@@ -1,28 +1,28 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::Formatter;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use hex;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use log::{debug, warn};
+use log::debug;
 use mongodb::bson as bson;
-use openssl::pkey::{PKey, Public};
+use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{DeserializeOwned, Visitor};
-use serde::ser::SerializeMap;
 use serde_json::{json, Map, Number, Value};
 use uuid::Uuid;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
-use crate::hachages::{hacher_bytes, hacher_message, verifier_multihash};
-use crate::middleware::{IsConfigurationPki, map_msg_to_bson};
-use crate::signatures::{signer_message, verifier_message as ref_verifier_message};
+use crate::hachages::{hacher_bytes, hacher_message};
+use crate::middleware::map_msg_to_bson;
+use crate::signatures::signer_message;
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 use crate::bson::{Document, Bson};
 use std::convert::{TryFrom, TryInto};
 use multibase::Base;
 use multihash::Code;
+use openssl::sign::Verifier;
 use crate::constantes::MessageKind;
 use crate::mongo_dao::convertir_to_bson;
 
@@ -68,21 +68,21 @@ pub trait FormatteurMessage {
             None::<&str>, None::<&str>, None::<&str>, version, false)
     }
 
-    fn signer_message(
-        &self,
-        kind: MessageKind,
-        message: &mut MessageMilleGrille,
-        domaine: Option<&str>,
-        action: Option<&str>,
-        partition: Option<&str>,
-        version: Option<i32>
-    ) -> Result<(), Box<dyn Error>> {
-        if message.signature.is_some() {
-            Err(format!("Message {} est deja signe", message.entete.uuid_transaction))?
-        }
-        message.signer(self.get_enveloppe_signature().as_ref(),
-                       kind, domaine, action, partition, version)
-    }
+    // fn signer_message(
+    //     &self,
+    //     kind: MessageKind,
+    //     message: &mut MessageMilleGrille,
+    //     domaine: Option<&str>,
+    //     action: Option<&str>,
+    //     partition: Option<&str>,
+    //     version: Option<i32>
+    // ) -> Result<(), Box<dyn Error>> {
+    //     if message.signature.is_some() {
+    //         Err(format!("Message {} est deja signe", message.entete.uuid_transaction))?
+    //     }
+    //     message.signer(self.get_enveloppe_signature().as_ref(),
+    //                    kind, domaine, action, partition, version)
+    // }
 
     fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {
         let reponse = json!({"ok": ok, "message": message});
@@ -204,35 +204,45 @@ impl EnteteBuilder {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 /// Structure a utiliser pour creer un nouveau message
 /// Utiliser methode MessageMilleGrille::new_signer().
 pub struct MessageMilleGrille {
-    /// Entete du message. Contient domaine.action, hachage du contenu, fingerprint certificat, estampille, etc.
-    #[serde(rename = "en-tete")]
-    pub entete: Entete,
+    /// Identificateur unique du message. Correspond au hachage blake2s-256 en hex.
+    pub id: String,
+
+    /// Cle publique du certificat utilise pour la signature
+    pub pubkey: String,
+
+    /// Date de creation du message
+    pub estampille: DateEpochSeconds,
+
+    /// Kind du message, correspond a enum MessageKind
+    pub kind: u16,
+
+    /// Contenu du message en format json-string
+    pub contenu: String,
+
+    /// Information de routage de message (optionnel, depend du kind)
+    pub routage: Option<RoutageMessage>,
+
+    /// Signature ed25519 encodee en hex
+    #[serde(rename = "sig")]
+    pub signature: String,
 
     /// Chaine de certificats en format PEM.
-    #[serde(rename = "_certificat", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "certificat", skip_serializing_if = "Option::is_none")]
     pub certificat: Option<Vec<String>>,
 
     /// Certificat de millegrille (root).
-    #[serde(rename = "_millegrille", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "millegrille", skip_serializing_if = "Option::is_none")]
     pub millegrille: Option<String>,
 
-    /// Signature encodee en multibase
-    #[serde(rename = "_signature")]
-    pub signature: Option<String>,
-
-    /// Contenu du message autre que les elements structurels.
-    #[serde(flatten)]
-    pub contenu: Map<String, Value>,
-
     #[serde(skip)]
-    contenu_traite: bool,
+    contenu_valide: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RoutageMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
@@ -300,17 +310,17 @@ impl<'a> EnveloppeHachageMessage<'a> {
 impl MessageMilleGrille {
 
     /// Creer un nouveau message et inserer les valeurs a la main.
-    pub fn new() -> Self {
-        const PLACEHOLDER: &str = "PLACEHOLDER";
-        MessageMilleGrille {
-            entete: Entete::builder(PLACEHOLDER, PLACEHOLDER, PLACEHOLDER).build(),
-            certificat: None,
-            millegrille: None,
-            signature: None,
-            contenu: Map::new(),
-            contenu_traite: false,
-        }
-    }
+    // pub fn new() -> Self {
+    //     const PLACEHOLDER: &str = "PLACEHOLDER";
+    //     MessageMilleGrille {
+    //         entete: Entete::builder(PLACEHOLDER, PLACEHOLDER, PLACEHOLDER).build(),
+    //         certificat: None,
+    //         millegrille: None,
+    //         signature: None,
+    //         contenu: Map::new(),
+    //         contenu_traite: false,
+    //     }
+    // }
 
     pub fn new_signer<S, T, U, V>(
         enveloppe_privee: &EnveloppePrivee,
@@ -336,7 +346,7 @@ impl MessageMilleGrille {
         let domaine_str = match domaine { Some(inner) => Some(inner.as_ref().to_string()), None => None};
         let partition_str = match partition { Some(inner) => Some(inner.as_ref().to_string()), None => None};
 
-        let routage_message = match kind {
+        let routage_message = match &kind {
             MessageKind::Requete | MessageKind::Commande | MessageKind::Transaction | MessageKind::Evenement => {
                 Some(RoutageMessage { action: action_str, domaine: domaine_str, partition: partition_str })
             },
@@ -344,14 +354,17 @@ impl MessageMilleGrille {
         };
 
         // Hacher le message pour obtenir le id
-        let enveloppe_message = EnveloppeHachageMessage::new(
-            enveloppe_privee.enveloppe.as_ref(), kind, value_serialisee.as_str(), routage_message)?;
-        debug!("message a hacher {:?}", enveloppe_message);
-        let id_message = enveloppe_message.hacher()?;
-        debug!("ID message (hachage) : {}", id_message);
-        let id_message_bytes = hex::decode(&id_message)?;
+        let (id_message, pubkey, routage, estampille) = {
+            let enveloppe_message = EnveloppeHachageMessage::new(
+                enveloppe_privee.enveloppe.as_ref(), kind.clone(), value_serialisee.as_str(), routage_message)?;
+            debug!("message a hacher {:?}", enveloppe_message);
+            let id_message = enveloppe_message.hacher()?;
+            debug!("ID message (hachage) : {}", id_message);
+            (id_message, enveloppe_message.pubkey, enveloppe_message.routage, enveloppe_message.estampille)
+        };
 
         // Signer le id
+        let id_message_bytes = hex::decode(&id_message)?;
         let signature = signer_message(enveloppe_privee.cle_privee(), &id_message_bytes[..])?;
         debug!("Signature message {}", signature);
 
@@ -374,18 +387,18 @@ impl MessageMilleGrille {
             false => None
         };
 
-        let mut message = MessageMilleGrille {
-            entete,
+        Ok(MessageMilleGrille {
+            id: id_message,
+            pubkey,
+            estampille,
+            kind: kind.into(),
+            contenu: value_serialisee,
+            routage,
+            signature,
             certificat: Some(pems),
             millegrille,
-            signature: None,
-            contenu: value_ordered,
-            contenu_traite: true,
-        };
-
-        MessageMilleGrille::signer_message(&mut message, enveloppe_privee)?;
-
-        Ok(message)
+            contenu_valide: Some(true),
+        })
     }
 
     /// Va creer une nouvelle entete, calculer le hachag
@@ -439,36 +452,36 @@ impl MessageMilleGrille {
         Ok(entete)
     }
 
-    pub fn set_value(&mut self, name: &str, value: Value) {
-        if self.signature.is_some() { panic!("set_value sur message signe") }
-        self.contenu.insert(name.to_owned(), value);
-    }
+    // pub fn set_value(&mut self, name: &str, value: Value) {
+    //     if self.signature.is_some() { panic!("set_value sur message signe") }
+    //     self.contenu.insert(name.to_owned(), value);
+    // }
+    //
+    // pub fn set_int(&mut self, name: &str, value: i64) {
+    //     if self.signature.is_some() { panic!("set_int sur message signe") }
+    //     self.contenu.insert(name.to_owned(), Value::from(value));
+    // }
+    //
+    // pub fn set_float(&mut self, name: &str, value: f64) {
+    //     if self.signature.is_some() { panic!("set_float sur message signe") }
+    //     self.contenu.insert(name.to_owned(), Value::from(value));
+    // }
+    //
+    // pub fn set_bool(&mut self, name: &str, value: bool) {
+    //     if self.signature.is_some() { panic!("set_bool sur message signe") }
+    //     self.contenu.insert(name.to_owned(), Value::from(value));
+    // }
 
-    pub fn set_int(&mut self, name: &str, value: i64) {
-        if self.signature.is_some() { panic!("set_int sur message signe") }
-        self.contenu.insert(name.to_owned(), Value::from(value));
-    }
-
-    pub fn set_float(&mut self, name: &str, value: f64) {
-        if self.signature.is_some() { panic!("set_float sur message signe") }
-        self.contenu.insert(name.to_owned(), Value::from(value));
-    }
-
-    pub fn set_bool(&mut self, name: &str, value: bool) {
-        if self.signature.is_some() { panic!("set_bool sur message signe") }
-        self.contenu.insert(name.to_owned(), Value::from(value));
-    }
-
-    pub fn set_serializable<S>(&mut self, name: &str, value: &S) -> Result<(), Box<dyn Error>>
-    where
-        S: Serialize,
-    {
-        if self.signature.is_some() { panic!("set_serializable sur message signe") }
-
-        let val_ser = serde_json::to_value(value)?;
-        self.contenu.insert(name.to_owned(), val_ser);
-        Ok(())
-    }
+    // pub fn set_serializable<S>(&mut self, name: &str, value: &S) -> Result<(), Box<dyn Error>>
+    // where
+    //     S: Serialize,
+    // {
+    //     if self.signature.is_some() { panic!("set_serializable sur message signe") }
+    //
+    //     let val_ser = serde_json::to_value(value)?;
+    //     self.contenu.insert(name.to_owned(), val_ser);
+    //     Ok(())
+    // }
 
     pub fn serialiser_contenu<S>(contenu: &S) -> Result<Map<String, Value>, Box<dyn std::error::Error>>
     where
@@ -479,39 +492,39 @@ impl MessageMilleGrille {
         Ok(contenu)
     }
 
-    fn signer_message(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
-        let message_string = self.preparer_pour_signature()?;
+    // fn signer_message(&mut self, enveloppe_privee: &EnveloppePrivee) -> Result<(), Box<dyn std::error::Error>> {
+    //     let message_string = self.preparer_pour_signature()?;
+    //
+    //     debug!("Message serialise avec entete : {}", message_string);
+    //     let signature = signer_message(enveloppe_privee.cle_privee(), message_string.as_bytes())?;
+    //
+    //     self.signature = Some(signature);
+    //
+    //     Ok(())
+    // }
 
-        debug!("Message serialise avec entete : {}", message_string);
-        let signature = signer_message(enveloppe_privee.cle_privee(), message_string.as_bytes())?;
-
-        self.signature = Some(signature);
-
-        Ok(())
-    }
-
-    fn preparer_pour_signature(&mut self) -> Result<String, Box<dyn Error>> {
-        if !self.contenu_traite {
-            self.traiter_contenu()?;
-        }
-
-        // Creer une map avec l'entete (refs uniquements)
-        let mut map_ordered: BTreeMap<&str, &Value> = BTreeMap::new();
-
-        // Copier references du reste du contenu (exclure champs _)
-        for (k, v) in &self.contenu {
-            if !k.starts_with("_") {
-                map_ordered.insert(k.as_str(), v);
-            }
-        }
-
-        // Ajouter entete
-        let entete_value = serde_json::to_value(&self.entete)?;
-        map_ordered.insert("en-tete", &entete_value);
-
-        let message_string = serde_json::to_string(&map_ordered)?;
-        Ok(message_string)
-    }
+    // fn preparer_pour_signature(&mut self) -> Result<String, Box<dyn Error>> {
+    //     if !self.contenu_traite {
+    //         self.traiter_contenu()?;
+    //     }
+    //
+    //     // Creer une map avec l'entete (refs uniquements)
+    //     let mut map_ordered: BTreeMap<&str, &Value> = BTreeMap::new();
+    //
+    //     // Copier references du reste du contenu (exclure champs _)
+    //     for (k, v) in &self.contenu {
+    //         if !k.starts_with("_") {
+    //             map_ordered.insert(k.as_str(), v);
+    //         }
+    //     }
+    //
+    //     // Ajouter entete
+    //     let entete_value = serde_json::to_value(&self.entete)?;
+    //     map_ordered.insert("en-tete", &entete_value);
+    //
+    //     let message_string = serde_json::to_string(&map_ordered)?;
+    //     Ok(message_string)
+    // }
 
     /// Genere une String avec le contenu serialise correctement pour hachage / validation.
     // pub fn preparer_pour_hachage(&mut self) -> Result<String, Box<dyn Error>> {
@@ -588,81 +601,71 @@ impl MessageMilleGrille {
     //     Ok(serde_json::to_string(&ordered)?)
     // }
 
-    fn signer(
-        &mut self,
-        enveloppe_privee: &EnveloppePrivee,
-        kind: MessageKind,
-        domaine: Option<&str>,
-        action: Option<&str>,
-        partition: Option<&str>,
-        version: Option<i32>
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    // fn signer(
+    //     &mut self,
+    //     enveloppe_privee: &EnveloppePrivee,
+    //     kind: MessageKind,
+    //     domaine: Option<&str>,
+    //     action: Option<&str>,
+    //     partition: Option<&str>,
+    //     version: Option<i32>
+    // ) -> Result<(), Box<dyn std::error::Error>> {
+    //
+    //     if self.signature.is_some() {
+    //         warn!("appel signer() sur message deja signe, on ignore");
+    //         return Ok(())
+    //     }
+    //
+    //     let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, action, partition, version, &self.contenu)?;
+    //
+    //     // Remplacer l'entete
+    //     self.entete = entete;
+    //     self.certificat = Some(enveloppe_privee.chaine_pem().to_owned());
+    //     self.millegrille = None;
+    //
+    //     self.signer_message(enveloppe_privee)?;
+    //
+    //     Ok(())
+    // }
 
-        if self.signature.is_some() {
-            warn!("appel signer() sur message deja signe, on ignore");
-            return Ok(())
-        }
-
-        let entete = MessageMilleGrille::creer_entete(enveloppe_privee, domaine, action, partition, version, &self.contenu)?;
-
-        // Remplacer l'entete
-        self.entete = entete;
-        self.certificat = Some(enveloppe_privee.chaine_pem().to_owned());
-        self.millegrille = None;
-
-        self.signer_message(enveloppe_privee)?;
-
-        Ok(())
-    }
-
-    fn traiter_contenu(&mut self) -> Result<(), Box<dyn Error>>{
-        if ! self.contenu_traite {
-            let mut contenu = Map::new();
-            let contenu_ref = &mut self.contenu;
-
-            let keys: Vec<String> = contenu_ref.keys().map(|k| k.to_owned()).collect();
-            for k in keys {
-                if let Some(v) = contenu_ref.remove(k.as_str()) {
-                    contenu.insert(k, v);
-                }
-            }
-
-            // let mut contenu_prev: serde_json::map::IntoIter = self.contenu.into_iter();
-            // for ((k, v)) in self.contenu {
-            //     contenu.insert(k, v);
-            // }
-            // while let Some((k, v)) = contenu_prev.next() {
-            //     contenu.insert(k, v);
-            // }
-
-            // let mut contenu = &self.contenu;
-            // let contenu_prev: serde_json::map::IntoIter = contenu.into_iter();
-            // self.contenu = MessageMilleGrille::preparer_btree_recursif_into_iter(contenu_prev)?;
-            self.contenu = preparer_btree_recursif(contenu)?;
-            self.contenu_traite = true;
-        }
-        Ok(())
-    }
+    // fn traiter_contenu(&mut self) -> Result<(), Box<dyn Error>>{
+    //     if ! self.contenu_traite {
+    //         let mut contenu = Map::new();
+    //         let contenu_ref = &mut self.contenu;
+    //
+    //         let keys: Vec<String> = contenu_ref.keys().map(|k| k.to_owned()).collect();
+    //         for k in keys {
+    //             if let Some(v) = contenu_ref.remove(k.as_str()) {
+    //                 contenu.insert(k, v);
+    //             }
+    //         }
+    //
+    //         // let mut contenu_prev: serde_json::map::IntoIter = self.contenu.into_iter();
+    //         // for ((k, v)) in self.contenu {
+    //         //     contenu.insert(k, v);
+    //         // }
+    //         // while let Some((k, v)) = contenu_prev.next() {
+    //         //     contenu.insert(k, v);
+    //         // }
+    //
+    //         // let mut contenu = &self.contenu;
+    //         // let contenu_prev: serde_json::map::IntoIter = contenu.into_iter();
+    //         // self.contenu = MessageMilleGrille::preparer_btree_recursif_into_iter(contenu_prev)?;
+    //         self.contenu = preparer_btree_recursif(contenu)?;
+    //         self.contenu_traite = true;
+    //     }
+    //     Ok(())
+    // }
 
     /// Sert a retirer les certificats pour serialisation (e.g. backup, transaction Mongo, etc)
     pub fn retirer_certificats(&mut self) { self.certificat = None; self.millegrille = None; }
 
     /// Mapper le contenu ou un champ (1er niveau) du contenu vers un objet Deserialize
-    pub fn map_contenu<C>(&self, nom_champ: Option<&str>) -> Result<C, Box<dyn Error>>
+    pub fn map_contenu<C>(&self) -> Result<C, Box<dyn Error>>
         where C: DeserializeOwned
     {
-        let value = match nom_champ {
-            Some(c) => {
-                match self.contenu.get(c) {
-                    Some(c) => c.to_owned(),
-                    None => Err(format!("formatteur_messages.map_contenu Champ {} introuvable", c))?,
-                }
-            },
-            None => serde_json::to_value(self.contenu.clone())?,
-        };
-
+        let value = serde_json::from_str(self.contenu.as_str())?;
         let deser: C = serde_json::from_value(value)?;
-
         Ok(deser)
     }
 
@@ -670,111 +673,152 @@ impl MessageMilleGrille {
         map_msg_to_bson(self)
     }
 
-    pub fn verifier_hachage(&mut self) -> Result<bool, Box<dyn Error>> {
-        if ! self.contenu_traite {
-            self.traiter_contenu()?;
+    /// Verifie le hachage et la signature
+    /// :return: True si hachage et signature valides
+    pub fn verifier_contenu(&mut self) -> Result<bool, Box<dyn Error>> {
+        if let Some(inner) = self.contenu_valide {
+            return Ok(inner);  // Deja verifie
         }
 
-        let entete = &self.entete;
-        let hachage_str = entete.hachage_contenu.as_str();
+        let mut valide = false;
 
-        // Filtrer champs avec _
-        let contenu_string = {
-            let mut map: BTreeMap<&str, &Value> = BTreeMap::new();
-            for (k, v) in &self.contenu {
-                if !k.starts_with("_") {
-                    map.insert(k.as_str(), v);
-                }
-            }
-            serde_json::to_string(&map)?
-        };
+        // Hachage du message (id)
+        let id_message = hex::decode(self.id.as_str())?;
 
-        verifier_multihash(hachage_str, contenu_string.as_bytes())
+        // Verifier signature
+        {
+            let signature = hex::decode(self.signature.as_str())?;
+            let pubkey = hex::decode(self.pubkey.as_str())?;
+            let cle_ed25519_publique = PKey::public_key_from_raw_bytes(
+                &pubkey[..], Id::ED25519)?;
+            let mut verifier = Verifier::new_without_digest(&cle_ed25519_publique)?;
+            valide = verifier.verify_oneshot(&signature[..], &id_message[..])?;
+            debug!("Validite signature message : {}", valide);
+        }
+
+        // Verifier hachage
+        if valide {
+            debug!("Verifier hachage");
+            let message_enveloppe = EnveloppeHachageMessage {
+                pubkey: self.pubkey.clone(),
+                estampille: self.estampille.clone(),
+                kind: self.kind.clone(),
+                contenu: self.contenu.as_str(),
+                routage: self.routage.clone(),
+            };
+            let hachage_calcule = message_enveloppe.hacher()?;
+            valide = hachage_calcule == self.id;
+            debug!("Validite hachage contenu message {}", valide);
+        }
+
+        self.contenu_valide = Some(valide);  // Conserver pour reference future
+
+        Ok(valide)
     }
 
-    pub fn verifier_signature(&mut self, public_key: &PKey<Public>) -> Result<bool, Box<dyn Error>> {
-        // let contenu_str = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
-        debug!("verifier_signature_str (signature: {:?}, public key: {:?})", self.signature, public_key);
+    pub fn verifier_hachage(&mut self) -> Result<bool, Box<dyn Error>> {
+        self.verifier_contenu()
 
-        let message = self.preparer_pour_signature()?;
-        match &self.signature {
-            Some(s) => {
-                debug!("Message prepare pour signature\n{}", message);
-                let resultat = ref_verifier_message(public_key, message.as_bytes(), s.as_str())?;
-                Ok(resultat)
-                // decode(s)?
-            },
-            None => Err(format!("Signature absente"))?,
-        }
-        // let version_signature = signature_bytes.1[0];
-        // if version_signature != VERSION_2 {
-        //     Err(format!("La version de la signature n'est pas 2"))?;
-        // }
-
-        // let mut verifier = match Verifier::new(MessageDigest::sha512(), &public_key) {
-        //     Ok(v) => v,
-        //     Err(e) => Err(format!("Erreur verification signature : {:?}", e))?
+        // let entete = &self.entete;
+        // let hachage_str = entete.hachage_contenu.as_str();
+        //
+        // // Filtrer champs avec _
+        // let contenu_string = {
+        //     let mut map: BTreeMap<&str, &Value> = BTreeMap::new();
+        //     for (k, v) in &self.contenu {
+        //         if !k.starts_with("_") {
+        //             map.insert(k.as_str(), v);
+        //         }
+        //     }
+        //     serde_json::to_string(&map)?
         // };
         //
-        // verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
-        // verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
-        // verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
-        // verifier.update(message.as_bytes())?;
-        //
-        // // Retourner la reponse
-        // Ok(verifier.verify(&signature_bytes.1[1..])?)
+        // verifier_multihash(hachage_str, contenu_string.as_bytes())
     }
+
+    // pub fn verifier_signature(&mut self, public_key: &PKey<Public>) -> Result<bool, Box<dyn Error>> {
+    //     // let contenu_str = MessageMilleGrille::preparer_pour_signature(entete, contenu)?;
+    //     debug!("verifier_signature_str (signature: {:?}, public key: {:?})", self.signature, public_key);
+    //
+    //     let message = self.preparer_pour_signature()?;
+    //     match &self.signature {
+    //         Some(s) => {
+    //             debug!("Message prepare pour signature\n{}", message);
+    //             let resultat = ref_verifier_message(public_key, message.as_bytes(), s.as_str())?;
+    //             Ok(resultat)
+    //             // decode(s)?
+    //         },
+    //         None => Err(format!("Signature absente"))?,
+    //     }
+    //     // let version_signature = signature_bytes.1[0];
+    //     // if version_signature != VERSION_2 {
+    //     //     Err(format!("La version de la signature n'est pas 2"))?;
+    //     // }
+    //
+    //     // let mut verifier = match Verifier::new(MessageDigest::sha512(), &public_key) {
+    //     //     Ok(v) => v,
+    //     //     Err(e) => Err(format!("Erreur verification signature : {:?}", e))?
+    //     // };
+    //     //
+    //     // verifier.set_rsa_padding(Padding::PKCS1_PSS)?;
+    //     // verifier.set_rsa_mgf1_md(MessageDigest::sha512())?;
+    //     // verifier.set_rsa_pss_saltlen(RsaPssSaltlen::custom(SALT_LENGTH))?;
+    //     // verifier.update(message.as_bytes())?;
+    //     //
+    //     // // Retourner la reponse
+    //     // Ok(verifier.verify(&signature_bytes.1[1..])?)
+    // }
 }
 
 /// Serialiser message de MilleGrille. Met les elements en ordre.
-impl Serialize for MessageMilleGrille {
-    fn serialize<'a, S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-
-        // Creer BTreeMap avec toutes les values
-        // let mut ordered: BTreeMap<_, _> = self.contenu.iter().collect();
-        let mut ordered: BTreeMap<&str, &Value> = BTreeMap::new();
-        for (k, v) in &self.contenu {
-            ordered.insert(k.as_str(), v);
-        }
-
-        // Ajouter en-tete
-        let entete = serde_json::to_value(&self.entete).expect("val");
-        ordered.insert("en-tete", &entete);
-
-        // Ajouter certificats si presents
-        let cert = match &self.certificat {
-            Some(c) => serde_json::to_value(c).expect("certs"),
-            None => Value::Null
-        };
-        if cert != Value::Null {
-            ordered.insert("_certificat", &cert);
-        }
-        let cert_millegrille = match &self.millegrille {
-            Some(c) => serde_json::to_value(c).expect("cert millegrille"),
-            None => Value::Null
-        };
-        if cert_millegrille != Value::Null {
-            ordered.insert("_millegrille", &cert_millegrille);
-        }
-
-        // Ajouter signature si presente
-        let signature = match &self.signature {
-            Some(c) => serde_json::to_value(c).expect("signature"),
-            None => Value::Null
-        };
-        if signature != Value::Null {
-            ordered.insert("_signature", &signature);
-        }
-
-        // Serialiser la map triee
-        let mut map_ser = serializer.serialize_map(Some(ordered.len()))?;
-        for (k, v) in ordered {
-            map_ser.serialize_entry(k, v)?;
-        }
-        map_ser.end()
-
-    }
-}
+// impl Serialize for MessageMilleGrille {
+//     fn serialize<'a, S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+//
+//         // Creer BTreeMap avec toutes les values
+//         // let mut ordered: BTreeMap<_, _> = self.contenu.iter().collect();
+//         let mut ordered: BTreeMap<&str, &Value> = BTreeMap::new();
+//         for (k, v) in &self.contenu {
+//             ordered.insert(k.as_str(), v);
+//         }
+//
+//         // Ajouter en-tete
+//         let entete = serde_json::to_value(&self.entete).expect("val");
+//         ordered.insert("en-tete", &entete);
+//
+//         // Ajouter certificats si presents
+//         let cert = match &self.certificat {
+//             Some(c) => serde_json::to_value(c).expect("certs"),
+//             None => Value::Null
+//         };
+//         if cert != Value::Null {
+//             ordered.insert("_certificat", &cert);
+//         }
+//         let cert_millegrille = match &self.millegrille {
+//             Some(c) => serde_json::to_value(c).expect("cert millegrille"),
+//             None => Value::Null
+//         };
+//         if cert_millegrille != Value::Null {
+//             ordered.insert("_millegrille", &cert_millegrille);
+//         }
+//
+//         // Ajouter signature si presente
+//         let signature = match &self.signature {
+//             Some(c) => serde_json::to_value(c).expect("signature"),
+//             None => Value::Null
+//         };
+//         if signature != Value::Null {
+//             ordered.insert("_signature", &signature);
+//         }
+//
+//         // Serialiser la map triee
+//         let mut map_ser = serializer.serialize_map(Some(ordered.len()))?;
+//         for (k, v) in ordered {
+//             map_ser.serialize_entry(k, v)?;
+//         }
+//         map_ser.end()
+//
+//     }
+// }
 
 pub fn preparer_btree_recursif(contenu: Map<String, Value>) -> Result<Map<String, Value>, Box<dyn Error>> {
     let iter: serde_json::map::IntoIter = contenu.into_iter();
@@ -859,7 +903,7 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
 
 #[derive(Clone, Debug)]
 pub struct MessageSerialise {
-    entete: Entete,
+    //entete: Entete,
     message: String,
     pub parsed: MessageMilleGrille,
     pub certificat: Option<Arc<EnveloppeCertificat>>,
@@ -877,7 +921,7 @@ impl TryFrom<&str> for MessageSerialise {
 
         Ok(Self {
             message: value.to_owned(),
-            entete: msg_parsed.entete.clone(),
+            // entete: msg_parsed.entete.clone(),
             parsed: msg_parsed,
             certificat: Default::default(),
             millegrille: Default::default(),
@@ -894,7 +938,7 @@ impl TryFrom<String> for MessageSerialise {
         };
         Ok(Self {
             message: value,
-            entete: msg_parsed.entete.clone(),
+            // entete: msg_parsed.entete.clone(),
             parsed: msg_parsed,
             certificat: None,
             millegrille: None,
@@ -906,7 +950,7 @@ impl MessageSerialise {
     pub fn from_parsed(msg: MessageMilleGrille) -> Result<Self, Box<dyn std::error::Error>> {
         let msg_str = serde_json::to_string(&msg)?;
         Ok(MessageSerialise {
-            entete: msg.entete.clone(),
+            // entete: msg.entete.clone(),
             message: msg_str,
             parsed: msg,
             certificat: None,
@@ -932,7 +976,7 @@ impl MessageSerialise {
         // debug!("Comparaison message original:\n{}\nParsed\n{:?}", msg, msg_parsed);
         Ok(MessageSerialise {
             message: msg,
-            entete: msg_parsed.entete.clone(),
+            // entete: msg_parsed.entete.clone(),
             parsed: msg_parsed,
             certificat: None,
             millegrille: None,
@@ -947,9 +991,9 @@ impl MessageSerialise {
         self.millegrille = Some(certificat);
     }
 
-    pub fn get_entete(&self) -> &Entete {
-        &self.entete
-    }
+    // pub fn get_entete(&self) -> &Entete {
+    //     &self.entete
+    // }
 
     pub fn get_str(&self) -> &str {
         self.message.as_str()
@@ -983,7 +1027,7 @@ impl MessageSerialise {
     }
 
     async fn charger_certificat(&mut self, validateur: &dyn ValidateurX509) -> Result<Option<Arc<EnveloppeCertificat>>, Box<dyn Error>> {
-        let fp_certificat = self.entete.fingerprint_certificat.as_str();
+        let fp_certificat = self.parsed.pubkey.as_str();
 
         // Charger l'enveloppe du certificat de millegrille (CA)
         //let ca : Option<Arc<EnveloppeCertificat>> =
@@ -1034,13 +1078,14 @@ impl MessageSerialise {
     /// Sert a extraire le message pour une restauration - deplace (move) le message.
     pub fn preparation_restaurer(self) -> MessageMilleGrille {
         let mut message = self.parsed;
-        let evenements = message.contenu
-            .get_mut("_evenements").expect("evenements")
-            .as_object_mut().expect("object");
-        evenements.insert(String::from("backup_flag"), Value::Bool(true));
-        evenements.insert(String::from("transaction_restauree"), serde_json::to_value(bson::DateTime::now()).expect("date") );
-
-        message
+        todo!("fix me")
+        // let evenements = message.contenu
+        //     .get_mut("_evenements").expect("evenements")
+        //     .as_object_mut().expect("object");
+        // evenements.insert(String::from("backup_flag"), Value::Bool(true));
+        // evenements.insert(String::from("transaction_restauree"), serde_json::to_value(bson::DateTime::now()).expect("date") );
+        //
+        // message
     }
 
     // pub async fn valider_message_tiers<V>(&mut self, validateur: &V)
@@ -1300,7 +1345,8 @@ mod serialization_tests {
     use super::*;
 
     /// Sample
-    const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUFGTSBu4f2hbzgnca0GuSsmLgr7UwDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgzMDExNTcxNVoXDTIxMDkyOTExNTkxNVowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBAMcAz3SshFSHxyd+KfTZVHWG3OQg9t7kdHtV\nkrXySXdPYc+svArawMKhy/XRrFJ+NfLNoUyz+KPma5mEWxXZDRZVyvmdodDh/eNu\nqJ4aB078AkxyKWNgT/aF1/EuZ+pZseVlaDrD1yoEiC4stXwm6ay7mnWTyczDt8FI\ntCZ6/9nDNwPsnwC6cbqXRH4gqkwDqBGolX9Jz6TU4pqisIroacwOW+NEmNassM2b\nQqP/W4saEQQqD2BV78I9hQxouE8JLR6SIL5XD7j6Pq6pG86TSkFGAqQsSPd1w+5l\nxMRQgitYJ7ITo/Eq0qmAxv1INnxLyLmXQ2FysUNVTtgGgN3O7OUCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQSOxwSTijPrcKRmCWzoFpf8cJQbDAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEARX75Y2kVlxiJSmbDi1hZRj3mfe7ihT69EL51R6YiB0c/fpQUYxWfpddbg4DY\nlzAssE2XtSv1gYBZkZJXGWS4jB6dW6r+7Mhbtb6ZSXXG5ba9LydSxI8++//GZwG/\np8nce6fNmR8b06s/TQjpqwOa+hXqiqkWzqoVal/ucQWhdLtTkx/DVFUjHMcDMhZT\nVKIX7/SGEi9uGM9LNIVhCc7TsndcmiNXkV7ybiJ02rqxXPrD0QJ6h28rHIEGbWWs\napOlHiqtHYWQCuM0h5kygqknYKmHZIFBfba/xCf1rJi9HQUFZZfuw0VS9BcFmBg/\n5Hx8faWZNWWE9Iu+366P1t9GxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAWm3oYujnuCUtXlqyUnLWRNDJFtDUiG3wmy1sdU8YLTf0yNDENYLB8t1jUtXYyHRx5Dawd6sy0RhKXCUwnWl9q+Q/9u+wAwSxvR+dKiweYsdDZJAXrTwkYQmEu/X8/vbQcVMVX8VWwinDgalFSR0q//6V14Bp8jgAKFZifd2N9gPSEy0RBze1TUHuNlW7phUP5dAPcviiDLbpcQNJ3suD8Oq9m3ob61N04QFMvr8glWGs8yf0VbEJ8UXi22WOL/L02UWcMuqf5v9SKaKd/7we/jVW10GnYfH/coWdl62FrTNLBMGonkO9KzR8dXxNzDMvpt4A1kpcEZ7488EjTAhgzs","alpaca":true,"en-tete":{"estampille":1631884993,"fingerprint_certificat":"zQmSTKik15nFmLe4tQtndoEWA6aDdGUcVjpNHt4RtKQvnC3","hachage_contenu":"mEiCerWQ+xmJBauIR2JdRX1pBa+1wYlUNg/Q0dbhCGUOSww","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"6ba61473-18fc-4ff2-9de7-95470eadb2d8","version":1},"texte":"oui!","valeur":1}"#;
+    //const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUFGTSBu4f2hbzgnca0GuSsmLgr7UwDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgzMDExNTcxNVoXDTIxMDkyOTExNTkxNVowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBAMcAz3SshFSHxyd+KfTZVHWG3OQg9t7kdHtV\nkrXySXdPYc+svArawMKhy/XRrFJ+NfLNoUyz+KPma5mEWxXZDRZVyvmdodDh/eNu\nqJ4aB078AkxyKWNgT/aF1/EuZ+pZseVlaDrD1yoEiC4stXwm6ay7mnWTyczDt8FI\ntCZ6/9nDNwPsnwC6cbqXRH4gqkwDqBGolX9Jz6TU4pqisIroacwOW+NEmNassM2b\nQqP/W4saEQQqD2BV78I9hQxouE8JLR6SIL5XD7j6Pq6pG86TSkFGAqQsSPd1w+5l\nxMRQgitYJ7ITo/Eq0qmAxv1INnxLyLmXQ2FysUNVTtgGgN3O7OUCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQSOxwSTijPrcKRmCWzoFpf8cJQbDAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEARX75Y2kVlxiJSmbDi1hZRj3mfe7ihT69EL51R6YiB0c/fpQUYxWfpddbg4DY\nlzAssE2XtSv1gYBZkZJXGWS4jB6dW6r+7Mhbtb6ZSXXG5ba9LydSxI8++//GZwG/\np8nce6fNmR8b06s/TQjpqwOa+hXqiqkWzqoVal/ucQWhdLtTkx/DVFUjHMcDMhZT\nVKIX7/SGEi9uGM9LNIVhCc7TsndcmiNXkV7ybiJ02rqxXPrD0QJ6h28rHIEGbWWs\napOlHiqtHYWQCuM0h5kygqknYKmHZIFBfba/xCf1rJi9HQUFZZfuw0VS9BcFmBg/\n5Hx8faWZNWWE9Iu+366P1t9GxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAWm3oYujnuCUtXlqyUnLWRNDJFtDUiG3wmy1sdU8YLTf0yNDENYLB8t1jUtXYyHRx5Dawd6sy0RhKXCUwnWl9q+Q/9u+wAwSxvR+dKiweYsdDZJAXrTwkYQmEu/X8/vbQcVMVX8VWwinDgalFSR0q//6V14Bp8jgAKFZifd2N9gPSEy0RBze1TUHuNlW7phUP5dAPcviiDLbpcQNJ3suD8Oq9m3ob61N04QFMvr8glWGs8yf0VbEJ8UXi22WOL/L02UWcMuqf5v9SKaKd/7we/jVW10GnYfH/coWdl62FrTNLBMGonkO9KzR8dXxNzDMvpt4A1kpcEZ7488EjTAhgzs","alpaca":true,"en-tete":{"estampille":1631884993,"fingerprint_certificat":"zQmSTKik15nFmLe4tQtndoEWA6aDdGUcVjpNHt4RtKQvnC3","hachage_contenu":"mEiCerWQ+xmJBauIR2JdRX1pBa+1wYlUNg/Q0dbhCGUOSww","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"6ba61473-18fc-4ff2-9de7-95470eadb2d8","version":1},"texte":"oui!","valeur":1}"#;
+    const MESSAGE_STR: &str = r#"{"id":"45e8347dd1adbb7b633bb0fd2621596cff22657ddd219ac6327e5a70a3f5f353","pubkey":"30d241f794e561486abd5a2ffddf86ff08f89b78856080466aedff7837b8ba89","estampille":1681766892,"kind":1,"contenu":"{\"alpaca\":true,\"texte\":\"oui!\",\"valeur\":1}","routage":{"action":"requeteDummy","domaine":"Dummy"},"sig":"e0275248dfce879afc78b2e4798cf621b2885ea822e0a733138ce7494386443fb84e2cad5dbbd10a1aa5c712972fc3c0e476d012f9347cada283d201d1f71e0c","certificat":["-----BEGIN CERTIFICATE-----\nMIIClDCCAkagAwIBAgIUVFctVKeWq04RXiftJ3tj/Fw8mLIwBQYDK2VwMHIxLTAr\nBgNVBAMTJDI2Yzc0YmYwLWE1NWUtNDBjYi04M2U2LTdlYTgxOGUyZDQxNjFBMD8G\nA1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6\nWHJwMjJiQXR3R203SmYwHhcNMjMwNDE2MjIwNzM5WhcNMjMwNTE3MjIwNzU5WjCB\ngTEtMCsGA1UEAwwkYTcxMzA3YzUtMWNiOC00NGI1LWExM2EtY2Q5NDQwM2I2N2Vm\nMQ0wCwYDVQQLDARjb3JlMUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpG\ndUhHNzk2ZVN2Q1RXRTRNNDMyaXpYcnAyMmJBdHdHbTdKZjAqMAUGAytlcAMhADDS\nQfeU5WFIar1aL/3fhv8I+Jt4hWCARmrt/3g3uLqJo4HdMIHaMCsGBCoDBAAEIzQu\nc2VjdXJlLDMucHJvdGVnZSwyLnByaXZlLDEucHVibGljMAwGBCoDBAEEBGNvcmUw\nTAYEKgMEAgREQ29yZUJhY2t1cCxDb3JlQ2F0YWxvZ3VlcyxDb3JlTWFpdHJlRGVz\nQ29tcHRlcyxDb3JlUGtpLENvcmVUb3BvbG9naWUwDwYDVR0RBAgwBoIEY29yZTAf\nBgNVHSMEGDAWgBQHLJvHVM5P2+40plzpsr4b47oS7zAdBgNVHQ4EFgQUwnVgI/E/\nAZJlrA2h7rPLMaHmOqQwBQYDK2VwA0EAc717NCOIchhGhCJUZY+WeajoeubIwpGq\nqyRJ5bgC6XZJ8wVzpikUIvT3PcafQKdTGWtNOT0Jehi2xjLOT36ZAg==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIBozCCAVWgAwIBAgIKEiZUUAGScUVHVDAFBgMrZXAwFjEUMBIGA1UEAxMLTWls\nbGVHcmlsbGUwHhcNMjMwNDE2MjEzNDM5WhcNMjQxMDI1MjEzNDM5WjByMS0wKwYD\nVQQDEyQyNmM3NGJmMC1hNTVlLTQwY2ItODNlNi03ZWE4MThlMmQ0MTYxQTA/BgNV\nBAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy\ncDIyYkF0d0dtN0pmMCowBQYDK2VwAyEAb0VPx+wJvYRWgBnxW1QuMMAj1U6nhdqd\na1bz0mVXWoSjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G\nA1UdDgQWBBQHLJvHVM5P2+40plzpsr4b47oS7zAfBgNVHSMEGDAWgBTTiP/MFw4D\nDwXqQ/J2LLYPRUkkETAFBgMrZXADQQDHCMn7gdqOu7NAbYNRKQBa8/YZGoifuRuB\nCdVpEB7NGL1mWYfv78Rbtgw26ESC9aRbbL3imXBKQt1CgeCTN5gF\n-----END CERTIFICATE-----\n"]}"#;
 
     #[test]
     fn serializer_date() {
@@ -1384,15 +1430,15 @@ mod serialization_tests {
         setup("lire_message_millegrille");
         let (_, _) = charger_enveloppe_privee_env();
         let message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
-        let entete = message.get_entete();
         let contenu = &message.get_msg().contenu;
-        debug!("Entete message : ${:?}", entete);
-        debug!("Contenu parsed : ${:?}", contenu);
+        debug!("Contenu parsed : {:?}", contenu);
 
-        // assert_eq!("f5488642-01f3-42a0-9423-5f895bfed17a", entete.uuid_transaction);
-        assert_eq!("oui!", contenu.get("texte").expect("texte").as_str().expect("str"));
-        assert_eq!(true, contenu.get("alpaca").expect("texte").as_bool().expect("bool"));
-        assert_eq!(1, contenu.get("valeur").expect("texte").as_i64().expect("i64"));
+        let map_parsed: HashMap<String, Value> = message.parsed.map_contenu().expect("map_contenu");
+
+        assert_eq!("45e8347dd1adbb7b633bb0fd2621596cff22657ddd219ac6327e5a70a3f5f353", message.parsed.id);
+        assert_eq!("oui!", map_parsed.get("texte").expect("texte").as_str().expect("str"));
+        assert_eq!(true, map_parsed.get("alpaca").expect("texte").as_bool().expect("bool"));
+        assert_eq!(1, map_parsed.get("valeur").expect("texte").as_i64().expect("i64"));
     }
 
     #[tokio::test]
@@ -1406,7 +1452,7 @@ mod serialization_tests {
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(true, resultat.signature_valide);
         // assert_eq!(false, resultat.certificat_valide);  // Expire
-        assert_eq!(None, resultat.hachage_valide);
+        assert_eq!(Some(true), resultat.hachage_valide);
     }
 
     #[tokio::test]
@@ -1416,13 +1462,14 @@ mod serialization_tests {
         let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
 
         // Corrompre le message
-        message.parsed.contenu.insert(String::from("corruption"), Value::String(String::from("je te corromps!")));
-
-        let validateur = validateur_arc.as_ref();
-        let resultat = message.valider(validateur, None).await.expect("valider");
-        assert_eq!(false, resultat.signature_valide);
-        assert_eq!(false, resultat.certificat_valide);  // expire
-        assert_eq!(Some(false), resultat.hachage_valide);
+        todo!("fix me");
+        // message.parsed.contenu.insert(String::from("corruption"), Value::String(String::from("je te corromps!")));
+        //
+        // let validateur = validateur_arc.as_ref();
+        // let resultat = message.valider(validateur, None).await.expect("valider");
+        // assert_eq!(false, resultat.signature_valide);
+        // assert_eq!(false, resultat.certificat_valide);  // expire
+        // assert_eq!(Some(false), resultat.hachage_valide);
     }
 
     #[tokio::test]
@@ -1432,7 +1479,8 @@ mod serialization_tests {
         let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
 
         // Corrompre le message
-        message.entete.uuid_transaction = String::from("CORROMPU");
+        // message.entete.uuid_transaction = String::from("CORROMPU");
+        todo!("fix me");
 
         let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
@@ -1448,13 +1496,14 @@ mod serialization_tests {
         let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
 
         // Corrompre le message
-        message.entete.idmg = String::from("CORROMPU");
+        //message.entete.idmg = String::from("CORROMPU");
 
-        let validateur = validateur_arc.as_ref();
-        let resultat = message.valider(validateur, None).await.expect("valider");
-        assert_eq!(false, resultat.signature_valide);
-        assert_eq!(false, resultat.certificat_valide);
-        assert_eq!(Some(true), resultat.hachage_valide);
+        todo!("fix me");
+        // let validateur = validateur_arc.as_ref();
+        // let resultat = message.valider(validateur, None).await.expect("valider");
+        // assert_eq!(false, resultat.signature_valide);
+        // assert_eq!(false, resultat.certificat_valide);
+        // assert_eq!(Some(true), resultat.hachage_valide);
     }
 
     #[test]
@@ -1488,24 +1537,26 @@ mod serialization_tests {
         setup("creer_message_manuellement");
         let (_, enveloppe_privee) = charger_enveloppe_privee_env();
 
-        let mut message = MessageMilleGrille::new();
-        message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
-        message.set_serializable("contenu_String", &String::from("J'ai du contenu")).expect("contenu_int");
-        message.set_int("contenu_int", 22);
-        message.set_float("contenu_float", 22.89);
-        message.set_bool("contenu_bool", true);
+        todo!("Fix me");
 
-        // Signer le message
-        message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
-        debug!("creer_message_manuellement message signe : {:?}", message);
-
-        assert_eq!(message.certificat.is_some(), true);
-        assert_eq!(message.signature.is_some(), true);
-        assert_eq!(message.entete.version, 2);
-        assert_eq!(message.entete.domaine.as_ref().expect("domaine").as_str(), "MonDomaine");
-
-        // Signer a nouveau, devrait juste lancer un warning
-        message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
+        // let mut message = MessageMilleGrille::new();
+        // message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
+        // message.set_serializable("contenu_String", &String::from("J'ai du contenu")).expect("contenu_int");
+        // message.set_int("contenu_int", 22);
+        // message.set_float("contenu_float", 22.89);
+        // message.set_bool("contenu_bool", true);
+        //
+        // // Signer le message
+        // message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
+        // debug!("creer_message_manuellement message signe : {:?}", message);
+        //
+        // assert_eq!(message.certificat.is_some(), true);
+        // assert_eq!(message.signature.is_some(), true);
+        // assert_eq!(message.entete.version, 2);
+        // assert_eq!(message.entete.domaine.as_ref().expect("domaine").as_str(), "MonDomaine");
+        //
+        // // Signer a nouveau, devrait juste lancer un warning
+        // message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
     }
 
     #[test]
@@ -1515,11 +1566,12 @@ mod serialization_tests {
         let (_, enveloppe_privee) = charger_enveloppe_privee_env();
 
         // Creer et signer le message
-        let mut message = MessageMilleGrille::new();
-        message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
-
-        // Panic, le messsage est signe (immuable)
-        message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
+        !todo!("fix me");
+        // let mut message = MessageMilleGrille::new();
+        // message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
+        //
+        // // Panic, le messsage est signe (immuable)
+        // message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
     }
 
 }

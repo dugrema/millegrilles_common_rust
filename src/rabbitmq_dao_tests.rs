@@ -64,68 +64,69 @@ mod rabbitmq_dao_tests {
 
         let reply_q = rabbitmq_arc.reply_q.lock().expect("lock").clone();
 
-        let message_millegrille = MessageMilleGrille::new();
-        let correlation = message_millegrille.entete.uuid_transaction.clone();
-        let attente_expiration = Utc::now() + chrono::Duration::seconds(9);
-        let message = MessageOut::new(
-            "test", "action", None::<&str>, message_millegrille,
-            TypeMessageOut::Commande, Some(vec![Securite::L1Public]),
-            reply_q, Some(correlation), Some(attente_expiration)
-        );
-        rabbitmq_arc.as_ref().send_out(message).await.expect("send");
-
-        debug!("Pass 3");
-        futures.push(tokio::spawn(sleep_thread(20)));
-        futures.next().await;
-
-        // match timeout(tokio::time::Duration::new(15, 0), rabbitmq_thread).await {
-        //     Ok(result) => (),
-        //     Err(t) => {
-        //         debug!("Timeout - OK");
-        //     }
-        // }
-
-        // let mut executor = executer_mq(
-        //     Arc::new(config),
-        //     Some(queues),
-        //     None,
-        //     Securite::L3Protege
-        // ).expect("executer_mq");
+        todo!("fix me");
+        // let message_millegrille = MessageMilleGrille::new();
+        // let correlation = message_millegrille.entete.uuid_transaction.clone();
+        // let attente_expiration = Utc::now() + chrono::Duration::seconds(9);
+        // let message = MessageOut::new(
+        //     "test", "action", None::<&str>, message_millegrille,
+        //     TypeMessageOut::Commande, Some(vec![Securite::L1Public]),
+        //     reply_q, Some(correlation), Some(attente_expiration)
+        // );
+        // rabbitmq_arc.as_ref().send_out(message).await.expect("send");
         //
-        // let mut named_queues_guard = executor.rx_named_queues.lock().expect("lock");
-        // let config_test_queue = ConfigQueue {
-        //     nom_queue: "test_named_queue".to_string(),
-        //     routing_keys: vec![
-        //         ConfigRoutingExchange { routing_key: "commande.CorePki.testMoi".to_string(), exchange: Securite::L3Protege }
-        //     ],
-        //     ttl: None,
-        //     durable: false
-        // };
-        // let test_named_queue = NamedQueue::new(config_test_queue, None);
-        // named_queues_guard.insert("test_named_queue".to_string(), test_named_queue);
+        // debug!("Pass 3");
+        // futures.push(tokio::spawn(sleep_thread(20)));
+        // futures.next().await;
         //
-        // let (_tx_reply, rx_reply) = mpsc::channel(1);
-        // let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
-        // let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(1);
+        // // match timeout(tokio::time::Duration::new(15, 0), rabbitmq_thread).await {
+        // //     Ok(result) => (),
+        // //     Err(t) => {
+        // //         debug!("Timeout - OK");
+        // //     }
+        // // }
         //
-        // let middleware_stub = Arc::new(MiddlewareStub::new());
-        //
-        // let mut futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-        // futures.push(tokio::spawn(recevoir_messages(
-        //     middleware_stub.clone(),
-        //     rx_reply,
-        //     tx_messages_verif_reply.clone(),
-        //     tx_certificats_manquants.clone()
-        // )));
-        //
-        // match timeout(tokio::time::Duration::new(5, 0), futures.next()).await {
-        //     Ok(result) => {
-        //         result.expect("next").expect("reponse next");
-        //     },
-        //     Err(t) => {
-        //         debug!("Timeout - OK");
-        //     }
-        // }
+        // // let mut executor = executer_mq(
+        // //     Arc::new(config),
+        // //     Some(queues),
+        // //     None,
+        // //     Securite::L3Protege
+        // // ).expect("executer_mq");
+        // //
+        // // let mut named_queues_guard = executor.rx_named_queues.lock().expect("lock");
+        // // let config_test_queue = ConfigQueue {
+        // //     nom_queue: "test_named_queue".to_string(),
+        // //     routing_keys: vec![
+        // //         ConfigRoutingExchange { routing_key: "commande.CorePki.testMoi".to_string(), exchange: Securite::L3Protege }
+        // //     ],
+        // //     ttl: None,
+        // //     durable: false
+        // // };
+        // // let test_named_queue = NamedQueue::new(config_test_queue, None);
+        // // named_queues_guard.insert("test_named_queue".to_string(), test_named_queue);
+        // //
+        // // let (_tx_reply, rx_reply) = mpsc::channel(1);
+        // // let (tx_messages_verif_reply, rx_messages_verif_reply) = mpsc::channel(1);
+        // // let (tx_certificats_manquants, rx_certificats_manquants) = mpsc::channel(1);
+        // //
+        // // let middleware_stub = Arc::new(MiddlewareStub::new());
+        // //
+        // // let mut futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
+        // // futures.push(tokio::spawn(recevoir_messages(
+        // //     middleware_stub.clone(),
+        // //     rx_reply,
+        // //     tx_messages_verif_reply.clone(),
+        // //     tx_certificats_manquants.clone()
+        // // )));
+        // //
+        // // match timeout(tokio::time::Duration::new(5, 0), futures.next()).await {
+        // //     Ok(result) => {
+        // //         result.expect("next").expect("reponse next");
+        // //     },
+        // //     Err(t) => {
+        // //         debug!("Timeout - OK");
+        // //     }
+        // // }
 
     }
 

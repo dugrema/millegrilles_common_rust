@@ -119,6 +119,7 @@ pub fn securite_cascade_public<S>(securite: S) -> HashSet<Securite>
     set
 }
 
+#[derive(Clone)]
 pub enum MessageKind {
     Document,
     Requete,

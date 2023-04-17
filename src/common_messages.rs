@@ -3,10 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use multibase;
-use multihash::Code;
 
 use crate::chiffrage::{CleSecrete, FormatChiffrage};
-use crate::chiffrage_cle::IdentiteCle;
 use crate::hachages::verifier_multihash;
 use crate::formatteur_messages::DateEpochSeconds;
 use crate::recepteur_messages::TypeMessage;
@@ -257,7 +255,7 @@ pub struct MessageConfirmation {
 pub fn verifier_reponse_ok(message: &TypeMessage) -> bool {
     match message {
         TypeMessage::Valide(m) => {
-            match m.message.parsed.map_contenu::<MessageConfirmation>(None) {
+            match m.message.parsed.map_contenu::<MessageConfirmation>() {
                 Ok(r) => {
                     match r.ok {
                         Some(r) => r,

@@ -1373,7 +1373,39 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
     while let Some(message) = rx.recv().await {
         compteur += 1;
         debug!("task_emettre_messages Emettre_message {}, On a recu de quoi", compteur);
-        let contenu = &message.message;
+
+        let routing_key = match &message.domaine {
+            Some(_) => {
+                let rk = match concatener_rk(&message) {
+                    Ok(rk) => rk,
+                    Err(e) => {
+                        error!("task_emettre_messages Erreur preparation routing key {:?}", e);
+                        continue
+                    }
+                };
+
+                match &message.type_message {
+                    TypeMessageOut::Requete => format!("requete.{}", rk),
+                    TypeMessageOut::Commande => format!("commande.{}", rk),
+                    TypeMessageOut::Transaction => format!("transaction.{}", rk),
+                    TypeMessageOut::Reponse => {
+                        error!("Reponse avec domaine non supportee");
+                        continue;
+                    },
+                    TypeMessageOut::Evenement => format!("evenement.{}", rk),
+                }
+            },
+            None => String::from(""),
+        };
+
+        let message_serialise = match MessageSerialise::from_parsed(message.message) {
+            Ok(m) => m,
+            Err(e) => {
+                error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
+                continue;
+            },
+        };
+        let contenu = &message_serialise.parsed;
 
         // Verifier etat du channel (doit etre connecte)
         let connecte = match channel_opt.as_ref() {
@@ -1414,13 +1446,9 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
 
         let channel = channel_opt.as_ref().expect("channel");
 
-        let entete = &contenu.entete;
-        debug!("Emettre_message {:?}", entete);
+        debug!("Emettre_message id {}", contenu.id);
 
-        let correlation_id = match &message.correlation_id {
-            Some(c) => c.to_owned(),
-            None => entete.uuid_transaction.to_owned()
-        };
+        let correlation_id = contenu.id.as_str();
 
         let exchanges = match &message.exchanges {
             Some(e) => Some(e.clone()),
@@ -1433,37 +1461,37 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
             }
         };
 
-        let routing_key = match &message.domaine {
-            Some(_) => {
-                let rk = match concatener_rk(&message) {
-                    Ok(rk) => rk,
-                    Err(e) => {
-                        error!("task_emettre_messages Erreur preparation routing key {:?}", e);
-                        continue
-                    }
-                };
+        // let routing_key = match &message.domaine {
+        //     Some(_) => {
+        //         let rk = match concatener_rk(&message) {
+        //             Ok(rk) => rk,
+        //             Err(e) => {
+        //                 error!("task_emettre_messages Erreur preparation routing key {:?}", e);
+        //                 continue
+        //             }
+        //         };
+        //
+        //         match &message.type_message {
+        //             TypeMessageOut::Requete => format!("requete.{}", rk),
+        //             TypeMessageOut::Commande => format!("commande.{}", rk),
+        //             TypeMessageOut::Transaction => format!("transaction.{}", rk),
+        //             TypeMessageOut::Reponse => {
+        //                 error!("Reponse avec domaine non supportee");
+        //                 continue;
+        //             },
+        //             TypeMessageOut::Evenement => format!("evenement.{}", rk),
+        //         }
+        //     },
+        //     None => String::from(""),
+        // };
 
-                match &message.type_message {
-                    TypeMessageOut::Requete => format!("requete.{}", rk),
-                    TypeMessageOut::Commande => format!("commande.{}", rk),
-                    TypeMessageOut::Transaction => format!("transaction.{}", rk),
-                    TypeMessageOut::Reponse => {
-                        error!("Reponse avec domaine non supportee");
-                        continue;
-                    },
-                    TypeMessageOut::Evenement => format!("evenement.{}", rk),
-                }
-            },
-            None => String::from(""),
-        };
-
-        let message_serialise = match MessageSerialise::from_parsed(message.message) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
-                continue;
-            },
-        };
+        // let message_serialise = match MessageSerialise::from_parsed(message.message) {
+        //     Ok(m) => m,
+        //     Err(e) => {
+        //         error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
+        //         continue;
+        //     },
+        // };
 
         let options = BasicPublishOptions::default();
         let payload = message_serialise.get_str().as_bytes().to_vec();
@@ -1588,10 +1616,7 @@ impl MessageOut {
 
         let corr_id = match correlation_id {
             Some(c) => c.into(),
-            None => {
-                let entete = &message.entete;
-                entete.uuid_transaction.clone()
-            }
+            None => message.id.clone()
         };
 
         let rep_to = match replying_to {
