@@ -158,6 +158,11 @@ pub struct DemandeSignature {
     pub dns: Option<Value>,  // Ex: {"localhost": true, "hostnames": ["media"], "domain": true}
 }
 
+#[derive(Clone, Deserialize)]
+pub struct MessageReponse {
+    pub ok: Option<bool>
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReponseSignatureCertificat {
     pub ok: Option<bool>,

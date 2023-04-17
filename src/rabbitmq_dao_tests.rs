@@ -64,7 +64,7 @@ mod rabbitmq_dao_tests {
 
         let reply_q = rabbitmq_arc.reply_q.lock().expect("lock").clone();
 
-        todo!("fix me");
+        todo!("generer/formatter message");
         // let message_millegrille = MessageMilleGrille::new();
         // let correlation = message_millegrille.entete.uuid_transaction.clone();
         // let attente_expiration = Utc::now() + chrono::Duration::seconds(9);

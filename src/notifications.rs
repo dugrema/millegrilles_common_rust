@@ -18,6 +18,7 @@ use crate::chiffrage::{CipherMgs, CleSecrete, MgsCipherKeys};
 use crate::chiffrage_cle::CommandeSauvegarderCle;
 use crate::chiffrage_ed25519::{CleDerivee, deriver_asymetrique_ed25519};
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
+use crate::common_messages::MessageReponse;
 use crate::constantes::*;
 use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
@@ -64,6 +65,11 @@ pub struct EmetteurNotifications {
     ref_hachage_bytes: Mutex<Option<String>>,
 }
 
+#[derive(Clone, Deserialize)]
+pub struct MessageCertificat {
+    certificat: Vec<String>
+}
+
 impl EmetteurNotifications {
 
     pub fn new(enveloppe_ca: &EnveloppeCertificat, champ_from: Option<String>) -> Result<Self, Box<dyn Error>> {
@@ -90,157 +96,158 @@ impl EmetteurNotifications {
     ) -> Result<(), Box<dyn Error>>
     where M: GenerateurMessages + ValidateurX509
     {
-        todo!("fix me");
+        let commande_transmise = self.commande_cle_transmise.lock().expect("lock").clone();
 
-        // let commande_transmise = self.commande_cle_transmise.lock().expect("lock").clone();
-        //
-        // // Creer cipher pour chiffrer contenu du message
-        // let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
-        //
-        // // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
-        // let message_chiffre: String = {
-        //
-        //     let mut message_signe = middleware.formatter_message(
-        //         MessageKind::Document, &contenu, None::<&str>, None::<&str>, None::<&str>, Some(1), false)?;
-        //
-        //     message_signe.certificat = None;  // Retirer certificat, redondant
-        //
-        //     let contenu = serde_json::to_string(&message_signe)?;
-        //     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        //     encoder.write_all(contenu.as_bytes())?;
-        //     let contenu = encoder.finish()?;
-        //
-        //     let mut output_buffer = [0u8; 128 * 1024];
-        //     let mut position = cipher.update(contenu.as_slice(), &mut output_buffer[..])?;
-        //     position += cipher.finalize_keep(&mut output_buffer[position..])?;
-        //     encode(Base::Base64, &output_buffer[..position])
-        // };
-        //
-        // let mut message = NotificationContenu {
-        //     niveau: niveau.to_owned(),
-        //     ref_hachage_bytes: cipher.get_hachage().expect("get_hachage").to_owned(),
-        //     format: "mgs4".into(),
-        //     header: Some(cipher.get_header().to_owned()),
-        //     message_chiffre,
-        // };
-        //
-        // // Convertir contenu en message de notification
-        // let expiration = match expiration {
-        //     Some(e) => Some(DateEpochSeconds::from_i64(e)),
-        //     None => None
-        // };
-        //
-        // let cle = match commande_transmise {
-        //     true => {
-        //         // Remplacer ref_hachage_bytes
-        //         match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
-        //             Some(c) => {
-        //                 message.ref_hachage_bytes = c.clone();
-        //             },
-        //             None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
-        //         };
-        //         None
-        //     },
-        //     false => {
-        //         debug!("emettre_notification_proprietaire Emettre commande cle");
-        //         let mut commande_outer = match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
-        //             Some(c) => Some(c.clone()),
-        //             None => None
-        //         };
-        //
-        //         if commande_outer.is_none() {
-        //             debug!("emettre_notification_proprietaire Generer la commande MaitreDesCles");
-        //             let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES)
-        //                 .exchanges(vec![Securite::L1Public])
-        //                 .build();
-        //
-        //             let (public_keys, partition) = {
-        //                 let enveloppe_maitredescles = match middleware.transmettre_requete(routage, &json!({})).await? {
-        //                     TypeMessage::Valide(m) => {
-        //                         let certificat_pem: Vec<String> = m.message.parsed.map_contenu(Some("certificat"))?;
-        //                         debug!("emettre_notification_proprietaire Certificat maitre des cles {:?}", certificat_pem);
-        //                         middleware.charger_enveloppe(&certificat_pem, None, None).await?
-        //                     },
-        //                     _ => Err(format!("notifications.emettre_notification_proprietaire Erreur reception certificat maitre des cles (mauvais type reponse)"))?
-        //                 };
-        //
-        //                 // &Vec<FingerprintCertPublicKey>
-        //                 let enveloppe_ca = middleware.get_enveloppe_signature().enveloppe_ca.clone();
-        //                 let mut fpkeys = Vec::new();
-        //                 fpkeys.push(FingerprintCertPublicKey {
-        //                     fingerprint: enveloppe_ca.fingerprint.clone(),
-        //                     public_key: enveloppe_ca.cle_publique.clone(),
-        //                     est_cle_millegrille: true,
-        //                 });
-        //                 fpkeys.push(FingerprintCertPublicKey {
-        //                     fingerprint: enveloppe_maitredescles.fingerprint.clone(),
-        //                     public_key: enveloppe_maitredescles.cle_publique.clone(),
-        //                     est_cle_millegrille: false,
-        //                 });
-        //
-        //                 (fpkeys, enveloppe_maitredescles.fingerprint.clone())
-        //             };
-        //
-        //             let mut identificateurs_document = HashMap::new();
-        //             identificateurs_document.insert("notification".to_string(), "true".to_string());
-        //             let cles_rechiffrees = cipher.get_cipher_keys(&public_keys)?;
-        //             let commande = cles_rechiffrees.get_commande_sauvegarder_cles(
-        //                 "Messagerie", None, identificateurs_document)?;
-        //
-        //             // Signer commande
-        //             let commande_signee = middleware.formatter_message(
-        //                 MessageKind::Commande, &commande,
-        //                 Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
-        //                 Some(partition.as_str()), None, false)?;
-        //
-        //             {
-        //                 // Conserver ref_hachage_bytes
-        //                 let mut guard = self.ref_hachage_bytes.lock().expect("lock");
-        //                 guard.replace(commande.hachage_bytes.clone());
-        //             }
-        //
-        //             // Conserver commande signee
-        //             let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
-        //             guard.replace(commande_signee.clone());
-        //
-        //             // Retourner commande signee
-        //             commande_outer = Some(commande_signee);
-        //         }
-        //
-        //         commande_outer
-        //     }
-        // };
-        //
-        // let mut notification = Notification {
-        //     destinataires,
-        //     expiration,
-        //     message,
-        //     cle,
-        // };
-        //
-        // debug!("emettre_notification_proprietaire Notification a transmettre {:?}", notification);
-        //
-        // let routage = RoutageMessageAction::builder(DOMAINE_NOM_MESSAGERIE, ACTION_NOTIFIER)
-        //     .exchanges(vec![Securite::L1Public])
-        //     .build();
-        //
-        // let reponse = middleware.transmettre_commande(routage, &notification, true).await?;
-        // match reponse {
-        //     Some(r) => match r {
-        //         TypeMessage::Valide(m) => {
-        //             let ok: bool = m.message.parsed.map_contenu(Some("ok"))?;
-        //             if ok == true {
-        //                 // Marquer cle comme transmise
-        //                 let mut guard = self.commande_cle_transmise.lock().expect("lock");
-        //                 *guard = true;
-        //             }
-        //         },
-        //         _ => Err(format!("notifications.emettre_notification_proprietaire Mauvais type de reponse sur notification"))?
-        //     },
-        //     None => warn!("emettre_notification_proprietaire Aucune reponse")
-        // }
-        //
-        // Ok(())
+        // Creer cipher pour chiffrer contenu du message
+        let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
+
+        // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
+        let message_chiffre: String = {
+
+            let mut message_signe = middleware.formatter_message(
+                MessageKind::Document, &contenu, None::<&str>, None::<&str>, None::<&str>, Some(1), false)?;
+
+            message_signe.certificat = None;  // Retirer certificat, redondant
+
+            let contenu = serde_json::to_string(&message_signe)?;
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(contenu.as_bytes())?;
+            let contenu = encoder.finish()?;
+
+            let mut output_buffer = [0u8; 128 * 1024];
+            let mut position = cipher.update(contenu.as_slice(), &mut output_buffer[..])?;
+            position += cipher.finalize_keep(&mut output_buffer[position..])?;
+            encode(Base::Base64, &output_buffer[..position])
+        };
+
+        let mut message = NotificationContenu {
+            niveau: niveau.to_owned(),
+            ref_hachage_bytes: cipher.get_hachage().expect("get_hachage").to_owned(),
+            format: "mgs4".into(),
+            header: Some(cipher.get_header().to_owned()),
+            message_chiffre,
+        };
+
+        // Convertir contenu en message de notification
+        let expiration = match expiration {
+            Some(e) => Some(DateEpochSeconds::from_i64(e)),
+            None => None
+        };
+
+        let cle = match commande_transmise {
+            true => {
+                // Remplacer ref_hachage_bytes
+                match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
+                    Some(c) => {
+                        message.ref_hachage_bytes = c.clone();
+                    },
+                    None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
+                };
+                None
+            },
+            false => {
+                debug!("emettre_notification_proprietaire Emettre commande cle");
+                let mut commande_outer = match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
+                    Some(c) => Some(c.clone()),
+                    None => None
+                };
+
+                if commande_outer.is_none() {
+                    debug!("emettre_notification_proprietaire Generer la commande MaitreDesCles");
+                    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES)
+                        .exchanges(vec![Securite::L1Public])
+                        .build();
+
+                    let (public_keys, partition) = {
+                        let enveloppe_maitredescles = match middleware.transmettre_requete(routage, &json!({})).await? {
+                            TypeMessage::Valide(m) => {
+                                let certificat_message: MessageCertificat = m.message.parsed.map_contenu()?;
+                                // let certificat_pem: Vec<String> = m.message.parsed.map_contenu(Some("certificat"))?;
+                                let certificat_pem = certificat_message.certificat;
+                                debug!("emettre_notification_proprietaire Certificat maitre des cles {:?}", certificat_pem);
+                                middleware.charger_enveloppe(&certificat_pem, None, None).await?
+                            },
+                            _ => Err(format!("notifications.emettre_notification_proprietaire Erreur reception certificat maitre des cles (mauvais type reponse)"))?
+                        };
+
+                        // &Vec<FingerprintCertPublicKey>
+                        let enveloppe_ca = middleware.get_enveloppe_signature().enveloppe_ca.clone();
+                        let mut fpkeys = Vec::new();
+                        fpkeys.push(FingerprintCertPublicKey {
+                            fingerprint: enveloppe_ca.fingerprint.clone(),
+                            public_key: enveloppe_ca.cle_publique.clone(),
+                            est_cle_millegrille: true,
+                        });
+                        fpkeys.push(FingerprintCertPublicKey {
+                            fingerprint: enveloppe_maitredescles.fingerprint.clone(),
+                            public_key: enveloppe_maitredescles.cle_publique.clone(),
+                            est_cle_millegrille: false,
+                        });
+
+                        (fpkeys, enveloppe_maitredescles.fingerprint.clone())
+                    };
+
+                    let mut identificateurs_document = HashMap::new();
+                    identificateurs_document.insert("notification".to_string(), "true".to_string());
+                    let cles_rechiffrees = cipher.get_cipher_keys(&public_keys)?;
+                    let commande = cles_rechiffrees.get_commande_sauvegarder_cles(
+                        "Messagerie", None, identificateurs_document)?;
+
+                    // Signer commande
+                    let commande_signee = middleware.formatter_message(
+                        MessageKind::Commande, &commande,
+                        Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
+                        Some(partition.as_str()), None, false)?;
+
+                    {
+                        // Conserver ref_hachage_bytes
+                        let mut guard = self.ref_hachage_bytes.lock().expect("lock");
+                        guard.replace(commande.hachage_bytes.clone());
+                    }
+
+                    // Conserver commande signee
+                    let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
+                    guard.replace(commande_signee.clone());
+
+                    // Retourner commande signee
+                    commande_outer = Some(commande_signee);
+                }
+
+                commande_outer
+            }
+        };
+
+        let mut notification = Notification {
+            destinataires,
+            expiration,
+            message,
+            cle,
+        };
+
+        debug!("emettre_notification_proprietaire Notification a transmettre {:?}", notification);
+
+        let routage = RoutageMessageAction::builder(DOMAINE_NOM_MESSAGERIE, ACTION_NOTIFIER)
+            .exchanges(vec![Securite::L1Public])
+            .build();
+
+        let reponse = middleware.transmettre_commande(routage, &notification, true).await?;
+        match reponse {
+            Some(r) => match r {
+                TypeMessage::Valide(m) => {
+                    let message_ok: MessageReponse = m.message.parsed.map_contenu()?;
+                    // let ok: bool = m.message.parsed.map_contenu(Some("ok"))?;
+                    if let Some(true) = message_ok.ok {
+                        // Marquer cle comme transmise
+                        let mut guard = self.commande_cle_transmise.lock().expect("lock");
+                        *guard = true;
+                    }
+                },
+                _ => Err(format!("notifications.emettre_notification_proprietaire Mauvais type de reponse sur notification"))?
+            },
+            None => warn!("emettre_notification_proprietaire Aucune reponse")
+        }
+
+        Ok(())
     }
 }
 
