@@ -732,6 +732,7 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
 {
 
     let transaction = middleware.formatter_message(
+        MessageKind::Transaction,
         valeur,
         Some(domaine),
         Some(action),

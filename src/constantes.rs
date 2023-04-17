@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::cmp::Eq;
 use std::convert::TryFrom;
 use std::error::Error;
+use crate::rabbitmq_dao::TypeMessageOut;
 
 // Differents formats pour le niveau de securite
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -116,6 +117,51 @@ pub fn securite_cascade_public<S>(securite: S) -> HashSet<Securite>
     }
 
     set
+}
+
+pub enum MessageKind {
+    Document,
+    Requete,
+    Commande,
+    Transaction,
+    Reponse,
+    Evenement,
+    ReponseChiffree,
+}
+
+pub const KIND_DOCUMENT: u16 = 0;
+pub const KIND_REQUETE: u16 = 1;
+pub const KIND_COMMANDE: u16 = 2;
+pub const KIND_TRANSACTION: u16 = 3;
+pub const KIND_REPONSE: u16 = 4;
+pub const KIND_EVENEMENT: u16 = 5;
+pub const KIND_REPONSE_CHIFFREE: u16 = 6;
+
+pub fn kind_rank<S>(kind: S) -> u16
+    where S: Borrow<MessageKind>
+{
+    let s = kind.borrow();
+    match s {
+        MessageKind::Document => KIND_DOCUMENT,
+        MessageKind::Requete => KIND_REQUETE,
+        MessageKind::Commande => KIND_COMMANDE,
+        MessageKind::Transaction => KIND_TRANSACTION,
+        MessageKind::Reponse => KIND_REPONSE,
+        MessageKind::Evenement => KIND_EVENEMENT,
+        MessageKind::ReponseChiffree => KIND_REPONSE_CHIFFREE,
+    }
+}
+
+impl From<TypeMessageOut> for MessageKind {
+    fn from(value: TypeMessageOut) -> Self {
+        match value {
+            TypeMessageOut::Requete => MessageKind::Requete,
+            TypeMessageOut::Commande => MessageKind::Commande,
+            TypeMessageOut::Transaction => MessageKind::Transaction,
+            TypeMessageOut::Reponse => MessageKind::Reponse,
+            TypeMessageOut::Evenement => MessageKind::Evenement,
+        }
+    }
 }
 
 // Roles (types de certificats serveur)

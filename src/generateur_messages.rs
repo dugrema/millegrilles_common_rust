@@ -235,6 +235,7 @@ impl GenerateurMessagesImpl {
             None => None
         };
         let message_signe = match self.formatter_message(
+            type_message_out.clone().into(),
             message,
             Some(routage.domaine.as_str()),
             Some(routage.action.as_str()),
@@ -274,6 +275,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         }
 
         let message_signe = match self.formatter_message(
+            MessageKind::Evenement,
             message,
             Some(&routage.domaine),
             Some(&routage.action),

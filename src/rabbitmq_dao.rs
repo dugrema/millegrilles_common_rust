@@ -1646,6 +1646,12 @@ pub enum TypeMessageOut {
     Evenement,
 }
 
+impl From<MessageKind> for TypeMessageOut {
+    fn from(value: MessageKind) -> Self {
+        value.into()
+    }
+}
+
 // https://users.rust-lang.org/t/callback-with-generic/52426
 // https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=f8a5ecf9873f6463ee29066465a0d5c8
 // use std::marker::PhantomData;

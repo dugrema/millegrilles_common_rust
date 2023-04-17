@@ -336,7 +336,7 @@ async fn sauvegarder_catalogue<M>(
     let fichier_catalogue = std::fs::File::create(&path_catalogue)?;
 
     let mut catalogue_signe = middleware.formatter_message(
-        &catalogue, Some("Backup"), Some("backupTransactions"), None, None, false)?;
+        MessageKind::Commande, &catalogue, Some("Backup"), Some("backupTransactions"), None, None, false)?;
 
     // Conserver les uuid_transactions separement (ne sont pas inclues dans la signature)
     match catalogue.uuid_transactions {
@@ -1537,7 +1537,7 @@ mod backup_tests {
 
         for i in 0..3 {
             let message = m.formatter_message(
-                &json!({}), Some("Test"), None, None, None, false)
+                MessageKind::Document, &json!({}), Some("Test"), None, None, None, false)
                 .expect("formatter_message");
             let mut m_bson = message.map_to_bson().expect("bson");
 

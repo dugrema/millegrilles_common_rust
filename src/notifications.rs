@@ -99,7 +99,7 @@ impl EmetteurNotifications {
         let message_chiffre: String = {
 
             let mut message_signe = middleware.formatter_message(
-                &contenu, None::<&str>, None::<&str>, None::<&str>, Some(1), false)?;
+                MessageKind::Document, &contenu, None::<&str>, None::<&str>, None::<&str>, Some(1), false)?;
 
             message_signe.certificat = None;  // Retirer certificat, redondant
 
@@ -187,7 +187,9 @@ impl EmetteurNotifications {
 
                     // Signer commande
                     let commande_signee = middleware.formatter_message(
-                        &commande, Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE), Some(partition.as_str()), None, false)?;
+                        MessageKind::Commande, &commande,
+                        Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
+                        Some(partition.as_str()), None, false)?;
 
                     {
                         // Conserver ref_hachage_bytes
