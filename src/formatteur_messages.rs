@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::Formatter;
 use std::sync::{Arc, Mutex};
+use hex;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use log::{debug, warn};
@@ -14,12 +15,14 @@ use serde_json::{json, Map, Number, Value};
 use uuid::Uuid;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
-use crate::hachages::{hacher_message, verifier_multihash};
+use crate::hachages::{hacher_bytes, hacher_message, verifier_multihash};
 use crate::middleware::{IsConfigurationPki, map_msg_to_bson};
 use crate::signatures::{signer_message, verifier_message as ref_verifier_message};
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 use crate::bson::{Document, Bson};
 use std::convert::{TryFrom, TryInto};
+use multibase::Base;
+use multihash::Code;
 use crate::constantes::MessageKind;
 use crate::mongo_dao::convertir_to_bson;
 
@@ -229,6 +232,71 @@ pub struct MessageMilleGrille {
     contenu_traite: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoutageMessage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domaine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EnveloppeHachageMessage<'a> {
+    pub pubkey: String,
+    pub estampille: DateEpochSeconds,
+    pub kind: u16,
+    pub contenu: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routage: Option<RoutageMessage>,
+}
+
+impl<'a> EnveloppeHachageMessage<'a> {
+    pub fn new(certificat: &EnveloppeCertificat, kind: MessageKind, contenu: &'a str, routage: Option<RoutageMessage>) -> Result<Self, Box<dyn Error>> {
+        let pubkey = certificat.publickey_bytes_encoding(Base::Base16Lower, true)?;
+        let estampille = DateEpochSeconds::now();
+        Ok(Self {
+            pubkey,
+            estampille,
+            kind: kind.into(),
+            contenu,
+            routage,
+        })
+    }
+
+    pub fn hacher(&self) -> Result<String, Box<dyn Error>> {
+        let message_value = match &self.routage {
+            Some(inner) => {
+                json!([
+                    &self.pubkey,
+                    &self.estampille,
+                    &self.kind,
+                    self.contenu,
+                    inner,
+                ])
+            },
+            None => {
+                json!([
+                    &self.pubkey,
+                    &self.estampille,
+                    &self.kind,
+                    self.contenu,
+                ])
+            }
+        };
+
+        let value_str = serde_json::to_string(&message_value)?;
+        debug!("Message string a hacher : {}", value_str);
+        let value_bytes = value_str.as_bytes();
+        let message_hache = hacher_bytes(value_bytes, Some(Code::Blake2s256), Some(Base::Base16Lower));
+        // Retirer encodage multibase (1 char) et multihash (4 bytes), 9 chars en tout
+        let message_hache = &message_hache[9..];
+
+        Ok(message_hache.to_string())
+    }
+}
+
 impl MessageMilleGrille {
 
     /// Creer un nouveau message et inserer les valeurs a la main.
@@ -262,11 +330,33 @@ impl MessageMilleGrille {
     {
         // Serialiser le contenu
         let value_ordered: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
+        let value_serialisee = serde_json::to_string(&value_ordered)?;
 
-        debug!("message a serialiser avec B-Tree {}", serde_json::to_string(&value_ordered)?);
+        let action_str = match action { Some(inner) => Some(inner.as_ref().to_string()), None => None};
+        let domaine_str = match domaine { Some(inner) => Some(inner.as_ref().to_string()), None => None};
+        let partition_str = match partition { Some(inner) => Some(inner.as_ref().to_string()), None => None};
+
+        let routage_message = match kind {
+            MessageKind::Requete | MessageKind::Commande | MessageKind::Transaction | MessageKind::Evenement => {
+                Some(RoutageMessage { action: action_str, domaine: domaine_str, partition: partition_str })
+            },
+            _ => None
+        };
+
+        // Hacher le message pour obtenir le id
+        let enveloppe_message = EnveloppeHachageMessage::new(
+            enveloppe_privee.enveloppe.as_ref(), kind, value_serialisee.as_str(), routage_message)?;
+        debug!("message a hacher {:?}", enveloppe_message);
+        let id_message = enveloppe_message.hacher()?;
+        debug!("ID message (hachage) : {}", id_message);
+        let id_message_bytes = hex::decode(&id_message)?;
+
+        // Signer le id
+        let signature = signer_message(enveloppe_privee.cle_privee(), &id_message_bytes[..])?;
+        debug!("Signature message {}", signature);
 
         let entete = MessageMilleGrille::creer_entete(
-            enveloppe_privee, domaine, action, partition, version, &value_ordered)?;
+            enveloppe_privee, None::<&str>, None::<&str>, None::<&str>, version, &value_ordered)?;
 
         let pems: Vec<String> = {
             let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
@@ -1281,8 +1371,8 @@ mod serialization_tests {
             "alpaca": true,
         });
         let message = MessageMilleGrille::new_signer(
-            &enveloppe_privee, MessageKind::Document, &val,
-            None::<&str>, None::<&str>, None::<&str>, None,
+            &enveloppe_privee, MessageKind::Requete, &val,
+            Some("Dummy"), Some("requeteDummy"), None::<&str>, None,
             false).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");

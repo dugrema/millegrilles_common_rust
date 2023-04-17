@@ -503,6 +503,26 @@ impl EnveloppeCertificat {
         }
     }
 
+    pub fn publickey_bytes_encoding(&self, base: Base, strip: bool) -> Result<String, String> {
+        let pk = match self.certificat.public_key() {
+            Ok(pk) => pk,
+            Err(e) => Err(format!("certificat.public_bytes Erreur public_key() {:?}", e))?
+        };
+        match pk.raw_public_key() {
+            Ok(b) => {
+                let encoded_string: String = multibase::encode(base, b);
+                match strip {
+                    true => {
+                        let encoded_remove_id = &encoded_string[1..];
+                        Ok(encoded_remove_id.to_string())
+                    },
+                    false => Ok(encoded_string)
+                }
+            },
+            Err(e) => Err(format!("certificat.public_bytes Erreur raw_private_key() {:?}", e))?
+        }
+    }
+
     /// Retourne la cle publique pour le certificat (leaf) et le CA (millegrille)
     /// Utilise pour chiffrage de cles secretes
     pub fn fingerprint_cert_publickeys(&self) -> Result<Vec<FingerprintCertPublicKey>, Box<dyn Error>> {

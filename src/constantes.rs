@@ -164,6 +164,12 @@ impl From<TypeMessageOut> for MessageKind {
     }
 }
 
+impl Into<u16> for MessageKind {
+    fn into(self) -> u16 {
+        kind_rank(&self)
+    }
+}
+
 // Roles (types de certificats serveur)
 pub const ROLE_NOEUD_PROTEGE: &str = "protege";
 pub const ROLE_NOEUD_PRIVE: &str = "prive";

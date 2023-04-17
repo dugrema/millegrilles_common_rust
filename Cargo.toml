@@ -16,6 +16,7 @@ reqwest = { version = "0.11.6", features = ["default-tls", "rustls-tls", "rustls
 tempfile = { version = "3.2.0" }
 flate2 = "1.0.25"
 xz2 = { version = "0.1.7", features = ["tokio"] }
+hex = "0.4.3"
 
 # Tokio, async
 async-recursion = "*"
