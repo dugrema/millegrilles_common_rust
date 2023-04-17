@@ -139,13 +139,13 @@ where
     // }?;
 
     // let resultat_verifier_signature = message.parsed.verifier_signature(&public_key)?;
-    let resultat_verifier_message = message.parsed.verifier_contenu()?;
+    let (signature_valide, hachage_valide) = message.parsed.verifier_contenu()?;
 
     // if resultat_verifier_signature == true && toujours_verifier_hachage == false {
         // La signature est valide, on court-circuite le hachage.
         return Ok(ResultatValidation{
-            signature_valide: resultat_verifier_message,
-            hachage_valide: Some(resultat_verifier_message),
+            signature_valide,
+            hachage_valide: Some(hachage_valide),
             certificat_valide: certificat_idmg_valide && certificat_date_valide && message_date_valide,
             regles_valides: regles_ok,
         })

@@ -239,7 +239,7 @@ pub struct MessageMilleGrille {
     pub millegrille: Option<String>,
 
     #[serde(skip)]
-    contenu_valide: Option<bool>,
+    contenu_valide: Option<(bool, bool)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -397,7 +397,7 @@ impl MessageMilleGrille {
             signature,
             certificat: Some(pems),
             millegrille,
-            contenu_valide: Some(true),
+            contenu_valide: Some((true, true)),
         })
     }
 
@@ -675,49 +675,46 @@ impl MessageMilleGrille {
 
     /// Verifie le hachage et la signature
     /// :return: True si hachage et signature valides
-    pub fn verifier_contenu(&mut self) -> Result<bool, Box<dyn Error>> {
+    pub fn verifier_contenu(&mut self) -> Result<(bool, bool), Box<dyn Error>> {
         if let Some(inner) = self.contenu_valide {
             return Ok(inner);  // Deja verifie
         }
-
-        let mut valide = false;
 
         // Hachage du message (id)
         let id_message = hex::decode(self.id.as_str())?;
 
         // Verifier signature
-        {
+        let signature_valide = {
             let signature = hex::decode(self.signature.as_str())?;
             let pubkey = hex::decode(self.pubkey.as_str())?;
             let cle_ed25519_publique = PKey::public_key_from_raw_bytes(
                 &pubkey[..], Id::ED25519)?;
             let mut verifier = Verifier::new_without_digest(&cle_ed25519_publique)?;
-            valide = verifier.verify_oneshot(&signature[..], &id_message[..])?;
-            debug!("Validite signature message : {}", valide);
-        }
+            let signature_valide = verifier.verify_oneshot(&signature[..], &id_message[..])?;
+            debug!("Validite signature message : {}", signature_valide);
+            signature_valide
+        };
 
         // Verifier hachage
-        if valide {
-            debug!("Verifier hachage");
-            let message_enveloppe = EnveloppeHachageMessage {
-                pubkey: self.pubkey.clone(),
-                estampille: self.estampille.clone(),
-                kind: self.kind.clone(),
-                contenu: self.contenu.as_str(),
-                routage: self.routage.clone(),
-            };
-            let hachage_calcule = message_enveloppe.hacher()?;
-            valide = hachage_calcule == self.id;
-            debug!("Validite hachage contenu message {}", valide);
-        }
+        debug!("Verifier hachage");
+        let message_enveloppe = EnveloppeHachageMessage {
+            pubkey: self.pubkey.clone(),
+            estampille: self.estampille.clone(),
+            kind: self.kind.clone(),
+            contenu: self.contenu.as_str(),
+            routage: self.routage.clone(),
+        };
+        let hachage_calcule = message_enveloppe.hacher()?;
+        let hachage_valide = hachage_calcule == self.id;
+        debug!("Validite hachage contenu message {}", hachage_valide);
 
-        self.contenu_valide = Some(valide);  // Conserver pour reference future
+        self.contenu_valide = Some((signature_valide, hachage_valide));  // Conserver pour reference future
 
-        Ok(valide)
+        Ok((signature_valide, hachage_valide))
     }
 
     pub fn verifier_hachage(&mut self) -> Result<bool, Box<dyn Error>> {
-        self.verifier_contenu()
+        Ok(self.verifier_contenu()?.1)
 
         // let entete = &self.entete;
         // let hachage_str = entete.hachage_contenu.as_str();
@@ -1462,48 +1459,29 @@ mod serialization_tests {
         let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
 
         // Corrompre le message
-        todo!("fix me");
-        // message.parsed.contenu.insert(String::from("corruption"), Value::String(String::from("je te corromps!")));
-        //
-        // let validateur = validateur_arc.as_ref();
-        // let resultat = message.valider(validateur, None).await.expect("valider");
-        // assert_eq!(false, resultat.signature_valide);
+        message.parsed.contenu = message.parsed.contenu.replace("true", "false");
+
+        let validateur = validateur_arc.as_ref();
+        let resultat = message.valider(validateur, None).await.expect("valider");
+        assert_eq!(true, resultat.signature_valide);
         // assert_eq!(false, resultat.certificat_valide);  // expire
-        // assert_eq!(Some(false), resultat.hachage_valide);
+        assert_eq!(Some(false), resultat.hachage_valide);
     }
 
     #[tokio::test]
-    async fn valider_entete_corrompue() {
+    async fn valider_hachage_corrompu() {
         setup("valider_message_millegrille");
         let (validateur_arc, _) = charger_enveloppe_privee_env();
         let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
 
         // Corrompre le message
-        // message.entete.uuid_transaction = String::from("CORROMPU");
-        todo!("fix me");
+        message.parsed.id = String::from("45e8347dd1adbb7b633bb0fd2621596cff22657ddd219ac6327e5a70a3f5f354");
 
         let validateur = validateur_arc.as_ref();
         let resultat = message.valider(validateur, None).await.expect("valider");
         assert_eq!(false, resultat.signature_valide);
-        assert_eq!(false, resultat.certificat_valide);  // expire
-        assert_eq!(Some(true), resultat.hachage_valide);
-    }
-
-    #[tokio::test]
-    async fn valider_mauvais_idmg() {
-        setup("valider_message_millegrille");
-        let (validateur_arc, _) = charger_enveloppe_privee_env();
-        let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
-
-        // Corrompre le message
-        //message.entete.idmg = String::from("CORROMPU");
-
-        todo!("fix me");
-        // let validateur = validateur_arc.as_ref();
-        // let resultat = message.valider(validateur, None).await.expect("valider");
-        // assert_eq!(false, resultat.signature_valide);
-        // assert_eq!(false, resultat.certificat_valide);
-        // assert_eq!(Some(true), resultat.hachage_valide);
+        // assert_eq!(false, resultat.certificat_valide);  // expire
+        assert_eq!(Some(false), resultat.hachage_valide);
     }
 
     #[test]
@@ -1521,57 +1499,15 @@ mod serialization_tests {
             &enveloppe_privee, MessageKind::Document, &val, None::<&str>, None::<&str>, None::<&str>, None, false).expect("map");
 
         let message_str = serde_json::to_string(&message).expect("string");
-        let idx_certificat = message_str.find("\"_certificat\"");
+        let idx_certificat = message_str.find("\"certificat\"");
         debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
-        assert_eq!(Some(1), idx_certificat);
+        assert_eq!(true, idx_certificat.is_some());
 
         message.retirer_certificats();
         let message_str = serde_json::to_string(&message).expect("string");
-        let idx_certificat = message_str.find("\"_certificat\"");
+        let idx_certificat = message_str.find("\"certificat\"");
         debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
         assert_eq!(true, idx_certificat.is_none());
-    }
-
-    #[test]
-    fn creer_message_manuellement() {
-        setup("creer_message_manuellement");
-        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
-
-        todo!("Fix me");
-
-        // let mut message = MessageMilleGrille::new();
-        // message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
-        // message.set_serializable("contenu_String", &String::from("J'ai du contenu")).expect("contenu_int");
-        // message.set_int("contenu_int", 22);
-        // message.set_float("contenu_float", 22.89);
-        // message.set_bool("contenu_bool", true);
-        //
-        // // Signer le message
-        // message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
-        // debug!("creer_message_manuellement message signe : {:?}", message);
-        //
-        // assert_eq!(message.certificat.is_some(), true);
-        // assert_eq!(message.signature.is_some(), true);
-        // assert_eq!(message.entete.version, 2);
-        // assert_eq!(message.entete.domaine.as_ref().expect("domaine").as_str(), "MonDomaine");
-        //
-        // // Signer a nouveau, devrait juste lancer un warning
-        // message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
-    }
-
-    #[test]
-    #[should_panic]
-    fn creer_message_panic_set() {
-        setup("creer_message_panic_set");
-        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
-
-        // Creer et signer le message
-        !todo!("fix me");
-        // let mut message = MessageMilleGrille::new();
-        // message.signer(&enveloppe_privee, MessageKind::Requete, Some("MonDomaine"), None, None, Some(2)).expect("signer");
-        //
-        // // Panic, le messsage est signe (immuable)
-        // message.set_value("ma_valeur", Value::String(String::from("mon contenu")));
     }
 
 }
