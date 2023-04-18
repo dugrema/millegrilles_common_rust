@@ -1446,9 +1446,12 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
 
         let channel = channel_opt.as_ref().expect("channel");
 
-        debug!("Emettre_message id {}", contenu.id);
-
-        let correlation_id = contenu.id.as_str();
+        // let correlation_id = contenu.id.as_str();
+        let correlation_id = match message.correlation_id.as_ref() {
+            Some(inner) => inner.as_str(),
+            None => contenu.id.as_str()
+        };
+        debug!("Emettre_message id {} (correlation {})", contenu.id, correlation_id);
 
         let exchanges = match &message.exchanges {
             Some(e) => Some(e.clone()),
