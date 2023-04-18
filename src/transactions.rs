@@ -36,7 +36,7 @@ pub async fn transmettre_evenement_persistance<S>(
     where S: AsRef<str>
 {
     let mut evenement = json!({
-        "uuid_transaction": uuid_transaction.as_ref(),
+        "id": uuid_transaction.as_ref(),
         "evenement": EVENEMENT_TRANSACTION_PERSISTEE,
         "domaine": domaine.as_ref(),
         "action": action.as_ref(),
