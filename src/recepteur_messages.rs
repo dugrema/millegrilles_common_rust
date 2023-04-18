@@ -234,7 +234,7 @@ pub async fn traiter_delivery<M,S>(
     let properties = &delivery.properties;
     let correlation_id = match properties.correlation_id() {
         Some(c) => Some(String::from(c.as_str())),
-        None => None,
+        None => Some(correlation.clone()),
     };
     let reply_q = match properties.reply_to() {
         Some(q) => Some(String::from(q.as_str())),
