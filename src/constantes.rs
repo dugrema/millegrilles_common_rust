@@ -269,19 +269,20 @@ pub const EVENEMENT_BACKUP_DECLENCHER: &str = "declencherBackup";
 pub const EVENEMENT_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
 
 // Transactions
-pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";
-pub const TRANSACTION_CHAMP_UUID_TRANSACTION: &str = "uuid_transaction";
-pub const TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: &str = "en-tete.uuid_transaction";
-pub const TRANSACTION_CHAMP_ENTETE_PARTITION: &str = "en-tete.partition";
+pub const TRANSACTION_CHAMP_ID: &str = "id";
+// pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";
+// pub const TRANSACTION_CHAMP_UUID_TRANSACTION: &str = "uuid_transaction";
+// pub const TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: &str = "en-tete.uuid_transaction";
+// pub const TRANSACTION_CHAMP_ENTETE_PARTITION: &str = "en-tete.partition";
 pub const TRANSACTION_CHAMP_DOMAINE: &str = "domaine";
 pub const TRANSACTION_CHAMP_ACTION: &str = "action";
-pub const TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT: &str = "fingerprint_certificat";
+// pub const TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT: &str = "fingerprint_certificat";
 pub const TRANSACTION_CHAMP_EVENEMENTS: &str = "_evenements";
 pub const TRANSACTION_CHAMP_IDMG: &str = "idmg";
 pub const TRANSACTION_CHAMP_ESTAMPILLE: &str = "estampille";
 pub const TRANSACTION_CHAMP_COMPLETE: &str = "transaction_complete";
-pub const TRANSACTION_CHAMP_SIGNATURE: &str = "_signature";
-pub const TRANSACTION_CHAMP_CERTIFICAT: &str = "_certificat";
+pub const TRANSACTION_CHAMP_SIGNATURE: &str = "sig";
+pub const TRANSACTION_CHAMP_CERTIFICAT: &str = "certificat";
 
 pub const TRANSACTION_CHAMP_EVENEMENT_PERSISTE: &str = "_evenements.document_persiste";
 pub const TRANSACTION_CHAMP_EVENEMENT_COMPLETE: &str = "_evenements.transaction_complete";

@@ -101,107 +101,117 @@ pub trait FormatteurMessage {
 
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-/// Entete de messages de MilleGrille (champ "en-tete").
-pub struct Entete {
-    // Note : s'assurer de conserver les champs en ordre alphabetique
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub action: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub domaine: Option<String>,
+// #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+// /// Entete de messages de MilleGrille (champ "en-tete").
+// pub struct Entete {
+//     // Note : s'assurer de conserver les champs en ordre alphabetique
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub action: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub domaine: Option<String>,
+//     pub estampille: DateEpochSeconds,
+//     pub fingerprint_certificat: String,
+//     pub hachage_contenu: String,
+//     pub idmg: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub partition: Option<String>,
+//     pub uuid_transaction: String,
+//     pub version: i32,
+// }
+
+// impl Entete {
+//     pub fn builder(fingerprint_certificat: &str, hachage_contenu: &str, idmg: &str) -> EnteteBuilder {
+//         EnteteBuilder::new(fingerprint_certificat.to_owned(), hachage_contenu.to_owned(), idmg.to_owned())
+//     }
+// }
+
+// impl TryInto<Document> for Entete {
+//     type Error = String;
+//
+//     fn try_into(self) -> Result<Document, Self::Error> {
+//         match convertir_to_bson(self) {
+//             Ok(e) => Ok(e),
+//             Err(e) => Err(format!("transaction_catalogue_horaire Erreur conversion entete vers bson : {:?}", e))?
+//         }
+//     }
+// }
+
+// /// Builder pour les entetes de messages.
+// pub struct EnteteBuilder {
+//     action: Option<String>,
+//     domaine: Option<String>,
+//     estampille: DateEpochSeconds,
+//     fingerprint_certificat: String,
+//     hachage_contenu: String,
+//     idmg: String,
+//     partition: Option<String>,
+//     uuid_transaction: String,
+//     version: i32,
+// }
+
+// impl EnteteBuilder {
+//     pub fn new(fingerprint_certificat: String, hachage_contenu: String, idmg: String) -> EnteteBuilder {
+//         EnteteBuilder {
+//             action: None,
+//             domaine: None,
+//             estampille: DateEpochSeconds::now(),
+//             fingerprint_certificat,
+//             hachage_contenu,
+//             idmg,
+//             partition: None,
+//             uuid_transaction: Uuid::new_v4().to_string(),
+//             version: 1,
+//         }
+//     }
+//
+//     pub fn action(mut self, action: String) -> EnteteBuilder {
+//         self.action = Some(action);
+//         self
+//     }
+//
+//     pub fn domaine(mut self, domaine: String) -> EnteteBuilder {
+//         self.domaine = Some(domaine);
+//         self
+//     }
+//
+//     pub fn estampille(mut self, estampille: DateEpochSeconds) -> EnteteBuilder {
+//         self.estampille = estampille;
+//         self
+//     }
+//
+//     pub fn partition(mut self, partition: String) -> EnteteBuilder {
+//         self.partition = Some(partition);
+//         self
+//     }
+//
+//     pub fn version(mut self, version: i32) -> EnteteBuilder {
+//         self.version = version;
+//         self
+//     }
+//
+//     pub fn build(self) -> Entete {
+//         Entete {
+//             action: self.action,
+//             domaine: self.domaine,
+//             estampille: self.estampille,
+//             fingerprint_certificat: self.fingerprint_certificat,
+//             hachage_contenu: self.hachage_contenu,
+//             idmg: self.idmg,
+//             partition: self.partition,
+//             uuid_transaction: self.uuid_transaction,
+//             version: self.version,
+//         }
+//     }
+// }
+
+/// Identificateurs d'un message MilleGrille (sans contenu/signature)
+#[derive(Clone, Debug, Deserialize)]
+pub struct MessageMilleGrilleIdentificateurs {
+    pub id: String,
+    pub pubkey: String,
     pub estampille: DateEpochSeconds,
-    pub fingerprint_certificat: String,
-    pub hachage_contenu: String,
-    pub idmg: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub partition: Option<String>,
-    pub uuid_transaction: String,
-    pub version: i32,
-}
-
-impl Entete {
-    pub fn builder(fingerprint_certificat: &str, hachage_contenu: &str, idmg: &str) -> EnteteBuilder {
-        EnteteBuilder::new(fingerprint_certificat.to_owned(), hachage_contenu.to_owned(), idmg.to_owned())
-    }
-}
-
-impl TryInto<Document> for Entete {
-    type Error = String;
-
-    fn try_into(self) -> Result<Document, Self::Error> {
-        match convertir_to_bson(self) {
-            Ok(e) => Ok(e),
-            Err(e) => Err(format!("transaction_catalogue_horaire Erreur conversion entete vers bson : {:?}", e))?
-        }
-    }
-}
-
-/// Builder pour les entetes de messages.
-pub struct EnteteBuilder {
-    action: Option<String>,
-    domaine: Option<String>,
-    estampille: DateEpochSeconds,
-    fingerprint_certificat: String,
-    hachage_contenu: String,
-    idmg: String,
-    partition: Option<String>,
-    uuid_transaction: String,
-    version: i32,
-}
-
-impl EnteteBuilder {
-    pub fn new(fingerprint_certificat: String, hachage_contenu: String, idmg: String) -> EnteteBuilder {
-        EnteteBuilder {
-            action: None,
-            domaine: None,
-            estampille: DateEpochSeconds::now(),
-            fingerprint_certificat,
-            hachage_contenu,
-            idmg,
-            partition: None,
-            uuid_transaction: Uuid::new_v4().to_string(),
-            version: 1,
-        }
-    }
-
-    pub fn action(mut self, action: String) -> EnteteBuilder {
-        self.action = Some(action);
-        self
-    }
-
-    pub fn domaine(mut self, domaine: String) -> EnteteBuilder {
-        self.domaine = Some(domaine);
-        self
-    }
-
-    pub fn estampille(mut self, estampille: DateEpochSeconds) -> EnteteBuilder {
-        self.estampille = estampille;
-        self
-    }
-
-    pub fn partition(mut self, partition: String) -> EnteteBuilder {
-        self.partition = Some(partition);
-        self
-    }
-
-    pub fn version(mut self, version: i32) -> EnteteBuilder {
-        self.version = version;
-        self
-    }
-
-    pub fn build(self) -> Entete {
-        Entete {
-            action: self.action,
-            domaine: self.domaine,
-            estampille: self.estampille,
-            fingerprint_certificat: self.fingerprint_certificat,
-            hachage_contenu: self.hachage_contenu,
-            idmg: self.idmg,
-            partition: self.partition,
-            uuid_transaction: self.uuid_transaction,
-            version: self.version,
-        }
-    }
+    pub kind: u16,
+    pub routage: Option<RoutageMessage>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -368,8 +378,8 @@ impl MessageMilleGrille {
         let signature = signer_message(enveloppe_privee.cle_privee(), &id_message_bytes[..])?;
         debug!("Signature message {}", signature);
 
-        let entete = MessageMilleGrille::creer_entete(
-            enveloppe_privee, None::<&str>, None::<&str>, None::<&str>, version, &value_ordered)?;
+        // let entete = MessageMilleGrille::creer_entete(
+        //     enveloppe_privee, None::<&str>, None::<&str>, None::<&str>, version, &value_ordered)?;
 
         let pems: Vec<String> = {
             let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
@@ -401,56 +411,56 @@ impl MessageMilleGrille {
         })
     }
 
-    /// Va creer une nouvelle entete, calculer le hachag
-    /// Note : value doit etre deja trie (BTreeMap recursif)
-    fn creer_entete<S, T, U>(
-        enveloppe_privee: &EnveloppePrivee,
-        domaine: Option<S>,
-        action: Option<T>,
-        partition: Option<U>,
-        version: Option<i32>,
-        value: &Map<String, Value>
-    )
-        -> Result<Entete, Box<dyn Error>>
-        where S: AsRef<str>, T: AsRef<str>, U: AsRef<str>
-    {
-
-        // Calculer le hachage du contenu
-        let message_string = serde_json::to_string(&value)?;
-        let hachage = hacher_message(message_string.as_str());
-
-        // Generer l'entete
-        let mut entete_builder = Entete::builder(
-            enveloppe_privee.fingerprint(),
-            &hachage,
-            enveloppe_privee.idmg().expect("idmg").as_str()
-        )
-            .estampille(DateEpochSeconds::now())
-            .version(1);
-
-        match domaine {
-            Some(d) => entete_builder = entete_builder.domaine(d.as_ref().to_owned()),
-            None => (),
-        }
-
-        match action {
-            Some(a) => entete_builder = entete_builder.action(a.as_ref().to_owned()),
-            None => (),
-        }
-
-        match partition {
-            Some(p) => entete_builder = entete_builder.partition(p.as_ref().to_owned()),
-            None => (),
-        }
-
-        match version {
-            Some(v) => entete_builder = entete_builder.version(v),
-            None => (),
-        }
-
-        let entete = entete_builder.build();
-        Ok(entete)
-    }
+    // /// Va creer une nouvelle entete, calculer le hachag
+    // /// Note : value doit etre deja trie (BTreeMap recursif)
+    // fn creer_entete<S, T, U>(
+    //     enveloppe_privee: &EnveloppePrivee,
+    //     domaine: Option<S>,
+    //     action: Option<T>,
+    //     partition: Option<U>,
+    //     version: Option<i32>,
+    //     value: &Map<String, Value>
+    // )
+    //     -> Result<Entete, Box<dyn Error>>
+    //     where S: AsRef<str>, T: AsRef<str>, U: AsRef<str>
+    // {
+    //
+    //     // Calculer le hachage du contenu
+    //     let message_string = serde_json::to_string(&value)?;
+    //     let hachage = hacher_message(message_string.as_str());
+    //
+    //     // Generer l'entete
+    //     let mut entete_builder = Entete::builder(
+    //         enveloppe_privee.fingerprint(),
+    //         &hachage,
+    //         enveloppe_privee.idmg().expect("idmg").as_str()
+    //     )
+    //         .estampille(DateEpochSeconds::now())
+    //         .version(1);
+    //
+    //     match domaine {
+    //         Some(d) => entete_builder = entete_builder.domaine(d.as_ref().to_owned()),
+    //         None => (),
+    //     }
+    //
+    //     match action {
+    //         Some(a) => entete_builder = entete_builder.action(a.as_ref().to_owned()),
+    //         None => (),
+    //     }
+    //
+    //     match partition {
+    //         Some(p) => entete_builder = entete_builder.partition(p.as_ref().to_owned()),
+    //         None => (),
+    //     }
+    //
+    //     match version {
+    //         Some(v) => entete_builder = entete_builder.version(v),
+    //         None => (),
+    //     }
+    //
+    //     let entete = entete_builder.build();
+    //     Ok(entete)
+    // }
 
     // pub fn set_value(&mut self, name: &str, value: Value) {
     //     if self.signature.is_some() { panic!("set_value sur message signe") }
@@ -1365,41 +1375,6 @@ mod serialization_tests {
         let date: DateEpochSeconds = serde_json::from_value(value).expect("date");
 
         assert_eq!(date.date.timestamp() as i32, value_int);
-    }
-
-    #[test]
-    fn serializer_entete() {
-        setup("deserializer_date");
-        let fingerprint = "zQmPD1VZCEgPDvpNdSK8SCv6SuhdrtbvzAy5nUDvRWYn3Wv";
-        let hachage_contenu = "mEiAoFMueZNEcSQ97UXcOWmezPuQyjBYWpm8+1NZDKJvb2g";
-        let idmg = "z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s";
-        let entete = Entete::builder(fingerprint, hachage_contenu, idmg).build();
-
-        let value = serde_json::to_value(entete).unwrap();
-
-        assert_eq!(value.get("fingerprint_certificat").expect("fp").as_str().expect("fp str"), fingerprint);
-        assert_eq!(value.get("hachage_contenu").expect("hachage").as_str().expect("hachage str"), hachage_contenu);
-        assert_eq!(value.get("idmg").expect("idmg").as_str().expect("idmg str"), idmg);
-    }
-
-    #[test]
-    fn deserializer_entete() {
-        setup("deserializer_date");
-        let value = json!({
-	    	"domaine": "Backup.catalogueHoraire",
-		    "estampille": 1627585202,
-		    "fingerprint_certificat": "zQmPD1VZCEgPDvpNdSK8SCv6SuhdrtbvzAy5nUDvRWYn3Wv",
-		    "hachage_contenu": "mEiAoFMueZNEcSQ97UXcOWmezPuQyjBYWpm8+1NZDKJvb2g",
-		    "idmg": "z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s",
-		    "uuid_transaction": "2da93aa1-f09f-11eb-95a5-bf4298f92e28",
-		    "version": 6
-        });
-
-        let entete: Entete = serde_json::from_value(value).expect("deserialiser entete");
-
-        assert_eq!(entete.domaine.expect("domaine").as_str(), "Backup.catalogueHoraire");
-        assert_eq!(entete.estampille.date.timestamp(), 1627585202);
-
     }
 
     #[test]

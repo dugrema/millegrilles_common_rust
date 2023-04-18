@@ -262,7 +262,7 @@ mod test {
 
     use crate::certificats::{build_store_path, charger_enveloppe, charger_enveloppe_privee, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
     use crate::constantes::Securite;
-    use crate::formatteur_messages::{Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
+    use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
     use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
     use crate::rabbitmq_dao::TypeMessageOut;
     use crate::recepteur_messages::{MessageValide, TypeMessage};
@@ -391,24 +391,25 @@ mod test {
         async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M) -> Result<TypeMessage, String> where M: Serialize + Send + Sync {
             let certificat_pem: Vec<String> = self.enveloppe_privee.enveloppe.get_pem_vec().iter().map(|f| f.pem.clone()).collect();
 
-            let entete = Entete::builder("abcd1234", "efgh5678", "ijkl9012").build();
-            let message = json!({
-                "en-tete": entete,
-                "certificat": certificat_pem,
-            });
-            let message = MessageSerialise::from_serializable(message).expect("from_serializable");
-            let message_valide = MessageValide {
-                message,
-                q: "".to_string(),
-                reply_q: None,
-                correlation_id: None,
-                routing_key: None,
-                domaine: None,
-                exchange: None,
-                type_message: None
-            };
-
-            Ok(TypeMessage::Valide(message_valide))
+            todo!("fix me");
+            // let entete = Entete::builder("abcd1234", "efgh5678", "ijkl9012").build();
+            // let message = json!({
+            //     "en-tete": entete,
+            //     "certificat": certificat_pem,
+            // });
+            // let message = MessageSerialise::from_serializable(message).expect("from_serializable");
+            // let message_valide = MessageValide {
+            //     message,
+            //     q: "".to_string(),
+            //     reply_q: None,
+            //     correlation_id: None,
+            //     routing_key: None,
+            //     domaine: None,
+            //     exchange: None,
+            //     type_message: None
+            // };
+            //
+            // Ok(TypeMessage::Valide(message_valide))
         }
 
         async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
@@ -416,19 +417,20 @@ mod test {
         }
 
         async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
-            let entete = Entete::builder("abcd1234", "efgh5678", "ijkl9012").build();
-            let message = json!({"ok": true, "en-tete": entete});
-            let message_valide = MessageValide {
-                message: MessageSerialise::from_serializable(message).expect("from_serializable"),
-                q: "".to_string(),
-                reply_q: None,
-                correlation_id: None,
-                routing_key: None,
-                domaine: None,
-                exchange: None,
-                type_message: None
-            };
-            Ok(Some(TypeMessage::Valide(message_valide)))
+            todo!("fix me");
+            // let entete = Entete::builder("abcd1234", "efgh5678", "ijkl9012").build();
+            // let message = json!({"ok": true, "en-tete": entete});
+            // let message_valide = MessageValide {
+            //     message: MessageSerialise::from_serializable(message).expect("from_serializable"),
+            //     q: "".to_string(),
+            //     reply_q: None,
+            //     correlation_id: None,
+            //     routing_key: None,
+            //     domaine: None,
+            //     exchange: None,
+            //     type_message: None
+            // };
+            // Ok(Some(TypeMessage::Valide(message_valide)))
         }
 
         async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {

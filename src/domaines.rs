@@ -443,11 +443,11 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
             // Index transactions par uuid-transaction
             let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from(TRANSACTION_CHAMP_UUID_TRANSACTION)),
+                nom_index: Some(String::from("index_champ_id")),
                 unique: true
             };
             let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION), direction: 1}
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1}
             );
 
             middleware.create_index(

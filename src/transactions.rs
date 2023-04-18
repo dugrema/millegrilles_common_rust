@@ -19,9 +19,9 @@ use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
-use crate::formatteur_messages::{Entete, MessageMilleGrille, MessageSerialise};
+use crate::formatteur_messages::{MessageMilleGrille, MessageMilleGrilleIdentificateurs, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::requete_certificat;
+use crate::middleware::{map_serializable_to_bson, requete_certificat};
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
 
 pub async fn transmettre_evenement_persistance<S>(
@@ -67,7 +67,8 @@ pub async fn transmettre_evenement_persistance<S>(
 pub struct TriggerTransaction {
     pub domaine: String,
     pub evenement: String,
-    pub uuid_transaction: String,
+    // pub uuid_transaction: String,
+    pub id: String,
     pub reply_to: Option<String>,
     pub correlation_id: Option<String>,
 }
@@ -92,12 +93,12 @@ where
     // let trigger = &m.message;
     // let entete = trigger.get_entete();
     // let contenu = &m.message.get_msg().contenu;
-    let uuid_transaction = trigger.uuid_transaction.as_str();
+    let uuid_transaction = trigger.id.as_str();
 
     // Charger transaction a partir de la base de donnees
     let collection = middleware.get_collection(nom_collection)?;
 
-    let filtre = doc! {TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction};
+    let filtre = doc! {TRANSACTION_CHAMP_ID: uuid_transaction};
 
     match collection.find_one(filtre, None).await {
         Ok(d) => match d {
@@ -109,20 +110,21 @@ where
 }
 
 async fn extraire_transaction(validateur: &impl ValidateurX509, doc_transaction: Document) -> Result<TransactionImpl, String> {
-    let entete = doc_transaction.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
-    let fingerprint = entete.get_str(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint_certificat");
-    let enveloppe = match validateur.get_certificat(fingerprint).await {
-        Some(e) => Some(e.clone()),
-        None => None,
-    };
-
-    Ok(TransactionImpl::new(doc_transaction, enveloppe))
+    todo!("fix me");
+    // let entete = doc_transaction.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
+    // let fingerprint = entete.get_str(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint_certificat");
+    // let enveloppe = match validateur.get_certificat(fingerprint).await {
+    //     Some(e) => Some(e.clone()),
+    //     None => None,
+    // };
+    //
+    // Ok(TransactionImpl::new(doc_transaction, enveloppe))
 }
 
 pub trait Transaction: Clone + Debug + Send + Sync {
     fn get_contenu(&self) -> &Document;
     fn contenu(self) -> Document;
-    fn get_entete(&self) -> &Document;
+    // fn get_entete(&self) -> &Document;
     fn get_domaine(&self) -> &str;
     fn get_action(&self) -> &str;
     fn get_uuid_transaction(&self) -> &str;
@@ -139,35 +141,35 @@ pub struct TransactionImpl {
     contenu: Document,
     domaine: String,
     action: String,
-    uuid_transaction: String,
+    id: String,
     estampille: DateTime<Utc>,
     enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
 }
 
 impl TransactionImpl {
     pub fn new(contenu: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> TransactionImpl {
-
-        let entete = contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
-        let domaine = String::from(entete.get_str(TRANSACTION_CHAMP_DOMAINE).expect("domaine"));
-        let action = String::from(entete.get_str(TRANSACTION_CHAMP_ACTION).expect("action"));
-
-        // let mut domaine_split = domaine_action.split(".");
-        // let domaine = domaine_split.next().expect("domaine").to_owned();
-        // let action = domaine_split.last().expect("action").to_owned();
-
-        let uuid_transaction = String::from(entete.get_str(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("domaine"));
-
-        let evenements = contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements");
-        let estampille = evenements.get_datetime("_estampille").expect("_estampille").to_chrono();
-
-        TransactionImpl {
-            contenu,
-            domaine,
-            action,
-            uuid_transaction,
-            estampille,
-            enveloppe_certificat,
-        }
+        todo!("fix me");
+        // let entete = contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
+        // let domaine = String::from(entete.get_str(TRANSACTION_CHAMP_DOMAINE).expect("domaine"));
+        // let action = String::from(entete.get_str(TRANSACTION_CHAMP_ACTION).expect("action"));
+        //
+        // // let mut domaine_split = domaine_action.split(".");
+        // // let domaine = domaine_split.next().expect("domaine").to_owned();
+        // // let action = domaine_split.last().expect("action").to_owned();
+        //
+        // let uuid_transaction = String::from(entete.get_str(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("domaine"));
+        //
+        // let evenements = contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements");
+        // let estampille = evenements.get_datetime("_estampille").expect("_estampille").to_chrono();
+        //
+        // TransactionImpl {
+        //     contenu,
+        //     domaine,
+        //     action,
+        //     uuid_transaction,
+        //     estampille,
+        //     enveloppe_certificat,
+        // }
     }
 }
 
@@ -203,7 +205,7 @@ impl TryFrom<MessageSerialise> for TransactionImpl {
             contenu,
             domaine,
             action,
-            uuid_transaction: value.parsed.id,
+            id: value.parsed.id,
             estampille: value.parsed.estampille.get_datetime().to_owned(),
             enveloppe_certificat: value.certificat,
         })
@@ -219,9 +221,9 @@ impl Transaction for TransactionImpl {
         self.contenu
     }
 
-    fn get_entete(&self) -> &Document {
-        self.contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete")
-    }
+    // fn get_entete(&self) -> &Document {
+    //     self.contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete")
+    // }
 
     fn get_domaine(&self) -> &str {
         &self.domaine
@@ -232,7 +234,7 @@ impl Transaction for TransactionImpl {
     }
 
     fn get_uuid_transaction(&self) -> &str {
-        &self.uuid_transaction
+        &self.id
     }
 
     fn get_estampille(&self) -> &DateTime<Utc> {
@@ -295,7 +297,7 @@ pub async fn marquer_transaction<'a, M, S, T>(middleware: &M, nom_collection: S,
         "$currentDate": current_date,
     };
     let filtre = doc! {
-        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction_str,
+        TRANSACTION_CHAMP_ID: uuid_transaction_str,
     };
 
     let collection = middleware.get_collection(nom_collection.as_ref())?;
@@ -408,58 +410,59 @@ async fn resoumettre<M>(middleware: &M, _collection: &Collection<Document>, _ops
 where
     M: GenerateurMessages + MongoDao
 {
-    let entete_value = match d.get("en-tete") {
-        Some(e) => e,
-        None => {
-            error!("Erreur chargement entete pour resoumission de {:?}", d);
-            Err(ErreurResoumission::new(false, None::<String>))?
-        },
-    };
-    let entete: Entete = match serde_json::from_value::<Entete>(serde_json::to_value(entete_value).expect("val")) {
-        Ok(e) => e,
-        Err(e) => {
-            error!("En-tete illisible, transaction ne peut pas etre re-emise {:?}Transaction: \n{:?}", e, d);
-            Err(ErreurResoumission::new(false, None::<String>))?
-        }
-    };
-
-    let uuid_transaction = entete.uuid_transaction.as_str();
-    let domaine = match &entete.domaine {
-        Some(d) => d.as_str(),
-        None => {
-            error!("Domaine absent, transaction ne peut etre re-emise : {:?}", entete);
-            Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
-        }
-    };
-    let action = match &entete.action {
-        Some(a) => a.as_str(),
-        None => {
-            error!("Action absente, transaction ne peut etre re-emise : {:?}", entete);
-            Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
-        }
-    };
-    let partition = match &entete.partition {
-        Some(p) => Some(p),
-        None => None
-    };
-
-    // let filtre_transaction_resoumise = doc! {
-    //             TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
-    //         };
-
-    debug!("Transaction a resoumettre : {:?}", uuid_transaction);
-    let resultat = transmettre_evenement_persistance(
-        middleware, uuid_transaction, domaine, action, partition, None, None).await;
-
-    match &resultat {
-        Ok(()) => {
-            Ok(())
-        },
-        Err(_e) => {
-            error!("Erreur resoumission transaction avec mongo : {:?}", resultat);
-            Err(ErreurResoumission::new(true, Some(uuid_transaction)))
-        }
-    }
+    todo!("fix me");
+    // let entete_value = match d.get("en-tete") {
+    //     Some(e) => e,
+    //     None => {
+    //         error!("Erreur chargement entete pour resoumission de {:?}", d);
+    //         Err(ErreurResoumission::new(false, None::<String>))?
+    //     },
+    // };
+    // let entete: Entete = match serde_json::from_value::<Entete>(serde_json::to_value(entete_value).expect("val")) {
+    //     Ok(e) => e,
+    //     Err(e) => {
+    //         error!("En-tete illisible, transaction ne peut pas etre re-emise {:?}Transaction: \n{:?}", e, d);
+    //         Err(ErreurResoumission::new(false, None::<String>))?
+    //     }
+    // };
+    //
+    // let uuid_transaction = entete.uuid_transaction.as_str();
+    // let domaine = match &entete.domaine {
+    //     Some(d) => d.as_str(),
+    //     None => {
+    //         error!("Domaine absent, transaction ne peut etre re-emise : {:?}", entete);
+    //         Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
+    //     }
+    // };
+    // let action = match &entete.action {
+    //     Some(a) => a.as_str(),
+    //     None => {
+    //         error!("Action absente, transaction ne peut etre re-emise : {:?}", entete);
+    //         Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
+    //     }
+    // };
+    // let partition = match &entete.partition {
+    //     Some(p) => Some(p),
+    //     None => None
+    // };
+    //
+    // // let filtre_transaction_resoumise = doc! {
+    // //             TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
+    // //         };
+    //
+    // debug!("Transaction a resoumettre : {:?}", uuid_transaction);
+    // let resultat = transmettre_evenement_persistance(
+    //     middleware, uuid_transaction, domaine, action, partition, None, None).await;
+    //
+    // match &resultat {
+    //     Ok(()) => {
+    //         Ok(())
+    //     },
+    //     Err(_e) => {
+    //         error!("Erreur resoumission transaction avec mongo : {:?}", resultat);
+    //         Err(ErreurResoumission::new(true, Some(uuid_transaction)))
+    //     }
+    // }
 }
 
 #[derive(Clone, Debug)]
@@ -680,12 +683,12 @@ where
     resultat
 }
 
-fn get_entete_from_doc(doc: &Document) -> Result<Entete, Box<dyn Error>> {
-    let entete_bson = doc.get_document("en-tete")?;
-    let entete_value = serde_json::to_value(entete_bson)?;
-
-    Ok(serde_json::from_value(entete_value)?)
-}
+// fn get_entete_from_doc(doc: &Document) -> Result<Entete, Box<dyn Error>> {
+//     let entete_bson = doc.get_document("en-tete")?;
+//     let entete_value = serde_json::to_value(entete_bson)?;
+//
+//     Ok(serde_json::from_value(entete_value)?)
+// }
 
 // S'assurer d'avoir tous les certificats dans redis ou cache
 async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Document>) -> Result<(), Box<dyn Error>>
@@ -694,15 +697,23 @@ async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Do
     while let Some(result) = curseur.next().await {
         let transaction = result?;
 
-        let entete = match get_entete_from_doc(&transaction) {
-            Ok(t) => t,
+        let message_identificateurs: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(transaction.clone()) {
+            Ok(inner) => inner,
             Err(_e) => {
-                error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
+                error!("transactions.regenerer_transactions Erreur transaction chargement identificateurs - ** SKIP **");
                 continue  // Skip
             }
         };
 
-        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+        // let entete = match get_entete_from_doc(&transaction) {
+        //     Ok(t) => t,
+        //     Err(_e) => {
+        //         error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
+        //         continue  // Skip
+        //     }
+        // };
+
+        let fingerprint_certificat = message_identificateurs.pubkey.as_str();
         if middleware.get_certificat(fingerprint_certificat).await.is_none() {
             debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
             if requete_certificat(middleware, fingerprint_certificat).await?.is_none() {
@@ -723,7 +734,8 @@ where
     while let Some(result) = curseur.next().await {
         let transaction = result?;
 
-        let entete = match get_entete_from_doc(&transaction) {
+        //let entete = match get_entete_from_doc(&transaction) {
+        let message_identificateurs: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(transaction.clone()) {
             Ok(t) => t,
             Err(_e) => {
                 error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
@@ -731,10 +743,10 @@ where
             }
         };
 
-        let uuid_transaction = entete.uuid_transaction.as_str();
+        let uuid_transaction = message_identificateurs.id.as_str();
         debug!("regenerer_transactions Traiter transaction : {:?}", uuid_transaction);
 
-        let fingerprint_certificat = entete.fingerprint_certificat.as_str();
+        let fingerprint_certificat = message_identificateurs.pubkey.as_str();
         let certificat = match middleware.get_certificat(fingerprint_certificat).await {
             Some(c) => c,
             None => {

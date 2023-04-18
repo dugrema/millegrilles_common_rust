@@ -32,7 +32,7 @@ use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
 use crate::fichiers::FichierWriter;
-use crate::formatteur_messages::{DateEpochSeconds, Entete, FormatteurMessage, MessageMilleGrille, MessageSerialise};
+use crate::formatteur_messages::{DateEpochSeconds, FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::hachages::hacher_bytes;
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
@@ -422,7 +422,7 @@ async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collecti
 
     let collection = middleware.get_collection(nom_collection)?;
     let filtre = doc! {
-        TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: {"$in": &uuid_transactions}
+        TRANSACTION_CHAMP_ID: {"$in": &uuid_transactions}
     };
     let ops = doc! {
         "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: true},
@@ -488,9 +488,9 @@ pub struct CatalogueBackup {
     pub data_transactions: String,
     pub nombre_transactions: usize,
 
-    /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
-    #[serde(rename = "en-tete", skip_serializing)]
-    pub entete: Option<Entete>,
+    // /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
+    // #[serde(rename = "en-tete", skip_serializing)]
+    // pub entete: Option<Entete>,
 
     /// Liste des transactions - resultat intermediaire, va etre retiree du fichier final
     #[serde(skip_serializing)]
@@ -668,7 +668,7 @@ impl CatalogueBackupBuilder {
             nombre_transactions: self.uuid_transactions.len(),
             uuid_transactions: Some(self.uuid_transactions),
 
-            entete: None,  // En-tete chargee lors de la deserialization
+            // entete: None,  // En-tete chargee lors de la deserialization
 
             cle, iv: None, tag: None, header, format,
         }

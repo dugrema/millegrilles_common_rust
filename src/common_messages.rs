@@ -284,3 +284,4 @@ pub struct TransactionRetirerSubscriptionWebpush {
     pub endpoint: String,
     pub user_id: Option<String>,
 }
+

@@ -152,11 +152,11 @@ pub struct ChampIndex {
 }
 
 pub fn filtrer_doc_id(doc: &mut Document) {
-    doc.remove(TRANSACTION_CHAMP_ENTETE);
+    // doc.remove(TRANSACTION_CHAMP_ENTETE);
 
     let ks: Vec<String> = doc.keys().cloned().collect();
     for k in ks {
-        if k.starts_with("_") {
+        if k.as_str() == "_id" {
             doc.remove(k);
         }
     }
