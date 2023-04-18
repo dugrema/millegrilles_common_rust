@@ -147,29 +147,36 @@ pub struct TransactionImpl {
 }
 
 impl TransactionImpl {
-    pub fn new(contenu: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> TransactionImpl {
-        todo!("fix me");
+    pub fn new(contenu: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> Result<TransactionImpl, Box<dyn Error>> {
+        let message_ids: MessageMilleGrilleIdentificateurs = convertir_bson_deserializable(contenu.clone())?;
+        let uuid_transaction = message_ids.id;
+
         // let entete = contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
-        // let domaine = String::from(entete.get_str(TRANSACTION_CHAMP_DOMAINE).expect("domaine"));
-        // let action = String::from(entete.get_str(TRANSACTION_CHAMP_ACTION).expect("action"));
-        //
-        // // let mut domaine_split = domaine_action.split(".");
-        // // let domaine = domaine_split.next().expect("domaine").to_owned();
-        // // let action = domaine_split.last().expect("action").to_owned();
-        //
-        // let uuid_transaction = String::from(entete.get_str(TRANSACTION_CHAMP_UUID_TRANSACTION).expect("domaine"));
-        //
-        // let evenements = contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements");
-        // let estampille = evenements.get_datetime("_estampille").expect("_estampille").to_chrono();
-        //
-        // TransactionImpl {
-        //     contenu,
-        //     domaine,
-        //     action,
-        //     uuid_transaction,
-        //     estampille,
-        //     enveloppe_certificat,
-        // }
+        let routage = match message_ids.routage {
+            Some(inner) => inner,
+            None => Err(format!("transactions.TransactionImpl Routage absent de la transaction {}", uuid_transaction))?
+        };
+
+        let domaine = match routage.domaine {
+            Some(inner) => inner,
+            None => Err(format!("transactions.TransactionImpl Domaine absent de la transaction {}", uuid_transaction))?
+        };
+        let action = match routage.action {
+            Some(inner) => inner,
+            None => Err(format!("transactions.TransactionImpl Action absent de la transaction {}", uuid_transaction))?
+        };
+
+        let evenements = contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements");
+        let estampille = evenements.get_datetime("_estampille").expect("_estampille").to_chrono();
+
+        Ok(TransactionImpl {
+            contenu,
+            domaine,
+            action,
+            id: uuid_transaction,
+            estampille,
+            enveloppe_certificat,
+        })
     }
 }
 
@@ -760,7 +767,7 @@ where
                 // }
             }
         };
-        let transaction_impl = TransactionImpl::new(transaction, Some(certificat));
+        let transaction_impl = TransactionImpl::new(transaction, Some(certificat))?;
         match processor.appliquer_transaction(middleware, transaction_impl).await {
             Ok(_resultat) => (),
             Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", uuid_transaction, e)

@@ -768,7 +768,10 @@ pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageVal
     }?;
 
     // Convertir message en format transaction
-    let transaction = TransactionImpl::new(doc_transaction, m.message.certificat);
+    let transaction = match TransactionImpl::new(doc_transaction, m.message.certificat) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur TransactionImpl::new {:?}", e))?
+    };
     let uuid_transaction = transaction.get_uuid_transaction().to_owned();
 
     // Traiter transaction
