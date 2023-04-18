@@ -417,7 +417,24 @@ async fn resoumettre<M>(middleware: &M, _collection: &Collection<Document>, _ops
 where
     M: GenerateurMessages + MongoDao
 {
-    todo!("fix me");
+    let message_ids: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(d.clone()) {
+        Ok(inner) => inner,
+        Err(e) => {
+            error!("Identificateurs transactions illisibles, transaction ne peut pas etre re-emise {:?}Transaction: \n{:?}", e, d);
+            Err(ErreurResoumission::new(false, None::<String>))?
+        }
+    };
+
+    let uuid_transaction = message_ids.id.as_str();
+
+    let routage = match message_ids.routage {
+        Some(inner) => inner,
+        None => {
+            error!("Identificateurs routage absents, transaction ne peut pas etre re-emise. Transaction: \n{:?}", d);
+            Err(ErreurResoumission::new(false, Some(uuid_transaction.to_string())))?
+        }
+    };
+
     // let entete_value = match d.get("en-tete") {
     //     Some(e) => e,
     //     None => {
@@ -432,44 +449,43 @@ where
     //         Err(ErreurResoumission::new(false, None::<String>))?
     //     }
     // };
-    //
-    // let uuid_transaction = entete.uuid_transaction.as_str();
-    // let domaine = match &entete.domaine {
-    //     Some(d) => d.as_str(),
-    //     None => {
-    //         error!("Domaine absent, transaction ne peut etre re-emise : {:?}", entete);
-    //         Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
-    //     }
-    // };
-    // let action = match &entete.action {
-    //     Some(a) => a.as_str(),
-    //     None => {
-    //         error!("Action absente, transaction ne peut etre re-emise : {:?}", entete);
-    //         Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
-    //     }
-    // };
-    // let partition = match &entete.partition {
-    //     Some(p) => Some(p),
-    //     None => None
-    // };
-    //
-    // // let filtre_transaction_resoumise = doc! {
-    // //             TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
-    // //         };
-    //
-    // debug!("Transaction a resoumettre : {:?}", uuid_transaction);
-    // let resultat = transmettre_evenement_persistance(
-    //     middleware, uuid_transaction, domaine, action, partition, None, None).await;
-    //
-    // match &resultat {
-    //     Ok(()) => {
-    //         Ok(())
-    //     },
-    //     Err(_e) => {
-    //         error!("Erreur resoumission transaction avec mongo : {:?}", resultat);
-    //         Err(ErreurResoumission::new(true, Some(uuid_transaction)))
-    //     }
-    // }
+
+    let domaine = match routage.domaine.as_ref() {
+        Some(d) => d.as_str(),
+        None => {
+            error!("Domaine absent, transaction ne peut etre re-emise : {:?}", d);
+            Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
+        }
+    };
+    let action = match routage.action.as_ref() {
+        Some(a) => a.as_str(),
+        None => {
+            error!("Action absente, transaction ne peut etre re-emise : {:?}", d);
+            Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
+        }
+    };
+    let partition = match routage.partition.as_ref() {
+        Some(p) => Some(p),
+        None => None
+    };
+
+    // let filtre_transaction_resoumise = doc! {
+    //             TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
+    //         };
+
+    debug!("Transaction a resoumettre : {}", uuid_transaction);
+    let resultat = transmettre_evenement_persistance(
+        middleware, uuid_transaction, domaine, action, partition, None, None).await;
+
+    match &resultat {
+        Ok(()) => {
+            Ok(())
+        },
+        Err(_e) => {
+            error!("Erreur resoumission transaction avec mongo : {:?}", resultat);
+            Err(ErreurResoumission::new(true, Some(uuid_transaction)))
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
