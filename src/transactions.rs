@@ -262,7 +262,8 @@ impl Transaction for TransactionImpl {
     fn convertir<S>(self) -> Result<S, Box<dyn Error>>
         where S: DeserializeOwned
     {
-        let content = serde_json::from_value(serde_json::to_value(self.contenu)?)?;
+        let champ_contenu = self.contenu.get_str("contenu")?;
+        let content = serde_json::from_value(serde_json::from_str(champ_contenu)?)?;
         Ok(content)
     }
 }
