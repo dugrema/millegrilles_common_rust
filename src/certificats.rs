@@ -86,9 +86,13 @@ pub fn charger_csr(pem: &str) -> Result<X509Req, String> {
 
 pub fn csr_calculer_fingerprintpk(pem: &str) -> Result<String, Box<dyn Error>> {
     let csr_parsed = charger_csr(pem)?;
-    let cle_publique = csr_parsed.public_key()?;
-    let fingerprint = calculer_fingerprint_pk(&cle_publique)?;
-    Ok(fingerprint)
+    // let cle_publique = csr_parsed.public_key()?;
+    // let fingerprint = calculer_fingerprint_pk(&cle_publique)?;
+    // Ok(fingerprint)
+
+    let cle_publique = csr_parsed.public_key()?.raw_public_key()?;
+    let cle_hex = hex::encode(cle_publique);
+    Ok(cle_hex)
 }
 
 pub fn charger_chaine(pem: &str) -> Result<Vec<X509>, ErrorStack> {
@@ -206,23 +210,33 @@ pub fn verifier_certificat(cert: &X509, chaine_pem: &StackRef<X509>, store: &X50
 pub fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
     // let fingerprint = cert.digest(MessageDigest::sha256())?;
 
-    let fingerprint = {
-        let der = match cert.to_der() {
-            Ok(v) => v,
-            Err(e) => Err(format!("calculer_fingerprint fingerprint error : {:?}", e))?
-        };
-        let mut hasher = Blake2s256::new();
-        hasher.update(der);
-        hasher.finalize()
-    };
+    // let fingerprint = {
+    //     let der = match cert.to_der() {
+    //         Ok(v) => v,
+    //         Err(e) => Err(format!("calculer_fingerprint fingerprint error : {:?}", e))?
+    //     };
+    //     let mut hasher = Blake2s256::new();
+    //     hasher.update(der);
+    //     hasher.finalize()
+    // };
 
-    let mh = match Multihash::wrap(Blake2s_256.code().into(), fingerprint.as_ref()) {
-        Ok(m) => m,
-        Err(e) => Err(format!("calculer_fingerprint multihash error : {:?}", e))?
-    };
-    let mh_bytes: Vec<u8> = mh.to_bytes();
+    // let mh = match Multihash::wrap(Blake2s_256.code().into(), fingerprint.as_ref()) {
+    //     Ok(m) => m,
+    //     Err(e) => Err(format!("calculer_fingerprint multihash error : {:?}", e))?
+    // };
+    // let mh_bytes: Vec<u8> = mh.to_bytes();
 
-    Ok(encode(Base::Base58Btc, mh_bytes))
+    // Ok(encode(Base::Base58Btc, mh_bytes))
+
+    let cle_publique = match cert.public_key() {
+        Ok(inner) => match inner.raw_public_key() {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("certificats.calculer_fingerprint Erreur raw_public_key() {:?}", e))?
+        },
+        Err(e) => Err(format!("certificats.calculer_fingerprint Erreur public_key() {:?}", e))?
+    };
+    let cle_hex = hex::encode(cle_publique);
+    Ok(cle_hex)
 }
 
 // fn calculer_fingerprint_ref(cert: &X509Ref) -> Result<String, ErrorStack> {
