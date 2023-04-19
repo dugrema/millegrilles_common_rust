@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Debug;
@@ -19,7 +19,7 @@ use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, FingerprintCert, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
-use crate::formatteur_messages::{MessageMilleGrille, MessageMilleGrilleIdentificateurs, MessageSerialise};
+use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageMilleGrilleIdentificateurs, MessageSerialise, RoutageMessage};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{map_serializable_to_bson, requete_certificat};
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
@@ -129,59 +129,96 @@ async fn extraire_transaction(validateur: &impl ValidateurX509, doc_transaction:
 }
 
 pub trait Transaction: Clone + Debug + Send + Sync {
-    fn get_contenu(&self) -> &Document;
-    fn contenu(self) -> Document;
+    fn get_contenu(&self) -> &str;
+    // fn contenu(self) -> Document;
     // fn get_entete(&self) -> &Document;
-    fn get_domaine(&self) -> &str;
-    fn get_action(&self) -> &str;
+    fn get_routage(&self) -> &RoutageMessage;
+    fn get_id(&self) -> &str;
     fn get_uuid_transaction(&self) -> &str;
     fn get_estampille(&self) -> &DateTime<Utc>;
     fn get_enveloppe_certificat(&self) -> Option<&EnveloppeCertificat>;
-    fn get_evenements(&self) -> &Document;
+    fn get_evenements(&self) -> &HashMap<String, Value>;
 
     fn convertir<S>(self) -> Result<S, Box<dyn Error>>
         where S: DeserializeOwned;
 }
 
+#[derive(Clone, Debug, Deserialize)]
+/// Permet de charger une transaction MilleGrille
+pub struct DocumentTransactionMillegrille {
+    /// Identificateur unique du message. Correspond au hachage blake2s-256 en hex.
+    pub id: String,
+
+    /// Cle publique du certificat utilise pour la signature
+    pub pubkey: String,
+
+    /// Date de creation du message
+    pub estampille: DateEpochSeconds,
+
+    /// Kind du message, correspond a enum MessageKind
+    pub kind: u16,
+
+    /// Contenu du message en format json-string
+    pub contenu: String,
+
+    /// Information de routage de message (optionnel, depend du kind)
+    pub routage: Option<RoutageMessage>,
+
+    /// Signature ed25519 encodee en hex
+    #[serde(rename = "sig")]
+    pub signature: String,
+
+    /// Chaine de certificats en format PEM.
+    #[serde(rename = "certificat", skip_serializing_if = "Option::is_none")]
+    pub certificat: Option<Vec<String>>,
+
+    /// Certificat de millegrille (root).
+    #[serde(rename = "millegrille", skip_serializing_if = "Option::is_none")]
+    pub millegrille: Option<String>,
+
+    #[serde(rename = "_evenements", skip_serializing_if = "Option::is_none")]
+    pub evenements: Option<HashMap<String, Value>>,
+
+    #[serde(skip)]
+    contenu_valide: Option<(bool, bool)>,
+}
+
 #[derive(Clone, Debug)]
 pub struct TransactionImpl {
-    contenu: Document,
-    domaine: String,
-    action: String,
     id: String,
+    pubkey: String,
     estampille: DateTime<Utc>,
+    kind: u16,
+    contenu: String,
+    routage: RoutageMessage,
+    evenements: HashMap<String, Value>,
     enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
 }
 
 impl TransactionImpl {
-    pub fn new(contenu: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> Result<TransactionImpl, Box<dyn Error>> {
-        let message_ids: MessageMilleGrilleIdentificateurs = convertir_bson_deserializable(contenu.clone())?;
-        let uuid_transaction = message_ids.id;
+    pub fn new(enveloppe_transaction: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> Result<TransactionImpl, Box<dyn Error>> {
+        let message_transaction: DocumentTransactionMillegrille = convertir_bson_deserializable(enveloppe_transaction)?;
+        let uuid_transaction = message_transaction.id;
 
         // let entete = contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
-        let routage = match message_ids.routage {
+        let routage = match message_transaction.routage {
             Some(inner) => inner,
             None => Err(format!("transactions.TransactionImpl Routage absent de la transaction {}", uuid_transaction))?
         };
 
-        let domaine = match routage.domaine {
+        let evenements = match message_transaction.evenements {
             Some(inner) => inner,
-            None => Err(format!("transactions.TransactionImpl Domaine absent de la transaction {}", uuid_transaction))?
+            None => HashMap::new()
         };
-        let action = match routage.action {
-            Some(inner) => inner,
-            None => Err(format!("transactions.TransactionImpl Action absent de la transaction {}", uuid_transaction))?
-        };
-
-        let evenements = contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements");
-        let estampille = evenements.get_datetime("_estampille").expect("_estampille").to_chrono();
 
         Ok(TransactionImpl {
-            contenu,
-            domaine,
-            action,
             id: uuid_transaction,
-            estampille,
+            pubkey: message_transaction.pubkey,
+            estampille: message_transaction.estampille.get_datetime().to_owned(),
+            kind: message_transaction.kind,
+            contenu: message_transaction.contenu,
+            routage,
+            evenements,
             enveloppe_certificat,
         })
     }
@@ -191,64 +228,39 @@ impl TryFrom<MessageSerialise> for TransactionImpl {
     type Error = Box<dyn Error>;
 
     fn try_from(value: MessageSerialise) -> Result<Self, Self::Error> {
-        let (domaine, action) = match value.parsed.routage.as_ref() {
-            Some(inner) => {
-                if inner.domaine.is_none() {
-                    Err(format!("TryFrom<MessageSerialise> Domaine absent"))?;
-                }
-                if inner.action.is_none() {
-                    Err(format!("TryFrom<MessageSerialise> Action absent"))?;
-                }
-                (inner.domaine.as_ref().expect("domaine").to_owned(), inner.action.as_ref().expect("action").to_owned())
-            },
-            None => Err(format!("TryFrom<MessageSerialise> Routage (domaine, action) absent"))?
+        let routage = match value.parsed.routage {
+            Some(inner) => inner,
+            None => Err(format!("TryFrom<MessageSerialise> for TransactionImpl Routage absent"))?
         };
-        // let entete = value.get_entete();
-        // let domaine = match &entete.domaine {
-        //     Some(d) => d.to_owned(),
-        //     None => Err(format!("Domaine absent"))?
-        // };
-        // let action = match &entete.action {
-        //     Some(a) => a.to_owned(),
-        //     None => Err(format!("Action absente"))?
-        // };
-
-        let contenu: Document = value.get_msg().map_contenu()?;
-
         Ok(TransactionImpl {
-            contenu,
-            domaine,
-            action,
             id: value.parsed.id,
+            pubkey: value.parsed.pubkey,
             estampille: value.parsed.estampille.get_datetime().to_owned(),
+            kind: value.parsed.kind,
+            contenu: value.parsed.contenu,
+            routage,
+            evenements: Default::default(),
             enveloppe_certificat: value.certificat,
         })
     }
 }
 
 impl Transaction for TransactionImpl {
-    fn get_contenu(&self) -> &Document {
-        &self.contenu
+
+    fn get_contenu(&self) -> &str {
+        self.contenu.as_str()
     }
 
-    fn contenu(self) -> Document {
-        self.contenu
+    fn get_routage(&self) -> &RoutageMessage {
+        &self.routage
     }
 
-    // fn get_entete(&self) -> &Document {
-    //     self.contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete")
-    // }
-
-    fn get_domaine(&self) -> &str {
-        &self.domaine
-    }
-
-    fn get_action(&self) -> &str {
-        &self.action
+    fn get_id(&self) -> &str {
+        &self.id
     }
 
     fn get_uuid_transaction(&self) -> &str {
-        &self.id
+        self.get_id()
     }
 
     fn get_estampille(&self) -> &DateTime<Utc> {
@@ -262,16 +274,14 @@ impl Transaction for TransactionImpl {
         }
     }
 
-    fn get_evenements(&self) -> &Document {
-        self.contenu.get_document(TRANSACTION_CHAMP_EVENEMENTS).expect("_evenements")
+    fn get_evenements(&self) -> &HashMap<String, Value> {
+        &self.evenements
     }
 
     fn convertir<S>(self) -> Result<S, Box<dyn Error>>
         where S: DeserializeOwned
     {
-        let champ_contenu = self.contenu.get_str("contenu")?;
-        let content = serde_json::from_value(serde_json::from_str(champ_contenu)?)?;
-        Ok(content)
+        Ok(serde_json::from_str(self.contenu.as_str())?)
     }
 }
 
