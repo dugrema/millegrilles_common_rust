@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_stream::StreamExt;
 
-use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
+use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, FingerprintCert, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
 use crate::formatteur_messages::{MessageMilleGrille, MessageMilleGrilleIdentificateurs, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
@@ -110,15 +110,22 @@ where
 }
 
 async fn extraire_transaction(validateur: &impl ValidateurX509, doc_transaction: Document) -> Result<TransactionImpl, String> {
-    todo!("fix me");
-    // let entete = doc_transaction.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
-    // let fingerprint = entete.get_str(TRANSACTION_CHAMP_FINGERPRINT_CERTIFICAT).expect("fingerprint_certificat");
-    // let enveloppe = match validateur.get_certificat(fingerprint).await {
-    //     Some(e) => Some(e.clone()),
-    //     None => None,
-    // };
-    //
-    // Ok(TransactionImpl::new(doc_transaction, enveloppe))
+    let enveloppe = {
+        let fingerprint = match doc_transaction.get_str(TRANSACTION_CHAMP_PUBKEY) {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("transactions.extraire_transaction Erreur champ pubkey absent : {:?}  doc ({:?})", e, doc_transaction))?
+        };
+
+        match validateur.get_certificat(fingerprint).await {
+            Some(e) => Some(e.clone()),
+            None => None,
+        }
+    };
+
+    match TransactionImpl::new(doc_transaction, enveloppe) {
+        Ok(inner) => Ok(inner),
+        Err(e) => Err(format!("transactions.extraire_transaction Erreur TransactionImpl::new() : {:?}", e))
+    }
 }
 
 pub trait Transaction: Clone + Debug + Send + Sync {

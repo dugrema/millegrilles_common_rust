@@ -270,6 +270,7 @@ pub const EVENEMENT_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
 
 // Transactions
 pub const TRANSACTION_CHAMP_ID: &str = "id";
+pub const TRANSACTION_CHAMP_PUBKEY: &str = "pubkey";
 // pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";
 // pub const TRANSACTION_CHAMP_UUID_TRANSACTION: &str = "uuid_transaction";
 // pub const TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: &str = "en-tete.uuid_transaction";
