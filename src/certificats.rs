@@ -228,15 +228,12 @@ pub fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
 
     // Ok(encode(Base::Base58Btc, mh_bytes))
 
-    let cle_publique = match cert.public_key() {
-        Ok(inner) => match inner.raw_public_key() {
-            Ok(inner) => inner,
-            Err(e) => Err(format!("certificats.calculer_fingerprint Erreur raw_public_key() {:?}", e))?
-        },
+    // refact 2023.5.0 - le fingerprint (pubkey) correspond a la cle publique
+    // note : risque de poisoning si cle privee est reutilisee dans plusieurs certificats
+    match cert.public_key() {
+        Ok(inner) => calculer_fingerprint_pk(&inner),
         Err(e) => Err(format!("certificats.calculer_fingerprint Erreur public_key() {:?}", e))?
-    };
-    let cle_hex = hex::encode(cle_publique);
-    Ok(cle_hex)
+    }
 }
 
 // fn calculer_fingerprint_ref(cert: &X509Ref) -> Result<String, ErrorStack> {
@@ -250,11 +247,18 @@ pub fn calculer_fingerprint(cert: &X509) -> Result<String, String> {
 
 pub fn calculer_fingerprint_pk(pk: &PKey<Public>) -> Result<String, String> {
     // let pk_der = pk.public_key_to_der().expect("Erreur conversion PK vers format DER");
-    let pk_raw = match pk.raw_public_key() {
-        Ok(k) => k,
-        Err(e) => Err(format!("certificats.calculer_fingerprint_pk Erreur extraction raw public key : {:?}", e))?
+    // let pk_raw = match pk.raw_public_key() {
+    //     Ok(k) => k,
+    //     Err(e) => Err(format!("certificats.calculer_fingerprint_pk Erreur extraction raw public key : {:?}", e))?
+    // };
+    // Ok(hacher_bytes(&pk_raw[..], Some(Code::Blake2s256), Some(Base::Base58Btc)))
+
+    let cle_publique = match pk.raw_public_key() {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("certificats.calculer_fingerprint_pk Erreur raw_public_key() {:?}", e))?
     };
-    Ok(hacher_bytes(&pk_raw[..], Some(Code::Blake2s256), Some(Base::Base58Btc)))
+    let cle_hex = hex::encode(cle_publique);
+    Ok(cle_hex)
 }
 
 pub fn calculer_idmg(cert: &X509) -> Result<String, String> {
