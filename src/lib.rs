@@ -41,6 +41,7 @@ pub use bytes;
 pub use chrono;
 pub use futures;
 pub use futures_util;
+pub use hex;
 pub use mongodb::bson as bson;
 pub use mongodb;
 pub use multibase;
