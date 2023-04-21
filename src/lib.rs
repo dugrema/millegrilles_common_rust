@@ -37,6 +37,7 @@ mod rabbitmq_dao_tests;
 
 // Re-exports
 pub use async_trait;
+pub use base64_url;
 pub use bytes;
 pub use chrono;
 pub use futures;
