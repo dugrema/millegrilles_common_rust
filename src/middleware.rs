@@ -731,7 +731,7 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
         S: Serialize
 {
 
-    let transaction = middleware.formatter_message(
+    let mut transaction = middleware.formatter_message(
         MessageKind::Transaction,
         valeur,
         Some(domaine),
@@ -749,7 +749,7 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
 }
 
 /// Sauvegarde une nouvelle transaction et de la traite immediatement
-pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageValideAction, gestionnaire: &G)
+pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, mut m: MessageValideAction, gestionnaire: &G)
     -> Result<Option<MessageMilleGrille>, String>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao,
@@ -761,6 +761,9 @@ pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, m: MessageVal
             return Err(format!("middleware.sauvegarder_traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))
         }
     };
+
+    // Retirer attachments - doivent etre traites dans la commande avant la sauvegarde
+    m.message.parsed.retirer_attachments();
 
     let doc_transaction = match sauvegarder_transaction(middleware, &m, nom_collection_transactions.as_str()).await {
         Ok(d) => Ok(d),

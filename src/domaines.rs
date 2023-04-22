@@ -602,8 +602,10 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             Err(format!("domaines.restaurer_transaction Transaction invalide - ** SKIP **"))?;
         }
 
+        // Retirer les attachments (contenu qui n'est pas signe)
+        message_serialise.parsed.retirer_attachments();
+
         // Conserver la transaction
-        // let transaction_doc = TransactionImpl::try_from(message_serialise)?;
         let resultat_batch = sauvegarder_batch(middleware, nom_collection_transactions.as_str(), vec![message_serialise.parsed]).await?;
         debug!("domaines.restaurer_transaction Resultat batch sauvegarde : {:?}", resultat_batch);
 
