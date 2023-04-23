@@ -178,27 +178,27 @@ impl IdentiteCle {
         // Obtenir la cle publique Ed25519 qui correspond au seed prive
         let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_privee_bytes.as_slice(), Id::ED25519) {
             Ok(s) => s,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur preparation secret key : {:?}", e))?
+            Err(e) => Err(format!("IdentiteCle.verifier Erreur preparation secret key : {:?}", e))?
         };
         let public_bytes = match private_ed25519.raw_public_key() {
             Ok(p) => p,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur private_ed25519.raw_public_key : {:?}", e))?
+            Err(e) => Err(format!("IdentiteCle.verifier Erreur private_ed25519.raw_public_key : {:?}", e))?
         };
         let public_ed25519 = match PKey::public_key_from_raw_bytes(public_bytes.as_slice(), Id::ED25519) {
             Ok(p) => p,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur PKey::public_key_from_raw_bytes : {:?}", e))?
+            Err(e) => Err(format!("IdentiteCle.verifier Erreur PKey::public_key_from_raw_bytes : {:?}", e))?
         };
 
         // Preparer le message
         let value_ordered: Map<String, Value> = match MessageMilleGrille::serialiser_contenu(self) {
             Ok(v) => v,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur mapping values : {:?}", e))?
+            Err(e) => Err(format!("IdentiteCle.verifier Erreur mapping values : {:?}", e))?
         };
         let message_string = match serde_json::to_string(&value_ordered) {
             Ok(m) => m,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur conversion en string : {:?}", e))?
+            Err(e) => Err(format!("IdentiteCle.verifier Erreur conversion en string : {:?}", e))?
         };
-        debug!("Message string a verifier {}", message_string);
+        debug!("IdentiteCle.verifier Message string a verifier {}", message_string);
 
         // Verifier la signature
         match verifier_message(&public_ed25519, message_string.as_bytes(), self.signature_identite.as_str()) {
