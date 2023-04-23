@@ -1,13 +1,16 @@
+use std::error::Error;
 use std::marker::Send;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::debug;
+use log::{debug, error};
 use serde::Serialize;
 use tokio::sync;
+use serde_json::{json, Value};
 
 use crate::certificats::EnveloppePrivee;
+use crate::common_messages::MessageReponse;
 use crate::configuration::ConfigurationPki;
 use crate::constantes::*;
 use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
@@ -486,6 +489,65 @@ impl FormatteurMessage for GenerateurMessagesImpl {
         let mut guard = self.enveloppe_privee.lock().expect("lock");
         *guard = enveloppe;
     }
+}
+
+pub async fn transmettre_cle_attachee<M,V>(middleware: &M, cle: V) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    where M: GenerateurMessages,
+          V: Serialize
+{
+    let ser_value = serde_json::to_value(cle)?;
+    debug!("Reception commande MaitreDesCles : {:?}", ser_value);
+    let mut message_cle = MessageSerialise::from_serializable(ser_value)?;
+
+    // Extraire partition pour le routage
+    let routage = match message_cle.parsed.attachements.take() {
+        Some(mut attachments_cle) => match attachments_cle.remove("partition") {
+            Some(partition) => match partition.as_str() {
+                Some(partition) => {
+                    RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE)
+                        .exchanges(vec![Securite::L3Protege])
+                        .partition(partition)
+                        .build()
+                },
+                None => {
+                    error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : partition n'est pas str");
+                    return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (1)"}), None)?));
+                }
+            },
+            None => {
+                error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : partition manquante");
+                return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (2)"}), None)?));
+            }
+        },
+        None => {
+            error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : attachements.partition manquant");
+            return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (3)"}), None)?));
+        }
+    };
+
+    // match middleware.transmettre_commande(routage, &message_cle.parsed, true).await {
+    match middleware.emettre_message_millegrille(routage, true, TypeMessageOut::Commande, message_cle.parsed).await {
+        Ok(inner) => {
+            if let Some(TypeMessage::Valide(reponse)) = inner {
+                let reponse_contenu: MessageReponse = reponse.message.parsed.map_contenu()?;
+                if let Some(true) = reponse_contenu.ok {
+                    debug!("Cle sauvegardee OK");
+                } else {
+                    error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : reponse ok == false");
+                    return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (4)"}), None)?));
+                }
+            } else {
+                error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : mauvais type reponse");
+                return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (5)"}), None)?));
+            }
+        },
+        Err(e) => {
+            error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : {:?}", e);
+            return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (6)"}), None)?));
+        }
+    }
+
+    Ok(None)
 }
 
 // impl IsConfigurationPki for GenerateurMessagesImpl {
