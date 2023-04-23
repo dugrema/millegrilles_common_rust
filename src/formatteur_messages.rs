@@ -248,9 +248,9 @@ pub struct MessageMilleGrille {
     #[serde(rename = "millegrille", skip_serializing_if = "Option::is_none")]
     pub millegrille: Option<String>,
 
-    /// Contenu du message autre que les elements structurels. Traite comme attachments non signes.
-    #[serde(flatten)]
-    pub attachments: Option<Map<String, Value>>,
+    /// Attachements au message. Traite comme attachments non signes (doivent etre validable separement).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachements: Option<Map<String, Value>>,
 
     #[serde(skip)]
     contenu_valide: Option<(bool, bool)>,
@@ -411,7 +411,7 @@ impl MessageMilleGrille {
             signature,
             certificat: Some(pems),
             millegrille,
-            attachments: None,
+            attachements: None,
             contenu_valide: Some((true, true)),
         })
     }
@@ -675,7 +675,7 @@ impl MessageMilleGrille {
     /// Sert a retirer les certificats pour serialisation (e.g. backup, transaction Mongo, etc)
     pub fn retirer_certificats(&mut self) { self.certificat = None; self.millegrille = None; }
 
-    pub fn retirer_attachments(&mut self) { self.attachments = None; }
+    pub fn retirer_attachments(&mut self) { self.attachements = None; }
 
     /// Mapper le contenu ou un champ (1er niveau) du contenu vers un objet Deserialize
     pub fn map_contenu<C>(&self) -> Result<C, Box<dyn Error>>
