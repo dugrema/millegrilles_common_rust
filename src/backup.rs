@@ -54,8 +54,9 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
     where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     while let Some(commande) = rx.recv().await {
+        debug!("thread_backup Debut commande backup {:?}", commande);
         let nom_domaine = commande.nom_domaine;
-        info!("Debug backup {}", nom_domaine);
+        info!("Debut backup {}", nom_domaine);
         match backup(middleware.as_ref(), &nom_domaine, commande.nom_collection_transactions, commande.complet).await {
             Ok(_) => info!("Backup {} OK", nom_domaine),
             Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", nom_domaine, e)
@@ -286,6 +287,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
         };
 
         if resultat_verification.valide() {
+            debug!("backup.generer_fichiers_backup Transaction {} valide", transaction.parsed.id);
             let fingerprint_certificat = transaction.parsed.pubkey.as_str();
             let certificat = match middleware.get_certificat(fingerprint_certificat).await {
                 Some(c) => c,
@@ -306,6 +308,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
         }
     }
 
+    debug!("backup.generer_fichiers_backup {} transactions pour backup", builder.uuid_transactions.len());
     if builder.uuid_transactions.len() > 0 {
         let path_catalogue = sauvegarder_catalogue(middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
         fichiers_generes.push(path_catalogue.clone());
@@ -406,6 +409,7 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
         .batch_size(50)
         .build();
 
+    debug!("backup.requete_transactions Collection {}, filtre {:?}", nom_collection, filtre);
     let curseur = collection.find(filtre, find_options).await?;
 
     // Wrapper dans CurseurMongo

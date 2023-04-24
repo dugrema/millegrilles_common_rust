@@ -556,6 +556,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             return Ok(None);
         }
 
+        debug!("GestionnaireDomaine.demarrer_backup {} : {:?}", self.get_nom_domaine(), message.message.parsed);
         let message_backup: MessageBackupTransactions = message.message.parsed.map_contenu()?;
         let complet = match message_backup.complet.as_ref() { Some(v) => v.to_owned(), None => false };
 
