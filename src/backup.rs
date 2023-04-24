@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use multihash::Code;
 use reqwest::Body;
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
 use tokio::sync::mpsc::Sender;
@@ -344,8 +344,14 @@ async fn sauvegarder_catalogue<M>(
     // Conserver les uuid_transactions separement (ne sont pas inclues dans la signature)
     match catalogue.uuid_transactions {
         Some(u) => {
-            todo!("fix me");
-            //catalogue_signe.contenu.insert("_uuid_transactions".into(), serde_json::to_value(&u)?);
+            let mut attachements = match catalogue_signe.attachements.as_mut() {
+                Some(inner) => inner,
+                None => {
+                    catalogue_signe.attachements = Some(Map::new());
+                    catalogue_signe.attachements.as_mut().expect("attachements.as_mut")
+                }
+            };
+            attachements.insert("uuid_transactions".to_string(), serde_json::to_value(&u)?);
         },
         None => ()
     }
@@ -788,59 +794,69 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
         debug!("emettre_backup_transactions Traitement fichier {:?}", fichier);
 
         // Charger fichier de backup
-        todo!("fix me");
-        // let (message_backup, uuid_transactions) = {
-        //     let fichier_fp = std::fs::File::open(fichier)?;
-        //     let fichier_reader = std::io::BufReader::new(fichier_fp);
-        //
-        //     let mut message_backup: MessageMilleGrille = serde_json::from_reader(fichier_reader)?;
-        //     debug!("emettre_backup_transactions Message backup a emettre : {:?}", message_backup);
-        //
-        //     // Conserver liste de transactions, retirer du message a emettre
-        //     let uuid_transactions: Vec<String> = message_backup.map_contenu(Some("_uuid_transactions"))?;
-        //     message_backup.contenu.remove("_uuid_transactions");
-        //
-        //     (message_backup, uuid_transactions)
-        // };
-        //
-        // let uuid_message_backup = message_backup.id.clone();
-        // debug!("emettre_backup_transactions Emettre transactions dans le backup {} : {:?}", uuid_message_backup, uuid_transactions);
-        //
-        // let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
-        //     .exchanges(vec![Securite::L2Prive])
-        //     // .correlation_id(uuid_message_backup.clone())
-        //     .timeout_blocking(90_000)
-        //     .build();
-        // let reponse = middleware.emettre_message_millegrille(
-        //     routage, true, TypeMessageOut::Commande, message_backup).await;
-        //
-        // let reponse = match reponse {
-        //     Ok(result) => match result {
-        //         Some(r) => match r {
-        //             TypeMessage::Valide(r) => r,
-        //             _ => {
-        //                 error!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup);
-        //                 continue;
-        //             }
-        //         },
-        //         None => {
-        //             error!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
-        //             continue;
-        //         }
-        //     },
-        //     Err(_) => {
-        //         error!("emettre_backup_transactions Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
-        //         continue;
-        //     }
-        // };
-        //
-        // debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse);
-        //
-        // // Marquer transactions comme etant completees
-        // marquer_transaction_backup_complete(
-        //     middleware,
-        //     nom_collection_transactions.as_ref(),
-        //     &uuid_transactions).await?;
+        let (message_backup, uuid_transactions) = {
+            let fichier_fp = std::fs::File::open(fichier)?;
+            let fichier_reader = std::io::BufReader::new(fichier_fp);
+
+            let mut message_backup: MessageMilleGrille = serde_json::from_reader(fichier_reader)?;
+            debug!("emettre_backup_transactions Message backup a emettre : {:?}", message_backup);
+
+            // Conserver liste de transactions, retirer du message a emettre
+            let uuid_transactions: Vec<String> = match message_backup.attachements.take() {
+                Some(mut attachements) => match attachements.remove("uuid_transactions") {
+                    Some(liste) => serde_json::from_value(liste)?,
+                    None => {
+                        error!("emettre_backup_transactions Message backup sans liste uuid_transactions - skip");
+                        continue;
+                    }
+                },
+                None => {
+                    error!("emettre_backup_transactions Message backup sans liste uuid_transactions - skip");
+                    continue;
+                }
+            };
+
+            (message_backup, uuid_transactions)
+        };
+
+        let uuid_message_backup = message_backup.id.clone();
+        debug!("emettre_backup_transactions Emettre transactions dans le backup {} : {:?}", uuid_message_backup, uuid_transactions);
+
+        let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
+            .exchanges(vec![Securite::L2Prive])
+            // .correlation_id(uuid_message_backup.clone())
+            .timeout_blocking(90_000)
+            .build();
+        let reponse = middleware.emettre_message_millegrille(
+            routage, true, TypeMessageOut::Commande, message_backup).await;
+
+        let reponse = match reponse {
+            Ok(result) => match result {
+                Some(r) => match r {
+                    TypeMessage::Valide(r) => r,
+                    _ => {
+                        error!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup);
+                        continue;
+                    }
+                },
+                None => {
+                    error!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
+                    continue;
+                }
+            },
+            Err(_) => {
+                error!("emettre_backup_transactions Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup);
+                continue;
+            }
+        };
+
+        debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse);
+
+        // Marquer transactions comme etant completees
+        marquer_transaction_backup_complete(
+            middleware,
+            nom_collection_transactions.as_ref(),
+            &uuid_transactions).await?;
     }
 
     Ok(())
