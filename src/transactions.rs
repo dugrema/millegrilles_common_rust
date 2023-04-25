@@ -128,7 +128,7 @@ async fn extraire_transaction(validateur: &impl ValidateurX509, doc_transaction:
     }
 }
 
-pub trait Transaction: Clone + Debug + Send + Sync + Serialize {
+pub trait Transaction: Clone + Debug + Send + Sync {
     fn get_contenu(&self) -> &str;
     // fn contenu(self) -> Document;
     // fn get_entete(&self) -> &Document;
@@ -192,7 +192,7 @@ pub struct TransactionImpl {
     contenu: String,
     routage: RoutageMessage,
     evenements: HashMap<String, Value>,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
 }
 
@@ -529,10 +529,9 @@ impl ErreurResoumission {
     }
 }
 
-pub async fn sauvegarder_batch<M,T>(middleware: &M, nom_collection: &str, mut transactions: Vec<T>)
+pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<TransactionImpl>)
     -> Result<ResultatBatchInsert, String>
-    where M: MongoDao,
-          T: Transaction
+    where M: MongoDao
 {
     let collection = match middleware.get_collection(nom_collection) {
         Ok(c) => c,
@@ -546,7 +545,7 @@ pub async fn sauvegarder_batch<M,T>(middleware: &M, nom_collection: &str, mut tr
         let mut uuid_transactions = HashSet::new();
         let mut curseur = {
             for t in &transactions {
-                uuid_transactions.insert(t.get_uuid_transaction().to_owned());
+                uuid_transactions.insert(t.id.clone());
             }
             let projection = doc! {"en-tete.uuid_transaction": 1};
             let vec_uuid_transactions = uuid_transactions.iter().collect::<Vec<&String>>();
@@ -576,11 +575,11 @@ pub async fn sauvegarder_batch<M,T>(middleware: &M, nom_collection: &str, mut tr
         // Serialiser les transactions vers le format bson
         while let Some(t) = transactions.pop() {
             debug!("sauvegarder_batch Message a serialiser en bson : {:?}", t);
-            if uuid_transactions.contains(t.get_uuid_transaction()) {
+            if uuid_transactions.contains(&t.id) {
                 let bson_doc = bson::to_document(&t).expect("serialiser bson");
                 transactions_bson.push(bson_doc);
             } else {
-                debug!("sauvegarder_batch Skip transaction existante : {}", t.get_uuid_transaction());
+                debug!("sauvegarder_batch Skip transaction existante : {}", t.id);
             }
         }
 
