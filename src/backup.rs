@@ -309,6 +309,9 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
             builder.ajouter_certificat(certificat.as_ref());
             builder.ajouter_transaction(message_id, &date_traitement_transaction);
 
+            // Retirer le certificat de la transaction - le backup les store separement
+            transaction.parsed.retirer_certificats();
+
             // let len_message = writer.write_bson_line(&doc_transaction).await?;
             let len_message = writer.write_json_line(&transaction.parsed).await?;
             len_written += len_message;
