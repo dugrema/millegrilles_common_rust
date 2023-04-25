@@ -191,6 +191,8 @@ pub struct TransactionImpl {
     kind: u16,
     contenu: String,
     routage: RoutageMessage,
+    sig: String,
+    #[serde(rename="_evenements")]
     evenements: HashMap<String, Value>,
     #[serde(skip)]
     enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
@@ -219,6 +221,7 @@ impl TransactionImpl {
             kind: message_transaction.kind,
             contenu: message_transaction.contenu,
             routage,
+            sig: message_transaction.signature,
             evenements,
             enveloppe_certificat,
         })
@@ -244,6 +247,7 @@ impl TryFrom<MessageSerialise> for TransactionImpl {
             kind: value.parsed.kind,
             contenu: value.parsed.contenu,
             routage,
+            sig: value.parsed.signature,
             evenements: Default::default(),
             enveloppe_certificat: value.certificat,
         })
