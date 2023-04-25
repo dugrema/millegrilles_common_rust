@@ -23,7 +23,7 @@ use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation, TransactionImpl};
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation, TransactionImpl, TransactionPersistee};
 use crate::verificateur::ValidationOptions;
 
 #[async_trait]
@@ -604,13 +604,13 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
 
         // Retirer les attachments (contenu qui n'est pas signe)
-        let mut transaction = TransactionImpl::try_from(message_serialise.clone())?;
-        if let Some(mut attachements) = message_serialise.parsed.attachements.take() {
-            if let Some(evenements) = attachements.remove("evenements") {
-                let map_evenements: HashMap<String, Value> = serde_json::from_value(evenements)?;
-                transaction.set_evenements(map_evenements);
-            }
-        }
+        let mut transaction = TransactionPersistee::try_from(message_serialise.clone())?;
+        // if let Some(mut attachements) = message_serialise.parsed.attachements.take() {
+        //     if let Some(evenements) = attachements.remove("evenements") {
+        //         let map_evenements: HashMap<String, Value> = serde_json::from_value(evenements)?;
+        //         transaction.set_evenements(map_evenements);
+        //     }
+        // }
 
         // Conserver la transaction
         let resultat_batch = sauvegarder_batch(middleware, nom_collection_transactions.as_str(), vec![transaction]).await?;

@@ -14,7 +14,7 @@ use mongodb::error::{BulkWriteError, ErrorKind};
 use mongodb::options::{FindOptions, Hint, InsertManyOptions};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, FingerprintCert, ValidateurX509, VerificateurPermissions};
@@ -303,6 +303,46 @@ impl VerificateurPermissions for TransactionImpl {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct TransactionPersistee {
+    id: String,
+    pubkey: String,
+    estampille: DateEpochSeconds,
+    kind: u16,
+    contenu: String,
+    routage: RoutageMessage,
+    sig: String,
+    #[serde(rename="_evenements")]
+    pub evenements: Map<String, Value>,
+}
+
+impl TryFrom<MessageSerialise> for TransactionPersistee {
+    type Error = Box<dyn Error>;
+
+    fn try_from(mut value: MessageSerialise) -> Result<Self, Self::Error> {
+        let routage = match value.parsed.routage {
+            Some(inner) => inner,
+            None => Err(format!("TryFrom<MessageSerialise> for TransactionPersistee Routage absent"))?
+        };
+
+        let evenements = match value.parsed.attachements.take() {
+            Some(inner) => inner,
+            None => Map::new()
+        };
+
+        Ok(TransactionPersistee {
+            id: value.parsed.id,
+            pubkey: value.parsed.pubkey,
+            estampille: value.parsed.estampille,
+            kind: value.parsed.kind,
+            contenu: value.parsed.contenu,
+            routage,
+            sig: value.parsed.signature,
+            evenements,
+        })
+    }
+}
+
 pub enum EtatTransaction {
     Complete,
 }
@@ -533,7 +573,7 @@ impl ErreurResoumission {
     }
 }
 
-pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<TransactionImpl>)
+pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<TransactionPersistee>)
     -> Result<ResultatBatchInsert, String>
     where M: MongoDao
 {
