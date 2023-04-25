@@ -41,6 +41,7 @@ use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMo
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 use crate::tokio::sync::mpsc::Receiver;
+use crate::transactions::{Transaction, TransactionImpl};
 use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 // Max size des transactions, on tente de limiter la taille finale du message
@@ -260,20 +261,29 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
         // let uuid_transaction = entete.uuid_transaction.as_str();
         let date_traitement_transaction = match doc_transaction.get("_evenements") {
             Some(d) => match d.as_document() {
-                Some(e) => match e.get("transaction_traitee") {
-                    Some(d) => match d.as_datetime() {
-                        Some(d) => {
-                            DateEpochSeconds::from_i64(d.timestamp_millis()/1000)
+                Some(evenements_doc) => {
+                    let date_traitee = match evenements_doc.get("transaction_traitee") {
+                        Some(d) => match d.as_datetime() {
+                            Some(d) => {
+                                DateEpochSeconds::from_i64(d.timestamp_millis()/1000)
+                            },
+                            None => {
+                                debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", message_id);
+                                transaction.parsed.estampille.clone()
+                            }
                         },
                         None => {
                             debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", message_id);
                             transaction.parsed.estampille.clone()
                         }
-                    },
-                    None => {
-                        debug!("Mauvais type d'element _evenements.transaction_traitee pour {} transaction. Utiliser estampille.", message_id);
-                        transaction.parsed.estampille.clone()
-                    }
+                    };
+
+                    let evenements_value: Map<String, Value> = convertir_bson_deserializable(evenements_doc.to_owned())?;
+                    let mut attachements = Map::new();
+                    attachements.insert("evenements".to_string(), Value::from(evenements_value));
+                    transaction.parsed.attachements = Some(attachements);
+
+                    date_traitee
                 },
                 None => {
                     debug!("Mauvais type d'element _evenements pour {} transaction. Utiliser estampille.", message_id);
@@ -281,7 +291,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
                 }
             },
             None => {
-                debug!("Aucune information d'evenements (_eveneemnts) pour une transaction. Utiliser estampille.");
+                debug!("Aucune information d'evenements (_evenements) pour une transaction. Utiliser estampille.");
                 transaction.parsed.estampille.clone()
             }
         };
