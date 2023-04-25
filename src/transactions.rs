@@ -326,7 +326,13 @@ impl TryFrom<MessageSerialise> for TransactionPersistee {
         };
 
         let evenements = match value.parsed.attachements.take() {
-            Some(inner) => inner,
+            Some(inner) => match inner.get("evenements") {
+                Some(evenements) => match evenements.as_object() {
+                    Some(inner) => inner.to_owned(),
+                    None => Map::new()
+                },
+                None => Map::new()
+            },
             None => Map::new()
         };
 
