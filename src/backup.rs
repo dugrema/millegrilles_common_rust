@@ -309,7 +309,8 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
             builder.ajouter_certificat(certificat.as_ref());
             builder.ajouter_transaction(message_id, &date_traitement_transaction);
 
-            let len_message = writer.write_bson_line(&doc_transaction).await?;
+            // let len_message = writer.write_bson_line(&doc_transaction).await?;
+            let len_message = writer.write_json_line(&transaction.parsed).await?;
             len_written += len_message;
             nb_transactions_written += 1;
         } else {
@@ -761,9 +762,15 @@ impl TransactionWriter {
     }
 
     /// Serialise un objet Json (Value) dans le fichier. Ajouter un line feed (\n).
-    pub async fn write_json_line(&mut self, contenu: &Value) -> Result<usize, Box<dyn Error>> {
+    pub async fn write_json_line<S>(&mut self, contenu: &S) -> Result<usize, Box<dyn Error>>
+        where S: Serialize
+    {
         // Convertir value en bytes
-        let mut contenu_bytes = serde_json::to_string(contenu)?.as_bytes().to_owned();
+        let mut contenu_bytes = {
+            let contenu_str = serde_json::to_string(contenu)?;
+            debug!("backup.TransactionWriter.write_json_line Ecrire transaction bytes {}", contenu_str);
+            contenu_str.as_bytes().to_owned()
+        };
 
         // Ajouter line feed (\n)
         contenu_bytes.push(NEW_LINE_BYTE);
