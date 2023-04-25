@@ -527,8 +527,11 @@ pub struct CatalogueBackup {
     cle: Option<String>,
 
     /// IV du contenu chiffre
+    #[serde(skip_serializing_if = "Option::is_none")]
     iv: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     header: Option<String>,
 
     /// Format du chiffrage
