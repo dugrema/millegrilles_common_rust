@@ -13,7 +13,7 @@ use mongodb::bson::{Bson, Document};
 use mongodb::error::{BulkWriteError, ErrorKind};
 use mongodb::options::{FindOptions, Hint, InsertManyOptions};
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio_stream::StreamExt;
 
@@ -128,7 +128,7 @@ async fn extraire_transaction(validateur: &impl ValidateurX509, doc_transaction:
     }
 }
 
-pub trait Transaction: Clone + Debug + Send + Sync {
+pub trait Transaction: Clone + Debug + Send + Sync + Serialize {
     fn get_contenu(&self) -> &str;
     // fn contenu(self) -> Document;
     // fn get_entete(&self) -> &Document;
@@ -183,7 +183,7 @@ pub struct DocumentTransactionMillegrille {
     contenu_valide: Option<(bool, bool)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TransactionImpl {
     id: String,
     pubkey: String,
@@ -192,6 +192,7 @@ pub struct TransactionImpl {
     contenu: String,
     routage: RoutageMessage,
     evenements: HashMap<String, Value>,
+    #[serde(skip_serializing)]
     enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
 }
 
@@ -221,6 +222,10 @@ impl TransactionImpl {
             evenements,
             enveloppe_certificat,
         })
+    }
+
+    pub fn set_evenements(&mut self, evenements: HashMap<String, Value>) {
+        self.evenements = evenements;
     }
 }
 
@@ -524,9 +529,10 @@ impl ErreurResoumission {
     }
 }
 
-pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<MessageMilleGrille>)
+pub async fn sauvegarder_batch<M,T>(middleware: &M, nom_collection: &str, mut transactions: Vec<T>)
     -> Result<ResultatBatchInsert, String>
-    where M: MongoDao
+    where M: MongoDao,
+          T: Transaction
 {
     let collection = match middleware.get_collection(nom_collection) {
         Ok(c) => c,
@@ -540,7 +546,7 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
         let mut uuid_transactions = HashSet::new();
         let mut curseur = {
             for t in &transactions {
-                uuid_transactions.insert(t.id.clone());
+                uuid_transactions.insert(t.get_uuid_transaction().to_owned());
             }
             let projection = doc! {"en-tete.uuid_transaction": 1};
             let vec_uuid_transactions = uuid_transactions.iter().collect::<Vec<&String>>();
@@ -570,11 +576,11 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
         // Serialiser les transactions vers le format bson
         while let Some(t) = transactions.pop() {
             debug!("sauvegarder_batch Message a serialiser en bson : {:?}", t);
-            if uuid_transactions.contains(&t.id) {
+            if uuid_transactions.contains(t.get_uuid_transaction()) {
                 let bson_doc = bson::to_document(&t).expect("serialiser bson");
                 transactions_bson.push(bson_doc);
             } else {
-                debug!("sauvegarder_batch Skip transaction existante : {}", t.id);
+                debug!("sauvegarder_batch Skip transaction existante : {}", t.get_uuid_transaction());
             }
         }
 
