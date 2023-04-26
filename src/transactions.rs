@@ -319,6 +319,8 @@ pub struct TransactionPersistee {
     kind: u16,
     contenu: String,
     routage: RoutageMessage,
+    #[serde(rename="pre-migration", skip_serializing_if = "Option::is_none")]
+    pre_migration: Option<HashMap<String, Value>>,
     sig: String,
     #[serde(rename="_evenements")]
     pub evenements: Map<String, Value>,
@@ -360,6 +362,7 @@ impl TryFrom<MessageSerialise> for TransactionPersistee {
             kind: value.parsed.kind,
             contenu: value.parsed.contenu,
             routage,
+            pre_migration: value.parsed.pre_migration,
             sig: value.parsed.signature,
             evenements,
         })
