@@ -164,6 +164,10 @@ pub struct DocumentTransactionMillegrille {
     /// Information de routage de message (optionnel, depend du kind)
     pub routage: Option<RoutageMessage>,
 
+    /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
+    #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
+    pub pre_migration: Option<HashMap<String, Value>>,
+
     /// Signature ed25519 encodee en hex
     #[serde(rename = "sig")]
     pub signature: String,
@@ -191,6 +195,8 @@ pub struct TransactionImpl {
     kind: u16,
     contenu: String,
     routage: RoutageMessage,
+    #[serde(rename="pre-migration")]
+    pre_migration: Option<HashMap<String, Value>>,
     sig: String,
     #[serde(rename="_evenements")]
     evenements: HashMap<String, Value>,
@@ -221,6 +227,7 @@ impl TransactionImpl {
             kind: message_transaction.kind,
             contenu: message_transaction.contenu,
             routage,
+            pre_migration: message_transaction.pre_migration,
             sig: message_transaction.signature,
             evenements,
             enveloppe_certificat,
@@ -247,6 +254,7 @@ impl TryFrom<MessageSerialise> for TransactionImpl {
             kind: value.parsed.kind,
             contenu: value.parsed.contenu,
             routage,
+            pre_migration: value.parsed.pre_migration,
             sig: value.parsed.signature,
             evenements: Default::default(),
             enveloppe_certificat: value.certificat,

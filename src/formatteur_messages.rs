@@ -236,6 +236,10 @@ pub struct MessageMilleGrille {
     /// Information de routage de message (optionnel, depend du kind)
     pub routage: Option<RoutageMessage>,
 
+    /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
+    #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
+    pub pre_migration: Option<HashMap<String, Value>>,
+
     /// Signature ed25519 encodee en hex
     #[serde(rename = "sig")]
     pub signature: String,
@@ -274,10 +278,14 @@ pub struct EnveloppeHachageMessage<'a> {
     pub contenu: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub routage: Option<RoutageMessage>,
+    #[serde(rename="pre-migration", skip_serializing_if = "Option::is_none")]
+    pub pre_migration: Option<HashMap<String, Value>>,
 }
 
 impl<'a> EnveloppeHachageMessage<'a> {
-    pub fn new(certificat: &EnveloppeCertificat, kind: MessageKind, contenu: &'a str, routage: Option<RoutageMessage>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(certificat: &EnveloppeCertificat, kind: MessageKind, contenu: &'a str,
+               routage: Option<RoutageMessage>, pre_migration: Option<HashMap<String, Value>>
+    ) -> Result<Self, Box<dyn Error>> {
         let pubkey = certificat.publickey_bytes_encoding(Base::Base16Lower, true)?;
         let estampille = DateEpochSeconds::now();
         Ok(Self {
@@ -286,28 +294,56 @@ impl<'a> EnveloppeHachageMessage<'a> {
             kind: kind.into(),
             contenu,
             routage,
+            pre_migration,
         })
     }
 
     pub fn hacher(&self) -> Result<String, Box<dyn Error>> {
-        let message_value = match &self.routage {
-            Some(inner) => {
+
+        let message_value = match &self.kind {
+            0 | 4 | 6 => {
                 json!([
                     &self.pubkey,
                     &self.estampille,
                     &self.kind,
                     self.contenu,
-                    inner,
                 ])
             },
-            None => {
-                json!([
-                    &self.pubkey,
-                    &self.estampille,
-                    &self.kind,
-                    self.contenu,
-                ])
-            }
+            1 | 2 | 3 | 5 => {
+                match self.routage.as_ref() {
+                    Some(routage) => {
+                        json!([
+                            &self.pubkey,
+                            &self.estampille,
+                            &self.kind,
+                            self.contenu,
+                            routage,
+                        ])
+                    },
+                    None => Err(format!("Message format {} sans routage", self.kind))?
+                }
+            },
+            7 => {
+                match self.routage.as_ref() {
+                    Some(routage) => {
+                        match self.pre_migration.as_ref() {
+                            Some(pre_migration) => {
+                                json!([
+                                    &self.pubkey,
+                                    &self.estampille,
+                                    &self.kind,
+                                    self.contenu,
+                                    routage,
+                                    pre_migration,
+                                ])
+                            },
+                            None => Err(format!("Message format {} sans pre_migration", self.kind))?
+                        }
+                    },
+                    None => Err(format!("Message format {} sans routage", self.kind))?
+                }
+            },
+            _ => Err(format!("Message format {} non supporte", self.kind))?
         };
 
         let value_str = serde_json::to_string(&message_value)?;
@@ -370,7 +406,7 @@ impl MessageMilleGrille {
         // Hacher le message pour obtenir le id
         let (id_message, pubkey, routage, estampille) = {
             let enveloppe_message = EnveloppeHachageMessage::new(
-                enveloppe_privee.enveloppe.as_ref(), kind.clone(), value_serialisee.as_str(), routage_message)?;
+                enveloppe_privee.enveloppe.as_ref(), kind.clone(), value_serialisee.as_str(), routage_message, None)?;
             debug!("message a hacher {:?}", enveloppe_message);
             let id_message = enveloppe_message.hacher()?;
             debug!("ID message (hachage) : {}", id_message);
@@ -408,6 +444,7 @@ impl MessageMilleGrille {
             kind: kind.into(),
             contenu: value_serialisee,
             routage,
+            pre_migration: None,
             signature,
             certificat: Some(pems),
             millegrille,
@@ -720,6 +757,7 @@ impl MessageMilleGrille {
             kind: self.kind.clone(),
             contenu: self.contenu.as_str(),
             routage: self.routage.clone(),
+            pre_migration: self.pre_migration.clone(),
         };
         let hachage_calcule = message_enveloppe.hacher()?;
         let hachage_valide = hachage_calcule == self.id;
