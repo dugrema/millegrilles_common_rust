@@ -329,11 +329,20 @@ impl TryFrom<MessageSerialise> for TransactionPersistee {
             Some(inner) => match inner.get("evenements") {
                 Some(evenements) => match evenements.as_object() {
                     Some(inner) => inner.to_owned(),
-                    None => Map::new()
+                    None => {
+                        debug!("attachements.evenements - mauvais format (pas dict) (1)");
+                        Map::new()
+                    }
                 },
-                None => Map::new()
+                None => {
+                    debug!("attachements.evenements absent (2)");
+                    Map::new()
+                }
             },
-            None => Map::new()
+            None => {
+                debug!("attachements absent (3)");
+                Map::new()
+            }
         };
 
         Ok(TransactionPersistee {

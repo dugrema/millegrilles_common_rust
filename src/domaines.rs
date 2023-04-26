@@ -584,7 +584,18 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         };
         let message_restauration: MessageRestaurerTransaction = message.message.parsed.map_contenu()?;
         let transaction = message_restauration.transaction;
+
+        if transaction.attachements.is_none() {
+            error!("Attachements manquants (1) : {:?}", transaction);
+            return Ok(None)
+        }
+
         let mut message_serialise = MessageSerialise::from_parsed(transaction)?;
+
+        if message_serialise.parsed.attachements.is_none() {
+            error!("Attachements manquants (2) : {:?}", message_serialise.parsed);
+            return Ok(None)
+        }
 
         let fingerprint_certificat = message_serialise.parsed.pubkey.as_str();
         // let certificat: &Vec<String> = match &message_serialise.parsed.certificat {
