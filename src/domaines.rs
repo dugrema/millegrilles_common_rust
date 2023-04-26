@@ -587,13 +587,17 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let mut message_serialise = MessageSerialise::from_parsed(transaction)?;
 
         let fingerprint_certificat = message_serialise.parsed.pubkey.as_str();
-        let certificat: &Vec<String> = match &message_serialise.parsed.certificat {
-            Some(c) => c,
+        // let certificat: &Vec<String> = match &message_serialise.parsed.certificat {
+        //     Some(c) => c,
+        //     None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?
+        // };
+        // debug!("Certificat message : {:?}", certificat);
+        // let enveloppe = middleware.charger_enveloppe(certificat, Some(fingerprint_certificat), None).await?;
+        let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+            Some(inner) => inner,
             None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?
         };
-        debug!("Certificat message : {:?}", certificat);
-        let enveloppe = middleware.charger_enveloppe(certificat, Some(fingerprint_certificat), None).await?;
-        message_serialise.set_certificat(enveloppe);
+        message_serialise.set_certificat(certificat);
 
         let validation_options = ValidationOptions::new(true, true, true);
         let resultat_verification = middleware.verifier_message(&mut message_serialise, Some(&validation_options))?;
