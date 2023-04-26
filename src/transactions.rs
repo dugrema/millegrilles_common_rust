@@ -834,12 +834,31 @@ async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Do
             debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
             if requete_certificat(middleware, fingerprint_certificat).await?.is_none() {
                 warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
-                continue;
+            }
+        }
+        if let Some(pre_migration) = message_identificateurs.pre_migration.as_ref() {
+            if let Some(pubkey) = pre_migration.get("pubkey") {
+                if let Some(pubkey_str) = pubkey.as_str() {
+                    if middleware.get_certificat(pubkey_str).await.is_none() {
+                        debug!("Certificat pre-migration {} inconnu, charger via PKI", pubkey_str);
+                        if requete_certificat(middleware, pubkey_str).await?.is_none() {
+                            warn!("Certificat pre-migration Certificat {} inconnu, ** SKIP **", pubkey_str);
+                        }
+                    }
+                }
             }
         }
     }
 
     Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct PreMigration {
+    id: Option<String>,
+    estampille: Option<DateEpochSeconds>,
+    pubkey: Option<String>,
+    idmg: Option<String>,
 }
 
 async fn regenerer_transactions<M, T>(middleware: &M, mut curseur: Cursor<Document>, processor: &T) -> Result<(), Box<dyn Error>>
@@ -862,15 +881,36 @@ where
         let uuid_transaction = message_identificateurs.id.as_str();
         debug!("regenerer_transactions Traiter transaction : {:?}", uuid_transaction);
 
-        let fingerprint_certificat = message_identificateurs.pubkey.as_str();
-        let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+        // Charger pubkey du certificat - en cas de migration, utiliser certificat original
+        let pre_migration = match message_identificateurs.pre_migration {
+            Some(inner) => {
+                // Mapper pre-migration
+                Some(serde_json::from_value::<PreMigration>(serde_json::to_value(inner)?)?)
+            },
+            None => None
+        };
+
+        let pubkey = match &message_identificateurs.kind {
+            &KIND_TRANSACTION_MIGREE => {
+                match &pre_migration {
+                    Some(inner) => match inner.pubkey.as_ref() {
+                        Some(inner) => inner.as_str(),
+                        None => message_identificateurs.pubkey.as_str()
+                    },
+                    None => message_identificateurs.pubkey.as_str()
+                }
+            },
+            _ => message_identificateurs.pubkey.as_str()
+        };
+
+        let certificat = match middleware.get_certificat(pubkey).await {
             Some(c) => c,
             None => {
                 // debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
                 // match requete_certificat(middleware, fingerprint_certificat).await? {
                 //     Some(c) => c,
                 //     None => {
-                        warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
+                        warn!("Certificat {} inconnu, ** SKIP **", pubkey);
                         continue;
                 //     }
                 // }

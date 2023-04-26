@@ -128,6 +128,7 @@ pub enum MessageKind {
     Reponse,
     Evenement,
     ReponseChiffree,
+    TransactionMigree,
 }
 
 pub const KIND_DOCUMENT: u16 = 0;
@@ -137,6 +138,7 @@ pub const KIND_TRANSACTION: u16 = 3;
 pub const KIND_REPONSE: u16 = 4;
 pub const KIND_EVENEMENT: u16 = 5;
 pub const KIND_REPONSE_CHIFFREE: u16 = 6;
+pub const KIND_TRANSACTION_MIGREE: u16 = 7;
 
 pub fn kind_rank<S>(kind: S) -> u16
     where S: Borrow<MessageKind>
@@ -150,6 +152,7 @@ pub fn kind_rank<S>(kind: S) -> u16
         MessageKind::Reponse => KIND_REPONSE,
         MessageKind::Evenement => KIND_EVENEMENT,
         MessageKind::ReponseChiffree => KIND_REPONSE_CHIFFREE,
+        MessageKind::TransactionMigree => KIND_TRANSACTION_MIGREE,
     }
 }
 

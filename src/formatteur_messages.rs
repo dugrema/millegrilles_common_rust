@@ -212,6 +212,8 @@ pub struct MessageMilleGrilleIdentificateurs {
     pub estampille: DateEpochSeconds,
     pub kind: u16,
     pub routage: Option<RoutageMessage>,
+    #[serde(rename="pre-migration")]
+    pub pre_migration: Option<HashMap<String, Value>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
