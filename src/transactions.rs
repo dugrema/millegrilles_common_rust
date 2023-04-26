@@ -916,7 +916,23 @@ where
                 // }
             }
         };
-        let transaction_impl = TransactionImpl::new(transaction, Some(certificat))?;
+        let mut transaction_impl = TransactionImpl::new(transaction, Some(certificat))?;
+
+        if let Some(overrides) = pre_migration {
+            if let Some(id) = overrides.id {
+                debug!("Override attributs pre_migration dans la transaction, nouvel id {}", id);
+                transaction_impl.id = id;
+            }
+            if let Some(pubkey) = overrides.pubkey {
+                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
+                transaction_impl.pubkey = pubkey;
+            }
+            if let Some(estampille) = overrides.estampille {
+                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
+                transaction_impl.estampille = estampille.get_datetime().to_owned();
+            }
+        }
+
         match processor.appliquer_transaction(middleware, transaction_impl).await {
             Ok(_resultat) => (),
             Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", uuid_transaction, e)
