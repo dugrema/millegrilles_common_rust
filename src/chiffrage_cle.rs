@@ -15,7 +15,7 @@ use crate::constantes::*;
 use crate::formatteur_messages::MessageMilleGrille;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
-use crate::signatures::{signer_message, verifier_message};
+use crate::signatures::{signer_identite, signer_message, verifier_message};
 
 /// Effectue une requete pour charger des cles a partir du maitre des cles
 pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>)
@@ -228,7 +228,7 @@ impl IdentiteCle {
             Err(e) => Err(format!("IdentiteCle.signer Erreur conversion en string : {:?}", e))?
         };
         debug!("Message string a signer {}", message_string);
-        match signer_message(&private_ed25519, message_string.as_bytes()) {
+        match signer_identite(&private_ed25519, message_string.as_bytes()) {
             Ok(s) => Ok(s),
             Err(e) => Err(format!("IdentiteCle.signer Erreur signature identite cle : {:?}", e))
         }
