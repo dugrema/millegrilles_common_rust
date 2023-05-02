@@ -242,6 +242,14 @@ pub struct MessageMilleGrille {
     #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
     pub pre_migration: Option<HashMap<String, Value>>,
 
+    /// IDMG d'origine du message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origine: Option<String>,
+
+    /// Information de dechiffrage pour contenu chiffre
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dechiffrage: Option<HashMap<String, String>>,
+
     /// Signature ed25519 encodee en hex
     #[serde(rename = "sig")]
     pub signature: String,
@@ -282,11 +290,16 @@ pub struct EnveloppeHachageMessage<'a> {
     pub routage: Option<RoutageMessage>,
     #[serde(rename="pre-migration", skip_serializing_if = "Option::is_none")]
     pub pre_migration: Option<HashMap<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dechiffrage: Option<HashMap<String, String>>
 }
 
 impl<'a> EnveloppeHachageMessage<'a> {
     pub fn new(certificat: &EnveloppeCertificat, kind: MessageKind, contenu: &'a str,
-               routage: Option<RoutageMessage>, pre_migration: Option<HashMap<String, Value>>
+               routage: Option<RoutageMessage>, pre_migration: Option<HashMap<String, Value>>,
+               origine: Option<String>, dechiffrage: Option<HashMap<String, String>>
     ) -> Result<Self, Box<dyn Error>> {
         let pubkey = certificat.publickey_bytes_encoding(Base::Base16Lower, true)?;
         let estampille = DateEpochSeconds::now();
@@ -297,6 +310,8 @@ impl<'a> EnveloppeHachageMessage<'a> {
             contenu,
             routage,
             pre_migration,
+            origine,
+            dechiffrage
         })
     }
 
@@ -340,6 +355,32 @@ impl<'a> EnveloppeHachageMessage<'a> {
                                 ])
                             },
                             None => Err(format!("Message format {} sans pre_migration", self.kind))?
+                        }
+                    },
+                    None => Err(format!("Message format {} sans routage", self.kind))?
+                }
+            },
+                        7 => {
+                match self.routage.as_ref() {
+                    Some(routage) => {
+                        match self.origine.as_ref() {
+                            Some(origine) => {
+                                match self.dechiffrage.as_ref() {
+                                    Some(dechiffrage) => {
+                                        json!([
+                                            &self.pubkey,
+                                            &self.estampille,
+                                            &self.kind,
+                                            self.contenu,
+                                            routage,
+                                            origine,
+                                            dechiffrage
+                                        ])
+                                    },
+                                    None => Err(format!("Message format {} sans dechiffrage", self.kind))?
+                                }
+                            },
+                            None => Err(format!("Message format {} sans origine", self.kind))?
                         }
                     },
                     None => Err(format!("Message format {} sans routage", self.kind))?
@@ -408,7 +449,8 @@ impl MessageMilleGrille {
         // Hacher le message pour obtenir le id
         let (id_message, pubkey, routage, estampille) = {
             let enveloppe_message = EnveloppeHachageMessage::new(
-                enveloppe_privee.enveloppe.as_ref(), kind.clone(), value_serialisee.as_str(), routage_message, None)?;
+                enveloppe_privee.enveloppe.as_ref(), kind.clone(), value_serialisee.as_str(), routage_message,
+                None, None, None)?;
             debug!("message a hacher {:?}", enveloppe_message);
             let id_message = enveloppe_message.hacher()?;
             debug!("ID message (hachage) : {}", id_message);
@@ -447,6 +489,8 @@ impl MessageMilleGrille {
             contenu: value_serialisee,
             routage,
             pre_migration: None,
+            origine: None,
+            dechiffrage: None,
             signature,
             certificat: Some(pems),
             millegrille,
@@ -760,6 +804,8 @@ impl MessageMilleGrille {
             contenu: self.contenu.as_str(),
             routage: self.routage.clone(),
             pre_migration: self.pre_migration.clone(),
+            origine: self.origine.clone(),
+            dechiffrage: self.dechiffrage.clone()
         };
         let hachage_calcule = message_enveloppe.hacher()?;
         let hachage_valide = hachage_calcule == self.id;
