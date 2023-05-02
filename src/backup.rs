@@ -954,8 +954,8 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
 
     let collection = middleware.get_collection(nom_collection_transactions)?;
     let mut curseur = {
-        let filtre = doc! {"_certificat": {"$exists": true}};
-        let projection = doc! {"en-tete.fingerprint_certificat": 1, "_certificat": 1};
+        let filtre = doc! {"certificat": {"$exists": true}};
+        let projection = doc! {"pubkey": 1, "certificat": 1};
         let find_opts = FindOptions::builder()
             .projection(projection)
             .build();
@@ -979,7 +979,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
             }
         };
 
-        let fingerprint = row_cert_mappe.entete.fingerprint;
+        let fingerprint = row_cert_mappe.pubkey;
 
         if ! fingerprint_traites_set.contains(fingerprint.as_str()) {
             debug!("Sauvegarder certificat {}", fingerprint);
@@ -1004,12 +1004,12 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
         // Cleanup de tous les certificats traites dans les transaction
         let fingerprint_traites: Vec<String> = fingerprint_traites_set.into_iter().collect();
         let filtre = doc! {
-            "_certificat": {"$exists": true},
-            "en-tete.fingerprint_certificat": {"$in": fingerprint_traites}
+            "certificat": {"$exists": true},
+            "pubkey": {"$in": fingerprint_traites}
         };
         debug!("persister_certificats Filtre nettoyage certificats : {:?}", filtre);
         let ops = doc! {
-            "$unset": {"_certificat": 1},
+            "$unset": {"certificat": 1},
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
         collection.update_many(filtre, ops, None).await?;
@@ -1022,16 +1022,8 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
 
 #[derive(Clone, Debug, Deserialize)]
 struct TransactionCertRow {
-    #[serde(rename = "en-tete")]
-    entete: EnteteCertificatRow,
-    #[serde(rename = "_certificat")]
+    pubkey: String,
     certificat: Vec<String>
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct EnteteCertificatRow {
-    #[serde(rename = "fingerprint_certificat")]
-    fingerprint: String
 }
 
 pub async fn emettre_evenement_backup<M>(
