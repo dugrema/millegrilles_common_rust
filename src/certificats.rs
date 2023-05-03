@@ -413,6 +413,11 @@ impl EnveloppeCertificat {
         vec
     }
 
+    /// Extrait les pems et retourne dans un Vec<String>
+    pub fn get_pem_vec_extracted(&self) -> Vec<String> {
+        self.get_pem_vec().iter().map(|p| p.pem.clone()).collect()
+    }
+
     pub fn get_pem_ca(&self) -> Result<Option<String>,String> {
         match &self.millegrille {
             Some(c) => match c.to_pem() {

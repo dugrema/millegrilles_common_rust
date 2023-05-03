@@ -360,7 +360,7 @@ impl<'a> EnveloppeHachageMessage<'a> {
                     None => Err(format!("Message format {} sans routage", self.kind))?
                 }
             },
-                        7 => {
+            8 => {
                 match self.routage.as_ref() {
                     Some(routage) => {
                         match self.origine.as_ref() {
