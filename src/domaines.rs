@@ -24,7 +24,7 @@ use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation, TransactionImpl, TransactionPersistee};
-use crate::verificateur::ValidationOptions;
+use crate::verificateur::{ValidationOptions, VerificateurMessage};
 
 #[async_trait]
 pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
@@ -268,7 +268,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T)
         -> Result<Option<MessageMilleGrille>, String>
         where
-            M: ValidateurX509 + GenerateurMessages + MongoDao,
+            M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
             T: Transaction;
 
     /// Methode qui peut etre re-implementee dans une impl
@@ -386,7 +386,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Traite une transaction en la chargeant, dirigeant vers l'aiguillage puis la marque comme traitee
     async fn traiter_transaction<M>(self: &'static Self, middleware: &M, m: MessageValideAction) -> Result<Option<MessageMilleGrille>, String>
-        where M: ValidateurX509 + GenerateurMessages + MongoDao
+        where M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage
     {
         // let trigger = match serde_json::from_value::<TriggerTransaction>(Value::Object(m.message.get_msg().contenu.clone())) {
         //     Ok(t) => t,

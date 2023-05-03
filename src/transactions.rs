@@ -23,6 +23,7 @@ use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageMi
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{map_serializable_to_bson, requete_certificat};
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
+use crate::verificateur::VerificateurMessage;
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
@@ -755,7 +756,7 @@ impl ResultatBatchInsert {
 
 pub async fn regenerer<M, T>(middleware: &M, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao,
+    M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
     T: TraiterTransaction,
 {
     debug!("transactions.regenerer Regenerer {:?}", nom_collection_transactions);
@@ -863,7 +864,7 @@ struct PreMigration {
 
 async fn regenerer_transactions<M, T>(middleware: &M, mut curseur: Cursor<Document>, processor: &T) -> Result<(), Box<dyn Error>>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao,
+    M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
     T: TraiterTransaction,
 {
     while let Some(result) = curseur.next().await {
@@ -945,5 +946,5 @@ where
 #[async_trait]
 pub trait TraiterTransaction {
     async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
-        where M: ValidateurX509 + GenerateurMessages + MongoDao;
+        where M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage;
 }
