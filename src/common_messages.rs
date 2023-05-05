@@ -111,8 +111,9 @@ impl PreuveCle {
         // };
         // debug!("Verifier preuve (recue) {:?}", preuve_recue_bytes);
 
-        let fingerprint_bytes: Vec<u8> = match multibase::decode(fingerprint) {
-            Ok(inner) => inner.1,
+        // let fingerprint_bytes: Vec<u8> = match multibase::decode(fingerprint) {
+        let fingerprint_bytes: Vec<u8> = match hex::decode(fingerprint) {
+            Ok(inner) => inner,
             Err(e) => Err(format!("common_messages.verifier_preuve Erreur decoder fingerprint : {:?}", e))?
         };
         debug!("Verifier preuve fingerprint bytes {:?}", fingerprint_bytes);
