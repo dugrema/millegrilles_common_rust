@@ -10,6 +10,7 @@ use tokio::sync;
 use serde_json::{json, Value};
 
 use crate::certificats::EnveloppePrivee;
+use crate::chiffrage_cle::CommandeSauvegarderCle;
 use crate::common_messages::MessageReponse;
 use crate::configuration::ConfigurationPki;
 use crate::constantes::*;
@@ -548,6 +549,52 @@ pub async fn transmettre_cle_attachee<M,V>(middleware: &M, cle: V) -> Result<Opt
     }
 
     Ok(None)
+}
+
+pub async fn sauvegarde_attachement_cle<M>(middleware: &M, smtp: Value) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages
+{
+    match serde_json::from_value::<MessageMilleGrille>(smtp) {
+        Ok(mut commande) => {
+            // Extraire champ partition en attachement
+            let partition = match commande.attachements.take() {
+                Some(mut attachements) => {
+                    match attachements.remove("partition") {
+                        Some(partition) => match partition.as_str() {
+                            Some(partition) => partition.to_owned(),
+                            None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Partition absente (1)"))?
+                        },
+                        None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Partition absente (2)"))?
+                    }
+                },
+                None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Partition absente (3)"))?
+            };
+
+            // Convertir la cle
+            let cle: CommandeSauvegarderCle = commande.map_contenu()?;
+            debug!("commande_conserver_configuration_notifications Sauvegarder cle SMTP : {:?}", cle);
+            let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE)
+                .exchanges(vec![Securite::L3Protege])
+                .partition(partition)
+                .build();
+
+            // Emettre la cle, verifier reponse (doit etre ok: true)
+            match middleware.emettre_message_millegrille(routage, true , TypeMessageOut::Commande, commande).await? {
+                Some(TypeMessage::Valide(m)) => {
+                    let reponse: MessageReponse = m.message.parsed.map_contenu()?;
+                    if let Some(true) = reponse.ok {
+                        // Ok
+                    } else {
+                        Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Reponse ok != true"))?
+                    }
+                },
+                _ => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Mauvais type reponse"))?
+            }
+        },
+        Err(e) => Err(format!("generateur_messages.sauvegarde_attachement_cle Erreur mapping commande cle : {:?}", e))?
+    }
+
+    Ok(())
 }
 
 // impl IsConfigurationPki for GenerateurMessagesImpl {
