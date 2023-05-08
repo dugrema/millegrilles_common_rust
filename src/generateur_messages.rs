@@ -551,10 +551,10 @@ pub async fn transmettre_cle_attachee<M,V>(middleware: &M, cle: V) -> Result<Opt
     Ok(None)
 }
 
-pub async fn sauvegarde_attachement_cle<M>(middleware: &M, smtp: Value) -> Result<(), Box<dyn Error>>
+pub async fn sauvegarde_attachement_cle<M>(middleware: &M, cle: Value) -> Result<(), Box<dyn Error>>
     where M: GenerateurMessages
 {
-    match serde_json::from_value::<MessageMilleGrille>(smtp) {
+    match serde_json::from_value::<MessageMilleGrille>(cle) {
         Ok(mut commande) => {
             // Extraire champ partition en attachement
             let partition = match commande.attachements.take() {
@@ -562,12 +562,12 @@ pub async fn sauvegarde_attachement_cle<M>(middleware: &M, smtp: Value) -> Resul
                     match attachements.remove("partition") {
                         Some(partition) => match partition.as_str() {
                             Some(partition) => partition.to_owned(),
-                            None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Partition absente (1)"))?
+                            None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle : Partition absente (1)"))?
                         },
-                        None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Partition absente (2)"))?
+                        None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle : Partition absente (2)"))?
                     }
                 },
-                None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Partition absente (3)"))?
+                None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle : Partition absente (3)"))?
             };
 
             // Convertir la cle
