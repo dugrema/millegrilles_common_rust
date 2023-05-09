@@ -3,7 +3,7 @@ use std::error::Error;
 use std::sync::Mutex;
 use log::{debug, warn};
 use serde::{Serialize, Deserialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io;
@@ -20,8 +20,9 @@ use crate::chiffrage_ed25519::{CleDerivee, deriver_asymetrique_ed25519};
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::common_messages::MessageReponse;
 use crate::constantes::*;
-use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageSerialise};
+use crate::formatteur_messages::{DateEpochSeconds, DechiffrageInterMillegrille, MessageInterMillegrille, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
 
 /// Contenu chiffre du message
@@ -35,26 +36,29 @@ pub struct NotificationMessageInterne {
 }
 
 /// Enveloppe du message de notification
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct NotificationContenu {
-    niveau: String,
-    ref_hachage_bytes: String,
-    format: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    header: Option<String>,
-    message_chiffre: String,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// struct NotificationContenu {
+//     niveau: String,
+//     ref_hachage_bytes: String,
+//     format: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     header: Option<String>,
+//     message_chiffre: String,
+// }
 
 /// Enveloppe de la notification, routage
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Notification {
+    message: MessageMilleGrille,
     #[serde(skip_serializing_if = "Option::is_none")]
     destinataires: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     expiration: Option<DateEpochSeconds>,
-    message: NotificationContenu,
-    #[serde(rename = "_cle", skip_serializing_if = "Option::is_none")]
-    cle: Option<MessageMilleGrille>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    niveau: Option<String>,
+    // message: NotificationContenu,
+    // #[serde(rename = "_cle", skip_serializing_if = "Option::is_none")]
+    // cle: Option<MessageMilleGrille>,
 }
 
 pub struct EmetteurNotifications {
@@ -102,14 +106,8 @@ impl EmetteurNotifications {
         let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
 
         // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
-        let message_chiffre: String = {
-
-            let mut message_signe = middleware.formatter_message(
-                MessageKind::Document, &contenu, None::<&str>, None::<&str>, None::<&str>, Some(1), false)?;
-
-            message_signe.certificat = None;  // Retirer certificat, redondant
-
-            let contenu = serde_json::to_string(&message_signe)?;
+        let message_contenu: String = {
+            let contenu = serde_json::to_string(&contenu)?;
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(contenu.as_bytes())?;
             let contenu = encoder.finish()?;
@@ -117,16 +115,13 @@ impl EmetteurNotifications {
             let mut output_buffer = [0u8; 128 * 1024];
             let mut position = cipher.update(contenu.as_slice(), &mut output_buffer[..])?;
             position += cipher.finalize_keep(&mut output_buffer[position..])?;
-            encode(Base::Base64, &output_buffer[..position])
+
+            let contenu = encode(Base::Base64, &output_buffer[..position]);
+            // Retirer premier caracter (mulibase base64 'm')
+            contenu[1..].to_string()
         };
 
-        let mut message = NotificationContenu {
-            niveau: niveau.to_owned(),
-            ref_hachage_bytes: cipher.get_hachage().expect("get_hachage").to_owned(),
-            format: "mgs4".into(),
-            header: Some(cipher.get_header().to_owned()),
-            message_chiffre,
-        };
+        let hachage_contenu = cipher.get_hachage().expect("get_hachage").to_owned();
 
         // Convertir contenu en message de notification
         let expiration = match expiration {
@@ -134,12 +129,14 @@ impl EmetteurNotifications {
             None => None
         };
 
+        let mut cle_id = cipher.get_hachage().expect("get_hachage").to_owned();
+
         let cle = match commande_transmise {
             true => {
                 // Remplacer ref_hachage_bytes
                 match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
                     Some(c) => {
-                        message.ref_hachage_bytes = c.clone();
+                        cle_id = c.clone();
                     },
                     None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
                 };
@@ -194,10 +191,12 @@ impl EmetteurNotifications {
                         "Messagerie", None, identificateurs_document)?;
 
                     // Signer commande
-                    let commande_signee = middleware.formatter_message(
+                    let mut commande_signee = middleware.formatter_message(
                         MessageKind::Commande, &commande,
                         Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
                         Some(partition.as_str()), None, false)?;
+
+                    commande_signee.ajouter_attachement("partition", partition);
 
                     {
                         // Conserver ref_hachage_bytes
@@ -217,11 +216,37 @@ impl EmetteurNotifications {
             }
         };
 
+        // let mut commande = NotificationContenu {
+        //     niveau: niveau.to_owned(),
+        //     message: message_contenu,
+        //     // ref_hachage_bytes: cipher.get_hachage().expect("get_hachage").to_owned(),
+        //     // format: "mgs4".into(),
+        //     // header: Some(cipher.get_header().to_owned()),
+        //     // message_chiffre,
+        // };
+
+        let message_a_signer = MessageInterMillegrille {
+            contenu: message_contenu,
+            origine: middleware.idmg().to_owned(),
+            dechiffrage: DechiffrageInterMillegrille {
+                hachage: None,
+                cle_id: Some(cle_id),
+                format: "mgs4".to_owned(),
+                header: Some(cipher.get_header().to_owned()),
+            }
+        };
+
+        let mut message_signe = middleware.formatter_message(
+            MessageKind::CommandeInterMillegrille, &message_a_signer,
+            Some(DOMAINE_NOM_MESSAGERIE), Some("nouveauMessage"), None::<&str>,
+            Some(1), false)?;
+        message_signe.retirer_certificats();  // Retirer certificat, redondant
+
         let mut notification = Notification {
+            message: message_signe,
             destinataires,
             expiration,
-            message,
-            cle,
+            niveau: Some(niveau.to_owned()),
         };
 
         debug!("emettre_notification_proprietaire Notification a transmettre {:?}", notification);
@@ -230,7 +255,19 @@ impl EmetteurNotifications {
             .exchanges(vec![Securite::L1Public])
             .build();
 
-        let reponse = middleware.transmettre_commande(routage, &notification, true).await?;
+        let mut commande = middleware.formatter_message(
+            MessageKind::Commande, &notification,
+            Some(DOMAINE_NOM_MESSAGERIE), Some(ACTION_NOTIFIER), None,
+            None, false)?;
+        // Ajouter cle en attachement au besoin
+        if let Some(inner) = cle {
+            commande.ajouter_attachement("cle", serde_json::to_value(inner)?);
+        }
+
+        // let reponse = middleware.transmettre_commande(routage, &notification, true).await?;
+        let reponse = middleware.emettre_message_millegrille(
+            routage, true, TypeMessageOut::Commande, commande).await?;
+
         match reponse {
             Some(r) => match r {
                 TypeMessage::Valide(m) => {

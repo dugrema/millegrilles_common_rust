@@ -248,7 +248,7 @@ pub struct MessageMilleGrille {
 
     /// Information de dechiffrage pour contenu chiffre
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dechiffrage: Option<HashMap<String, String>>,
+    pub dechiffrage: Option<DechiffrageInterMillegrille>,
 
     /// Signature ed25519 encodee en hex
     #[serde(rename = "sig")]
@@ -293,13 +293,13 @@ pub struct EnveloppeHachageMessage<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origine: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dechiffrage: Option<HashMap<String, String>>
+    pub dechiffrage: Option<DechiffrageInterMillegrille>
 }
 
 impl<'a> EnveloppeHachageMessage<'a> {
     pub fn new(certificat: &EnveloppeCertificat, kind: MessageKind, contenu: &'a str,
                routage: Option<RoutageMessage>, pre_migration: Option<HashMap<String, Value>>,
-               origine: Option<String>, dechiffrage: Option<HashMap<String, String>>
+               origine: Option<String>, dechiffrage: Option<DechiffrageInterMillegrille>
     ) -> Result<Self, Box<dyn Error>> {
         let pubkey = certificat.publickey_bytes_encoding(Base::Base16Lower, true)?;
         let estampille = DateEpochSeconds::now();
@@ -432,29 +432,38 @@ impl MessageMilleGrille {
         V: AsRef<str>,
     {
         // Serialiser le contenu
-        let value_ordered: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
-        let value_serialisee = serde_json::to_string(&value_ordered)?;
+        let (value_serialisee, origine, dechiffrage) = match kind {
+            MessageKind::CommandeInterMillegrille => {
+                let commande_inter_millegrille: MessageInterMillegrille = serde_json::from_value(serde_json::to_value(contenu)?)?;
+                (commande_inter_millegrille.contenu, Some(commande_inter_millegrille.origine), Some(commande_inter_millegrille.dechiffrage))
+            },
+            _ => {
+                let value_ordered: Map<String, Value> = MessageMilleGrille::serialiser_contenu(contenu)?;
+                let value_serialisee = serde_json::to_string(&value_ordered)?;
+                (value_serialisee, None, None)
+            }
+        };
 
         let action_str = match action { Some(inner) => Some(inner.as_ref().to_string()), None => None};
         let domaine_str = match domaine { Some(inner) => Some(inner.as_ref().to_string()), None => None};
         let partition_str = match partition { Some(inner) => Some(inner.as_ref().to_string()), None => None};
 
         let routage_message = match &kind {
-            MessageKind::Requete | MessageKind::Commande | MessageKind::Transaction | MessageKind::Evenement => {
+            MessageKind::Requete | MessageKind::Commande | MessageKind::Transaction | MessageKind::Evenement | MessageKind::CommandeInterMillegrille => {
                 Some(RoutageMessage { action: action_str, domaine: domaine_str, partition: partition_str })
             },
             _ => None
         };
 
         // Hacher le message pour obtenir le id
-        let (id_message, pubkey, routage, estampille) = {
+        let (id_message, pubkey, routage, estampille, origine, dechiffrage) = {
             let enveloppe_message = EnveloppeHachageMessage::new(
                 enveloppe_privee.enveloppe.as_ref(), kind.clone(), value_serialisee.as_str(), routage_message,
-                None, None, None)?;
+                None, origine, dechiffrage)?;
             debug!("message a hacher {:?}", enveloppe_message);
             let id_message = enveloppe_message.hacher()?;
             debug!("ID message (hachage) : {}", id_message);
-            (id_message, enveloppe_message.pubkey, enveloppe_message.routage, enveloppe_message.estampille)
+            (id_message, enveloppe_message.pubkey, enveloppe_message.routage, enveloppe_message.estampille, enveloppe_message.origine, enveloppe_message.dechiffrage)
         };
 
         // Signer le id
@@ -489,8 +498,8 @@ impl MessageMilleGrille {
             contenu: value_serialisee,
             routage,
             pre_migration: None,
-            origine: None,
-            dechiffrage: None,
+            origine,
+            dechiffrage,
             signature,
             certificat: Some(pems),
             millegrille,
@@ -868,6 +877,24 @@ impl MessageMilleGrille {
     //     // // Retourner la reponse
     //     // Ok(verifier.verify(&signature_bytes.1[1..])?)
     // }
+
+    pub fn ajouter_attachement<S,V>(&mut self, key: S, value: V)
+        where S: Into<String>, V: Into<Value>
+    {
+        let key = key.into();
+        let value = value.into();
+
+        match &mut self.attachements {
+            Some(inner) => {
+                inner.insert(key, value);
+            },
+            None => {
+                let mut attachements = Map::new();
+                attachements.insert(key, value);
+                self.attachements = Some(attachements);
+            }
+        }
+    }
 }
 
 /// Serialiser message de MilleGrille. Met les elements en ordre.
@@ -1434,6 +1461,24 @@ where
 {
     let ordered: BTreeMap<_, _> = value.iter().collect();
     ordered.serialize(serializer)
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DechiffrageInterMillegrille {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cle_id: Option<String>,
+    pub format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hachage: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MessageInterMillegrille {
+    pub contenu: String,  // Contenu compresse/chiffre et encode en multibase
+    pub origine: String,
+    pub dechiffrage: DechiffrageInterMillegrille,
 }
 
 #[cfg(test)]
