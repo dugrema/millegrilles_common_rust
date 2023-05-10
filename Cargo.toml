@@ -1,6 +1,6 @@
 [package]
 name = "millegrilles_common_rust"
-version = "2023.5.1"
+version = "2023.5.2"
 edition = "2021"
 
 [dependencies]
