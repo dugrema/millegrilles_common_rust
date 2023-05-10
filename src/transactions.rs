@@ -613,45 +613,60 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
     let mut transactions_bson = Vec::new();
     transactions_bson.reserve(transactions.len());
     {
-        let mut uuid_transactions = HashSet::new();
-        let mut curseur = {
-            for t in &transactions {
-                uuid_transactions.insert(t.id.clone());
-            }
-            let projection = doc! {"en-tete.uuid_transaction": 1};
-            let vec_uuid_transactions = uuid_transactions.iter().collect::<Vec<&String>>();
-            let filtre = doc! {"en-tete.uuid_transaction": {"$in": vec_uuid_transactions}};
-            let options = FindOptions::builder().projection(projection).build();
-            match collection.find(filtre, options).await {
-                Ok(c) => c,
-                Err(e) => Err(format!("sauvegarder_batch Erreur collection.find : {:?}",e ))?
-            }
-        };
-
-        // Retirer tous les uuid_transactions connus, on va les ignorer
-        while let Some(result_uuid_transactions) = curseur.next().await {
-            let doc_uuid_transactions = match result_uuid_transactions {
-                Ok(d) => d,
-                Err(e) => Err(format!("sauvegarder_batch Erreur curseur.next() : {:?}", e))?
-            };
-            let row_uuid_transaction: RowResultatUuidTransaction = match convertir_bson_deserializable(doc_uuid_transactions) {
-                Ok(r) => r,
-                Err(e) => Err(format!("sauvegarder_batch Erreur convertir_bson_deserializable RowResultatUuidTransaction : {:?}", e))?
-            };
-            // Retirer les transactions qui existent deja (connues)
-            let uuid_transaction = row_uuid_transaction.entete.uuid_transaction;
-            uuid_transactions.remove(uuid_transaction.as_str());
-        }
+        // let mut uuid_transactions = HashSet::new();
+        // let mut curseur = {
+        //     for t in &transactions {
+        //         uuid_transactions.insert(t.id.clone());
+        //     }
+        //     let projection = doc! {"id": 1};
+        //     let vec_uuid_transactions = uuid_transactions.iter().collect::<Vec<&String>>();
+        //     let filtre = doc! {"id": {"$in": vec_uuid_transactions}};
+        //     let options = FindOptions::builder()
+        //         .projection(projection)
+        //         .hint(Hint::Name("index_champ_id".into()))
+        //         .build();
+        //     match collection.find(filtre, options).await {
+        //         Ok(c) => c,
+        //         Err(e) => Err(format!("sauvegarder_batch Erreur collection.find : {:?}",e ))?
+        //     }
+        // };
+        //
+        // // Retirer tous les uuid_transactions connus, on va les ignorer
+        // while let Some(result_uuid_transactions) = curseur.next().await {
+        //     let doc_uuid_transactions = match result_uuid_transactions {
+        //         Ok(d) => d,
+        //         Err(e) => Err(format!("sauvegarder_batch Erreur curseur.next() : {:?}", e))?
+        //     };
+        //     let row_uuid_transaction: RowResultatUuidTransaction = match convertir_bson_deserializable(doc_uuid_transactions) {
+        //         Ok(r) => r,
+        //         Err(e) => Err(format!("sauvegarder_batch Erreur convertir_bson_deserializable RowResultatUuidTransaction : {:?}", e))?
+        //     };
+        //     // Retirer les transactions qui existent deja (connues)
+        //     let uuid_transaction = row_uuid_transaction.id;
+        //     uuid_transactions.remove(uuid_transaction.as_str());
+        // }
 
         // Serialiser les transactions vers le format bson
-        while let Some(t) = transactions.pop() {
+        while let Some(mut t) = transactions.pop() {
             debug!("sauvegarder_batch Message a serialiser en bson : {:?}", t);
-            if uuid_transactions.contains(&t.id) {
+
+            // Injecter backup flag true (c'est une restoration, le backup existe deja)
+            match t.evenements.get("backup_flag") {
+                Some(Value::Bool(true)) => {
+                    // Ok
+                },
+                _ => {
+                    // Set flag a true
+                    t.evenements.insert("backup_flag".into(), Value::Bool(true));
+                }
+            }
+
+            //if uuid_transactions.contains(&t.id) {
                 let bson_doc = bson::to_document(&t).expect("serialiser bson");
                 transactions_bson.push(bson_doc);
-            } else {
-                debug!("sauvegarder_batch Skip transaction existante : {}", t.id);
-            }
+            // } else {
+            //     debug!("sauvegarder_batch Skip transaction existante : {}", t.id);
+            // }
         }
 
     }
@@ -726,8 +741,9 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RowResultatUuidTransaction {
-    #[serde(rename="en-tete")]
-    entete: RowEnteteUuidTransaction
+    // #[serde(rename="en-tete")]
+    // entete: RowEnteteUuidTransaction
+    id: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
