@@ -57,6 +57,7 @@ pub use tokio_util;
 pub use uuid;
 pub use serde;
 pub use serde_json;
+pub use chacha20poly1305;
 
 #[cfg(test)]
 mod test_setup {

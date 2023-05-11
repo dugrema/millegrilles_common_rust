@@ -75,6 +75,21 @@ pub fn rechiffrer_asymetrique_multibase(private_key: &PKey<Private>, public_key:
     Ok(multibase::encode(Base::Base64, &cle_rechiffree[..]))
 }
 
+pub fn chiffrer_asymetrique_multibase(cle_secrete: CleSecrete, public_key: &PKey<Public>)
+    -> Result<String, Box<dyn Error>>
+{
+    let cle_rechiffree = {
+        // Determiner le type de cle. Supporte RSA et ED25519.
+        match public_key.id() {
+            Id::ED25519 => chiffrer_asymmetrique_ed25519(&cle_secrete.0[..], public_key)?.to_vec(),
+            Id::RSA => chiffrer_asymetrique_aesgcm(public_key, &cle_secrete.0[..])?,
+            _ => Err(format!("Unsupported key format - only Ed25519 and RSA are supported"))?
+        }
+    };
+
+    Ok(multibase::encode(Base::Base64, &cle_rechiffree[..]))
+}
+
 pub fn extraire_cle_secrete(private_key: &PKey<Private>, cle: &str)
     -> Result<CleSecrete, Box<dyn Error>>
 {
