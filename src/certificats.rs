@@ -482,6 +482,14 @@ impl EnveloppeCertificat {
         Ok(resultat)
     }
 
+    pub fn get_common_name(&self) -> Result<String, String> {
+        let subject = self.subject()?;
+        match subject.get("commonName") {
+            Some(cn) => Ok(cn.to_owned()),
+            None => Err("certificats.EnveloppeCertificat.get_common_name : commonName absent du subject".into())
+        }
+    }
+
     pub fn issuer(&self) -> Result<HashMap<String, String>, String> {
         let certificat = &self.certificat;
         let subject_name = certificat.issuer_name();
