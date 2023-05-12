@@ -346,6 +346,7 @@ pub const COMMANDE_SAUVEGARDER_CLE: &str = "sauvegarderCle";
 pub const REQUETE_CERT_MAITREDESCLES: &str = "certMaitreDesCles";
 pub const COMMANDE_CERT_MAITREDESCLES: &str = REQUETE_CERT_MAITREDESCLES;
 pub const COMMANDE_TRANSFERT_CLE: &str = "transfertCle";
+pub const EVENEMENT_CLES_RECHIFFRAGE: &str = "clesRechiffrage";
 
 // Messagerie
 pub const DOMAINE_NOM_MESSAGERIE: &str = "Messagerie";
