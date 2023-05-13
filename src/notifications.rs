@@ -233,6 +233,7 @@ impl EmetteurNotifications {
                 cle_id: Some(cle_id),
                 format: "mgs4".to_owned(),
                 header: Some(cipher.get_header().to_owned()),
+                cles: None,
             }
         };
 
