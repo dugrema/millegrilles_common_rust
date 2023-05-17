@@ -55,6 +55,21 @@ impl Into<Bson> for FormatChiffrage {
     }
 }
 
+impl TryFrom<&str> for FormatChiffrage {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let valeur = match value {
+            "mgs2" => FormatChiffrage::mgs2,
+            "mgs3" => FormatChiffrage::mgs3,
+            "mgs4" => FormatChiffrage::mgs4,
+            _ => Err(format!("Format inconnu"))?
+        };
+
+        Ok(valeur)
+    }
+}
+
 /// Struct qui efface la cle secrete en memoire sur drop
 #[derive(Zeroize)]
 #[zeroize(drop)]
