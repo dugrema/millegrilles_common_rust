@@ -28,6 +28,16 @@ use crate::middleware::IsConfigurationPki;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage { mgs2, mgs3, mgs4 }
 
+impl Into<&str> for FormatChiffrage {
+    fn into(self) -> &'static str {
+        match self {
+            Self::mgs2 => "mgs2",
+            Self::mgs3 => "mgs3",
+            Self::mgs4 => "mgs4",
+        }
+    }
+}
+
 impl Into<Bson> for FormatChiffrage {
     fn into(self) -> Bson {
         match self {
