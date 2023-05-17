@@ -15,10 +15,11 @@ use multibase::{Base, decode, encode};
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
 
-use crate::certificats::FingerprintCertPublicKey;
+use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey};
 use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_cle::{CleDechiffree, CommandeSauvegarderCle, FingerprintCleChiffree, IdentiteCle};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, CleDerivee, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, rechiffrer_cles};
+use crate::formatteur_messages::DechiffrageInterMillegrille;
 use crate::hachages::Hacheur;
 
 const CONST_TAILLE_BLOCK_MGS4: usize = 64 * 1024;
@@ -438,6 +439,23 @@ impl Mgs4CipherKeys {
 }
 
 impl MgsCipherKeys for Mgs4CipherKeys {
+
+    fn get_dechiffrage(&self, enveloppe_demandeur: Option<&EnveloppeCertificat>)
+        -> Result<DechiffrageInterMillegrille, String>
+    {
+        let mut cles = self.cles_to_map();
+        if let Some(cert) = enveloppe_demandeur {
+            todo!("Fix me");
+        }
+
+        Ok(DechiffrageInterMillegrille {
+            cle_id: Some(self.hachage_bytes.clone()),
+            format: self.get_format(),
+            hachage: Some(self.hachage_bytes.clone()),
+            header: Some(self.header.clone()),
+            cles: Some(cles),
+        })
+    }
 
     fn get_commande_sauvegarder_cles(
         &self,

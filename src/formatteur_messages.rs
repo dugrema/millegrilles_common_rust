@@ -23,9 +23,14 @@ use std::convert::{TryFrom, TryInto};
 use multibase::Base;
 use multihash::Code;
 use openssl::sign::Verifier;
-use crate::chiffrage::{ChiffrageFactory, CipherMgs};
+use crate::chiffrage::{ChiffrageFactory, chiffrer_data, CipherMgs, CleChiffrageHandler, FormatChiffrage};
+use crate::chiffrage_cle::CleDechiffree;
+use crate::chiffrage_ed25519::dechiffrer_asymmetrique_ed25519;
+use crate::common_messages::{DataChiffre, DataDechiffre};
 use crate::constantes::MessageKind;
 use crate::constantes::MessageKind::ReponseChiffree;
+use crate::dechiffrage::dechiffrer_data;
+use crate::generateur_messages::GenerateurMessages;
 use crate::mongo_dao::convertir_to_bson;
 
 pub trait FormatteurMessage {
@@ -1514,17 +1519,82 @@ pub struct MessageReponseChiffree {
     pub dechiffrage: DechiffrageInterMillegrille,
 }
 
+impl TryFrom<MessageMilleGrille> for MessageReponseChiffree {
+    type Error = String;
+
+    fn try_from(mut value: MessageMilleGrille) -> Result<Self, Self::Error> {
+        let dechiffrage = match value.dechiffrage.take() {
+            Some(inner) => inner,
+            None => Err(format!("commande_rechiffrer_batch Information de dechiffrage absente"))?
+        };
+        Ok(Self {
+            contenu: value.contenu,
+            dechiffrage,
+        })
+    }
+}
+
 impl MessageReponseChiffree {
     pub fn new<M,S>(middleware: &M, contenu: S, certificat_demandeur: &EnveloppeCertificat)
         -> Result<Self, Box<dyn Error>>
         where M: ChiffrageFactoryTrait, S: Serialize
     {
-        let chiffrage_factory = middleware.get_chiffrage_factory();
-        let mut chiffreur = chiffrage_factory.get_chiffreur_mgs4()?;
-        todo!("fix me")
-        // let size_interim = chiffreur.update()?;
-        // let (size_out, keys) = chiffreur.finalize()?;
+        let (data_chiffre, dechiffrage) = chiffrer_data(middleware, contenu)?;
+        Ok(Self { contenu: data_chiffre.data_chiffre, dechiffrage })
+    }
 
+    pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, Box<dyn Error>>
+        where M: GenerateurMessages + CleChiffrageHandler
+    {
+        let enveloppe_privee = middleware.get_enveloppe_signature();
+        let fingerprint_local = enveloppe_privee.fingerprint().as_str();
+        let header = match self.dechiffrage.header.as_ref() {
+            Some(inner) => inner.as_str(),
+            None => Err(format!("formatteur_messages.MessageReponseChiffree.dechiffrer Erreur format message, header absent"))?
+        };
+
+        let (header, cle_secrete) = match self.dechiffrage.cles.as_ref() {
+            Some(inner) => match inner.get(fingerprint_local) {
+                Some(inner) => {
+                    // Cle chiffree, on dechiffre
+                    let cle_bytes = multibase::decode(inner)?;
+                    let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes.1[..], enveloppe_privee.cle_privee())?;
+                    (header, cle_secrete)
+                },
+                None => Err(format!("formatteur_messages.MessageReponseChiffree.dechiffrer Erreur format message, dechiffrage absent"))?
+            },
+            None => Err(format!("formatteur_messages.MessageReponseChiffree.dechiffrer Erreur format message, dechiffrage absent"))?
+        };
+
+        // Dechiffrer le contenu
+        let data_chiffre = DataChiffre {
+            ref_hachage_bytes: None,
+            data_chiffre: format!("m{}", self.contenu),
+            format: FormatChiffrage::mgs4,
+            header: Some(header.to_owned()),
+            tag: None,
+        };
+        debug!("formatteur_messages.MessageReponseChiffree.dechiffrer Data chiffre contenu : {:?}", data_chiffre);
+
+        let cle_dechiffre = CleDechiffree {
+            cle: "m".to_string(),
+            cle_secrete,
+            domaine: "MaitreDesCles".to_string(),
+            format: "mgs4".to_string(),
+            hachage_bytes: "".to_string(),
+            identificateurs_document: None,
+            iv: None,
+            tag: None,
+            header: Some(header.to_owned()),
+            signature_identite: "".to_string(),
+        };
+
+        debug!("formatteur_messages.MessageReponseChiffree.dechiffrer Dechiffrer data avec cle dechiffree");
+        let data_dechiffre = dechiffrer_data(cle_dechiffre, data_chiffre)?;
+        debug!("formatteur_messages.MessageReponseChiffree.dechiffrer.MessageReponseChiffree.dechiffrerfrer_batch Data dechiffre len {}", data_dechiffre.data_dechiffre.len());
+        // debug!("formatteur_messages.MessageReponseChiffree.dechiffrer Data dechiffre {:?}", String::from_utf8(data_dechiffre.data_dechiffre.clone()));
+
+        Ok(data_dechiffre)
     }
 }
 

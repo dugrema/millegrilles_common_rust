@@ -1,13 +1,19 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Debug;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
+use base64::{Engine as _, engine::general_purpose};
 
 use async_trait::async_trait;
+use base64_url::base64;
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use log::{debug, error, info};
 use multibase::Base;
 use openssl::pkey::{Id, PKey, Private, Public};
 use rand::Rng;
+use reqwest::multipart::Form;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 use crate::bson::Bson;
@@ -22,9 +28,9 @@ use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherData, Mgs4C
 use crate::common_messages::DataChiffre;
 use crate::configuration::ConfigMessages;
 use crate::constantes::RolesCertificats;
-use crate::formatteur_messages::MessageSerialise;
+use crate::formatteur_messages::{DechiffrageInterMillegrille, MessageSerialise};
 use crate::generateur_messages::GenerateurMessages;
-use crate::middleware::IsConfigurationPki;
+use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage { mgs2, mgs3, mgs4 }
@@ -123,6 +129,10 @@ pub trait MgsCipherData {
 }
 
 pub trait MgsCipherKeys {
+
+    fn get_dechiffrage(&self, enveloppe_demandeur: Option<&EnveloppeCertificat>)
+        -> Result<DechiffrageInterMillegrille, String>;
+
     fn get_commande_sauvegarder_cles(
         &self,
         domaine: &str,
@@ -379,39 +389,42 @@ pub type CipherMgsCurrent = CipherMgs4;
 pub type MgsCipherKeysCurrent = Mgs4CipherKeys;
 pub type MgsCipherDataCurrent = Mgs4CipherData;
 
-// Chiffrer data avec une cle secrete
-pub fn chiffrer_data<S>(data_dechiffre: S) -> Result<DataChiffre, Box<dyn Error>>
-    where S: Serialize
-{
-    // Extraire bytes, compresser
-    todo!("fix me");
-    // let data_vec = serde_json::to_vec(data_dechiffre)?;
+const MAXLEN_DATA_CHIFFRE: usize = 1024 * 1024 * 3;
 
-    // let mut decipher_data = Mgs4CipherData::try_from(cle)?;
-    //
-    // // Remplacer le header par celui du data (requis lors de reutilisation de cles)
-    // match &data.header {
-    //     Some(inner) => decipher_data.header = decode(inner) ?.1,
-    //     None => ()
-    // }
-    //
-    // let mut decipher = DecipherMgs4::new(&decipher_data)?;
-    //
-    // // Dechiffrer message
-    // let mut output_vec = Vec::new();
-    // let data_chiffre_vec: Vec<u8> = decode(data.data_chiffre)?.1;
-    // debug!("dechiffrer_data Dechiffrer {:?}", data_chiffre_vec);
-    // // output_vec.reserve(data_chiffre_vec.len());
-    // output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
-    // let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
-    // let out_len = decipher.finalize(&mut output_vec[len..])?;
-    // debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
-    //
-    // let mut data_dechiffre = Vec::new();
-    // data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
-    //
-    // Ok(DataDechiffre {
-    //     ref_hachage_bytes: data.ref_hachage_bytes,
-    //     data_dechiffre,
-    // })
+// Chiffrer data avec une cle secrete
+pub fn chiffrer_data<M,S>(middleware: &M, data_dechiffre: S) -> Result<(DataChiffre, DechiffrageInterMillegrille), Box<dyn Error>>
+    where M: ChiffrageFactoryTrait, S: Serialize
+{
+    let mut buf_output = [0u8; MAXLEN_DATA_CHIFFRE];  // 1MB
+
+    // Extraire bytes, compresser
+    let data_vec = {
+        let data_vec = serde_json::to_vec(&data_dechiffre)?;
+        let mut compressor = GzEncoder::new(Vec::new(), Compression::default());
+        compressor.write_all(&data_vec[..])?;
+        compressor.finish()?
+    };
+
+    if data_vec.len() > MAXLEN_DATA_CHIFFRE {
+        Err(format!("Data depasse limite buffer ({} bytes)", MAXLEN_DATA_CHIFFRE))?
+    }
+
+    // Compresser les donnees
+    let mut chiffreur = middleware.get_chiffrage_factory().get_chiffreur_mgs4()?;
+    let taille_output = chiffreur.update(&data_vec[..], &mut buf_output[..])?;
+    let (output_final, keys) = chiffreur.finalize(&mut buf_output[taille_output..])?;
+
+    let data_chiffre = general_purpose::STANDARD_NO_PAD.encode(&buf_output[..taille_output+output_final]);
+
+    let data_output = DataChiffre {
+        ref_hachage_bytes: Some(keys.hachage_bytes.clone()),
+        data_chiffre,
+        format: FormatChiffrage::mgs4,
+        header: Some(keys.header.clone()),
+        tag: None,
+    };
+
+    let dechiffrage = keys.get_dechiffrage(None)?;
+
+    Ok((data_output, dechiffrage))
 }

@@ -9,10 +9,11 @@ use multihash::Code;
 use openssl::pkey::{PKey, Private};
 use openssl::symm::{Cipher, Crypter, Mode};
 
-use crate::certificats::FingerprintCertPublicKey;
+use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey};
 use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_cle::{CommandeSauvegarderCle, FingerprintCleChiffree};
 use crate::chiffrage_rsa::*;
+use crate::formatteur_messages::DechiffrageInterMillegrille;
 use crate::hachages::Hacheur;
 
 pub struct CipherMgs2 {
@@ -250,6 +251,9 @@ impl Mgs2CipherKeys {
 }
 
 impl MgsCipherKeys for Mgs2CipherKeys {
+    fn get_dechiffrage(&self, enveloppe_demandeur: Option<&EnveloppeCertificat>) -> Result<DechiffrageInterMillegrille, String> {
+        todo!()
+    }
 
     fn get_commande_sauvegarder_cles(
         &self,
