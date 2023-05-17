@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
 use crate::hachages::{hacher_bytes, hacher_message};
-use crate::middleware::map_msg_to_bson;
+use crate::middleware::{ChiffrageFactoryTrait, map_msg_to_bson};
 use crate::signatures::signer_message;
 use crate::verificateur::{ResultatValidation, ValidationOptions, verifier_message};
 use crate::bson::{Document, Bson};
@@ -23,7 +23,9 @@ use std::convert::{TryFrom, TryInto};
 use multibase::Base;
 use multihash::Code;
 use openssl::sign::Verifier;
+use crate::chiffrage::{ChiffrageFactory, CipherMgs};
 use crate::constantes::MessageKind;
+use crate::constantes::MessageKind::ReponseChiffree;
 use crate::mongo_dao::convertir_to_bson;
 
 pub trait FormatteurMessage {
@@ -66,6 +68,25 @@ pub trait FormatteurMessage {
         MessageMilleGrille::new_signer(
             enveloppe.as_ref(), MessageKind::Reponse, &contenu,
             None::<&str>, None::<&str>, None::<&str>, version, false)
+    }
+
+    /// Repondre en chiffrant le contenu avec le certificat du demandeur
+    fn formatter_reponse_chiffree<M,S>(
+        &self,
+        middleware: &M,
+        contenu: S,
+        certificat_demandeur: &EnveloppeCertificat
+    ) -> Result<MessageMilleGrille, Box<dyn Error>>
+    where
+        M: ChiffrageFactoryTrait,
+        S: Serialize,
+    {
+        let enveloppe = self.get_enveloppe_signature();
+        let reponse_chiffree = MessageReponseChiffree::new(
+            middleware, contenu, certificat_demandeur)?;
+        MessageMilleGrille::new_signer(
+            enveloppe.as_ref(), MessageKind::ReponseChiffree, &reponse_chiffree,
+            None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
     }
 
     // fn signer_message(
@@ -433,6 +454,10 @@ impl MessageMilleGrille {
     {
         // Serialiser le contenu
         let (value_serialisee, origine, dechiffrage) = match kind {
+            MessageKind::ReponseChiffree => {
+                let reponse_chiffree: MessageReponseChiffree = serde_json::from_value(serde_json::to_value(contenu)?)?;
+                (reponse_chiffree.contenu, None, Some(reponse_chiffree.dechiffrage))
+            },
             MessageKind::CommandeInterMillegrille => {
                 let commande_inter_millegrille: MessageInterMillegrille = serde_json::from_value(serde_json::to_value(contenu)?)?;
                 (commande_inter_millegrille.contenu, Some(commande_inter_millegrille.origine), Some(commande_inter_millegrille.dechiffrage))
@@ -1481,6 +1506,26 @@ pub struct MessageInterMillegrille {
     pub contenu: String,  // Contenu compresse/chiffre et encode en multibase
     pub origine: String,
     pub dechiffrage: DechiffrageInterMillegrille,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MessageReponseChiffree {
+    pub contenu: String,  // Contenu compresse/chiffre et encode en multibase
+    pub dechiffrage: DechiffrageInterMillegrille,
+}
+
+impl MessageReponseChiffree {
+    pub fn new<M,S>(middleware: &M, contenu: S, certificat_demandeur: &EnveloppeCertificat)
+        -> Result<Self, Box<dyn Error>>
+        where M: ChiffrageFactoryTrait, S: Serialize
+    {
+        let chiffrage_factory = middleware.get_chiffrage_factory();
+        let mut chiffreur = chiffrage_factory.get_chiffreur_mgs4()?;
+        todo!("fix me")
+        // let size_interim = chiffreur.update()?;
+        // let (size_out, keys) = chiffreur.finalize()?;
+
+    }
 }
 
 #[cfg(test)]

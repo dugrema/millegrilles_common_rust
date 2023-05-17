@@ -19,6 +19,7 @@ use crate::chiffrage_cle::CommandeSauvegarderCle;
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::chiffrage_rsa::{chiffrer_asymetrique as chiffrer_asymetrique_aesgcm, dechiffrer_asymetrique as dechiffrer_asymetrique_aesgcm};
 use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherData, Mgs4CipherKeys};
+use crate::common_messages::DataChiffre;
 use crate::configuration::ConfigMessages;
 use crate::constantes::RolesCertificats;
 use crate::formatteur_messages::MessageSerialise;
@@ -377,3 +378,40 @@ pub type ChiffreurMgsCurrent = ChiffreurMgs4;
 pub type CipherMgsCurrent = CipherMgs4;
 pub type MgsCipherKeysCurrent = Mgs4CipherKeys;
 pub type MgsCipherDataCurrent = Mgs4CipherData;
+
+// Chiffrer data avec une cle secrete
+pub fn chiffrer_data<S>(data_dechiffre: S) -> Result<DataChiffre, Box<dyn Error>>
+    where S: Serialize
+{
+    // Extraire bytes, compresser
+    todo!("fix me");
+    // let data_vec = serde_json::to_vec(data_dechiffre)?;
+
+    // let mut decipher_data = Mgs4CipherData::try_from(cle)?;
+    //
+    // // Remplacer le header par celui du data (requis lors de reutilisation de cles)
+    // match &data.header {
+    //     Some(inner) => decipher_data.header = decode(inner) ?.1,
+    //     None => ()
+    // }
+    //
+    // let mut decipher = DecipherMgs4::new(&decipher_data)?;
+    //
+    // // Dechiffrer message
+    // let mut output_vec = Vec::new();
+    // let data_chiffre_vec: Vec<u8> = decode(data.data_chiffre)?.1;
+    // debug!("dechiffrer_data Dechiffrer {:?}", data_chiffre_vec);
+    // // output_vec.reserve(data_chiffre_vec.len());
+    // output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
+    // let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
+    // let out_len = decipher.finalize(&mut output_vec[len..])?;
+    // debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
+    //
+    // let mut data_dechiffre = Vec::new();
+    // data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
+    //
+    // Ok(DataDechiffre {
+    //     ref_hachage_bytes: data.ref_hachage_bytes,
+    //     data_dechiffre,
+    // })
+}

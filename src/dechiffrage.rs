@@ -1,8 +1,13 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::io::Read;
+use flate2::Compression;
+use flate2::read::{GzDecoder, GzEncoder};
+use futures_util::AsyncReadExt;
 use log::debug;
 use multibase::decode;
 use serde_json::json;
+
 use crate::certificats::EnveloppeCertificat;
 use crate::chiffrage::{DecipherMgs, MgsCipherData};
 use crate::chiffrage_cle::{CleDechiffree, ReponseDechiffrageCles};
@@ -120,21 +125,31 @@ pub fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDech
     let mut decipher = DecipherMgs4::new(&decipher_data)?;
 
     // Dechiffrer message
-    let mut output_vec = Vec::new();
-    let data_chiffre_vec: Vec<u8> = decode(data.data_chiffre)?.1;
-    debug!("dechiffrer_data Dechiffrer {:?}", data_chiffre_vec);
-    // output_vec.reserve(data_chiffre_vec.len());
-    output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
-    let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
-    let out_len = decipher.finalize(&mut output_vec[len..])?;
-    debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
+    let data_dechiffre = {
+        let mut output_vec = Vec::new();
+        let data_chiffre_vec: Vec<u8> = decode(data.data_chiffre)?.1;
+        debug!("dechiffrer_data Dechiffrer {}", data_chiffre_vec.len());
+        // output_vec.reserve(data_chiffre_vec.len());
+        output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
+        let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
+        let out_len = decipher.finalize(&mut output_vec[len..])?;
+        debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
 
-    let mut data_dechiffre = Vec::new();
-    data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
+        let mut data_dechiffre = Vec::new();
+        data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
+
+        data_dechiffre
+    };
+
+    // Decompresser data
+    debug!("dechiffrer_data Decompresser data dechiffre");
+    let mut decoder = GzDecoder::new(&data_dechiffre[..]);
+    let mut data_decompresse = Vec::new();
+    let resultat = decoder.read_to_end(&mut data_decompresse)?;
 
     Ok(DataDechiffre {
         ref_hachage_bytes: data.ref_hachage_bytes,
-        data_dechiffre,
+        data_dechiffre: data_decompresse,
     })
 }
 
