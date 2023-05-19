@@ -50,7 +50,7 @@ impl MessageCedule {
 pub struct CommandePostmasterPoster {
     pub idmg: String,
     pub message_id: String,
-    pub fiche: FicheApplication,
+    pub fiche: FicheMillegrilleApplication,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
