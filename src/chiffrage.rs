@@ -406,8 +406,16 @@ pub type MgsCipherDataCurrent = Mgs4CipherData;
 
 const MAXLEN_DATA_CHIFFRE: usize = 1024 * 1024 * 3;
 
-// Chiffrer data avec une cle secrete
 pub fn chiffrer_data<M,S>(middleware: &M, data_dechiffre: S) -> Result<(DataChiffre, DechiffrageInterMillegrille), Box<dyn Error>>
+    where M: ChiffrageFactoryTrait, S: Serialize
+{
+    let (data_output, keys) = chiffrer_data_get_keys(middleware, data_dechiffre)?;
+    let dechiffrage = keys.get_dechiffrage(None)?;
+    Ok((data_output, dechiffrage))
+}
+
+// Chiffrer data avec une cle secrete
+pub fn chiffrer_data_get_keys<M,S>(middleware: &M, data_dechiffre: S) -> Result<(DataChiffre, Mgs4CipherKeys), Box<dyn Error>>
     where M: ChiffrageFactoryTrait, S: Serialize
 {
     let mut buf_output = [0u8; MAXLEN_DATA_CHIFFRE];  // 1MB
@@ -439,7 +447,5 @@ pub fn chiffrer_data<M,S>(middleware: &M, data_dechiffre: S) -> Result<(DataChif
         tag: None,
     };
 
-    let dechiffrage = keys.get_dechiffrage(None)?;
-
-    Ok((data_output, dechiffrage))
+    Ok((data_output, keys))
 }

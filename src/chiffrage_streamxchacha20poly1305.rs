@@ -436,6 +436,17 @@ impl Mgs4CipherKeys {
             }
         }
     }
+
+    pub fn rechiffrer(&self, enveloppe: &EnveloppeCertificat) -> Result<String, Box<dyn Error>> {
+        let cle = match &self.cle_secrete {
+            Some(inner) => inner,
+            None => Err(format!("Cle secrete absente"))?
+        };
+        let cle_rechiffree = chiffrer_asymmetrique_ed25519(&cle.0[..], &enveloppe.cle_publique)?;
+        let resultat: String = multibase::encode(Base::Base64, cle_rechiffree);
+
+        Ok(resultat)
+    }
 }
 
 impl MgsCipherKeys for Mgs4CipherKeys {
@@ -445,7 +456,11 @@ impl MgsCipherKeys for Mgs4CipherKeys {
     {
         let mut cles = self.cles_to_map();
         if let Some(cert) = enveloppe_demandeur {
-            todo!("Fix me");
+            let cle_rechiffree = match self.rechiffrer(cert) {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("Mgs4CipherKeys.get_dechiffrage Erreur {:?}", e))?
+            };
+            cles.insert(cert.fingerprint.clone(), cle_rechiffree);
         }
 
         Ok(DechiffrageInterMillegrille {

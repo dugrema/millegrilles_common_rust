@@ -23,9 +23,9 @@ use std::convert::{TryFrom, TryInto};
 use multibase::Base;
 use multihash::Code;
 use openssl::sign::Verifier;
-use crate::chiffrage::{ChiffrageFactory, chiffrer_data, CipherMgs, CleChiffrageHandler, FormatChiffrage};
+use crate::chiffrage::{ChiffrageFactory, chiffrer_data, chiffrer_data_get_keys, CipherMgs, CleChiffrageHandler, FormatChiffrage, MgsCipherKeys};
 use crate::chiffrage_cle::CleDechiffree;
-use crate::chiffrage_ed25519::dechiffrer_asymmetrique_ed25519;
+use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::common_messages::{DataChiffre, DataDechiffre};
 use crate::constantes::MessageKind;
 use crate::constantes::MessageKind::ReponseChiffree;
@@ -89,6 +89,24 @@ pub trait FormatteurMessage {
         let enveloppe = self.get_enveloppe_signature();
         let reponse_chiffree = MessageReponseChiffree::new(
             middleware, contenu, certificat_demandeur)?;
+        MessageMilleGrille::new_signer(
+            enveloppe.as_ref(), MessageKind::ReponseChiffree, &reponse_chiffree,
+            None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
+    }
+
+    fn formatter_inter_millegrille<M,S>(
+        &self,
+        middleware: &M,
+        contenu: S,
+        certificat_demandeur: &EnveloppeCertificat
+    ) -> Result<MessageMilleGrille, Box<dyn Error>>
+    where
+        M: ChiffrageFactoryTrait + FormatteurMessage,
+        S: Serialize,
+    {
+        let enveloppe = self.get_enveloppe_signature();
+        let reponse_chiffree = MessageInterMillegrille::new(
+            middleware, contenu, Some(vec![certificat_demandeur]))?;
         MessageMilleGrille::new_signer(
             enveloppe.as_ref(), MessageKind::ReponseChiffree, &reponse_chiffree,
             None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
@@ -1511,6 +1529,86 @@ pub struct MessageInterMillegrille {
     pub contenu: String,  // Contenu compresse/chiffre et encode en multibase
     pub origine: String,
     pub dechiffrage: DechiffrageInterMillegrille,
+}
+
+impl MessageInterMillegrille {
+    pub fn new<M,S>(middleware: &M, contenu: S, certificats_demandeur: Option<Vec<&EnveloppeCertificat>>)
+        -> Result<Self, Box<dyn Error>>
+        where M: FormatteurMessage + ChiffrageFactoryTrait, S: Serialize
+    {
+        let (data_chiffre, keys) = chiffrer_data_get_keys(middleware, contenu)?;
+        let idmg = middleware.get_enveloppe_signature().idmg()?;
+
+        let mut dechiffrage = keys.get_dechiffrage(None)?;
+        match certificats_demandeur {
+            Some(certificats) => {
+                let mut cles_rechiffrees = HashMap::new();
+                for cert in certificats {
+                    let cle_rechiffree = keys.rechiffrer(cert)?;
+                    cles_rechiffrees.insert(cert.fingerprint.clone(), cle_rechiffree);
+                }
+                // Remplacer cles rechiffrage
+                dechiffrage.cles = Some(cles_rechiffrees);
+            },
+            None => ()
+        }
+
+        Ok(Self { contenu: data_chiffre.data_chiffre, origine: idmg, dechiffrage })
+    }
+
+    pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, Box<dyn Error>>
+        where M: GenerateurMessages + CleChiffrageHandler
+    {
+        let enveloppe_privee = middleware.get_enveloppe_signature();
+        let fingerprint_local = enveloppe_privee.fingerprint().as_str();
+        let header = match self.dechiffrage.header.as_ref() {
+            Some(inner) => inner.as_str(),
+            None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, header absent"))?
+        };
+
+        let (header, cle_secrete) = match self.dechiffrage.cles.as_ref() {
+            Some(inner) => match inner.get(fingerprint_local) {
+                Some(inner) => {
+                    // Cle chiffree, on dechiffre
+                    let cle_bytes = multibase::decode(inner)?;
+                    let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes.1[..], enveloppe_privee.cle_privee())?;
+                    (header, cle_secrete)
+                },
+                None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, dechiffrage absent"))?
+            },
+            None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, dechiffrage absent"))?
+        };
+
+        // Dechiffrer le contenu
+        let data_chiffre = DataChiffre {
+            ref_hachage_bytes: None,
+            data_chiffre: format!("m{}", self.contenu),
+            format: FormatChiffrage::mgs4,
+            header: Some(header.to_owned()),
+            tag: None,
+        };
+        debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Data chiffre contenu : {:?}", data_chiffre);
+
+        let cle_dechiffre = CleDechiffree {
+            cle: "m".to_string(),
+            cle_secrete,
+            domaine: "MaitreDesCles".to_string(),
+            format: "mgs4".to_string(),
+            hachage_bytes: "".to_string(),
+            identificateurs_document: None,
+            iv: None,
+            tag: None,
+            header: Some(header.to_owned()),
+            signature_identite: "".to_string(),
+        };
+
+        debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Dechiffrer data avec cle dechiffree");
+        let data_dechiffre = dechiffrer_data(cle_dechiffre, data_chiffre)?;
+        debug!("formatteur_messages.MessageInterMillegrille.dechiffrer.MessageReponseChiffree.dechiffrerfrer_batch Data dechiffre len {}", data_dechiffre.data_dechiffre.len());
+        // debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Data dechiffre {:?}", String::from_utf8(data_dechiffre.data_dechiffre.clone()));
+
+        Ok(data_dechiffre)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

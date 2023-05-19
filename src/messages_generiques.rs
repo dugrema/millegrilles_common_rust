@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use chrono::{Utc, Timelike, Datelike};
 use serde::{Deserialize, Serialize};
-use crate::formatteur_messages::DateEpochSeconds;
+use crate::chiffrage_cle::MetaInformationCle;
+use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageCedule {
@@ -42,4 +44,28 @@ impl MessageCedule {
     pub fn get_date(&self) -> DateEpochSeconds {
         DateEpochSeconds::from_i64(self.estampille as i64)
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandePostmasterPoster {
+    pub idmg: String,
+    pub message_id: String,
+    pub fiche: FicheApplication,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FicheMillegrilleApplication {
+    pub idmg: String,
+    // pub adresses: Vec<String>,
+    pub application: Vec<FicheApplication>,
+    pub ca: Option<String>,
+    pub chiffrage: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FicheApplication {
+    pub application: String,
+    pub nature: String,
+    pub url: String,
+    pub version: Option<String>,
 }
