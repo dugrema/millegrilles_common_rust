@@ -76,3 +76,15 @@ pub struct ConfirmationTransmission {
     pub idmg: String,
     pub code: u16,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeDechiffrerCle {
+    pub cle: String,
+    pub fingerprint: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeCleRechiffree {
+    pub ok: bool,
+    pub cle: Option<String>,
+}
