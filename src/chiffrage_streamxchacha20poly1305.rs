@@ -1,6 +1,6 @@
 use core::fmt::Formatter;
 use std::cmp::min;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::{Debug, Write};
 
@@ -412,8 +412,8 @@ impl Mgs4CipherKeys {
         String::from("mgs4")
     }
 
-    pub fn cles_to_map(&self) -> HashMap<String, String> {
-        let mut map: HashMap<String, String> = HashMap::new();
+    pub fn cles_to_map(&self) -> BTreeMap<String, String> {
+        let mut map: BTreeMap<String, String> = BTreeMap::new();
         for cle in &self.cles_chiffrees {
             map.insert(cle.fingerprint.clone(), cle.cle_chiffree.clone());
         }
@@ -486,12 +486,17 @@ impl MgsCipherKeys for Mgs4CipherKeys {
 
         let fingerprint_partitions = self.get_fingerprint_partitions();
 
+        let mut map_cles = HashMap::new();
+        for (k,v) in self.cles_to_map() {
+            map_cles.insert(k, v);
+        }
+
         let mut commande = CommandeSauvegarderCle {
             hachage_bytes: self.hachage_bytes.clone(),
             domaine: domaine.to_owned(),
             identificateurs_document,
             signature_identite: "".into(),
-            cles: self.cles_to_map(),
+            cles: map_cles,
             iv: None,
             tag: None,
             header: Some(self.header.clone()),

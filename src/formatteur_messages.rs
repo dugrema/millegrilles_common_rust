@@ -1516,7 +1516,7 @@ pub struct DechiffrageInterMillegrille {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cle_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cles: Option<HashMap<String, String>>,
+    pub cles: Option<BTreeMap<String, String>>,
     pub format: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hachage: Option<String>,
@@ -1542,7 +1542,7 @@ impl MessageInterMillegrille {
         let mut dechiffrage = keys.get_dechiffrage(None)?;
         match certificats_demandeur {
             Some(certificats) => {
-                let mut cles_rechiffrees = HashMap::new();
+                let mut cles_rechiffrees = BTreeMap::new();
                 for cert in certificats {
                     let cle_rechiffree = keys.rechiffrer(cert)?;
                     cles_rechiffrees.insert(cert.fingerprint.clone(), cle_rechiffree);
