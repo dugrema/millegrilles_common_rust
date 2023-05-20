@@ -69,3 +69,10 @@ pub struct FicheApplication {
     pub url: String,
     pub version: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfirmationTransmission {
+    pub message_id: String,
+    pub idmg: String,
+    pub code: u16,
+}
