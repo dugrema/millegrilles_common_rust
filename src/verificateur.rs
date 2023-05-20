@@ -94,7 +94,7 @@ where
         None => true
     };
 
-    let certificat_idmg_valide = match utiliser_idmg_message {
+    let (certificat_idmg_valide, certificat_millegrille) = match utiliser_idmg_message {
         true => {
             let idmg_cert = certificat.idmg()?;
             // let msg_match_certificat = idmg == idmg_cert.as_str();
@@ -114,23 +114,36 @@ where
                 };
                 let resultat = validateur.valider_chaine(certificat, certificat_millegrille)?;
                 debug!("verifier_message Resultat valider chaine : {}", resultat);
-                resultat
+                (resultat, certificat_millegrille)
             } else {
-                false
+                debug!("verifier_message IDMG Message mismatch certificat");
+                (false, None)
             }
         },
-        false => true  // idmg == validateur.idmg()  ** Idmg n'est plus un champ du message
+        false => (true, None)  // idmg == validateur.idmg()  ** Idmg n'est plus un champ du message
     };
     let certificat_date_valide = match utiliser_date_message {
         true => {
-            validateur.valider_pour_date(certificat, estampille)?
+            let valide = validateur.valider_pour_date(certificat, estampille)?;
+            debug!("Certificat valide pour date {}? {}", estampille, certificat.presentement_valide);
+            valide
         },
-        false => certificat.presentement_valide
+        false => {
+            if certificat.presentement_valide == true {
+                true
+            } else {
+                // Revalider le certificat
+                let certificat_valide = validateur.valider_chaine(certificat, certificat_millegrille)?;
+                debug!("Certificat presentement valide? {}", certificat_valide);
+                certificat_valide
+            }
+        }
     };
 
     // Le certificat est valide pour le message, on s'assure que l'estampille du message correspond.
     let message_date_valide = estampille <= &certificat.not_valid_after()? &&
         estampille >= &certificat.not_valid_before()?;
+    debug!("Date Message correspond au certificat? {}", message_date_valide);
 
     // On verifie la signature - si valide, court-circuite le reste de la validation.
     // let public_key = match certificat.certificat().public_key() {

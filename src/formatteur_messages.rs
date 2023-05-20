@@ -1235,17 +1235,7 @@ impl MessageSerialise {
             }
         };
 
-        // match &self.parsed.millegrille {
-        //     Some(c) => {
-        //         if self.millegrille.is_none() {
-        //             debug!("Chargement du certificat de millegrille inclue {}", c);
-        //             let vec_certs = vec!(c.to_owned());
-        //             let enveloppe = validateur.charger_enveloppe(&vec_certs, None, None).await?;
-        //             self.millegrille = Some(enveloppe);
-        //         }
-        //     },
-        //     None => ()
-        // }
+        self.certificat = enveloppe.clone();
 
         Ok(enveloppe)
     }
