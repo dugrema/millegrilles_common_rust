@@ -17,7 +17,7 @@ use openssl::pkey::{PKey, Private};
 
 use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey};
 use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
-use crate::chiffrage_cle::{CleDechiffree, CommandeSauvegarderCle, FingerprintCleChiffree, IdentiteCle};
+use crate::chiffrage_cle::{CleDechiffree, CommandeSauvegarderCle, FingerprintCleChiffree};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, CleDerivee, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, rechiffrer_cles};
 use crate::formatteur_messages::DechiffrageInterMillegrille;
 use crate::hachages::Hacheur;
@@ -495,7 +495,7 @@ impl MgsCipherKeys for Mgs4CipherKeys {
             hachage_bytes: self.hachage_bytes.clone(),
             domaine: domaine.to_owned(),
             identificateurs_document,
-            signature_identite: "".into(),
+            // signature_identite: "".into(),
             cles: map_cles,
             iv: None,
             tag: None,
@@ -505,7 +505,7 @@ impl MgsCipherKeys for Mgs4CipherKeys {
             fingerprint_partitions: Some(fingerprint_partitions),
         };
 
-        commande.signer_identite(cle_secrete)?;
+        // commande.signer_identite(cle_secrete)?;
 
         Ok(commande)
     }

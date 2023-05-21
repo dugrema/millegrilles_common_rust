@@ -99,7 +99,7 @@ pub struct CommandeSauvegarderCle {
     pub domaine: String,
     #[serde(serialize_with = "ordered_map")]
     pub identificateurs_document: HashMap<String, String>,
-    pub signature_identite: String,
+    // pub signature_identite: String,
 
     // Cles chiffrees
     #[serde(serialize_with = "ordered_map")]
@@ -131,110 +131,110 @@ impl Into<Document> for CommandeSauvegarderCle {
 
 impl CommandeSauvegarderCle {
 
-    pub fn signer_identite(&mut self, cle_secrete: &CleSecrete) -> Result<(), String> {
-        let identite = IdentiteCle::from(self.clone());
-        let signature_identite = identite.signer(cle_secrete)?;
-        self.signature_identite = signature_identite;
-        Ok(())
-    }
+    // pub fn signer_identite(&mut self, cle_secrete: &CleSecrete) -> Result<(), String> {
+    //     let identite = IdentiteCle::from(self.clone());
+    //     let signature_identite = identite.signer(cle_secrete)?;
+    //     self.signature_identite = signature_identite;
+    //     Ok(())
+    // }
 
-    pub fn verifier_identite(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
-        let identite = IdentiteCle::from(self.clone());
-        Ok(identite.verifier(cle_secrete)?)
-    }
-
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct IdentiteCle {
-    pub hachage_bytes: String,
-    pub domaine: String,
-    #[serde(serialize_with = "ordered_map")]
-    pub identificateurs_document: HashMap<String, String>,
-    #[serde(skip_serializing)]
-    pub signature_identite: String,
-}
-
-impl From<CommandeSauvegarderCle> for IdentiteCle {
-    fn from(value: CommandeSauvegarderCle) -> Self {
-        IdentiteCle {
-            hachage_bytes: value.hachage_bytes,
-            domaine: value.domaine,
-            identificateurs_document: value.identificateurs_document,
-            signature_identite: value.signature_identite
-        }
-    }
-}
-
-impl IdentiteCle {
-
-    /// Verifie la signature de l'identite avec la cle secrete
-    pub fn verifier(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
-        // Hacher la cle secrete, va servir de cle privee Ed25519
-        let mut hasher = Blake2s256::new();
-        hasher.update(&cle_secrete.0);
-        let cle_privee_bytes = hasher.finalize();
-
-        // Obtenir la cle publique Ed25519 qui correspond au seed prive
-        let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_privee_bytes.as_slice(), Id::ED25519) {
-            Ok(s) => s,
-            Err(e) => Err(format!("IdentiteCle.verifier Erreur preparation secret key : {:?}", e))?
-        };
-        let public_bytes = match private_ed25519.raw_public_key() {
-            Ok(p) => p,
-            Err(e) => Err(format!("IdentiteCle.verifier Erreur private_ed25519.raw_public_key : {:?}", e))?
-        };
-        let public_ed25519 = match PKey::public_key_from_raw_bytes(public_bytes.as_slice(), Id::ED25519) {
-            Ok(p) => p,
-            Err(e) => Err(format!("IdentiteCle.verifier Erreur PKey::public_key_from_raw_bytes : {:?}", e))?
-        };
-
-        // Preparer le message
-        let value_ordered: Map<String, Value> = match MessageMilleGrille::serialiser_contenu(self) {
-            Ok(v) => v,
-            Err(e) => Err(format!("IdentiteCle.verifier Erreur mapping values : {:?}", e))?
-        };
-        let message_string = match serde_json::to_string(&value_ordered) {
-            Ok(m) => m,
-            Err(e) => Err(format!("IdentiteCle.verifier Erreur conversion en string : {:?}", e))?
-        };
-        debug!("IdentiteCle.verifier Message string a verifier {}", message_string);
-
-        // Verifier la signature
-        match verifier_message(&public_ed25519, message_string.as_bytes(), self.signature_identite.as_str()) {
-            Ok(r) => Ok(r),
-            Err(e) => Err(format!("IdentiteCle.verifier Erreur verification message : {:?}", e))?
-        }
-    }
-
-    /// Signe l'identite avec la cle secrete (sert de cle privee Ed25519).
-    fn signer(&self, cle_secrete: &CleSecrete) -> Result<String, String> {
-
-        // Hacher la cle secrete, va servir de cle privee Ed25519
-        let mut hasher = Blake2s256::new();
-        hasher.update(&cle_secrete.0);
-        let cle_privee_bytes = hasher.finalize();
-
-        let private_ed25519 = match PKey::private_key_from_raw_bytes(cle_privee_bytes.as_slice(), Id::ED25519) {
-            Ok(s) => s,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur preparation secret key : {:?}", e))?
-        };
-        let value_ordered: Map<String, Value> = match MessageMilleGrille::serialiser_contenu(self) {
-            Ok(v) => v,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur mapping values : {:?}", e))?
-        };
-        let message_string = match serde_json::to_string(&value_ordered) {
-            Ok(m) => m,
-            Err(e) => Err(format!("IdentiteCle.signer Erreur conversion en string : {:?}", e))?
-        };
-        debug!("Message string a signer {}", message_string);
-        match signer_identite(&private_ed25519, message_string.as_bytes()) {
-            Ok(s) => Ok(s),
-            Err(e) => Err(format!("IdentiteCle.signer Erreur signature identite cle : {:?}", e))
-        }
-    }
+    // pub fn verifier_identite(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
+    //     let identite = IdentiteCle::from(self.clone());
+    //     Ok(identite.verifier(cle_secrete)?)
+    // }
 
 }
+
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct IdentiteCle {
+//     pub hachage_bytes: String,
+//     pub domaine: String,
+//     #[serde(serialize_with = "ordered_map")]
+//     pub identificateurs_document: HashMap<String, String>,
+//     #[serde(skip_serializing)]
+//     pub signature_identite: String,
+// }
+
+// impl From<CommandeSauvegarderCle> for IdentiteCle {
+//     fn from(value: CommandeSauvegarderCle) -> Self {
+//         IdentiteCle {
+//             hachage_bytes: value.hachage_bytes,
+//             domaine: value.domaine,
+//             identificateurs_document: value.identificateurs_document,
+//             signature_identite: value.signature_identite
+//         }
+//     }
+// }
+
+// impl IdentiteCle {
+//
+//     /// Verifie la signature de l'identite avec la cle secrete
+//     pub fn verifier(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
+//         // Hacher la cle secrete, va servir de cle privee Ed25519
+//         let mut hasher = Blake2s256::new();
+//         hasher.update(&cle_secrete.0);
+//         let cle_privee_bytes = hasher.finalize();
+//
+//         // Obtenir la cle publique Ed25519 qui correspond au seed prive
+//         let private_ed25519 = match PKey::private_key_from_raw_bytes(&cle_privee_bytes.as_slice(), Id::ED25519) {
+//             Ok(s) => s,
+//             Err(e) => Err(format!("IdentiteCle.verifier Erreur preparation secret key : {:?}", e))?
+//         };
+//         let public_bytes = match private_ed25519.raw_public_key() {
+//             Ok(p) => p,
+//             Err(e) => Err(format!("IdentiteCle.verifier Erreur private_ed25519.raw_public_key : {:?}", e))?
+//         };
+//         let public_ed25519 = match PKey::public_key_from_raw_bytes(public_bytes.as_slice(), Id::ED25519) {
+//             Ok(p) => p,
+//             Err(e) => Err(format!("IdentiteCle.verifier Erreur PKey::public_key_from_raw_bytes : {:?}", e))?
+//         };
+//
+//         // Preparer le message
+//         let value_ordered: Map<String, Value> = match MessageMilleGrille::serialiser_contenu(self) {
+//             Ok(v) => v,
+//             Err(e) => Err(format!("IdentiteCle.verifier Erreur mapping values : {:?}", e))?
+//         };
+//         let message_string = match serde_json::to_string(&value_ordered) {
+//             Ok(m) => m,
+//             Err(e) => Err(format!("IdentiteCle.verifier Erreur conversion en string : {:?}", e))?
+//         };
+//         debug!("IdentiteCle.verifier Message string a verifier {}", message_string);
+//
+//         // Verifier la signature
+//         match verifier_message(&public_ed25519, message_string.as_bytes(), self.signature_identite.as_str()) {
+//             Ok(r) => Ok(r),
+//             Err(e) => Err(format!("IdentiteCle.verifier Erreur verification message : {:?}", e))?
+//         }
+//     }
+//
+//     /// Signe l'identite avec la cle secrete (sert de cle privee Ed25519).
+//     fn signer(&self, cle_secrete: &CleSecrete) -> Result<String, String> {
+//
+//         // Hacher la cle secrete, va servir de cle privee Ed25519
+//         let mut hasher = Blake2s256::new();
+//         hasher.update(&cle_secrete.0);
+//         let cle_privee_bytes = hasher.finalize();
+//
+//         let private_ed25519 = match PKey::private_key_from_raw_bytes(cle_privee_bytes.as_slice(), Id::ED25519) {
+//             Ok(s) => s,
+//             Err(e) => Err(format!("IdentiteCle.signer Erreur preparation secret key : {:?}", e))?
+//         };
+//         let value_ordered: Map<String, Value> = match MessageMilleGrille::serialiser_contenu(self) {
+//             Ok(v) => v,
+//             Err(e) => Err(format!("IdentiteCle.signer Erreur mapping values : {:?}", e))?
+//         };
+//         let message_string = match serde_json::to_string(&value_ordered) {
+//             Ok(m) => m,
+//             Err(e) => Err(format!("IdentiteCle.signer Erreur conversion en string : {:?}", e))?
+//         };
+//         debug!("Message string a signer {}", message_string);
+//         match signer_identite(&private_ed25519, message_string.as_bytes()) {
+//             Ok(s) => Ok(s),
+//             Err(e) => Err(format!("IdentiteCle.signer Erreur signature identite cle : {:?}", e))
+//         }
+//     }
+//
+// }
 
 pub struct CleDechiffree {
     pub cle: String,
@@ -246,7 +246,7 @@ pub struct CleDechiffree {
     pub iv: Option<String>,
     pub tag: Option<String>,
     pub header: Option<String>,
-    pub signature_identite: String,
+    // pub signature_identite: String,
 }
 
 impl CleDechiffree {
@@ -264,7 +264,7 @@ impl CleDechiffree {
             iv: information_cle.iv,
             tag: information_cle.tag,
             header: information_cle.header,
-            signature_identite: information_cle.signature_identite,
+            // signature_identite: information_cle.signature_identite,
         })
     }
 }
@@ -287,7 +287,7 @@ mod test {
             hachage_bytes: "hachage_dummy".to_string(),
             domaine: "DomaineDummy".to_string(),
             identificateurs_document,
-            signature_identite: "".to_string(),
+            // signature_identite: "".to_string(),
             cles: Default::default(),
             format: FormatChiffrage::mgs4,
             iv: None,

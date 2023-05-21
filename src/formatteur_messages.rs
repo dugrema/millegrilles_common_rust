@@ -1618,7 +1618,7 @@ impl MessageInterMillegrille {
             iv: None,
             tag: None,
             header: Some(header.to_owned()),
-            signature_identite: "".to_string(),
+            // signature_identite: "".to_string(),
         };
 
         debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Dechiffrer data avec cle dechiffree");
@@ -1703,7 +1703,7 @@ impl MessageReponseChiffree {
             iv: None,
             tag: None,
             header: Some(header.to_owned()),
-            signature_identite: "".to_string(),
+            // signature_identite: "".to_string(),
         };
 
         debug!("formatteur_messages.MessageReponseChiffree.dechiffrer Dechiffrer data avec cle dechiffree");
