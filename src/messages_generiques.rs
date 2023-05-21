@@ -75,6 +75,7 @@ pub struct ConfirmationTransmission {
     pub message_id: String,
     pub idmg: String,
     pub code: u16,
+    pub adresses: Option<HashMap<String, u16>>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
