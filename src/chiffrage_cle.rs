@@ -55,7 +55,7 @@ pub struct InformationCle {
     pub iv: Option<String>,
     pub tag: Option<String>,
     pub header: Option<String>,
-    pub signature_identite: String,
+    // pub signature_identite: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -67,7 +67,7 @@ pub struct MetaInformationCle {
     pub iv: Option<String>,
     pub tag: Option<String>,
     pub header: Option<String>,
-    pub signature_identite: String,
+    // pub signature_identite: String,
 }
 
 impl From<InformationCle> for MetaInformationCle {
@@ -80,7 +80,7 @@ impl From<InformationCle> for MetaInformationCle {
             iv: value.iv,
             tag: value.tag,
             header: value.header,
-            signature_identite: value.signature_identite,
+            // signature_identite: value.signature_identite,
         }
     }
 }
@@ -298,48 +298,48 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_signature_identite() -> Result<(), Box<dyn Error>> {
-        setup("test_signature_identite");
+    // #[test]
+    // fn test_signature_identite() -> Result<(), Box<dyn Error>> {
+    //     setup("test_signature_identite");
+    //
+    //     let mut commande = produire_commande();
+    //     let cle_secrete = CleSecrete::generer();
+    //
+    //     // Signer
+    //     commande.signer_identite(&cle_secrete)?;
+    //
+    //     debug!("Commande signee : {:?}", commande);
+    //
+    //     // Verifier
+    //     let resultat = commande.verifier_identite(&cle_secrete)?;
+    //
+    //     assert_eq!(true, resultat);
+    //
+    //     Ok(())
+    // }
 
-        let mut commande = produire_commande();
-        let cle_secrete = CleSecrete::generer();
-
-        // Signer
-        commande.signer_identite(&cle_secrete)?;
-
-        debug!("Commande signee : {:?}", commande);
-
-        // Verifier
-        let resultat = commande.verifier_identite(&cle_secrete)?;
-
-        assert_eq!(true, resultat);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_corruption_identite() -> Result<(), Box<dyn Error>> {
-        setup("test_signature_identite");
-
-        let mut commande = produire_commande();
-        let cle_secrete = CleSecrete::generer();
-
-        // Signer
-        commande.signer_identite(&cle_secrete)?;
-
-        debug!("Commande signee : {:?}", commande);
-
-        // Corrompre la commande (retirer user_id)
-        commande.identificateurs_document.insert("corrupt".to_owned(), "true".to_owned());
-
-        // Verifier
-        let resultat = commande.verifier_identite(&cle_secrete)?;
-
-        assert_eq!(false, resultat);
-
-        Ok(())
-    }
+    // #[test]
+    // fn test_corruption_identite() -> Result<(), Box<dyn Error>> {
+    //     setup("test_signature_identite");
+    //
+    //     let mut commande = produire_commande();
+    //     let cle_secrete = CleSecrete::generer();
+    //
+    //     // Signer
+    //     commande.signer_identite(&cle_secrete)?;
+    //
+    //     debug!("Commande signee : {:?}", commande);
+    //
+    //     // Corrompre la commande (retirer user_id)
+    //     commande.identificateurs_document.insert("corrupt".to_owned(), "true".to_owned());
+    //
+    //     // Verifier
+    //     let resultat = commande.verifier_identite(&cle_secrete)?;
+    //
+    //     assert_eq!(false, resultat);
+    //
+    //     Ok(())
+    // }
 
 }
 
