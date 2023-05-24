@@ -28,11 +28,12 @@ use crate::recepteur_messages::TypeMessage;
 /// Contenu chiffre du message
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NotificationMessageInterne {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from: Option<String>,
+    pub from: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
     pub content: String,
+    pub version: i32,
+    pub format: String,
 }
 
 /// Enveloppe du message de notification
