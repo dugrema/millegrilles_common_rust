@@ -118,7 +118,10 @@ pub fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDech
 
     // Remplacer le header par celui du data (requis lors de reutilisation de cles)
     match &data.header {
-        Some(inner) => decipher_data.header = decode(inner) ?.1,
+        Some(header) => decipher_data.header = match decode(header) {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("dechiffrer_data Erreur multibase.decode decipher_data.header {} : {:?}", header, e))?
+        }.1,
         None => ()
     }
 
@@ -127,7 +130,10 @@ pub fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDech
     // Dechiffrer message
     let data_dechiffre = {
         let mut output_vec = Vec::new();
-        let data_chiffre_vec: Vec<u8> = decode(data.data_chiffre)?.1;
+        let data_chiffre_vec: Vec<u8> = match decode(data.data_chiffre.as_str()) {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("dechiffrer_data Erreur multibase.decode data.data_chiffre {} : {:?}", data.data_chiffre, e))?
+        }.1;
         debug!("dechiffrer_data Dechiffrer {}", data_chiffre_vec.len());
         // output_vec.reserve(data_chiffre_vec.len());
         output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
