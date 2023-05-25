@@ -561,9 +561,9 @@ impl EnveloppeCertificat {
         let fp_leaf = calculer_fingerprint(cert_leaf)?;
         let fpleaf = FingerprintCertPublicKey { fingerprint: fp_leaf, public_key: cert_leaf.public_key()?, est_cle_millegrille: false };
 
-        let cert_mg = self.chaine.last().expect("cert mg");
+        let cert_mg = self.chaine.last().expect("cert inter");
         let fp_mg = calculer_fingerprint(cert_mg)?;
-        let fpmg = FingerprintCertPublicKey { fingerprint: fp_mg, public_key: cert_mg.public_key()?, est_cle_millegrille: true };
+        let fpmg = FingerprintCertPublicKey { fingerprint: fp_mg, public_key: cert_mg.public_key()?, est_cle_millegrille: false };
 
         Ok(vec!(fpleaf, fpmg))
     }

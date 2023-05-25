@@ -1,5 +1,6 @@
 use log::{debug, error};
 use std::collections::HashMap;
+use std::error::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use multibase;
@@ -275,6 +276,15 @@ pub fn verifier_reponse_ok(message: &TypeMessage) -> bool {
     }
 }
 
+pub fn verifier_reponse_ok_option(reponse: &Option<TypeMessage>) -> bool {
+    match reponse {
+        Some(r) => {
+            verifier_reponse_ok(r)
+        },
+        None => false
+    }
+}
+
 pub struct DataDechiffre {
     pub ref_hachage_bytes: Option<String>,
     pub data_dechiffre: Vec<u8>,
@@ -285,4 +295,3 @@ pub struct TransactionRetirerSubscriptionWebpush {
     pub endpoint: String,
     pub user_id: Option<String>,
 }
-

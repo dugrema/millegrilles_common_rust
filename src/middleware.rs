@@ -21,6 +21,7 @@ use crate::backup::BackupStarter;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
 use crate::chiffrage::{ChiffrageFactoryImpl, ChiffrageFactory, CleChiffrageHandler};
 use crate::chiffrage_aesgcm::CipherMgs2;
+use crate::chiffrage_cle::CleDechiffree;
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
@@ -64,6 +65,16 @@ pub trait EmetteurNotificationsTrait: GenerateurMessages + ValidateurX509 {
         expiration: Option<i64>,
         destinataires: Option<Vec<String>>
     ) -> Result<(), Box<dyn Error>>;
+
+    async fn emettre_notification_usager<D,S,N>(
+        &self,
+        user_id: S,
+        contenu: NotificationMessageInterne,
+        niveau: N,
+        domaine: D,
+        expiration: Option<i64>,
+        cle_dechiffree: Option<CleDechiffree>
+    ) -> Result<(), Box<dyn Error>> where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send;
 }
 
 /// Super-trait pour tous les traits implementes par Middleware
@@ -156,6 +167,21 @@ impl EmetteurNotificationsTrait for MiddlewareMessage {
     {
         self.ressources.emetteur_notifications.emettre_notification_proprietaire(
             self, contenu, niveau, expiration, destinataires).await
+    }
+
+    async fn emettre_notification_usager<D,S,N> (
+        &self,
+        user_id: S,
+        contenu: NotificationMessageInterne,
+        niveau: N,
+        domaine: D,
+        expiration: Option<i64>,
+        cle_dechiffree: Option<CleDechiffree>
+    ) -> Result<(), Box<dyn Error>>
+        where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
+    {
+        self.ressources.emetteur_notifications.emettre_notification_usager(
+            self, user_id, contenu, niveau, domaine, expiration, cle_dechiffree).await
     }
 }
 

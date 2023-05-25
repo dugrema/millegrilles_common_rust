@@ -75,6 +75,14 @@ impl TryFrom<&str> for FormatChiffrage {
 #[zeroize(drop)]
 pub struct CleSecrete(pub [u8; 32]);
 
+impl Clone for CleSecrete {
+    fn clone(&self) -> Self {
+        let mut copie = [0u8;32];
+        copie.copy_from_slice(&self.0[..]);
+        Self (copie)
+    }
+}
+
 impl PartialEq for CleSecrete {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0

@@ -17,6 +17,7 @@ use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, VerificateurPermissions};
 use crate::chiffrage::{ChiffrageFactory, ChiffrageFactoryImpl, CleChiffrageHandler};
 use crate::chiffrage_aesgcm::CipherMgs2;
+use crate::chiffrage_cle::CleDechiffree;
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
@@ -50,6 +51,21 @@ impl EmetteurNotificationsTrait for MiddlewareDb {
     {
         self.ressources.ressources.emetteur_notifications.emettre_notification_proprietaire(
             self, contenu, niveau, expiration, destinataires).await
+    }
+
+    async fn emettre_notification_usager<D,S,N> (
+        &self,
+        user_id: S,
+        contenu: NotificationMessageInterne,
+        niveau: N,
+        domaine: D,
+        expiration: Option<i64>,
+        cle_dechiffree: Option<CleDechiffree>
+    ) -> Result<(), Box<dyn Error>>
+        where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
+    {
+        self.ressources.ressources.emetteur_notifications.emettre_notification_usager(
+            self, user_id, contenu, niveau, domaine, expiration, cle_dechiffree).await
     }
 }
 
