@@ -74,7 +74,7 @@ pub trait EmetteurNotificationsTrait: GenerateurMessages + ValidateurX509 {
         domaine: D,
         expiration: Option<i64>,
         cle_dechiffree: Option<CleDechiffree>
-    ) -> Result<(), Box<dyn Error>> where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send;
+    ) -> Result<String, Box<dyn Error>> where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send;
 }
 
 /// Super-trait pour tous les traits implementes par Middleware
@@ -177,7 +177,7 @@ impl EmetteurNotificationsTrait for MiddlewareMessage {
         domaine: D,
         expiration: Option<i64>,
         cle_dechiffree: Option<CleDechiffree>
-    ) -> Result<(), Box<dyn Error>>
+    ) -> Result<String, Box<dyn Error>>
         where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
     {
         self.ressources.emetteur_notifications.emettre_notification_usager(

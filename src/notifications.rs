@@ -313,7 +313,7 @@ impl EmetteurNotifications {
         domaine: D,
         expiration: Option<i64>,
         cle_dechiffree: Option<CleDechiffree>
-    ) -> Result<(), Box<dyn Error>>
+    ) -> Result<String, Box<dyn Error>>
         where
             M: GenerateurMessages + ValidateurX509 + ChiffrageFactoryTrait,
             D: AsRef<str>, S: AsRef<str>, N: AsRef<str>
@@ -322,20 +322,24 @@ impl EmetteurNotifications {
         let niveau = niveau.as_ref();
         let domaine = domaine.as_ref();
 
-        // let cle_deja_sauvegardee = cle_dechiffree.is_some();
+        let cle_deja_sauvegardee = cle_dechiffree.is_some();
 
-        let (cle_secrete, cle_derivee) = match cle_dechiffree {
-            Some(inner) => (inner.cle_secrete, None),
+        let (cle_derivee, cle_id) = match cle_dechiffree {
+            Some(inner) => {
+                let public_peer = [0u8; 32]; // Dummy vide
+                let cle_derivee = CleDerivee { secret: inner.cle_secrete, public_peer };
+                (cle_derivee, Some(inner.hachage_bytes))
+            },
             None => {
                 debug!("emettre_notification_usager Generer une nouvelle cle secrete pour notifications de l'usager");
                 let cle_privee = middleware.get_enveloppe_signature();
                 let cle_millegrille_public = &cle_privee.enveloppe_ca.cle_publique;
                 let cle_derivee_proprietaire = deriver_asymetrique_ed25519(cle_millegrille_public)?;
-                (cle_derivee_proprietaire.secret.clone(), Some(cle_derivee_proprietaire))
+                (cle_derivee_proprietaire, None)
             }
         };
 
-        let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
+        let mut cipher = CipherMgs4::new_avec_secret(&cle_derivee)?;
         // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
         let message_contenu = Self::chiffrer_contenu_notification(&contenu, &mut cipher)?;
         let hachage_contenu = cipher.get_hachage().expect("get_hachage").to_owned();
@@ -344,9 +348,12 @@ impl EmetteurNotifications {
             Some(e) => Some(DateEpochSeconds::from_i64(e)),
             None => None
         };
-        let mut cle_id = cipher.get_hachage().expect("get_hachage").to_owned();
+        let mut cle_id = match cle_id {
+            Some(inner) => inner,
+            None => cipher.get_hachage().expect("get_hachage").to_owned()
+        };
 
-        let commande_cles_messagerie = if cle_derivee.is_some() {
+        let commande_cles_messagerie = if cle_deja_sauvegardee == false {
             debug!("emettre_notification_usager Generer commande maitre des cles");
             let mut identificateurs_document = HashMap::new();
             identificateurs_document.insert("notification".to_string(), "true".to_string());
@@ -425,7 +432,7 @@ impl EmetteurNotifications {
             origine: middleware.idmg().to_owned(),
             dechiffrage: DechiffrageInterMillegrille {
                 hachage: None,
-                cle_id: Some(cle_id),
+                cle_id: Some(cle_id.clone()),
                 format: "mgs4".to_owned(),
                 header: Some(cipher.get_header().to_owned()),
                 cles: None,
@@ -469,7 +476,7 @@ impl EmetteurNotifications {
             error!("emettre_notification_usager Erreur transmission notification, messagerie reponse : {:?}", reponse);
         }
 
-        Ok(())
+        Ok(cle_id)
     }
 }
 

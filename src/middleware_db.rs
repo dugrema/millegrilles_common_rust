@@ -61,7 +61,7 @@ impl EmetteurNotificationsTrait for MiddlewareDb {
         domaine: D,
         expiration: Option<i64>,
         cle_dechiffree: Option<CleDechiffree>
-    ) -> Result<(), Box<dyn Error>>
+    ) -> Result<String, Box<dyn Error>>
         where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
     {
         self.ressources.ressources.emetteur_notifications.emettre_notification_usager(
