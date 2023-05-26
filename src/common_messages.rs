@@ -295,3 +295,10 @@ pub struct TransactionRetirerSubscriptionWebpush {
     pub endpoint: String,
     pub user_id: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RequeteDechiffrage {
+    pub domaine: String,
+    pub liste_hachage_bytes: Vec<String>,
+    pub certificat_rechiffrage: Option<Vec<String>>,
+}
