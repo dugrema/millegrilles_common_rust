@@ -17,9 +17,9 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::constantes::*;
 use crate::recepteur_messages::TypeMessage;
 
-pub async fn dechiffrer_documents<M>(middleware: &M, liste_data_chiffre: Vec<DataChiffre>)
+pub async fn dechiffrer_documents<M,S>(middleware: &M, liste_data_chiffre: Vec<DataChiffre>, domaine: Option<S>)
     -> Result<Vec<DataDechiffre>, Box<dyn Error>>
-    where M: GenerateurMessages
+    where M: GenerateurMessages, S: Into<String>
 {
     let mut liste_hachage_bytes = Vec::new();
     for d in &liste_data_chiffre {
@@ -27,7 +27,7 @@ pub async fn dechiffrer_documents<M>(middleware: &M, liste_data_chiffre: Vec<Dat
             liste_hachage_bytes.push(inner.as_str())
         }
     }
-    let mut cles_dechiffrees = get_cles_dechiffrees(middleware, liste_hachage_bytes).await?;
+    let mut cles_dechiffrees = get_cles_dechiffrees(middleware, liste_hachage_bytes, domaine).await?;
 
     let mut data_dechiffre = Vec::new();
     for d in liste_data_chiffre {
@@ -42,10 +42,18 @@ pub async fn dechiffrer_documents<M>(middleware: &M, liste_data_chiffre: Vec<Dat
     Ok(data_dechiffre)
 }
 
-pub async fn get_cles_rechiffrees<M,S>(middleware: &M, liste_hachage_bytes: &Vec<S>, certificat_rechiffrage_pem: Option<&EnveloppeCertificat>)
+pub async fn get_cles_rechiffrees<M,S,T>(
+    middleware: &M, liste_hachage_bytes: &Vec<S>, certificat_rechiffrage_pem: Option<&EnveloppeCertificat>,
+    domaine: Option<T>
+)
     -> Result<ReponseDechiffrageCles, Box<dyn Error>>
-    where M: GenerateurMessages, S: AsRef<str>
+    where M: GenerateurMessages, S: AsRef<str>, T: Into<String>
 {
+    let domaine_str = match domaine {
+        Some(d) => Some(d.into()),
+        None => None
+    };
+
     let requete_cles = match certificat_rechiffrage_pem {
         Some(inner) => {
             // Utiliser certificat du message client (requete) pour demande de rechiffrage
@@ -55,10 +63,12 @@ pub async fn get_cles_rechiffrees<M,S>(middleware: &M, liste_hachage_bytes: &Vec
             json!({
                 MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
                 "certificat_rechiffrage": pem_rechiffrage,
+                "domaine": domaine_str,
             })
         },
         None => json!({
             MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
+            "domaine": domaine_str,
         })
     };
     let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE)
@@ -68,7 +78,10 @@ pub async fn get_cles_rechiffrees<M,S>(middleware: &M, liste_hachage_bytes: &Vec
     debug!("dechiffrer_documents Requete cles config notifications : {:?}", requete_cles);
     let reponse_cles: ReponseDechiffrageCles = match middleware.transmettre_requete(routage, &requete_cles).await? {
         TypeMessage::Valide(inner) => {
-            inner.message.parsed.map_contenu()?
+            match inner.message.parsed.map_contenu() {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("dechiffrage.get_cles_dechiffrees Erreur mapping reponse rechiffrage {:?} : {:?}", inner, e))?
+            }
         },
         _ => Err(format!("dechiffrage.get_cles_dechiffrees Message reponse invalide"))?
     };
@@ -76,25 +89,13 @@ pub async fn get_cles_rechiffrees<M,S>(middleware: &M, liste_hachage_bytes: &Vec
     Ok(reponse_cles)
 }
 
-pub async fn get_cles_dechiffrees<M,S>(middleware: &M, liste_hachage_bytes: Vec<S>)
+pub async fn get_cles_dechiffrees<M,S,T>(middleware: &M, liste_hachage_bytes: Vec<S>, domaine: Option<T>)
     -> Result<HashMap<String, CleDechiffree>, Box<dyn Error>>
-    where M: GenerateurMessages, S: AsRef<str>
+    where M: GenerateurMessages, S: AsRef<str>, T: Into<String>
 {
-    // let requete_cles = json!({
-    //     MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
-    // });
-    // let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE)
-    //     .exchanges(vec![Securite::L3Protege])
-    //     .build();
-    // debug!("dechiffrer_documents Requete cles config notifications : {:?}", requete_cles);
-    // let reponse_cles: ReponseDechiffrageCles = match middleware.transmettre_requete(routage, &requete_cles).await? {
-    //     TypeMessage::Valide(inner) => {
-    //         inner.message.parsed.map_contenu(None)?
-    //     },
-    //     _ => Err(format!("dechiffrage.get_cles_dechiffrees Message reponse invalide"))?
-    // };
-
-    let reponse_cles = get_cles_rechiffrees(middleware, &liste_hachage_bytes, None).await?;
+    let reponse_cles = get_cles_rechiffrees(
+        middleware, &liste_hachage_bytes, None, domaine
+    ).await?;
 
     debug!("dechiffrer_documents Reponse cles dechiffrer config notifications : {:?}", reponse_cles);
     let enveloppe_privee = middleware.get_enveloppe_signature();
