@@ -777,6 +777,9 @@ where
 {
     debug!("transactions.regenerer Regenerer {:?}", nom_collection_transactions);
 
+    // Skip la validation des transactions si on charge CorePki (les certificats)
+    let skip_certificats = nom_collection_transactions == DOMAINE_PKI;
+
     // Supprimer contenu des collections
     for nom_collection in noms_collections_docs {
         let collection = middleware.get_collection(nom_collection.as_str())?;
@@ -799,8 +802,12 @@ where
             .build();
 
         let collection_transactions = middleware.get_collection(nom_collection_transactions)?;
-        let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
-        regenerer_charger_certificats(middleware, curseur_certs).await?;
+        if skip_certificats == false {
+            let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
+            regenerer_charger_certificats(middleware, curseur_certs, skip_certificats).await?;
+        } else {
+            info!("Regeneration CorePki - skip chargement certificats pour validation");
+        }
 
         collection_transactions.find(filtre, options).await
     }?;
@@ -808,7 +815,7 @@ where
     middleware.set_regeneration(); // Desactiver emission de messages
 
     // Executer toutes les transactions du curseur en ordre
-    let resultat = regenerer_transactions(middleware, resultat_transactions, processor).await;
+    let resultat = regenerer_transactions(middleware, resultat_transactions, processor, skip_certificats).await;
     info!("transactions.regenerer Resultat regenerer {:?} = {:?}", nom_collection_transactions, resultat);
 
     middleware.reset_regeneration(); // Reactiver emission de messages
@@ -824,7 +831,7 @@ where
 // }
 
 // S'assurer d'avoir tous les certificats dans redis ou cache
-async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Document>) -> Result<(), Box<dyn Error>>
+async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Document>, skip_certificats: bool) -> Result<(), Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     while let Some(result) = curseur.next().await {
@@ -857,9 +864,11 @@ async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Do
             if let Some(pubkey) = pre_migration.get("pubkey") {
                 if let Some(pubkey_str) = pubkey.as_str() {
                     if middleware.get_certificat(pubkey_str).await.is_none() {
-                        debug!("Certificat pre-migration {} inconnu, charger via PKI", pubkey_str);
-                        if requete_certificat(middleware, pubkey_str).await?.is_none() {
-                            warn!("Certificat pre-migration Certificat {} inconnu, ** SKIP **", pubkey_str);
+                        if skip_certificats == false {
+                            debug!("Certificat pre-migration {} inconnu, charger via PKI", pubkey_str);
+                            if requete_certificat(middleware, pubkey_str).await?.is_none() {
+                                warn!("Certificat pre-migration Certificat {} inconnu, ** SKIP **", pubkey_str);
+                            }
                         }
                     }
                 }
@@ -878,7 +887,8 @@ struct PreMigration {
     idmg: Option<String>,
 }
 
-async fn regenerer_transactions<M, T>(middleware: &M, mut curseur: Cursor<Document>, processor: &T) -> Result<(), Box<dyn Error>>
+async fn regenerer_transactions<M, T>(middleware: &M, mut curseur: Cursor<Document>, processor: &T, skip_certificats: bool)
+    -> Result<(), Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
     T: TraiterTransaction,
@@ -921,19 +931,16 @@ where
         };
 
         let certificat = match middleware.get_certificat(pubkey).await {
-            Some(c) => c,
+            Some(c) => Some(c),
             None => {
-                // debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
-                // match requete_certificat(middleware, fingerprint_certificat).await? {
-                //     Some(c) => c,
-                //     None => {
-                        warn!("Certificat {} inconnu, ** SKIP **", pubkey);
-                        continue;
-                //     }
-                // }
+                if skip_certificats == false {
+                    warn!("Certificat {} inconnu, ** SKIP **", pubkey);
+                    continue;
+                }
+                None
             }
         };
-        let mut transaction_impl = TransactionImpl::new(transaction, Some(certificat))?;
+        let mut transaction_impl = TransactionImpl::new(transaction, certificat)?;
 
         if let Some(overrides) = pre_migration {
             if let Some(id) = overrides.id {
