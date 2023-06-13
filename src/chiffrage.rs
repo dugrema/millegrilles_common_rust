@@ -266,7 +266,7 @@ impl ChiffrageFactory for ChiffrageFactoryImpl {
         let fp_public_keys = self.get_publickeys_chiffrage();
         match CipherMgs4::new(&fp_public_keys) {
             Ok(c) => Ok(c),
-            Err(e) => Err(format!("ChiffrageFactoryImpl.get_chiffreur_mgs2 Erreur {:?}", e))
+            Err(e) => Err(format!("ChiffrageFactoryImpl.get_chiffreur_mgs4 Erreur {:?}", e))
         }
     }
 }

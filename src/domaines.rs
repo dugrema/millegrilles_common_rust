@@ -180,6 +180,15 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
                     },
+                    COMMANDE_CERT_MAITREDESCLES => {
+                        match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &message.message).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("Erreur interception certificat maitre des cles : {:?}", e);
+                            }
+                        };
+                        Ok(None)
+                    },
                     _ => self.consommer_evenement(middleware.as_ref(), message).await
                 }
             },
@@ -514,6 +523,15 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         let trigger: MessageCedule = message.message.get_msg().map_contenu()?;
                         // self.verifier_backup_cedule(middleware.as_ref(), &trigger).await?;
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
+                        Ok(None)
+                    },
+                    COMMANDE_CERT_MAITREDESCLES => {
+                        match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &message.message).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                error!("domaines.consommer_evenement_trait Erreur interception certificat maitre des cles : {:?}", e);
+                            }
+                        };
                         Ok(None)
                     },
                     _ => self.consommer_evenement(middleware.as_ref(), message).await

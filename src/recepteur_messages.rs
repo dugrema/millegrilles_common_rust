@@ -325,7 +325,7 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                 Some(correlation_id) => {
                     match correlation_id.as_str() {
                         COMMANDE_CERT_MAITREDESCLES => {
-                            debug!("intercepter_message Reponse certificat maitre des cles recus : {:?}", inner);
+                            info!("intercepter_message Reponse certificat maitre des cles recus : {:?}", inner);
                             match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
                                 Ok(_) => true,
                                 Err(e) => {
@@ -345,12 +345,12 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                 TypeMessageIn::Evenement => {
                     match inner.action.as_str() {
                         PKI_REQUETE_CERTIFICAT => {
-                            debug!("intercepter_messageEvenement certificat {}, message intercepte", inner.routing_key);
+                            info!("intercepter_messageEvenement certificat {}, message intercepte", inner.routing_key);
                             traiter_certificatintercepter_message(middleware, inner).await;
                             true  // Intercepte
                         },
                         COMMANDE_CERT_MAITREDESCLES => {
-                            debug!("intercepter_messageEvenement certificat maitre des cles recus : {:?}", inner);
+                            info!("intercepter_messageEvenement certificat maitre des cles recus : {:?}", inner);
                             match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
                                 Ok(_) => true,
                                 Err(e) => {

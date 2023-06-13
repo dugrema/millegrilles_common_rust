@@ -1161,6 +1161,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 
             // Evenement globaux
             // String::from(EVENEMENT_GLOBAL_CEDULE),
+            String::from(format!("evenement.{}.{}", DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES)),
             String::from(COMMANDE_GLOBAL_BACKUP_HORAIRE),
             String::from(COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS),
             String::from(COMMANDE_GLOBAL_RESET_BACKUP),
