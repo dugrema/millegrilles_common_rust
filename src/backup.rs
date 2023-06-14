@@ -50,11 +50,38 @@ const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 3 * 1024 * 1024;
 const TRANSACTIONS_MAX_SIZE: usize = 5 * 1024 * 1024;
 const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions par fichier
 
+// Epoch en ms du demarrage du backup courant
+// Utilise pour ignorer des flags de demande de backup recus durant le backup
+const PERIODE_PROTECTION_FIN_COMPLET: i64 = 30_000;
+static mut DERNIER_BACKUP_COMPLET_FIN_DOMAINES: Option<HashMap<String, i64>> = None;
+
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
     where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     while let Some(commande) = rx.recv().await {
+        if commande.complet {
+            // Protection de backup complet a repetition (reset toutes les transactions)
+            let now = Utc::now().timestamp_millis();
+            unsafe {
+                let dernier_backup_complet = match DERNIER_BACKUP_COMPLET_FIN_DOMAINES.as_ref() {
+                    Some(inner) => {
+                        match inner.get(commande.nom_domaine.as_str()) {
+                            Some(inner) => inner.to_owned(),
+                            None => 0
+                        }
+                    },
+                    None => {
+                        DERNIER_BACKUP_COMPLET_FIN_DOMAINES = Some(HashMap::new());
+                        0
+                    }
+                };
+                if dernier_backup_complet > 0 && now - PERIODE_PROTECTION_FIN_COMPLET < dernier_backup_complet {
+                    info!("thread_backup Backup complet deja termine recemment ({}:{}) - SKIP", commande.nom_domaine, dernier_backup_complet);
+                    continue;
+                }
+            }
+        }
         debug!("thread_backup Debut commande backup {:?}", commande);
         let nom_domaine = commande.nom_domaine;
         info!("Debut backup {}", nom_domaine);
@@ -62,6 +89,14 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
             Ok(_) => info!("Backup {} OK", nom_domaine),
             Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", nom_domaine, e)
         };
+        if commande.complet {
+            unsafe {
+                DERNIER_BACKUP_COMPLET_FIN_DOMAINES
+                    .as_mut()
+                    .expect("DERNIER_BACKUP_COMPLET_FIN_DOMAINES")
+                    .insert(nom_domaine, Utc::now().timestamp_millis());
+            }  // Set flag fin complet
+        }
     }
 }
 
@@ -98,7 +133,7 @@ pub trait BackupStarter {
 pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T, complet: bool)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait,  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait,
         S: AsRef<str>, T: AsRef<str>,
 {
     let nom_coll_str = nom_collection_transactions.as_ref();
@@ -109,13 +144,6 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
 
     if complet {
         debug!("Backup complet");
-    //     let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, COMMANDE_BACKUP_ROTATION)
-    //         .exchanges(vec![Securite::L2Prive])
-    //         .build();
-    //     let commande = json!({"domaine": nom_domaine_str});
-    //     let reponse_rotation = middleware.transmettre_commande(routage, &commande, true).await?;
-    //     debug!("Reponse rotation : {:?}", reponse_rotation);
-
         // Reset le flag de backup de toutes les transactions dans mongodb
         reset_backup_flag(middleware, nom_coll_str).await?;
     }
