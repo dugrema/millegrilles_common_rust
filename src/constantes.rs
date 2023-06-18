@@ -193,6 +193,7 @@ pub const ROLE_MEDIA: &str = "media";
 pub const ROLE_INSTANCE: &str = "instance";
 pub const ROLE_STREAM: &str = "stream";
 pub const ROLE_POSTMASTER: &str = "postmaster";
+pub const ROLE_SOLR_RELAI: &str = "solrrelai";
 
 pub enum RolesCertificats {
     NoeudProtege,
@@ -210,6 +211,7 @@ pub enum RolesCertificats {
     Instance,
     Stream,
     Postmaster,
+    SolrRelai,
 }
 impl Into<&str> for RolesCertificats {
     fn into(self) -> &'static str {
@@ -229,6 +231,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::Instance => ROLE_INSTANCE,
             RolesCertificats::Stream => ROLE_STREAM,
             RolesCertificats::Postmaster => ROLE_POSTMASTER,
+            RolesCertificats::SolrRelai => ROLE_SOLR_RELAI,
         }
     }
 }
