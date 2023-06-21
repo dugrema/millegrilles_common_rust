@@ -21,7 +21,7 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
 use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
-use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
+use crate::rabbitmq_dao::{emettre_certificat_compte, NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValideAction, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation, TransactionImpl, TransactionPersistee};
 use crate::verificateur::{ValidationOptions, VerificateurMessage};
@@ -552,7 +552,18 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         true => match message.domaine.as_str() {
                             PKI_DOCUMENT_CHAMP_CERTIFICAT => match message.action.as_str() {
                                 PKI_REQUETE_CERTIFICAT => {
-                                    todo!("Traiter evenement info certificat");
+                                    let reply_q = if let Some(inner) = message.reply_q.as_ref() {
+                                        inner
+                                    } else {
+                                        return self.consommer_evenement(middleware.as_ref(), message).await
+                                    };
+                                    let correlation_id = if let Some(inner) = message.correlation_id.as_ref() {
+                                        inner
+                                    } else {
+                                        return self.consommer_evenement(middleware.as_ref(), message).await
+                                    };
+                                    middleware.repondre_certificat(reply_q, correlation_id).await?;
+                                    Ok(None)
                                 },
                                 _ => self.consommer_evenement(middleware.as_ref(), message).await
                             },

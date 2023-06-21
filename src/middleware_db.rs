@@ -346,6 +346,10 @@ impl EmetteurCertificat for MiddlewareDb {
             Err(e) => Err(format!("Erreur emettre_certificat: {:?}", e)),
         }
     }
+
+    async fn repondre_certificat<S, T>(&self, reply_q: S, correlation_id: T) -> Result<(), String> where S: AsRef<str> + Send, T: AsRef<str> + Send {
+        todo!()
+    }
 }
 
 impl ChiffrageFactoryTrait for MiddlewareDb {

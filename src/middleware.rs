@@ -504,6 +504,35 @@ impl EmetteurCertificat for MiddlewareMessage {
             Err(e) => Err(format!("Erreur emettre_certificat: {:?}", e)),
         }
     }
+
+    async fn repondre_certificat<S,T>(&self, reply_q: S, correlation_id: T) -> Result<(), String>
+        where S: AsRef<str> + Send, T: AsRef<str> + Send
+    {
+        repondre_certificat(self, reply_q, correlation_id).await
+    }
+}
+
+pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_id: T) -> Result<(), String>
+    where M: ConfigMessages + GenerateurMessages,
+          S: AsRef<str> + Send, T: AsRef<str> + Send
+{
+    let reply_q = reply_q.as_ref();
+    let correlation_id = correlation_id.as_ref();
+
+    let enveloppe_privee = middleware.get_configuration_pki().get_enveloppe_privee();
+    let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
+    let message = formatter_message_certificat(enveloppe_certificat)?;
+
+    let routage = RoutageMessageReponse::new(reply_q, correlation_id);
+    let message_formatte = match middleware.formatter_reponse(message, None) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("middleware.repondre_certificat Erreur formatter reponse : {:?}", e))?
+    };
+
+    match middleware.repondre(routage, message_formatte).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("middleware.repondre_certificat Erreur emettre_certificat: {:?}", e)),
+    }
 }
 
 impl VerificateurMessage for MiddlewareMessage {
@@ -716,11 +745,17 @@ pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine:
 #[async_trait]
 pub trait EmetteurCertificat: Send + Sync {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String>;
+    async fn repondre_certificat<S,T>(&self, reply_q: S, correlation_id: T) -> Result<(), String>
+        where S: AsRef<str> + Send, T: AsRef<str> + Send;
 }
 
 #[async_trait]
 impl EmetteurCertificat for ValidateurX509Impl {
     async fn emettre_certificat(&self, _: &impl GenerateurMessages) -> Result<(), String> {
+        todo!()
+    }
+
+    async fn repondre_certificat<S, T>(&self, reply_q: S, correlation_id: T) -> Result<(), String> where S: AsRef<str> + Send, T: AsRef<str> + Send {
         todo!()
     }
 }
