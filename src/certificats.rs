@@ -1275,6 +1275,34 @@ pub trait VerificateurPermissions {
 
         true
     }
+
+    fn verifier_domaines(&self, domaines_permis: Vec<String>) -> bool {
+        // Valider certificat.
+        let extensions = match self.get_extensions() {
+            Some(e) => e,
+            None => return false
+        };
+
+        let mut hs_param= HashSet::new();
+        hs_param.extend(domaines_permis);
+
+        let hs_cert = match extensions.domaines.clone() {
+            Some(ex) => {
+                let mut hs_cert = HashSet::new();
+                hs_cert.extend(ex);
+                hs_cert
+            },
+            None => return false,
+        };
+
+        let res: Vec<&String> = hs_param.intersection(&hs_cert).collect();
+        if res.len() == 0 {
+            return false
+        }
+
+        true
+    }
+
 }
 
 impl VerificateurPermissions for EnveloppeCertificat {
