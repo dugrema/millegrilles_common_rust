@@ -510,7 +510,7 @@ mod test {
         let emetteur = EmetteurNotifications::new(generateur.enveloppe_ca.as_ref(), None)?;
 
         let notification_interne = NotificationMessageInterne {
-            from: None,
+            from: "".to_string(),
             subject: None,
             content: "".to_string(),
             version: 0,
@@ -538,7 +538,7 @@ mod test {
         let emetteur = EmetteurNotifications::new(generateur.enveloppe_ca.as_ref(), None)?;
 
         let notification_interne = NotificationMessageInterne {
-            from: None,
+            from: "".to_string(),
             subject: None,
             content: "".to_string(),
             version: 0,

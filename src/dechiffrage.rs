@@ -199,7 +199,6 @@ mod test {
             iv: None,
             tag: None,
             header: Some(cles.header.clone()),
-            signature_identite: String::from("DUMMY"),
         };
 
         let data_chiffre = DataChiffre {
