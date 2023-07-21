@@ -194,6 +194,7 @@ pub const ROLE_INSTANCE: &str = "instance";
 pub const ROLE_STREAM: &str = "stream";
 pub const ROLE_POSTMASTER: &str = "postmaster";
 pub const ROLE_SOLR_RELAI: &str = "solrrelai";
+pub const ROLE_BACKUP: &str = "backup";
 
 pub enum RolesCertificats {
     NoeudProtege,
@@ -256,6 +257,7 @@ pub const DEFAULT_Q_TTL: u32 = 300000;
 pub const DOMAINE_APPLICATION_INSTANCE: &str = "instance";
 pub const DOMAINE_SERVICE_MONITOR: &str = DOMAINE_APPLICATION_INSTANCE;
 pub const DOMAINE_FICHIERS: &str = "fichiers";
+pub const DOMAINE_BACKUP: &str = "backup";
 pub const DOMAINE_RELAIWEB: &str = "relaiweb";
 pub const DOMAINE_TOPOLOGIE: &str = "CoreTopologie";
 pub const DOMAINE_PKI: &str = "CorePki";
@@ -276,6 +278,9 @@ pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
 pub const EVENEMENT_CEDULE: &str = "cedule";
 pub const EVENEMENT_BACKUP_DECLENCHER: &str = "declencherBackup";
 pub const EVENEMENT_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
+
+// Requetes
+pub const REQUETE_NOMBRE_TRANSACTIONS: &str = "getNombreTransactions";
 
 // Transactions
 pub const TRANSACTION_CHAMP_ID: &str = "id";

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use tokio::spawn;
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
@@ -223,6 +223,13 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 
 }
 
+#[derive(Serialize)]
+struct ReponseNombreTransactions {
+    ok: bool,
+    domaine: String,
+    nombre_transactions: i64,
+}
+
 #[async_trait]
 pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction {
 
@@ -363,7 +370,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         };
 
         let resultat = match message.type_message {
-            TypeMessageOut::Requete => self.consommer_requete(middleware.as_ref(), message).await,
+            TypeMessageOut::Requete => self.consommer_requete_trait(middleware.clone(), message).await,
             TypeMessageOut::Commande => self.consommer_commande_trait(middleware.clone(), message).await,
             TypeMessageOut::Transaction => self.consommer_transaction(middleware.as_ref(), message).await,
             TypeMessageOut::Reponse => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
@@ -504,6 +511,21 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         self.preparer_database(middleware).await
     }
 
+    async fn consommer_requete_trait<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        debug!("Consommer requete trait : {:?}", &message.message);
+        match message.verifier_exchanges(vec!(Securite::L2Prive)) &&
+            message.verifier_roles_string(vec![ROLE_BACKUP.to_string()]) {
+            true => match message.action.as_str() {
+                REQUETE_NOMBRE_TRANSACTIONS => self.get_nombre_transactions(middleware.as_ref(), message).await,
+                _ => self.consommer_requete(middleware.as_ref(), message).await
+            },
+            false => self.consommer_requete(middleware.as_ref(), message).await
+        }
+    }
+
     async fn consommer_evenement_trait<M>(self: &'static Self, middleware: Arc<M>, message: MessageValideAction)
         -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
         where M: Middleware + 'static
@@ -574,6 +596,25 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 }
             }
         }
+    }
+
+    async fn get_nombre_transactions<M>(&self, middleware: &M, message: MessageValideAction)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(inner) => inner,
+            None => {
+                let reponse = ReponseNombreTransactions { ok: true, domaine: self.get_nom_domaine(), nombre_transactions: 0 };
+                return Ok(Some(middleware.formatter_reponse(reponse, None)?));
+            }
+        };
+
+        let collection = middleware.get_collection(nom_collection_transactions.as_str())?;
+        let nombre_transactions = collection.count_documents(None, None).await? as i64;
+
+        let reponse = ReponseNombreTransactions { ok: true, domaine: self.get_nom_domaine(), nombre_transactions };
+        Ok(Some(middleware.formatter_reponse(reponse, None)?))
     }
 
     async fn demarrer_backup<M>(&self, middleware: &M, message: MessageValideAction)
