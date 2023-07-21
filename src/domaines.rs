@@ -561,8 +561,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             },
             false => match message.verifier_exchanges(vec!(Securite::L2Prive)) {
                 true => {
-                    match message.domaine.as_str() {
-                        DOMAINE_FICHIERS => match message.action.as_str() {
+                    match message.verifier_roles(vec![RolesCertificats::Backup]) {
+                        true => match message.action.as_str() {
                             EVENEMENT_BACKUP_DECLENCHER => self.demarrer_backup(middleware.as_ref(), message).await,
                             _ => self.consommer_evenement(middleware.as_ref(), message).await
                         },

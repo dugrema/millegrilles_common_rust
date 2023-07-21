@@ -213,6 +213,7 @@ pub enum RolesCertificats {
     Stream,
     Postmaster,
     SolrRelai,
+    Backup,
 }
 impl Into<&str> for RolesCertificats {
     fn into(self) -> &'static str {
@@ -233,6 +234,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::Stream => ROLE_STREAM,
             RolesCertificats::Postmaster => ROLE_POSTMASTER,
             RolesCertificats::SolrRelai => ROLE_SOLR_RELAI,
+            RolesCertificats::Backup => ROLE_BACKUP,
         }
     }
 }
