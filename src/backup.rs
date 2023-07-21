@@ -158,7 +158,7 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
         Some(workdir.path().to_owned())
     )?;
 
-    emettre_evenement_backup(middleware, &info_backup, "backupDemarres", &Utc::now()).await?;
+    emettre_evenement_backup(middleware, &info_backup, "backupDemarre", &Utc::now()).await?;
 
     let transactions = requete_transactions(middleware, &info_backup).await?;
     let fichiers_backup = generer_fichiers_backup(middleware, transactions, &workdir, &info_backup).await?;
@@ -364,6 +364,9 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
     if builder.uuid_transactions.len() > 0 {
         let path_catalogue = sauvegarder_catalogue(middleware, workir_path, &mut fichiers_generes, builder, &mut path_fichier, writer).await?;
         fichiers_generes.push(path_catalogue.clone());
+
+        // Emettre evenement mise a jour
+        emettre_evenement_backup_catalogue(middleware, &info_backup, nb_transactions_total as i64).await?;
     } else {
         debug!("generer_fichiers_backup Fichier de backup vide, on skip");
     }
