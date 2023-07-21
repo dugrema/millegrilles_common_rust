@@ -375,7 +375,7 @@ pub const BACKUP_CHAMP_FUUID_GROSFICHIERS: &str = "fuuid_grosfichiers";
 pub const BACKUP_CHAMP_BACKUP_TRANSACTIONS: &str = "backup_transactions";
 
 pub const COMMANDE_BACKUP_HORAIRE: &str = "declencherBackupHoraire";
-pub const COMMANDE_BACKUP_QUOTIDIEN: &str = "declencherBackupQuotidien";
+// pub const COMMANDE_BACKUP_QUOTIDIEN: &str = "declencherBackupQuotidien";
 pub const COMMANDE_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
 pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";
 pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";

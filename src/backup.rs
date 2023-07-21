@@ -30,7 +30,7 @@ use crate::chiffrage::{Chiffreur, CipherMgsCurrent, MgsCipherDataCurrent, MgsCip
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
-use crate::constantes::Securite::L3Protege;
+use crate::constantes::Securite::{L2Prive, L3Protege};
 use crate::fichiers::FichierWriter;
 use crate::formatteur_messages::{DateEpochSeconds, FormatteurMessage, MessageMilleGrille, MessageSerialise};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
@@ -836,6 +836,12 @@ impl TransactionWriter {
 
 }
 
+#[derive(Deserialize)]
+struct ReponseBackup {
+    ok: Option<bool>,
+    err: Option<String>,
+}
+
 /// Emet une liste de backup de transactions.
 async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_transactions: T, fichiers: &Vec<S>)
     -> Result<(), Box<dyn Error>>
@@ -844,6 +850,8 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
         S: AsRef<Path>,
         T: AsRef<str>
 {
+    let nom_collection_transactions = nom_collection_transactions.as_ref();
+
     for fichier_ref in fichiers {
         let fichier = fichier_ref.as_ref();
         debug!("emettre_backup_transactions Traitement fichier {:?}", fichier);
@@ -877,7 +885,7 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
         let uuid_message_backup = message_backup.id.clone();
         debug!("emettre_backup_transactions Emettre transactions dans le backup {} : {:?}", uuid_message_backup, uuid_transactions);
 
-        let routage = RoutageMessageAction::builder(DOMAINE_FICHIERS, "backupTransactions")
+        let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions")
             .exchanges(vec![Securite::L2Prive])
             // .correlation_id(uuid_message_backup.clone())
             .timeout_blocking(90_000)
@@ -905,12 +913,20 @@ async fn emettre_backup_transactions<M,T,S>(middleware: &M, nom_collection_trans
             }
         };
 
-        debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse);
+        debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse.message.parsed);
+        let reponse_mappee: ReponseBackup = reponse.message.parsed.map_contenu()?;
+
+        if let Some(true) = reponse_mappee.ok {
+            debug!("Catalogue transactions sauvegarde OK")
+        } else {
+            Err(format!("Erreur sauvegarde catalogue transactions {:?}, ABORT. Erreur : {:?}",
+                        nom_collection_transactions, reponse_mappee.err))?;
+        }
 
         // Marquer transactions comme etant completees
         marquer_transaction_backup_complete(
             middleware,
-            nom_collection_transactions.as_ref(),
+            nom_collection_transactions,
             &uuid_transactions).await?;
     }
 
@@ -1065,8 +1081,8 @@ pub async fn emettre_evenement_backup<M>(
         "timestamp": timestamp.timestamp(),
     });
 
-    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, BACKUP_EVENEMENT_MAJ)
-        .exchanges(vec![L3Protege])
+    let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ)
+        .exchanges(vec![L2Prive])
         .build();
 
     Ok(middleware.emettre_evenement(routage, &value).await?)

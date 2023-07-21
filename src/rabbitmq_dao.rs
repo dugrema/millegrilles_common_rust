@@ -1179,8 +1179,9 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 
         let routing_keys_prive = vec!(
             // Ecouter les evenements pour le domaine
-            String::from(format!("evenement.{}.{}", DOMAINE_BACKUP, EVENEMENT_BACKUP_DECLENCHER)),
+            // String::from(format!("evenement.{}.{}", DOMAINE_BACKUP, EVENEMENT_BACKUP_DECLENCHER)),
             String::from(format!("requete.{}.{}", nom_domaine, REQUETE_NOMBRE_TRANSACTIONS)),
+            String::from(format!("commande.{}.{}", nom_domaine, EVENEMENT_BACKUP_DECLENCHER)),
         );
         for rk in routing_keys_prive {
             let _ = channel.queue_bind(

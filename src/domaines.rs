@@ -641,6 +641,17 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         Ok(None)
     }
 
+    async fn reset_backup<M>(&self, middleware: &M)
+        -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+        where M: Middleware + 'static
+    {
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(n) => n,
+            None => Err(format!("domaines.reset_backup Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
+        };
+        reset_backup_flag(middleware, nom_collection_transactions.as_str()).await
+    }
+
     /// Sauvegarde une transaction restauree dans la collection du domaine.
     /// Si la transaction existe deja (par en-tete.uuid_transaction), aucun effet.
     async fn restaurer_transaction<M>(&self, middleware: &M, message: MessageValideAction)
@@ -724,22 +735,25 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             false => m.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)
         };
 
+        let est_backup_service =  m.verifier_roles_string(vec![ROLE_BACKUP.to_string()]) &&
+            m.verifier_exchanges(vec![Securite::L2Prive]);
+
         match autorise_global {
             true => {
                 match m.action.as_str() {
                     // Commandes standard
-                    COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref(), m).await,
+                    // COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref(), m).await,
                     // COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
                     COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), m).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
-                    COMMANDE_RESET_BACKUP => {
-                        let nom_collection_transactions = match self.get_collection_transactions() {
-                            Some(n) => n,
-                            None => Err(format!("domaines.consommer_commande_trait Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
-                        };
-                        reset_backup_flag(
-                            middleware.as_ref(), nom_collection_transactions.as_str()).await
-                    },
+                    // COMMANDE_RESET_BACKUP => {
+                    //     let nom_collection_transactions = match self.get_collection_transactions() {
+                    //         Some(n) => n,
+                    //         None => Err(format!("domaines.consommer_commande_trait Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
+                    //     };
+                    //     reset_backup_flag(
+                    //         middleware.as_ref(), nom_collection_transactions.as_str()).await
+                    // },
 
                     // Commandes specifiques au domaine
                     _ => self.consommer_commande(middleware.as_ref(), m).await
@@ -753,7 +767,14 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         _ => self.consommer_commande(middleware.as_ref(), m).await
                     }
                 },
-                false => self.consommer_commande(middleware.as_ref(), m).await
+                false => match est_backup_service {
+                    true => match m.action.as_str() {
+                        EVENEMENT_BACKUP_DECLENCHER => self.demarrer_backup(middleware.as_ref(), m).await,
+                        COMMANDE_RESET_BACKUP => self.reset_backup(middleware.as_ref()).await,
+                        _ => self.consommer_commande(middleware.as_ref(), m).await
+                    },
+                    false => self.consommer_commande(middleware.as_ref(), m).await
+                }
             }
         }
     }
