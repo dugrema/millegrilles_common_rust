@@ -158,10 +158,15 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
         Some(workdir.path().to_owned())
     )?;
 
+    emettre_evenement_backup(middleware, &info_backup, "backupDemarres", &Utc::now()).await?;
+
     let transactions = requete_transactions(middleware, &info_backup).await?;
     let fichiers_backup = generer_fichiers_backup(middleware, transactions, &workdir, &info_backup).await?;
 
     emettre_backup_transactions(middleware, nom_coll_str, &fichiers_backup).await?;
+
+    // Emettre evenement fin backup pour le domaine
+    emettre_evenement_backup(middleware, &info_backup, "backupTermine", &Utc::now()).await?;
 
     Ok(None)
 }
@@ -182,6 +187,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
     let mut fichiers_generes: Vec<PathBuf> = Vec::new();
     let mut len_written: usize = 0;
     let mut nb_transactions_written: usize = 0;
+    let mut nb_transactions_total: usize = 0;
     let (mut builder, mut path_fichier) = nouveau_catalogue(workir_path, info_backup, fichiers_generes.len())?;
     debug!("generer_fichiers_backup Creation fichier backup : {:?}", path_fichier);
     let mut writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
@@ -205,6 +211,9 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
             builder = builder_1;
             path_fichier = path_fichier_1;
             writer = TransactionWriter::new(&path_fichier, Some(middleware)).await?;
+
+            // Emettre evenement mise a jour
+            emettre_evenement_backup_catalogue(middleware, &info_backup, nb_transactions_total as i64).await?;
         }
 
         // Verifier la transaction - doit etre completement valide, certificat connu
@@ -344,6 +353,7 @@ async fn generer_fichiers_backup<M,S,P>(middleware: &M, mut transactions: S, wor
             let len_message = writer.write_json_line(&transaction.parsed).await?;
             len_written += len_message;
             nb_transactions_written += 1;
+            nb_transactions_total += 1;
         } else {
             error!("Transaction {} invalide ({:?}), ** SKIPPED **", message_id, resultat_verification);
             continue;
@@ -1079,6 +1089,24 @@ pub async fn emettre_evenement_backup<M>(
         "evenement": evenement,
         "domaine": info_backup.domaine.as_str(),
         "timestamp": timestamp.timestamp(),
+    });
+
+    let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ)
+        .exchanges(vec![L2Prive])
+        .build();
+
+    Ok(middleware.emettre_evenement(routage, &value).await?)
+}
+
+pub async fn emettre_evenement_backup_catalogue<M>(
+    middleware: &M, info_backup: &BackupInformation, transactions_traitees: i64) -> Result<(), Box<dyn Error>>
+    where M: GenerateurMessages
+{
+    let value = json!({
+        "uuid_rapport": info_backup.uuid_backup.as_str(),
+        "evenement": "cataloguePret",
+        "domaine": info_backup.domaine.as_str(),
+        "transactions_traitees": transactions_traitees,
     });
 
     let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ)
