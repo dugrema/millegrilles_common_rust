@@ -787,10 +787,12 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             None => Err(format!("domaines.regenerer_transactions Tentative de regeneration sur domaine sans collection de transactions"))?
         };
 
+        let nom_domaine = self.get_nom_domaine();
         let noms_collections_docs = self.get_collections_documents();
 
         regenerer_operation(
             middleware.as_ref(),
+            nom_domaine,
             nom_collection_transactions.as_str(),
             &noms_collections_docs,
             self

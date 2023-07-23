@@ -770,12 +770,24 @@ impl ResultatBatchInsert {
     }
 }
 
-pub async fn regenerer<M, T>(middleware: &M, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T) -> Result<(), Box<dyn Error>>
+#[derive(Serialize)]
+struct EvenementRegeneration {
+    ok: bool,
+    termine: bool,
+    domaine: String,
+    position: Option<i64>,
+    err: Option<String>,
+}
+
+pub async fn regenerer<M,D,T>(middleware: &M, nom_domaine: D, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
+    -> Result<(), Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
+    D: AsRef<str>,
     T: TraiterTransaction,
 {
-    debug!("transactions.regenerer Regenerer {:?}", nom_collection_transactions);
+    let nom_domaine = nom_domaine.as_ref();
+    debug!("transactions.regenerer Regenerer {}", nom_domaine);
 
     // Skip la validation des transactions si on charge CorePki (les certificats)
     let skip_certificats = nom_collection_transactions == DOMAINE_PKI;
@@ -812,15 +824,38 @@ where
         collection_transactions.find(filtre, options).await
     }?;
 
+    {
+        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ)
+            .exchanges(vec![Securite::L3Protege])
+            .build();
+        let message = EvenementRegeneration { ok: true, termine: false, domaine: nom_domaine.into(), position: Some(0), err: None };
+        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
+            warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
+        }
+    }
+
     middleware.set_regeneration(); // Desactiver emission de messages
 
     // Executer toutes les transactions du curseur en ordre
-    let resultat = regenerer_transactions(middleware, resultat_transactions, processor, skip_certificats).await;
-    info!("transactions.regenerer Resultat regenerer {:?} = {:?}", nom_collection_transactions, resultat);
+    if let Err(e) = regenerer_transactions(middleware, resultat_transactions, processor, skip_certificats).await {
+        error!("regenerer Erreur regeneration domaine {} : {:?}", nom_domaine, e);
+    } else {
+        info!("transactions.regenerer Resultat regenerer {:?}", nom_collection_transactions);
+    }
 
     middleware.reset_regeneration(); // Reactiver emission de messages
 
-    resultat
+    {
+        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ)
+            .exchanges(vec![Securite::L3Protege])
+            .build();
+        let message = EvenementRegeneration { ok: true, termine: true, domaine: nom_domaine.into(), position: None, err: None };
+        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
+            warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
+        }
+    }
+
+    Ok(())
 }
 
 // fn get_entete_from_doc(doc: &Document) -> Result<Entete, Box<dyn Error>> {
