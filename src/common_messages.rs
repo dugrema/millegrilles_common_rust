@@ -1,6 +1,7 @@
 use log::{debug, error};
 use std::collections::HashMap;
 use std::error::Error;
+use mongodb::bson::{bson, Bson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use multibase;
@@ -179,6 +180,18 @@ pub struct RequeteConsignationFichiers {
     pub stats: Option<bool>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PresenceFichiersRepertoire { pub taille: i64, pub nombre: i64 }
+
+impl Into<Bson> for PresenceFichiersRepertoire {
+    fn into(self) -> Bson {
+        bson!({
+            "taille": self.taille,
+            "nombre": self.nombre,
+        })
+    }
+}
+
 /// Message d'information du mecanisme de consignation principal de fichiers
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReponseInformationConsignationFichiers {
@@ -229,15 +242,11 @@ pub struct ReponseInformationConsignationFichiers {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primaire: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fichiers_taille: Option<usize>,
+    pub local: Option<PresenceFichiersRepertoire>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fichiers_nombre: Option<usize>,
+    pub archives: Option<PresenceFichiersRepertoire>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub corbeille_taille: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub corbeille_nombre: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub espace_disponible: Option<usize>,
+    pub orphelins: Option<PresenceFichiersRepertoire>,
 
     pub ok: Option<bool>,
 }
