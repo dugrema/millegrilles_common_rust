@@ -256,6 +256,9 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     // Par defaut true.
     fn chiffrer_backup(&self) -> bool { true }
 
+    /// Retourne true si utilise consignation fichiers avec fuuids
+    fn reclame_fuuids(&self) -> bool { false }
+
     /// Genere les index du domaine dans MongoDB
     async fn preparer_database<M>(&self, middleware: &M) -> Result<(), String>
         where M: Middleware + 'static;
@@ -324,7 +327,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
 
         futures.push(spawn(self.entretien(middleware.clone())));
-        futures.push(spawn(thread_emettre_presence_domaine(middleware.clone(), self.get_nom_domaine())));
+        futures.push(spawn(thread_emettre_presence_domaine(
+            middleware.clone(), self.get_nom_domaine(), self.reclame_fuuids())));
 
         Ok(futures)
     }

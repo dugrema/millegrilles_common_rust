@@ -702,7 +702,10 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
     }
 }
 
-pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + GenerateurMessages + ConfigMessages), nom_domaine: &str) -> Result<(), Box<dyn Error>> {
+pub async fn emettre_presence_domaine(
+    middleware: &(impl ValidateurX509 + GenerateurMessages + ConfigMessages), nom_domaine: &str, reclame_fuuids: bool)
+    -> Result<(), Box<dyn Error>>
+{
 
     let instance_id = match &middleware.get_configuration_noeud().instance_id {
         Some(n) => Some(n.clone()),
@@ -715,6 +718,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
         "sous_domaines": None::<String>,
         "exchanges_routing": None::<String>,
         "primaire": true,
+        "reclame_fuuids": reclame_fuuids,
     });
 
     let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_PRESENCE_DOMAINE)
@@ -724,7 +728,7 @@ pub async fn emettre_presence_domaine(middleware: &(impl ValidateurX509 + Genera
     Ok(middleware.emettre_evenement(routage, &message).await?)
 }
 
-pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine: String)
+pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine: String, reclame_fuuids: bool)
     where M: ConfigMessages + GenerateurMessages + ValidateurX509 + 'static
 {
     info!("middleware.thread_emettre_presence_domaine : Debut thread");
@@ -732,7 +736,7 @@ pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine:
     // Attente initiale
     tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
     loop {
-        match emettre_presence_domaine(middleware.as_ref(), nom_domaine.as_str()).await {
+        match emettre_presence_domaine(middleware.as_ref(), nom_domaine.as_str(), reclame_fuuids).await {
             Ok(()) => (),
             Err(e) => warn!("Erreur emission presence du domaine : {}", e),
         };
