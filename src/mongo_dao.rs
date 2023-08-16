@@ -30,6 +30,11 @@ pub trait MongoDao: Send + Sync {
         Ok(database.collection(nom_collection))
     }
 
+    fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, String> {
+        let database = self.get_database()?;
+        Ok(database.collection::<T>(nom_collection))
+    }
+
     async fn create_index<C>(&self, configuration: &C, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>)
         -> Result<(), String>
         where C: ConfigMessages
