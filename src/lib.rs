@@ -32,6 +32,7 @@ pub mod backup_restoration;
 pub mod chiffrage_streamxchacha20poly1305;
 pub mod math;
 pub mod notifications;
+pub mod jwt_handler;
 
 mod rabbitmq_dao_tests;
 

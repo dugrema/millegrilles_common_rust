@@ -363,6 +363,7 @@ pub const COMMANDE_DECHIFFRER_CLE: &str = "dechiffrerCle";
 
 // Messagerie
 pub const DOMAINE_NOM_MESSAGERIE: &str = "Messagerie";
+pub const DOMAINE_NOM_GROSFICHIERS: &str = "GrosFichiers";
 pub const ACTION_NOTIFIER: &str = "notifier";
 
 // Backup
