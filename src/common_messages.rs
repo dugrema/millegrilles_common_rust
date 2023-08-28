@@ -264,6 +264,17 @@ pub struct DataChiffre {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InformationDechiffrage {
+    pub format: FormatChiffrage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_hachage_bytes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageConfirmation {
     ok: Option<bool>,
 }
@@ -310,4 +321,24 @@ pub struct RequeteDechiffrage {
     pub domaine: String,
     pub liste_hachage_bytes: Vec<String>,
     pub certificat_rechiffrage: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReponseDechiffrageCle {
+      pub cle: String,
+      pub cle_ref: Option<String>,
+      pub domaine: String,
+      pub format: String,
+      pub hachage_bytes: String,
+      pub header: Option<String>,
+      pub identificateurs_document: Option<HashMap<String, String>>,
+      pub iv: Option<String>,
+      pub tag: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReponseDechiffrage {
+    pub acces: String,
+    pub cles: HashMap<String, ReponseDechiffrageCle>,
+    pub code: i64,
 }

@@ -35,6 +35,16 @@ use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage { mgs2, mgs3, mgs4 }
 
+impl FormatChiffrage {
+    pub fn to_str(&self) -> &'static str {
+        match self {
+            Self::mgs2 => "mgs2",
+            Self::mgs3 => "mgs3",
+            Self::mgs4 => "mgs4",
+        }
+    }
+}
+
 impl Into<&str> for FormatChiffrage {
     fn into(self) -> &'static str {
         match self {
@@ -68,6 +78,7 @@ impl TryFrom<&str> for FormatChiffrage {
 
         Ok(valeur)
     }
+
 }
 
 /// Struct qui efface la cle secrete en memoire sur drop
