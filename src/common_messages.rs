@@ -181,7 +181,7 @@ pub struct RequeteConsignationFichiers {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PresenceFichiersRepertoire { pub taille: i64, pub nombre: i64 }
+pub struct PresenceFichiersRepertoire { pub taille: Option<i64>, pub nombre: Option<i64> }
 
 impl Into<Bson> for PresenceFichiersRepertoire {
     fn into(self) -> Bson {
@@ -242,11 +242,13 @@ pub struct ReponseInformationConsignationFichiers {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primaire: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub local: Option<PresenceFichiersRepertoire>,
+    pub principal: Option<PresenceFichiersRepertoire>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub archives: Option<PresenceFichiersRepertoire>,
+    pub archive: Option<PresenceFichiersRepertoire>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub orphelins: Option<PresenceFichiersRepertoire>,
+    pub orphelin: Option<PresenceFichiersRepertoire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manquant: Option<PresenceFichiersRepertoire>,
 
     pub ok: Option<bool>,
 }
