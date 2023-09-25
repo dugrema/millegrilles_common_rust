@@ -182,6 +182,7 @@ pub const ROLE_NOEUD_PROTEGE: &str = "protege";
 pub const ROLE_NOEUD_PRIVE: &str = "prive";
 pub const ROLE_NOEUD_PUBLIC: &str = "public";
 pub const ROLE_MAITRE_COMPTES: &str = "maitrecomptes";
+pub const ROLE_WEB_AUTH: &str = "webauth";
 pub const ROLE_MONITOR: &str = "monitor";
 pub const ROLE_MAITRE_DES_CLES: &str = "maitredescles";
 pub const ROLE_MAITRE_DES_CLES_CONNEXION: &str = "maitredescles_connexion";
@@ -201,6 +202,7 @@ pub enum RolesCertificats {
     NoeudPrive,
     NoeudPublic,
     MaitreComptes,
+    WebAuth,
     Monitor,  // Deprecated, devenu instance
     MaitreDesCles,           // Certificat de connexion (4.secure) et gestion de cles
     MaitreDesClesConnexion,  // Certificat de connexion sans droit de gestion de cles
@@ -222,6 +224,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::NoeudPrive => ROLE_NOEUD_PRIVE,
             RolesCertificats::NoeudPublic => ROLE_NOEUD_PUBLIC,
             RolesCertificats::MaitreComptes => ROLE_MAITRE_COMPTES,
+            RolesCertificats::WebAuth => ROLE_WEB_AUTH,
             RolesCertificats::Monitor => ROLE_MONITOR,
             RolesCertificats::MaitreDesCles => ROLE_MAITRE_DES_CLES,
             RolesCertificats::MaitreDesClesConnexion => ROLE_MAITRE_DES_CLES_CONNEXION,
