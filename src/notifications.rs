@@ -191,7 +191,7 @@ impl EmetteurNotifications {
                     let mut commande_signee = middleware.formatter_message(
                         MessageKind::Commande, &commande,
                         Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
-                        Some(partition.as_str()), None, false)?;
+                        Some(partition.as_str()), None::<&str>, None, false)?;
 
                     commande_signee.ajouter_attachement("partition", partition);
 
@@ -237,7 +237,7 @@ impl EmetteurNotifications {
         let mut message_signe = middleware.formatter_message(
             MessageKind::CommandeInterMillegrille, &message_a_signer,
             Some(DOMAINE_NOM_MESSAGERIE), Some("nouveauMessage"), None::<&str>,
-            Some(1), false)?;
+            None::<&str>, Some(1), false)?;
         message_signe.retirer_certificats();  // Retirer certificat, redondant
 
         let mut notification = Notification {
@@ -255,8 +255,8 @@ impl EmetteurNotifications {
 
         let mut commande = middleware.formatter_message(
             MessageKind::Commande, &notification,
-            Some(DOMAINE_NOM_MESSAGERIE), Some(ACTION_NOTIFIER), None,
-            None, false)?;
+            Some(DOMAINE_NOM_MESSAGERIE), Some(ACTION_NOTIFIER), None::<&str>,
+            None::<&str>, None, false)?;
         // Ajouter cle en attachement au besoin
         if let Some(inner) = cle {
             commande.ajouter_attachement("cle", serde_json::to_value(inner)?);
@@ -420,7 +420,7 @@ impl EmetteurNotifications {
             let commande_maitredescles = middleware.formatter_message(
                 MessageKind::Commande, &commande_cles_messagerie,
                 Some(DOMAINE_NOM_MESSAGERIE), Some(ACTION_NOTIFIER), Some(partition.as_str()),
-                None, false)?;
+                None::<&str>, None, false)?;
 
             Some(commande_maitredescles)
         } else {
@@ -442,7 +442,7 @@ impl EmetteurNotifications {
         let mut message_signe = middleware.formatter_message(
             MessageKind::CommandeInterMillegrille, &message_a_signer,
             Some(DOMAINE_NOM_MESSAGERIE), Some("nouveauMessage"), None::<&str>,
-            Some(1), false)?;
+            None::<&str>, Some(1), false)?;
         message_signe.retirer_certificats();  // Retirer certificat, redondant
 
         let mut notification = Notification {
@@ -460,8 +460,8 @@ impl EmetteurNotifications {
 
         let mut commande = middleware.formatter_message(
             MessageKind::Commande, &notification,
-            Some(DOMAINE_NOM_MESSAGERIE), Some(ACTION_NOTIFIER), None,
-            None, false)?;
+            Some(DOMAINE_NOM_MESSAGERIE), Some(ACTION_NOTIFIER), None::<&str>,
+            None::<&str>, None, false)?;
 
         // Ajouter cle en attachement au besoin
         if let Some(inner) = commande_cles_messagerie {

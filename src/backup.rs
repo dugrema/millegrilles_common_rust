@@ -397,7 +397,8 @@ async fn sauvegarder_catalogue<M>(
     let fichier_catalogue = std::fs::File::create(&path_catalogue)?;
 
     let mut catalogue_signe = middleware.formatter_message(
-        MessageKind::Commande, &catalogue, Some("Backup"), Some("backupTransactions"), None, None, false)?;
+        MessageKind::Commande, &catalogue, Some("Backup"), Some("backupTransactions"),
+        None::<&str>, None::<&str>, None, false)?;
 
     // Conserver les uuid_transactions separement (ne sont pas inclues dans la signature)
     match catalogue.uuid_transactions {

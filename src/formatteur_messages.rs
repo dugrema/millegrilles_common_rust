@@ -41,24 +41,28 @@ pub trait FormatteurMessage {
     fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>);
 
     /// Implementation de formattage et signature d'un message de MilleGrille
-    fn formatter_message<S,T>(
+    fn formatter_message<S,T,U,V,W>(
         &self,
         kind: MessageKind,
         contenu: &S,
         domaine: Option<T>,
-        action: Option<T>,
-        partition: Option<T>,
+        action: Option<U>,
+        partition: Option<V>,
+        user_id: Option<W>,
         version: Option<i32>,
         ajouter_ca: bool
     ) -> Result<MessageMilleGrille, Box<dyn Error>>
     where
         S: Serialize,
-        T: AsRef<str>
+        T: AsRef<str>,
+        U: AsRef<str>,
+        V: AsRef<str>,
+        W: AsRef<str>
     {
         let enveloppe = self.get_enveloppe_signature();
         MessageMilleGrille::new_signer(
             enveloppe.as_ref(), kind, contenu,
-            domaine, action, partition, version, ajouter_ca)
+            domaine, action, partition, user_id, version, ajouter_ca)
     }
 
     fn formatter_reponse<S>(
@@ -72,7 +76,7 @@ pub trait FormatteurMessage {
         let enveloppe = self.get_enveloppe_signature();
         MessageMilleGrille::new_signer(
             enveloppe.as_ref(), MessageKind::Reponse, &contenu,
-            None::<&str>, None::<&str>, None::<&str>, version, false)
+            None::<&str>, None::<&str>, None::<&str>, None::<&str>, version, false)
     }
 
     /// Repondre en chiffrant le contenu avec le certificat du demandeur
@@ -91,7 +95,7 @@ pub trait FormatteurMessage {
             middleware, contenu, certificat_demandeur)?;
         MessageMilleGrille::new_signer(
             enveloppe.as_ref(), MessageKind::ReponseChiffree, &reponse_chiffree,
-            None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
+            None::<&str>, None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
     }
 
     fn formatter_inter_millegrille<M,S>(
@@ -109,7 +113,7 @@ pub trait FormatteurMessage {
             middleware, contenu, Some(vec![certificat_demandeur]))?;
         MessageMilleGrille::new_signer(
             enveloppe.as_ref(), MessageKind::ReponseChiffree, &reponse_chiffree,
-            None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
+            None::<&str>, None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
     }
 
     // fn signer_message(
@@ -131,7 +135,7 @@ pub trait FormatteurMessage {
     fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {
         let reponse = json!({"ok": ok, "message": message});
         self.formatter_message(MessageKind::Reponse, &reponse,
-                               None::<&str>, None, None, None,
+                               None::<&str>, None::<&str>, None::<&str>, None::<&str>, None,
                                false)
     }
 
@@ -322,6 +326,8 @@ pub struct RoutageMessage {
     pub domaine: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub partition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -459,13 +465,14 @@ impl MessageMilleGrille {
     //     }
     // }
 
-    pub fn new_signer<S, T, U, V>(
+    pub fn new_signer<S, T, U, V, W>(
         enveloppe_privee: &EnveloppePrivee,
         kind: MessageKind,
         contenu: &S,
         domaine: Option<T>,
         action: Option<U>,
         partition: Option<V>,
+        user_id: Option<W>,
         version: Option<i32>,
         ajouter_ca: bool
     ) -> Result<Self, Box<dyn std::error::Error>>
@@ -474,6 +481,7 @@ impl MessageMilleGrille {
         T: AsRef<str>,
         U: AsRef<str>,
         V: AsRef<str>,
+        W: AsRef<str>,
     {
         // Serialiser le contenu
         let (value_serialisee, origine, dechiffrage) = match kind {
@@ -495,10 +503,11 @@ impl MessageMilleGrille {
         let action_str = match action { Some(inner) => Some(inner.as_ref().to_string()), None => None};
         let domaine_str = match domaine { Some(inner) => Some(inner.as_ref().to_string()), None => None};
         let partition_str = match partition { Some(inner) => Some(inner.as_ref().to_string()), None => None};
+        let user_id_str = match user_id { Some(inner) => Some(inner.as_ref().to_string()), None => None};
 
         let routage_message = match &kind {
             MessageKind::Requete | MessageKind::Commande | MessageKind::Transaction | MessageKind::Evenement | MessageKind::CommandeInterMillegrille => {
-                Some(RoutageMessage { action: action_str, domaine: domaine_str, partition: partition_str })
+                Some(RoutageMessage { action: action_str, domaine: domaine_str, partition: partition_str, user_id: user_id_str })
             },
             _ => None
         };

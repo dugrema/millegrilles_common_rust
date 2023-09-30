@@ -24,6 +24,7 @@ use crate::recepteur_messages::TypeMessage;
 pub struct RoutageMessageAction {
     domaine: String,
     action: String,
+    user_id: Option<String>,
     partition: Option<String>,
     exchanges: Option<Vec<Securite>>,
     reply_to: Option<String>,
@@ -41,6 +42,7 @@ impl RoutageMessageAction {
         RoutageMessageAction {
             domaine: domaine.into(),
             action: action.into(),
+            user_id: None,
             partition: None, exchanges: None, reply_to: None, correlation_id: None,
             ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
         }
@@ -57,6 +59,7 @@ impl RoutageMessageAction {
 pub struct RoutageMessageActionBuilder {
     domaine: String,
     action: String,
+    user_id: Option<String>,
     partition: Option<String>,
     exchanges: Option<Vec<Securite>>,
     reply_to: Option<String>,
@@ -73,9 +76,17 @@ impl RoutageMessageActionBuilder {
         RoutageMessageActionBuilder {
             domaine: domaine.into(),
             action: action.into(),
+            user_id: None,
             partition: None, exchanges: None, reply_to: None, correlation_id: None,
             ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
         }
+    }
+
+    pub fn user_id<S>(mut self, user_id: S) -> Self
+        where S: Into<String>
+    {
+        self.user_id = Some(user_id.into());
+        self
     }
 
     pub fn partition<S>(mut self, partition: S) -> Self
@@ -133,6 +144,7 @@ impl RoutageMessageActionBuilder {
         RoutageMessageAction {
             domaine: self.domaine,
             action: self.action,
+            user_id: self.user_id,
             partition: self.partition,
             exchanges: self.exchanges,
             reply_to: self.reply_to,
@@ -238,14 +250,19 @@ impl GenerateurMessagesImpl {
             Some(p) => Some(p.as_str()),
             None => None
         };
+        let user_id = match &routage.user_id {
+            Some(p) => Some(p.as_str()),
+            None => None
+        };
         let message_signe = match self.formatter_message(
             type_message_out.clone().into(),
             message,
             Some(routage.domaine.as_str()),
             Some(routage.action.as_str()),
             partition,
+            user_id,
             None,
-            routage.ajouter_ca
+            routage.ajouter_ca.clone()
         ) {
             Ok(m) => m,
             Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
@@ -284,6 +301,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             Some(&routage.domaine),
             Some(&routage.action),
             routage.partition.as_ref(),
+            routage.user_id.as_ref(),
             None,
             routage.ajouter_ca
         ) {
