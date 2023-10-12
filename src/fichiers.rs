@@ -459,6 +459,31 @@ pub trait TraiterFichier {
     where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs4, Mgs4CipherData> + VerificateurMessage;
 }
 
+pub fn is_mimetype_video<S>(mimetype: S) -> bool
+    where S: AsRef<str>
+{
+    const VIDEO_START: &'static str = "video/";
+    const VIDEO_MIMETYPES: [&'static str; 4] = [
+        "application/vnd.rn-realmedia",
+		"application/vnd.rn-realplayer",
+		"application/x-mplayer2",
+		"application/x-shockwave-flash"
+    ];
+
+    let mimetype_str = mimetype.as_ref();
+
+    if mimetype_str.starts_with(VIDEO_START) {
+        true
+    } else {
+        for mt in VIDEO_MIMETYPES {
+            if mt == mimetype_str {
+                return true
+            }
+        }
+        false
+    }
+}
+
 #[cfg(test)]
 pub mod fichiers_tests {
     use std::path::PathBuf;
