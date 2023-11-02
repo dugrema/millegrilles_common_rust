@@ -162,6 +162,13 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     let nom_coll_str = commande.nom_collection_transactions.as_str();
     let nom_domaine_str = commande.nom_domaine.as_str();
 
+    {
+        // Indiquer au processus trigger qu'on demarre le backup
+        let routage = RoutageMessageReponse::new(&commande.reply_q, &commande.correlation_id);
+        let reponse_demarrage = middleware.formatter_reponse(json!({"ok": true, "code": 0}), None)?;
+        middleware.repondre(routage, reponse_demarrage).await?;
+    }
+
     // Persister et retirer les certificats des transactions recentes.
     persister_certificats(middleware, nom_coll_str).await?;
 
@@ -180,13 +187,6 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
         nom_coll_str,
         Some(workdir.path().to_owned())
     )?;
-
-    {
-        // Indiquer au processus trigger qu'on demarre le backup
-        let routage = RoutageMessageReponse::new(&commande.reply_q, &commande.correlation_id);
-        let reponse_demarrage = middleware.formatter_reponse(json!({"ok": true, "code": 0}), None)?;
-        middleware.repondre(routage, reponse_demarrage).await?;
-    }
 
     emettre_evenement_backup(middleware, &info_backup, "backupDemarre", &Utc::now()).await?;
 
