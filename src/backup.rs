@@ -33,7 +33,7 @@ use crate::constantes::*;
 use crate::constantes::Securite::{L2Prive, L3Protege};
 use crate::fichiers::FichierWriter;
 use crate::formatteur_messages::{DateEpochSeconds, FormatteurMessage, MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::hachages::hacher_bytes;
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 use crate::middleware_db::MiddlewareDb;
@@ -60,6 +60,7 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
     where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     while let Some(commande) = rx.recv().await {
+        let mut abandonner_backup = false;
         if commande.complet {
             // Protection de backup complet a repetition (reset toutes les transactions)
             let now = Utc::now().timestamp_millis();
@@ -78,23 +79,42 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
                 };
                 if dernier_backup_complet > 0 && now - PERIODE_PROTECTION_FIN_COMPLET < dernier_backup_complet {
                     info!("thread_backup Backup complet deja termine recemment ({}:{}) - SKIP", commande.nom_domaine, dernier_backup_complet);
-                    continue;
+                    abandonner_backup = true;
                 }
             }
         }
+
+        if abandonner_backup {
+            let routage = RoutageMessageReponse::new(commande.reply_q, commande.correlation_id);
+            let reponse = match middleware.formatter_reponse(json!({"ok": false, "code": 2}), None) {
+                Ok(inner) => inner,
+                Err(e) => {
+                    error!("backup.thread_backup Erreur reponse backup refuse (1.) domaine {} : {:?}", commande.nom_domaine, e);
+                    continue
+                }
+            };
+
+            // Emettre le message
+            if let Err(e) = middleware.repondre(routage, reponse).await {
+                error!("backup.thread_backup Erreur reponse backup refuse (2.) domaine {} : {:?}", commande.nom_domaine, e);
+            }
+
+            // Skip le backup
+            continue
+        }
+
         debug!("thread_backup Debut commande backup {:?}", commande);
-        let nom_domaine = commande.nom_domaine;
-        info!("Debut backup {}", nom_domaine);
-        match backup(middleware.as_ref(), &nom_domaine, commande.nom_collection_transactions, commande.complet).await {
-            Ok(_) => info!("Backup {} OK", nom_domaine),
-            Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", nom_domaine, e)
+        info!("Debut backup {}", commande.nom_domaine);
+        match backup(middleware.as_ref(), &commande).await {
+            Ok(_) => info!("Backup {} OK", commande.nom_domaine),
+            Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", commande.nom_domaine, e)
         };
         if commande.complet {
             unsafe {
                 DERNIER_BACKUP_COMPLET_FIN_DOMAINES
                     .as_mut()
                     .expect("DERNIER_BACKUP_COMPLET_FIN_DOMAINES")
-                    .insert(nom_domaine, Utc::now().timestamp_millis());
+                    .insert(commande.nom_domaine.clone(), Utc::now().timestamp_millis());
             }  // Set flag fin complet
         }
     }
@@ -105,20 +125,24 @@ pub struct CommandeBackup {
     pub nom_domaine: String,
     pub nom_collection_transactions: String,
     pub complet: bool,
+    pub reply_q: String,
+    pub correlation_id: String,
 }
 
 #[async_trait]
 pub trait BackupStarter {
     fn get_tx_backup(&self) -> Sender<CommandeBackup>;
 
-    async fn demarrer_backup<S,T>(&self, nom_domaine: S, nom_collection_transactions: T, complet: bool)
+    async fn demarrer_backup<S,T,Q,C>(&self, nom_domaine: S, nom_collection_transactions: T, complet: bool, reply_q: Q, correlation_id: C)
         -> Result<(), Box<dyn Error>>
-        where S: Into<String> + Send, T: Into<String> + Send
+        where S: Into<String> + Send, T: Into<String> + Send, Q: Into<String> + Send, C: Into<String> + Send
     {
         let commande = CommandeBackup {
             nom_domaine: nom_domaine.into(),
             nom_collection_transactions: nom_collection_transactions.into(),
             complet,
+            reply_q: reply_q.into(),
+            correlation_id: correlation_id.into(),
         };
 
         let tx_backup = self.get_tx_backup();
@@ -130,19 +154,18 @@ pub trait BackupStarter {
 }
 
 /// Lance un backup complet de la collection en parametre.
-pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transactions: T, complet: bool)
+pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait,
-        S: AsRef<str>, T: AsRef<str>,
+        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait
 {
-    let nom_coll_str = nom_collection_transactions.as_ref();
-    let nom_domaine_str = nom_domaine.as_ref();
+    let nom_coll_str = commande.nom_collection_transactions.as_str();
+    let nom_domaine_str = commande.nom_domaine.as_str();
 
     // Persister et retirer les certificats des transactions recentes.
     persister_certificats(middleware, nom_coll_str).await?;
 
-    if complet {
+    if commande.complet {
         debug!("Backup complet");
         // Reset le flag de backup de toutes les transactions dans mongodb
         reset_backup_flag(middleware, nom_coll_str).await?;
@@ -157,6 +180,13 @@ pub async fn backup<M,S,T>(middleware: &M, nom_domaine: S, nom_collection_transa
         nom_coll_str,
         Some(workdir.path().to_owned())
     )?;
+
+    {
+        // Indiquer au processus trigger qu'on demarre le backup
+        let routage = RoutageMessageReponse::new(&commande.reply_q, &commande.correlation_id);
+        let reponse_demarrage = middleware.formatter_reponse(json!({"ok": true, "code": 0}), None)?;
+        middleware.repondre(routage, reponse_demarrage).await?;
+    }
 
     emettre_evenement_backup(middleware, &info_backup, "backupDemarre", &Utc::now()).await?;
 
