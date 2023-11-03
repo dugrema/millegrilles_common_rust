@@ -860,7 +860,7 @@ impl ValidateurX509 for ValidateurX509Impl {
         let fp: String = match fingerprint {
             Some(fp) => Ok(String::from(fp)),
             None => {
-                debug!("Charger le _certificat pour trouver fingerprint");
+                debug!("charger_enveloppe Charger le _certificat pour trouver fingerprint");
                 match chaine_pem.get(0) {
                     Some(pem) => {
                         match ValidateurX509Impl::charger_certificat(pem.as_str()) {
@@ -873,7 +873,7 @@ impl ValidateurX509 for ValidateurX509Impl {
             }
         }?;
 
-        debug!("Fingerprint du certificat de l'enveloppe a charger : {}", fp);
+        debug!("charger_enveloppe Fingerprint du certificat de l'enveloppe a charger : {}", fp);
 
         // Verifier si le certificat est present dans le cache
         match self.get_certificat(fp.as_str()).await {
@@ -881,7 +881,7 @@ impl ValidateurX509 for ValidateurX509Impl {
             None => {
                 // Creer l'enveloppe et conserver dans le cache local
                 let pem_str: String = chaine_pem.join("\n");
-                debug!("Alignement du _certificat en string concatenee\n{}", pem_str);
+                debug!("charger_enveloppe Alignement du _certificat en string concatenee\n{}", pem_str);
                 match charger_enveloppe(pem_str.as_str(), Some(&self.store), ca_pem) {
                     Ok(e) => {
 
@@ -897,11 +897,11 @@ impl ValidateurX509 for ValidateurX509Impl {
                             if idmg_local == idmg_certificat.as_str() || e.millegrille.is_some() {
                                 Ok(self.cacher(e).await.0)
                             } else {
-                                Err(format!("Erreur chargement certificat : certificat CA manquant pour millegrille tierce"))
+                                Err(format!("certificats.charger_enveloppe Erreur chargement certificat {} : certificat CA manquant pour millegrille {} tierce", fp, idmg_certificat))
                             }
                         }
                     },
-                    Err(e) => Err(format!("Erreur chargement certificat : {:?}", e))
+                    Err(e) => Err(format!("certificats.charger_enveloppe Erreur chargement certificat {} : {:?}", fp, e))
                 }
             }
         }

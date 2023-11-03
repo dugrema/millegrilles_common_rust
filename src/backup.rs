@@ -1062,7 +1062,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
         let row_cert_mappe: TransactionCertRow = match convertir_bson_deserializable(row_cert) {
             Ok(inner) => inner,
             Err(e) => {
-                warn!("Erreur mapping row : {:?}", e);
+                warn!("persister_certificats Erreur mapping row : {:?}", e);
                 continue;
             }
         };
@@ -1070,7 +1070,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
         let fingerprint = row_cert_mappe.pubkey;
 
         if ! fingerprint_traites_set.contains(fingerprint.as_str()) {
-            debug!("Sauvegarder certificat {}", fingerprint);
+            debug!("persister_certificats Sauvegarder certificat {}", fingerprint);
 
             let commande_sauvegarde = json!({
                 "chaine_pem": row_cert_mappe.certificat,
@@ -1082,7 +1082,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
                     // Conserver marqueur pour indiquer que le certificat a ete traite
                     fingerprint_traites_set.insert(fingerprint);
                 },
-                Err(e) => warn!("Erreur sauvegarde certificat : {:?}", e)
+                Err(e) => warn!("persister_certificats Erreur sauvegarde certificat : {:?}", e)
             }
         }
 
