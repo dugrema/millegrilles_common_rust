@@ -312,13 +312,18 @@ async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, se
         };
 
         // Calculer la taille de la transaction pour appliquer la limite
-        match serde_json::to_string(&transaction.parsed) {
-            Ok(inner) => {
-                taille_transactions = taille_transactions + inner.len();
-            },
-            Err(e) => {
-                error!("verifier_transactions Erreur traitement transaction {:?}, taille inconnue : {:?}", doc_transaction, e);
+        {
+            // Retirer le certificat pour calculer la taille de la transaction
+            let cert = transaction.parsed.certificat.take();
+            match serde_json::to_string(&transaction.parsed) {
+                Ok(inner) => {
+                    taille_transactions = taille_transactions + inner.len();
+                },
+                Err(e) => {
+                    error!("verifier_transactions Erreur traitement transaction {:?}, taille inconnue : {:?}", doc_transaction, e);
+                }
             }
+            transaction.parsed.certificat = cert;  // Remettre le certificat
         }
 
         // Transferer la transaction vers le processus d'ajout au catalogue
