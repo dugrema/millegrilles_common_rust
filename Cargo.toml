@@ -5,25 +5,26 @@ edition = "2021"
 
 [dependencies]
 
-async-std = "1.9.0"
+async-std = "1.12.0"
 async-tar = { version = "0.4.2" }
 bytes = { version = "1.1.0" }
 log = { version = "0.4.14", features = ["max_level_trace", "release_max_level_info"] }
 env_logger = { version = "0.9.0" }
 num-traits = "0.2.14"
 rand = "0.8.5"
-reqwest = { version = "0.11.6", features = ["default-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream", "socks"] }
-tempfile = { version = "3.2.0" }
-flate2 = "1.0.25"
+reqwest = { version = "0.11.18", features = ["default-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream", "socks"] }
+tempfile = { version = "3.5.0" }
+flate2 = "1.0.26"
 xz2 = { version = "0.1.7", features = ["tokio"] }
 hex = "0.4.3"
+async-compression = { version = "0.4.0", features = ["tokio", "all-algorithms"] }
 
 # Tokio, async
 async-recursion = "*"
 async-trait = "0.1.68"
 tokio = { version = "1.28.2", features = ["full"] }
 tokio-stream = { version = "0.1.14" }
-tokio-util = { version = "*", features = ["codec", "io"] }
+tokio-util = { version = "0.7.8", features = ["codec", "io"] }
 
 # Crypto et certs
 openssl = { version = "0.10.54", features = ["vendored"] }
@@ -35,8 +36,8 @@ base64 = "0.21.0"
 base64-url = "2.0.0"
 blake2 = "0.10.2"
 chacha20poly1305 = "0.10.1"
-#dryoc = { version = "0.5.0" }
-dryoc = { version = "0.3.14" }
+dryoc = { version = "0.5.0" }
+#dryoc = { version = "0.3.14" }
 zeroize = { version = "1.6.0", default-features = false }
 
 # JSON
