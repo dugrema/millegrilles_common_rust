@@ -297,7 +297,7 @@ async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, se
         // Transferer la transaction vers le processus d'ajout au catalogue
         sender.send(transaction).await?;
 
-        if compteur >= 100 || taille_transactions >= 500_000 {
+        if compteur >= TRANSACTIONS_MAX_NB || taille_transactions >= TRANSACTIONS_DECOMPRESSED_MAX_SIZE {
             debug!("verifier_transactions Transactions pour catalogue : {}, taille initiale : {}", compteur, taille_transactions);
             // Indiquer qu'on termine cette batch mais qu'il reste probablement des transactions
             return Ok(false)
