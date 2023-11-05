@@ -268,8 +268,6 @@ async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, se
 {
     debug!("verifier_transactions Debut");
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;  // !!! DEBUG !!!
-
     let mut compteur = 0;
     let mut taille_transactions = 0;  // Calcul la taille dechiffree/decompressee
     let options_validation = ValidationOptions::new(false, true, true);
