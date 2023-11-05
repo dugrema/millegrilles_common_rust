@@ -1,11 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, mpsc, Mutex};
 
 use async_std::fs::File;
+use async_std::prelude::FutureExt;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use futures::pin_mut;
 use log::{debug, error, info, warn};
 use mongodb::bson::{doc, Document};
 use mongodb::options::{FindOptions, Hint};
@@ -20,6 +22,7 @@ use tokio::fs::File as File_tokio;
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::try_join;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader, Result as TokioResult};
+use tokio::time::timeout;
 use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}, codec::{BytesCodec, FramedRead}};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
@@ -54,6 +57,7 @@ const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions p
 // Utilise pour ignorer des flags de demande de backup recus durant le backup
 const PERIODE_PROTECTION_FIN_COMPLET: i64 = 30_000;
 static mut DERNIER_BACKUP_COMPLET_FIN_DOMAINES: Option<HashMap<String, i64>> = None;
+const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
@@ -195,12 +199,34 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     // let fichiers_backup = generer_fichiers_backup(middleware, transactions, &workdir, &info_backup).await?;
     // emettre_backup_transactions(middleware, nom_coll_str, &fichiers_backup).await?;
 
-    generer_backup(middleware, curseur_transactions, &info_backup).await?;
+    let (tx_keepalive, rx_keepalive) = tokio::sync::oneshot::channel();
+    let handle_generer = generer_backup_wrapper(middleware, curseur_transactions, &info_backup, tx_keepalive);
+    let handle_keepalive = generer_keepalive(middleware, &info_backup, rx_keepalive);
+
+    let resultat = try_join!(handle_generer, handle_keepalive)?;
 
     // Emettre evenement fin backup pour le domaine
     emettre_evenement_backup(middleware, &info_backup, "backupTermine", &Utc::now()).await?;
 
     Ok(None)
+}
+
+async fn generer_backup_wrapper<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation, tx_keepalive: tokio::sync::oneshot::Sender<bool>)
+    -> Result<(), String>
+    where
+        M: MongoDao + ValidateurX509 + FormatteurMessage + VerificateurMessage + GenerateurMessages + ChiffrageFactoryTrait,
+        S: CurseurStream + Send + 'static
+{
+    let resultat = generer_backup(middleware, curseur, info_backup).await;
+
+    if let Err(e) = tx_keepalive.send(true) {
+        warn!("generer_backup_wrapper Erreur tx_keepalive.send : {:?}", e);
+    }
+
+    match resultat {
+        Ok(inner) => Ok(inner),
+        Err(e) => Err(format!("generer_backup_wrapper Erreur : {:?}", e))?
+    }
 }
 
 async fn generer_backup<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation)
@@ -212,8 +238,9 @@ async fn generer_backup<M,S>(middleware: &M, mut curseur: S, info_backup: &Backu
     let timestamp_backup = Utc::now();
     debug!("generer_fichiers_backup Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
     let mut termine = false;
-    while ! &termine {
+    let mut transactions_total: usize = 0;
 
+    while ! &termine {
         let (tx, rx) = tokio::sync::mpsc::channel(10);
 
         let handle_verifier = verifier_transactions(middleware, &mut curseur, tx);
@@ -240,6 +267,8 @@ async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, se
     where M: ValidateurX509 + VerificateurMessage, S: CurseurStream
 {
     debug!("verifier_transactions Debut");
+
+    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;  // !!! DEBUG !!!
 
     let mut compteur = 0;
     let mut taille_transactions = 0;  // Calcul la taille dechiffree/decompressee
@@ -311,13 +340,43 @@ async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, se
 async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<MessageSerialise>, info_backup: &BackupInformation) -> Result<(), String>
     where M: GenerateurMessages + ChiffrageFactoryTrait + MongoDao
 {
+    // Traiter transactions
     match _generer_catalogue_wrapper(middleware, receiver, info_backup).await {
         Ok(_) => Ok(()),
         Err(e) => Err(format!("generer_catalogue Erreur : {:?}", e))?
     }
 }
 
-async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<MessageSerialise>, info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
+async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, mut receiver: tokio::sync::oneshot::Receiver<bool>)
+    -> Result<(), String>
+    where M: GenerateurMessages
+{
+    debug!("generer_keepalive Debut");
+
+    let duration = tokio::time::Duration::from_secs(5);
+    pin_mut!(receiver);
+
+    loop {
+        match timeout(duration, &mut receiver).await {
+            Ok(_) => break,
+            Err(e) => {
+                // Ok, attendre
+            }
+        }
+
+        debug!("generer_keepalive Emettre keepalive");
+        if let Err(e) = emettre_evenement_backup(middleware, info_backup, CONST_EVENEMENT_KEEPALIVE, &Utc::now()).await {
+            warn!("generer_keepalive Erreur emission keepalive : {:?}", e);
+        }
+    }
+
+    debug!("generer_keepalive Fin");
+
+    Ok(())
+}
+
+async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<MessageSerialise>,
+                                       info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
     where M: GenerateurMessages + ChiffrageFactoryTrait + MongoDao
 {
     debug!("_generer_catalogue_wrapper Debut generer catalogue");
@@ -335,7 +394,7 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
 
     let (mut chiffreur, sender) = CompressionChiffrageProcessor::new();
 
-    let sender_handler = traiter_transactions_catalogue(&mut builder, &mut receiver, sender);
+    let sender_handler = traiter_transactions_catalogue(middleware, info_backup, &mut builder, &mut receiver, sender);
     let chiffreur_handler = chiffreur.run_vec(middleware.get_chiffrage_factory(), &mut buffer_output);
 
     let resultat = try_join!(sender_handler, chiffreur_handler)?;
@@ -357,21 +416,30 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
     Ok(())
 }
 
-async fn traiter_transactions_catalogue(
-    builder: &mut CatalogueBackupBuilder, receiver: &mut Receiver<MessageSerialise>, mut sender: Sender<TokioResult<Bytes>>)
+async fn traiter_transactions_catalogue<M>(
+    middleware: &M, info_backup: &BackupInformation, builder: &mut CatalogueBackupBuilder,
+    receiver: &mut Receiver<MessageSerialise>, mut sender: Sender<TokioResult<Bytes>>
+)
     -> Result<bool, String>
+    where M: GenerateurMessages
 {
-    match _traiter_transactions_catalogue_wrapper(builder, receiver, sender).await {
+    match _traiter_transactions_catalogue_wrapper(middleware, info_backup, builder, receiver, sender).await {
         Ok(inner) => Ok(inner),
         Err(e) => Err(format!("traiter_transactions_catalogue Erreur : {:?}", e))?
     }
 }
 
-async fn _traiter_transactions_catalogue_wrapper(
-    builder: &mut CatalogueBackupBuilder, receiver: &mut Receiver<MessageSerialise>, mut sender: Sender<TokioResult<Bytes>>)
+async fn _traiter_transactions_catalogue_wrapper<M>(
+    middleware: &M, info_backup: &BackupInformation, builder: &mut CatalogueBackupBuilder,
+    receiver: &mut Receiver<MessageSerialise>, mut sender: Sender<TokioResult<Bytes>>
+)
     -> Result<bool, Box<dyn Error>>
+    where M: GenerateurMessages
 {
     let mut messages_recus = false;
+
+    let mut dernier_evenement = Utc::now();
+    let intervalle_evenements = Duration::seconds(5);
 
     while let Some(mut transaction) = receiver.recv().await {
         messages_recus = true;  // S'assurer d'avoir au moins une transaction a traiter dans le catalogue
