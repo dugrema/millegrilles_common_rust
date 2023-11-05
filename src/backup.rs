@@ -46,8 +46,8 @@ use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMes
 
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
-const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 3 * 1024 * 1024;
-const TRANSACTIONS_MAX_SIZE: usize = 5 * 1024 * 1024;
+const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 5 * 1024 * 1024;
+const TRANSACTIONS_MAX_SIZE: usize = 10 * 1024 * 1024;
 const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions par fichier
 
 // Epoch en ms du demarrage du backup courant
