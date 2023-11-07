@@ -651,7 +651,11 @@ impl MessageMilleGrille {
     where
         S: Serialize,
     {
-        let map = serde_json::to_value(contenu).expect("value").as_object().expect("value map").to_owned();
+        let ser_va1 = serde_json::to_value(contenu)?;
+        let map = match ser_va1.as_object() {
+            Some(inner) => inner.to_owned(),
+            None => Err(format!("serialiser_contenu Contenu n'est pas un object (Map) : {:?}", ser_va1))?
+        };
         let contenu = preparer_btree_recursif(map)?;
         Ok(contenu)
     }
