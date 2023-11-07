@@ -213,6 +213,8 @@ pub struct ReponseInformationConsignationFichiers {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username_sftp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_sftp: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_path_sftp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_type_sftp: Option<String>,
@@ -231,13 +233,17 @@ pub struct ReponseInformationConsignationFichiers {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hostname_sftp_backup: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub port_sftp_backup: Option<String>,
+    pub port_sftp_backup: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username_sftp_backup: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_path_sftp_backup: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_type_sftp_backup: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_intervalle_secs: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_limit_bytes: Option<usize>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primaire: Option<bool>,
