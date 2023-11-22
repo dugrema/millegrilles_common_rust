@@ -1402,7 +1402,7 @@ fn bytes_to_part(filename: &str, contenu: Vec<u8>, mimetype: Option<&str>) -> Pa
 pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
     where M: MongoDao + GenerateurMessages,
 {
-    let collection = middleware.get_collection(nom_collection_transactions).expect("coll");
+    let collection = middleware.get_collection(nom_collection_transactions)?;
     let filtre = doc! { TRANSACTION_CHAMP_BACKUP_FLAG: true };
     let ops = doc! {
         "$set": {TRANSACTION_CHAMP_BACKUP_FLAG: false},
