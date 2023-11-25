@@ -89,3 +89,7 @@ pub struct CommandeCleRechiffree {
     pub ok: bool,
     pub cle: Option<String>,
 }
+
+pub trait CommandeUsager<'a> {
+    fn get_user_id(&'a self) -> Option<&'a str>;
+}
