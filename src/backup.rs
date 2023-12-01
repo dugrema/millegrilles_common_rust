@@ -412,8 +412,8 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
         buffer_output.len(), chiffrage_resultat.hachage, chiffrage_resultat.byte_count, chiffrage_resultat.cipher_data);
 
     // Generer le catalogue, emettre la commande pour sauvegarder le fichier
-    let catalogue = serialiser_catalogue(middleware, builder, &buffer_output, chiffrage_resultat, info_backup).await?;
-    debug!("_generer_catalogue_wrapper Catalogue chiffre et signe : {:?}", catalogue);
+    serialiser_catalogue(middleware, builder, &buffer_output, chiffrage_resultat, info_backup).await?;
+    debug!("_generer_catalogue_wrapper Catalogue chiffre et signe pour domaine {}, uuid {}", info_backup.domaine, info_backup.uuid_backup);
 
     debug!("_generer_catalogue_wrapper Fin generer catalogue");
     Ok(())
@@ -548,21 +548,6 @@ async fn serialiser_catalogue<M>(
 
     let uuid_message_backup = catalogue_signe.id.clone();
 
-    // Conserver les uuid_transactions separement (ne sont pas inclues dans la signature)
-    // match catalogue.uuid_transactions {
-    //     Some(u) => {
-    //         let mut attachements = match catalogue_signe.attachements.as_mut() {
-    //             Some(inner) => inner,
-    //             None => {
-    //                 catalogue_signe.attachements = Some(Map::new());
-    //                 catalogue_signe.attachements.as_mut().expect("attachements.as_mut")
-    //             }
-    //         };
-    //         attachements.insert("uuid_transactions".to_string(), serde_json::to_value(&u)?);
-    //     },
-    //     None => ()
-    // }
-
     debug!("sauvegarder_catalogue Catalogue serialise");
 
     let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions")
@@ -578,15 +563,15 @@ async fn serialiser_catalogue<M>(
             Some(r) => match r {
                 TypeMessage::Valide(r) => r,
                 _ => {
-                    Err(format!("emettre_backup_transactions Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup))?
+                    Err(format!("backup.serialiser_catalogue Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup))?
                 }
             },
             None => {
-                Err(format!("emettre_backup_transactions Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup))?
+                Err(format!("backup.serialiser_catalogue Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup))?
             }
         },
         Err(_) => {
-            Err(format!("emettre_backup_transactions Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup))?
+            Err(format!("backup.serialiser_catalogue Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup))?
         }
     };
 
@@ -596,7 +581,7 @@ async fn serialiser_catalogue<M>(
     if let Some(true) = reponse_mappee.ok {
         debug!("Catalogue transactions sauvegarde OK")
     } else {
-        Err(format!("Erreur sauvegarde catalogue transactions {:?}, ABORT. Erreur : {:?}",
+        Err(format!("backup.serialiser_catalogue Erreur sauvegarde catalogue transactions {:?} (application backup), ABORT. Erreur : {:?}",
                     nom_collection_transactions, reponse_mappee.err))?;
     }
 
