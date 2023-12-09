@@ -654,11 +654,12 @@ pub fn is_mimetype_video<S>(mimetype: S) -> bool
     where S: AsRef<str>
 {
     const VIDEO_START: &'static str = "video/";
-    const VIDEO_MIMETYPES: [&'static str; 4] = [
+    const VIDEO_MIMETYPES: [&'static str; 5] = [
         "application/vnd.rn-realmedia",
 		"application/vnd.rn-realplayer",
 		"application/x-mplayer2",
-		"application/x-shockwave-flash"
+		"application/x-shockwave-flash",
+        "application/vnd.ms-asf"
     ];
 
     let mimetype_str = mimetype.as_ref();
