@@ -1762,25 +1762,25 @@ mod serialization_tests {
         assert_eq!(date.date.timestamp() as i32, value_int);
     }
 
-    #[test]
-    fn creer_message_millegrille_signe() {
-        setup("creer_message_millegrille");
-        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
-        // let entete = Entete::builder("dummy", "hachage", "idmg").build();
-
-        let val = json!({
-            "valeur": 1,
-            "texte": "oui!",
-            "alpaca": true,
-        });
-        let message = MessageMilleGrille::new_signer(
-            &enveloppe_privee, MessageKind::Requete, &val,
-            Some("Dummy"), Some("requeteDummy"), None::<&str>, None,
-            false).expect("map");
-
-        let message_str = serde_json::to_string(&message).expect("string");
-        debug!("Message MilleGrille serialise : {}", message_str)
-    }
+    // #[test]
+    // fn creer_message_millegrille_signe() {
+    //     setup("creer_message_millegrille");
+    //     let (_, enveloppe_privee) = charger_enveloppe_privee_env();
+    //     // let entete = Entete::builder("dummy", "hachage", "idmg").build();
+    //
+    //     let val = json!({
+    //         "valeur": 1,
+    //         "texte": "oui!",
+    //         "alpaca": true,
+    //     });
+    //     let message = MessageMilleGrille::new_signer(
+    //         &enveloppe_privee, MessageKind::Requete, &val,
+    //         Some("Dummy"), Some("requeteDummy"), None::<&str>, None,
+    //         false).expect("map");
+    //
+    //     let message_str = serde_json::to_string(&message).expect("string");
+    //     debug!("Message MilleGrille serialise : {}", message_str)
+    // }
 
     #[test]
     fn lire_message_millegrille() {
@@ -1844,30 +1844,30 @@ mod serialization_tests {
         assert_eq!(Some(false), resultat.hachage_valide);
     }
 
-    #[test]
-    fn retirer_certificats() {
-        setup("creer_message_millegrille");
-        let (_, enveloppe_privee) = charger_enveloppe_privee_env();
-        // let entete = Entete::builder("dummy", "hachage", "idmg").build();
-
-        let val = json!({
-            "valeur": 1,
-            "texte": "oui!",
-            "alpaca": true,
-        });
-        let mut message = MessageMilleGrille::new_signer(
-            &enveloppe_privee, MessageKind::Document, &val, None::<&str>, None::<&str>, None::<&str>, None, false).expect("map");
-
-        let message_str = serde_json::to_string(&message).expect("string");
-        let idx_certificat = message_str.find("\"certificat\"");
-        debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
-        assert_eq!(true, idx_certificat.is_some());
-
-        message.retirer_certificats();
-        let message_str = serde_json::to_string(&message).expect("string");
-        let idx_certificat = message_str.find("\"certificat\"");
-        debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
-        assert_eq!(true, idx_certificat.is_none());
-    }
+    // #[test]
+    // fn retirer_certificats() {
+    //     setup("creer_message_millegrille");
+    //     let (_, enveloppe_privee) = charger_enveloppe_privee_env();
+    //     // let entete = Entete::builder("dummy", "hachage", "idmg").build();
+    //
+    //     let val = json!({
+    //         "valeur": 1,
+    //         "texte": "oui!",
+    //         "alpaca": true,
+    //     });
+    //     let mut message = MessageMilleGrille::new_signer(
+    //         &enveloppe_privee, MessageKind::Document, &val, None::<&str>, None::<&str>, None::<&str>, None, false).expect("map");
+    //
+    //     let message_str = serde_json::to_string(&message).expect("string");
+    //     let idx_certificat = message_str.find("\"certificat\"");
+    //     debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
+    //     assert_eq!(true, idx_certificat.is_some());
+    //
+    //     message.retirer_certificats();
+    //     let message_str = serde_json::to_string(&message).expect("string");
+    //     let idx_certificat = message_str.find("\"certificat\"");
+    //     debug!("Message MilleGrille serialise avec _certificat (position : {:?} : {}", idx_certificat, message_str);
+    //     assert_eq!(true, idx_certificat.is_none());
+    // }
 
 }

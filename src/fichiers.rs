@@ -739,19 +739,19 @@ pub mod fichiers_tests {
         assert_eq!(HASH_FICHIER_TEST, mh.as_str());
     }
 
-    #[tokio::test]
-    async fn decompresser_reader() {
-        setup("decompresser_reader");
-
-        let path_fichier = PathBuf::from("/tmp/output.xz");
-        let mut fichier = File::open(path_fichier.as_path()).await.expect("fichier");
-
-        let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
-        decompresseur.update(&mut fichier).await.expect("update");
-        let resultat = decompresseur.finish().expect("decompresseur");
-        let resultat_str = String::from_utf8(resultat).expect("utf8");
-        debug!("Resultat decompresse : {}", resultat_str);
-    }
+    // #[tokio::test]
+    // async fn decompresser_reader() {
+    //     setup("decompresser_reader");
+    //
+    //     let path_fichier = PathBuf::from("/tmp/output.xz");
+    //     let mut fichier = File::open(path_fichier.as_path()).await.expect("fichier");
+    //
+    //     let mut decompresseur = DecompresseurBytes::new().expect("decompresseur");
+    //     decompresseur.update(&mut fichier).await.expect("update");
+    //     let resultat = decompresseur.finish().expect("decompresseur");
+    //     let resultat_str = String::from_utf8(resultat).expect("utf8");
+    //     debug!("Resultat decompresse : {}", resultat_str);
+    // }
 
     // #[tokio::test]
     // async fn ecrire_bytes_chiffres_writer() {

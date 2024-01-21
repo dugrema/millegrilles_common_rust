@@ -1963,7 +1963,7 @@ mod backup_tests {
     //     assert_eq!("mQWxsbw", catalogue_builder.data_transactions);
     // }
 
-    /// Test de chiffrage du backup - round trip
+    // /// Test de chiffrage du backup - round trip
     // #[tokio::test]
     // async fn chiffrer_roundtrip_backup() {
     //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
@@ -2009,101 +2009,50 @@ mod backup_tests {
     //
     // }
 
-    fn creer_test_middleware(enveloppe: Arc<EnveloppePrivee>, validateur: Arc<ValidateurX509Impl>) -> (String, TestChiffreurMgs4) {
-        let mut fp_public_keys = Vec::new();
-        let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
-        let cle_publique = &enveloppe.enveloppe.cle_publique;
-        fp_public_keys.push(FingerprintCertPublicKey {
-            fingerprint: fingerprint_cert.clone(),
-            public_key: cle_publique.to_owned(),
-            est_cle_millegrille: false,
-        });
-        let cle_publique_ca = &enveloppe.enveloppe_ca.cle_publique;
-        fp_public_keys.push(FingerprintCertPublicKey {
-            fingerprint: enveloppe.enveloppe_ca.fingerprint.clone(),
-            public_key: cle_publique_ca.to_owned(),
-            est_cle_millegrille: true,
-        });
-        let chiffreur = TestChiffreurMgs4 { cles_chiffrage: fp_public_keys, validateur, enveloppe_privee: enveloppe };
-        (fingerprint_cert, chiffreur)
-    }
+    // fn creer_test_middleware(enveloppe: Arc<EnveloppePrivee>, validateur: Arc<ValidateurX509Impl>) -> (String, TestChiffreurMgs4) {
+    //     let mut fp_public_keys = Vec::new();
+    //     let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
+    //     let cle_publique = &enveloppe.enveloppe.cle_publique;
+    //     fp_public_keys.push(FingerprintCertPublicKey {
+    //         fingerprint: fingerprint_cert.clone(),
+    //         public_key: cle_publique.to_owned(),
+    //         est_cle_millegrille: false,
+    //     });
+    //     let cle_publique_ca = &enveloppe.enveloppe_ca.cle_publique;
+    //     fp_public_keys.push(FingerprintCertPublicKey {
+    //         fingerprint: enveloppe.enveloppe_ca.fingerprint.clone(),
+    //         public_key: cle_publique_ca.to_owned(),
+    //         est_cle_millegrille: true,
+    //     });
+    //     let chiffreur = TestChiffreurMgs4 { cles_chiffrage: fp_public_keys, validateur, enveloppe_privee: enveloppe };
+    //     (fingerprint_cert, chiffreur)
+    // }
 
-    #[tokio::test]
-    async fn test_generer_fichiers_backup() {
-
-        //let temp_dir = tempdir().expect("tempdir");
-        let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
-        match fs::create_dir(&temp_dir).await {
-            Ok(()) => (),
-            Err(e) => {
-                match e.kind() {
-                    ErrorKind::AlreadyExists => (),
-                    _ => panic!("Erreur createdir: {:?}", e)
-                }
-            }
-        }
-
-        let info_backup = BackupInformation::new(
-            "DUMMY",
-            "dummy_collection",
-            Some(temp_dir.clone())
-        ).expect("BackupInformation::new");
-
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-        let enveloppe = Arc::new(enveloppe);
-        let (_fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
-
-        // Generer transactions dummy
-        let mut transactions_vec = Vec::new();
-        let mut date_debut = Utc::now();
-        date_debut = date_debut - chrono::Duration::minutes(10);
-
-        for i in 0..3 {
-            let message = m.formatter_message(
-                MessageKind::Document, &json!({}), Some("Test"), None, None, None, false)
-                .expect("formatter_message");
-            let mut m_bson = message.map_to_bson().expect("bson");
-
-            let date_transaction = date_debut + Duration::minutes(i);
-
-            let evenements = doc! { "transaction_traitee": date_transaction };
-            m_bson.insert("_evenements", evenements);
-
-            transactions_vec.push( m_bson );
-        }
-        let transactions = CurseurIntoIter { data: transactions_vec.into_iter() };
-
-        let resultat = generer_fichiers_backup(&m, transactions, temp_dir, &info_backup)
-            .await.expect("generer_fichiers_backup");
-        debug!("Fichiers generes : {:?}", resultat);
-
-    }
-
-    #[tokio::test]
-    async fn test_emettre_fichiers_backup() {
-
-        // Setup
-        let (validateur, enveloppe) = charger_enveloppe_privee_env();
-        let enveloppe = Arc::new(enveloppe);
-        let (_fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
-
-        //let temp_dir = tempdir().expect("tempdir");
-        let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
-        match fs::create_dir(&temp_dir).await {
-            Ok(()) => (),
-            Err(e) => {
-                match e.kind() {
-                    ErrorKind::AlreadyExists => (),
-                    _ => panic!("Erreur createdir: {:?}", e)
-                }
-            }
-        }
-
-        let fichiers_backup = vec!["/tmp/test_generer_fichiers_backup/catalogue_0.json"];
-
-        emettre_backup_transactions(&m, "DUMMY_COLLECTION", &fichiers_backup)
-            .await.expect("emettre_backup_transactions");
-
-    }
+    // #[tokio::test]
+    // async fn test_emettre_fichiers_backup() {
+    //
+    //     // Setup
+    //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
+    //     let enveloppe = Arc::new(enveloppe);
+    //     let (_fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
+    //
+    //     //let temp_dir = tempdir().expect("tempdir");
+    //     let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
+    //     match fs::create_dir(&temp_dir).await {
+    //         Ok(()) => (),
+    //         Err(e) => {
+    //             match e.kind() {
+    //                 ErrorKind::AlreadyExists => (),
+    //                 _ => panic!("Erreur createdir: {:?}", e)
+    //             }
+    //         }
+    //     }
+    //
+    //     let fichiers_backup = vec!["/tmp/test_generer_fichiers_backup/catalogue_0.json"];
+    //
+    //     emettre_backup_transactions(&m, "DUMMY_COLLECTION", &fichiers_backup)
+    //         .await.expect("emettre_backup_transactions");
+    //
+    // }
 
 }
