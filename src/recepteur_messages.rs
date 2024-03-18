@@ -6,175 +6,16 @@ use std::sync::Arc;
 
 use lapin::message::Delivery;
 use log::{debug, error, info, trace, warn};
-use tokio::sync::mpsc::{Receiver, Sender};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef};
 use TypeMessageOut as TypeMessageIn;
 
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
-use crate::formatteur_messages::{MessageMilleGrille, MessageSerialise};
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{ChiffrageFactoryTrait, formatter_message_certificat, IsConfigurationPki};
-use crate::rabbitmq_dao::{AttenteReponse, MessageInterne, TypeMessageOut};
-use crate::transactions::TransactionImpl;
-use crate::verificateur::verifier_message;
-
-// /// Thread de traitement des messages
-// pub async fn recevoir_messages<M>(
-//     middleware: Arc<M>,
-//     mut rx: Receiver<MessageInterne>,
-//     tx_verifie: Sender<TypeMessage>,
-// )
-//     where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages
-// {
-//     debug!("recepteur_messages.recevoir_messages : Debut thread traiter_messages");
-//
-//     let mut map_attente: HashMap<String, AttenteReponse> = HashMap::new();
-//
-//     while let Some(mi) = rx.recv().await {
-//         trace!("recevoir_messages: Message recu : {:?}", mi);
-//
-//         let (delivery, nom_q, tx) = match mi {
-//             MessageInterne::Delivery(d, q) => {
-//                 debug!("recevoir_messages Delivery via {}", q);
-//                 (d, q, &tx_verifie)
-//             },
-//             MessageInterne::AttenteReponse(a) => {
-//                 debug!("recevoir_messages AttenteReponse {:?}", a);
-//                 map_attente.insert(a.correlation.clone(), a);
-//                 continue
-//             },
-//             MessageInterne::CancelDemandeReponse(fp) => {
-//                 debug!("recevoir_messages CancelDemandeReponse : {}", fp);
-//                 map_attente.remove(&fp);
-//                 continue
-//             },
-//             MessageInterne::Trigger(d, q) => {
-//                 debug!("recevoir_messages Trigger via {}", q);
-//                 (d, q, &tx_verifie)
-//             },
-//         };
-//
-//         // Extraire le contenu du message
-//         let mut contenu = match parse(delivery.data) {
-//             Ok(c) => c,
-//             Err(e) => {
-//                 error!("Erreur parsing message : {:?}", e);
-//                 continue
-//             }
-//         };
-//
-//         let entete = contenu.get_entete().clone();
-//         // let fingerprint_certificat = entete.fingerprint_certificat.as_str();
-//         debug!("Traiter message {:?}", entete);
-//
-//         // Extraire routing key pour gerer messages qui ne requierent pas de validation
-//         let (routing_key, type_message, domaine, action) = {
-//             let rk = delivery.routing_key.as_str();
-//             let ex = delivery.exchange.as_str();
-//             if ex == "" {
-//                 debug!("Reponse recue pour {:?}", entete.uuid_transaction);
-//                 (None, Some(TypeMessageIn::Reponse), None, None)
-//             } else {
-//                 let copie_rk = rk.to_owned();
-//                 let mut rk_split = copie_rk.split(".");
-//                 let type_str = rk_split.next().expect("Type message manquant de la RK");
-//                 let domaine: Option<String> = Some(rk_split.next().expect("Domaine manquant de la RK").into());
-//                 let action: Option<String> = Some(rk_split.last().expect("Action manquante de la RK").into());
-//                 let type_message = match type_str {
-//                     "requete" => Some(TypeMessageIn::Requete),
-//                     "evenement" => Some(TypeMessageIn::Evenement),
-//                     "commande" => Some(TypeMessageIn::Commande),
-//                     "transaction" => Some(TypeMessageIn::Transaction),
-//                     _ => None
-//                 };
-//
-//                 (Some(String::from(rk)), type_message, domaine, action)
-//             }
-//         };
-//
-//         // Valider le message. Si on a deja le certificat, on fait juste l'extraire du Option.
-//         if let Err(e) = valider_message(middleware.as_ref(), &mut contenu).await {
-//             error!("Erreur validation message : {:?}", e);
-//             continue;  // Skip
-//         }
-//
-//         let exchange = {
-//             let ex = delivery.exchange.as_str();
-//             if ex == "" {
-//                 None
-//             } else {
-//                 Some(String::from(ex))
-//             }
-//         };
-//         let properties = delivery.properties;
-//         let correlation_id = match properties.correlation_id() {
-//             Some(c) => Some(String::from(c.as_str())),
-//             None => None,
-//         };
-//         let reply_q = match properties.reply_to() {
-//             Some(q) => Some(String::from(q.as_str())),
-//             None => None,
-//         };
-//
-//         debug!("Message valide {:?}, passer a la prochaine etape (correlation: {:?})", &entete, correlation_id);
-//         let message = match action {
-//             Some(inner_action) => {
-//                 TypeMessage::ValideAction(MessageValideAction {
-//                     message: contenu,
-//                     q: nom_q,
-//                     reply_q,
-//                     correlation_id: correlation_id.clone(),
-//                     routing_key: routing_key.expect("routing key inconnue"),
-//                     domaine: domaine.expect("domaine inconnu"),
-//                     action: inner_action,
-//                     exchange,
-//                     type_message: type_message.clone().expect("type message inconnu"),
-//                 })
-//             },
-//             None => {
-//                 TypeMessage::Valide(MessageValide {
-//                     message: contenu,
-//                     q: nom_q,
-//                     reply_q,
-//                     correlation_id: correlation_id.clone(),
-//                     routing_key,
-//                     domaine,
-//                     exchange,
-//                     type_message: type_message.clone(),
-//                 })
-//             }
-//         };
-//
-//         // Verifier si le message est une reponse a une requete connue
-//         if let Some(tm) = type_message {
-//             if tm == TypeMessageOut::Reponse {
-//                 if let Some(cid) = &correlation_id {
-//                     debug!("Recu type message valide ... c'est une reponse? {}", cid);
-//                     if let Some(ma) = map_attente.remove(cid) {
-//                         debug!("Recu reponse pour message en attente sur {}", cid);
-//                         ma.sender.send(message).unwrap_or_else(|_e| error!("Erreur traitement reponse"));
-//                         continue
-//                     }
-//                 }
-//             }
-//         }
-//
-//         // Voir si on intercepte le message pour le passer a une chaine de traitement
-//         // differente.
-//         let intercepte = intercepter_message(middleware.as_ref(), &message).await;
-//
-//         // Passer le message pour traitement habituel
-//         if intercepte == false {
-//             debug!("Message valide, soumettre a tx_verifie : {:?}", &entete);
-//             tx.send(message).await.expect("tx_verifie");
-//         } else {
-//             debug!("Message valide et intercepte, pas soumis a tx_verifie : {:?}", &entete);
-//         }
-//
-//     }
-//     info!("recepteur_messages.recevoir_messages : Fin thread traiter_messages");
-// }
+use crate::rabbitmq_dao::TypeMessageOut;
+// use crate::verificateur::verifier_message;
 
 /// Traitement d'un message Delivery. Convertit en MessageMillegrille, valide le certificat
 pub async fn traiter_delivery<M,S>(
@@ -190,168 +31,122 @@ pub async fn traiter_delivery<M,S>(
     let nom_q = nom_queue.as_ref();
     debug!("recepteur_messages.traiter_delivery sur Q {}", nom_q);
 
-    // Extraire le contenu du message
-    let mut contenu = parse(delivery.data)?;
-    let correlation = contenu.parsed.id.clone();
-    debug!("Traiter message {:?}", correlation);
+    // Transferer le Vec<u8> du delivery vers un buffer de message et
+    // faire le parsing (validation structure).
+    let message: MessageMilleGrillesBufferDefault = delivery.data.into();
+    let (type_message, certificat) = {
+        let mut message_ref = message.parse()?;
 
-    // Extraire routing key pour gerer messages qui ne requierent pas de validation
-    let (routing_key, type_message, domaine, action) = {
+        // Verifier la signature du message. Lance une Err si le message est invalide.
+        message_ref.verifier_signature()?;
+
+        let correlation_id = match delivery.properties.correlation_id() {
+            Some(inner) => inner.as_str(),
+            None => message_ref.id
+        };
+        debug!("traiter_delivery Traiter message {:?}", correlation_id);
+
+        // Determiner le type de message (reponse ou action)
         let rk = delivery.routing_key.as_str();
         let ex = delivery.exchange.as_str();
-        if ex == "" {
-            debug!("Reponse recue pour {:?}", correlation);
-            (None, Some(TypeMessageIn::Reponse), None, None)
+
+        let type_message = if ex == "" {
+            // On a une reponse
+            let correlation_delivery = match delivery.properties.correlation_id() {
+                Some(inner) => inner.as_str(),
+                None => Err(String::from("traiter_delivery Reponse recue sans correlation_id - SKIP"))?
+            };
+            let routage = RoutageMessageReponse {
+                reply_to: nom_q.into(),
+                correlation_id: correlation_delivery.into(),
+            };
+            TypeMessageIn::Reponse(routage)
         } else {
-            let copie_rk = rk.to_owned();
-            let mut rk_split = copie_rk.split(".");
-            let type_str = rk_split.next().expect("Type message manquant de la RK");
-            let domaine: Option<String> = Some(rk_split.next().expect("Domaine manquant de la RK").into());
-            let action: Option<String> = Some(rk_split.last().expect("Action manquante de la RK").into());
-            let type_message = match type_str {
-                "requete" => Some(TypeMessageIn::Requete),
-                "evenement" => Some(TypeMessageIn::Evenement),
-                "commande" => Some(TypeMessageIn::Commande),
-                "transaction" => Some(TypeMessageIn::Transaction),
-                _ => None
+            // Message action
+            let mut rk_split = rk.split(".");
+            let type_message_string = match rk_split.next() {
+                Some(inner) => inner.to_ascii_lowercase(),
+                None => Err(String::from("traiter_delivery Message d'action avec routing_key vide - SKIP"))?
             };
 
-            (Some(String::from(rk)), type_message, domaine, action)
-        }
-    };
+            let message_routage = match &message_ref.routage {
+                Some(inner) => inner,
+                None => Err(String::from("traiter_delivery Message action sans routage dans le contenu - SKIP"))?
+            };
 
-    // Valider le message. Lance une Err si le message est invalide ou certificat inconnu.
-    valider_message(middleware, &mut contenu).await?;
+            let domaine = match message_routage.domaine {
+                Some(inner) => inner.to_owned(),
+                None => Err(String::from("traiter_delivery Message d'action sans domaine"))?
+            };
+            let action = match message_routage.action {
+                Some(inner) => inner.to_owned(),
+                None => Err(String::from("traiter_delivery Message d'action sans action"))?
+            };
+            let user_id = match message_routage.user_id {
+                Some(inner) => Some(inner.to_owned()),
+                None => None
+            };
+            let partition = match message_routage.partition {
+                Some(inner) => Some(inner.to_owned()),
+                None => None
+            };
+            let reply_to = match delivery.properties.reply_to() {
+                Some(inner) => Some(inner.as_str().to_owned()),
+                None => None
+            };
 
-    let exchange = {
-        let ex = delivery.exchange.as_str();
-        if ex == "" {
-            None
-        } else {
-            Some(String::from(ex))
-        }
-    };
-    let properties = &delivery.properties;
-    let correlation_id = match properties.correlation_id() {
-        Some(c) => Some(String::from(c.as_str())),
-        None => Some(correlation.clone()),
-    };
-    let reply_q = match properties.reply_to() {
-        Some(q) => Some(String::from(q.as_str())),
-        None => None,
-    };
-
-    debug!("Message valide {:?}, passer a la prochaine etape (correlation: {:?})", &correlation, correlation_id);
-    let message = match action {
-        Some(inner_action) => {
-            TypeMessage::ValideAction(MessageValideAction {
-                message: contenu,
-                q: nom_q.to_owned(),
-                reply_q,
-                correlation_id: correlation_id.clone(),
-                routing_key: routing_key.expect("routing key inconnue"),
-                domaine: domaine.expect("domaine inconnu"),
-                action: inner_action,
-                exchange,
-                type_message: type_message.clone().expect("type message inconnu"),
-            })
-        },
-        None => {
-            TypeMessage::Valide(MessageValide {
-                message: contenu,
-                q: nom_q.to_owned(),
-                reply_q,
-                correlation_id: correlation_id.clone(),
-                routing_key,
+            let routage = RoutageMessageAction {
                 domaine,
-                exchange,
-                type_message: type_message.clone(),
-            })
-        }
-    };
+                action,
+                user_id,
+                partition,
+                exchanges: vec![Securite::try_from(ex)?],
+                reply_to,
+                correlation_id: Some(correlation_id.to_owned()),
+                ajouter_reply_q: false,
+                blocking: None,
+                ajouter_ca: false,
+                timeout_blocking: None,
+            };
 
-    debug!("Message valide : {:?}", &correlation);
-    Ok(Some(message))
+            match type_message_string.as_str() {
+                "requete" => TypeMessageIn::Requete(routage),
+                "evenement" => TypeMessageIn::Evenement(routage),
+                "commande" => TypeMessageIn::Commande(routage),
+                "transaction" => TypeMessageIn::Transaction(routage),
+                _ => Err(format!("traiter_delivery Type message action non supporte : {}", type_message_string))?
+            }
+        };
+
+        // Valider le message. Lance une Err si le certificat est invalide ou inconnu.
+        let certificat = middleware.valider_certificat_message(&message_ref).await?;
+        if ! certificat.presentement_valide {
+            Err(String::from("Le certificat d'un message recu n'est pas presentement valide"))?
+        }
+
+        debug!("Message valide {}", correlation_id);
+        (type_message, certificat)
+    };
+    Ok(Some(TypeMessage::Valide(MessageValide { message, type_message, certificat })))
 }
 
-// pub struct RequeteCertificatInterne {
-//     delivery: Delivery,
-//     fingerprint: String,
-// }
-
-/// Task de requete et attente de reception de certificat
-// pub async fn task_requetes_certificats(middleware: Arc<impl GenerateurMessages>, mut rx: Receiver<RequeteCertificatInterne>, tx: Sender<MessageInterne>, skip_requete: bool) {
-//     info!("recepteur_messages.task_requetes_certificats : Demarrage thread");
-//     while let Some(req_cert) = rx.recv().await {
-//         let delivery = req_cert.delivery;
-//         let fingerprint = req_cert.fingerprint;
-//
-//         // todo Verifier dans redis si le certificat est deja en cache
-//
-//
-//         if !skip_requete {
-//             debug!("Faire une requete pour charger le certificat {}", fingerprint);
-//             let requete = json!({"fingerprint": fingerprint});
-//             // let domaine_action = format!("certificat.{}", fingerprint);
-//             // let message = MessageJson::new(requete);
-//             let routage = RoutageMessageAction::new("certificat", fingerprint.as_str());
-//             match middleware.transmettre_requete(routage, &requete).await {
-//                 Ok(_r) => {
-//                     tx.send(MessageInterne::Delivery(delivery, String::from("reponse")))
-//                         .await.expect("resend delivery avec certificat");
-//                     continue  // Ok
-//                 },
-//                 Err(e) => {
-//                     error!("Erreur / timeout sur demande certificat {} : {}", fingerprint, e);
-//                 }
-//             }
-//         }
-//
-//         // Certificat inconnu
-//         tx.send(MessageInterne::CancelDemandeReponse(fingerprint))
-//             .await.expect("cancel demande certificat sur timeout");
-//     }
-//
-//     info!("recepteur_messages.task_requetes_certificats : Fin thread");
-// }
-
 pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages
 {
     // Intercepter reponses et requetes de certificat
     match &message {
-        TypeMessage::Valide(inner) => {
-            match &inner.correlation_id {
-                Some(correlation_id) => {
-                    match correlation_id.as_str() {
+        TypeMessage::Valide(message_valide) => {
+            match &message_valide.type_message {
+                TypeMessageOut::Evenement(r) => {
+                    match r.action.as_str() {
+                        // PKI_REQUETE_CERTIFICAT => {
+                        //     info!("intercepter_messageEvenement certificat intercepte");
+                        //     traiter_certificatintercepter_message(middleware, message).await;
+                        //     true  // Intercepte
+                        // },
                         COMMANDE_CERT_MAITREDESCLES => {
-                            info!("intercepter_message Reponse certificat maitre des cles recus : {:?}", inner);
-                            match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
-                                Ok(_) => true,
-                                Err(e) => {
-                                    error!("intercepter_message Erreur interception certificat maitre des cles : {:?}", e);
-                                    false
-                                }
-                            }
-                        },
-                        _ => false
-                    }
-                },
-                None => false
-            }
-        },
-        TypeMessage::ValideAction(inner) => {
-            match inner.type_message {
-                TypeMessageIn::Evenement => {
-                    match inner.action.as_str() {
-                        PKI_REQUETE_CERTIFICAT => {
-                            info!("intercepter_messageEvenement certificat {}, message intercepte", inner.routing_key);
-                            traiter_certificatintercepter_message(middleware, inner).await;
-                            true  // Intercepte
-                        },
-                        COMMANDE_CERT_MAITREDESCLES => {
-                            info!("intercepter_messageEvenement certificat maitre des cles recus : {:?}", inner);
-                            match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
+                            info!("intercepter_messageEvenement certificat maitre des cles recus");
+                            match middleware.recevoir_certificat_chiffrage(middleware, message).await {
                                 Ok(_) => true,
                                 Err(e) => {
                                     error!("Erreur interception certificat maitre des cles : {:?}", e);
@@ -362,20 +157,64 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                         _ => false,
                     }
                 },
-                TypeMessageIn::Requete => {
-                    match inner.domaine.as_str() {
-                        "certificat" => {
-                            emettre_certificat(middleware, message, inner).await;
-                            true
-                        },
-                        _ => false,
-                    }
-                },
-                _ => {
-                    false // pas intercepte
-                }
+                _ => false
             }
+
+            // match &inner.correlation_id {
+            //     Some(correlation_id) => {
+            //         match correlation_id.as_str() {
+            //             COMMANDE_CERT_MAITREDESCLES => {
+            //                 info!("intercepter_message Reponse certificat maitre des cles recus : {:?}", inner);
+            //                 match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
+            //                     Ok(_) => true,
+            //                     Err(e) => {
+            //                         error!("intercepter_message Erreur interception certificat maitre des cles : {:?}", e);
+            //                         false
+            //                     }
+            //                 }
+            //             },
+            //             _ => false
+            //         }
+            //     },
+            //     None => false
+            // }
         },
+        // TypeMessage::ValideAction(inner) => {
+        //     match inner.type_message {
+        //         TypeMessageIn::Evenement => {
+        //             match inner.action.as_str() {
+        //                 PKI_REQUETE_CERTIFICAT => {
+        //                     info!("intercepter_messageEvenement certificat {}, message intercepte", inner.routing_key);
+        //                     traiter_certificatintercepter_message(middleware, inner).await;
+        //                     true  // Intercepte
+        //                 },
+        //                 COMMANDE_CERT_MAITREDESCLES => {
+        //                     info!("intercepter_messageEvenement certificat maitre des cles recus : {:?}", inner);
+        //                     match middleware.recevoir_certificat_chiffrage(middleware, &inner.message).await {
+        //                         Ok(_) => true,
+        //                         Err(e) => {
+        //                             error!("Erreur interception certificat maitre des cles : {:?}", e);
+        //                             false
+        //                         }
+        //                     }
+        //                 },
+        //                 _ => false,
+        //             }
+        //         },
+        //         TypeMessageIn::Requete => {
+        //             match inner.domaine.as_str() {
+        //                 "certificat" => {
+        //                     emettre_certificat(middleware, message, inner).await;
+        //                     true
+        //                 },
+        //                 _ => false,
+        //             }
+        //         },
+        //         _ => {
+        //             false // pas intercepte
+        //         }
+        //     }
+        // },
         TypeMessage::Certificat(_inner) => {
             // Rien a faire, le certificat a deja ete intercepte par ValidateurX509
             debug!("Message evenement certificat, message intercepte");
@@ -385,78 +224,78 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
     }
 }
 
-async fn emettre_certificat<M>(middleware: &M, message: &TypeMessage, inner: &MessageValideAction)
-    where M: GenerateurMessages
-{
-    let enveloppe_privee = middleware.get_enveloppe_signature();
-    let fingerprint = enveloppe_privee.fingerprint();
+// async fn emettre_certificat<M>(middleware: &M, type_message: &TypeMessage, message: &MessageMilleGrillesBufferDefault)
+//     where M: GenerateurMessages
+// {
+//     let enveloppe_privee = middleware.get_enveloppe_signature();
+//     let fingerprint = enveloppe_privee.fingerprint();
+//
+//     // Determiner si le message correspond a notre certificat (return immediatement sinon)
+//     if fingerprint.as_str() != inner.action.as_str() { return }
+//     let reply_q = match &inner.reply_q { Some(inner) => inner.as_str(), None => return};
+//     let correlation_id = match &inner.correlation_id { Some(inner) => inner.as_str(), None => return};
+//     debug!("Emettre certificat a demandeur sous correlation_id {}", correlation_id);
+//
+//     match preparer_reponse_certificats(
+//         middleware,
+//         message,
+//         enveloppe_privee.as_ref(),
+//         reply_q,
+//         correlation_id
+//     ).await {
+//         Ok(()) => (),
+//         Err(e) => error!("intercepter_message: Erreur emission reponse : {:?}", e)
+//     }
+//
+// }
 
-    // Determiner si le message correspond a notre certificat (return immediatement sinon)
-    if fingerprint.as_str() != inner.action.as_str() { return }
-    let reply_q = match &inner.reply_q { Some(inner) => inner.as_str(), None => return};
-    let correlation_id = match &inner.correlation_id { Some(inner) => inner.as_str(), None => return};
-    debug!("Emettre certificat a demandeur sous correlation_id {}", correlation_id);
+// async fn traiter_certificatintercepter_message<M>(middleware: &M, inner: &MessageValideAction)
+//     where M: ValidateurX509
+// {
+//     // Message deja intercepte par ValidateurX509, plus rien a faire.
+//     debug!("Evenement certificat {}, message intercepte", inner.routing_key);
+//
+//     // Charger / mettre certificat en cache au besoin.
+//     let m: MessageInfoCertificat = match inner.message.get_msg().map_contenu() {
+//         Ok(m) => m,
+//         Err(e) => {
+//             info!("Erreur lecture message infoCertificat : {:?}", e);
+//             return
+//         }
+//     };
+//
+//     match m.chaine_pem {
+//         Some(chaine_pem) => {
+//             let fingerprint = match m.fingerprint.as_ref() {
+//                 Some(f) => Some(f.as_str()),
+//                 None => None,
+//             };
+//             match middleware.charger_enveloppe(&chaine_pem, fingerprint, None).await {
+//                 Ok(e) => {
+//                     debug!("traiter_certificatintercepter_message Certificat intercepte {}", e.fingerprint);
+//                 },
+//                 Err(e) => info!("Erreur chargement message certificat.infoCertificat : {:?}", e)
+//             }
+//         },
+//         None => (),
+//     }
+//
+// }
 
-    match preparer_reponse_certificats(
-        middleware,
-        message,
-        enveloppe_privee.as_ref(),
-        reply_q,
-        correlation_id
-    ).await {
-        Ok(()) => (),
-        Err(e) => error!("intercepter_message: Erreur emission reponse : {:?}", e)
-    }
-
-}
-
-async fn traiter_certificatintercepter_message<M>(middleware: &M, inner: &MessageValideAction)
-    where M: ValidateurX509
-{
-    // Message deja intercepte par ValidateurX509, plus rien a faire.
-    debug!("Evenement certificat {}, message intercepte", inner.routing_key);
-
-    // Charger / mettre certificat en cache au besoin.
-    let m: MessageInfoCertificat = match inner.message.get_msg().map_contenu() {
-        Ok(m) => m,
-        Err(e) => {
-            info!("Erreur lecture message infoCertificat : {:?}", e);
-            return
-        }
-    };
-
-    match m.chaine_pem {
-        Some(chaine_pem) => {
-            let fingerprint = match m.fingerprint.as_ref() {
-                Some(f) => Some(f.as_str()),
-                None => None,
-            };
-            match middleware.charger_enveloppe(&chaine_pem, fingerprint, None).await {
-                Ok(e) => {
-                    debug!("traiter_certificatintercepter_message Certificat intercepte {}", e.fingerprint);
-                },
-                Err(e) => info!("Erreur chargement message certificat.infoCertificat : {:?}", e)
-            }
-        },
-        None => (),
-    }
-
-}
-
-async fn preparer_reponse_certificats<M>(
-    middleware: &M,
-    _message: &TypeMessage,
-    enveloppe_privee: &EnveloppePrivee,
-    reply_q: &str,
-    correlation_id: &str
-) -> Result<(), Box<dyn Error>>
-    where M:  GenerateurMessages
-{
-    let message_value = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref())?;
-    let message = middleware.formatter_reponse(message_value, None)?;
-    let routage = RoutageMessageReponse::new(reply_q, correlation_id);
-    Ok(middleware.repondre(routage, message).await?)
-}
+// async fn preparer_reponse_certificats<M>(
+//     middleware: &M,
+//     _message: &TypeMessage,
+//     enveloppe_privee: &EnveloppePrivee,
+//     reply_q: &str,
+//     correlation_id: &str
+// ) -> Result<(), Box<dyn Error>>
+//     where M:  GenerateurMessages
+// {
+//     let message_value = formatter_message_certificat(enveloppe_privee.enveloppe.as_ref())?;
+//     let message = middleware.formatter_reponse(message_value, None)?;
+//     let routage = RoutageMessageReponse::new(reply_q, correlation_id);
+//     Ok(middleware.repondre(routage, message).await?)
+// }
 
 // async fn traiter_certificat_attache(validateur: &impl ValidateurX509, certificat: &Value, fingerprint: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
 //     debug!("Recu certficat attache {:?}", certificat);
@@ -481,128 +320,133 @@ async fn preparer_reponse_certificats<M>(
 //     Ok(enveloppe)
 // }
 
-fn parse<D>(data: D) -> Result<MessageSerialise, String>
-    where D: Into<Vec<u8>>
-{
-    let data = match String::from_utf8(data.into()) {
-        Ok(data) => data,
-        Err(e) => {
-            return Err(format!("Erreur message n'est pas UTF-8 : {:?}", e))
-        }
-    };
-
-    let message_serialise = match MessageSerialise::try_from(data) {
-        Ok(m) => m,
-        Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}", e))?,
-    };
-
-    Ok(message_serialise)
-}
+// fn parse<'a, D>(data: D) -> Result<(MessageMilleGrillesBufferDefault, MessageMilleGrillesRef<'a, 4>), String>
+//     where D: Into<Vec<u8>>
+// {
+//     let message: MessageMilleGrillesBufferDefault = data.into().into();
+//     let message_parsed = match message.parse() {
+//         Ok(inner) => inner,
+//         Err(e) => Err(e.to_string())?
+//     };
+//
+//     Ok((message, message_parsed))
+//
+//     // Valider la structure du message
+//
+//     // let data = match String::from_utf8(data.into()) {
+//     //     Ok(data) => data,
+//     //     Err(e) => {
+//     //         return Err(format!("Erreur message n'est pas UTF-8 : {:?}", e))
+//     //     }
+//     // };
+//     //
+//     // let message_serialise = match MessageSerialise::try_from(data) {
+//     //     Ok(m) => m,
+//     //     Err(e) => Err(format!("Erreur lecture JSON message : erreur {:?}", e))?,
+//     // };
+//     //
+//     // Ok(message_serialise)
+// }
 
 #[derive(Clone, Debug)]
 pub struct MessageValide {
-    pub message: MessageSerialise,
-    pub q: String,
-    pub reply_q: Option<String>,
-    pub correlation_id: Option<String>,
-    pub routing_key: Option<String>,
-    pub domaine: Option<String>,
-    pub exchange: Option<String>,
-    pub type_message: Option<TypeMessageIn>,
-}
-
-#[derive(Clone, Debug)]
-pub struct MessageValideAction {
-    pub message: MessageSerialise,
-    pub q: String,
-    pub reply_q: Option<String>,
-    pub correlation_id: Option<String>,
-    pub routing_key: String,
-    pub domaine: String,
-    pub action: String,
-    pub exchange: Option<String>,
+    pub message: MessageMilleGrillesBufferDefault,
     pub type_message: TypeMessageIn,
-}
-impl MessageValideAction {
-    pub fn new<'a,S>(message: MessageSerialise, q: S, routing_key: S, domaine: S, action: S, type_message: TypeMessageIn)
-        -> Self
-        where S: Into<String>
-    {
-        MessageValideAction {
-            message,
-            q: q.into(),
-            reply_q: None,
-            correlation_id: None,
-            routing_key: routing_key.into(),
-            domaine: domaine.into(),
-            action: action.into(),
-            exchange: None,
-            type_message,
-        }
-    }
-
-    pub fn from_message_millegrille(message: MessageMilleGrille, type_message: TypeMessageIn) -> Result<Self, Box<dyn Error>> {
-        let (domaine, action) = match message.routage.as_ref() {
-            Some(inner) => {
-                if inner.domaine.is_none() {
-                    Err(format!("MessageValideAction.from_message_millegrille Domaine None"))?;
-                }
-                if inner.action.is_none() {
-                    Err(format!("MessageValideAction.from_message_millegrille Action None"))?;
-                }
-                (inner.domaine.as_ref().expect("domaine").to_owned(), inner.action.as_ref().expect("action").to_owned())
-            },
-            None => Err(format!("MessageValideAction.from_message_millegrille Routage absent"))?
-        };
-
-        let message_serialize = MessageSerialise::from_parsed(message)?;
-
-        Ok(Self::new(message_serialize, "interne", "interne",
-                     domaine.as_str(), action.as_str(), type_message))
-    }
-
-    pub fn get_reply_info(&self) -> Result<(String, String), String> {
-        let reply_q = match &self.reply_q {
-            Some(r) => r.to_owned(),
-            None => Err(format!("Reply Q manquante"))?
-        };
-        let correlation_id = match &self.correlation_id {
-            Some(r) => r.to_owned(),
-            None => Err(format!("Correlation id manquant"))?
-        };
-
-        Ok((reply_q, correlation_id))
-    }
-
-    pub fn get_partition(&self) -> Option<&str> {
-        let routing_key: Vec<&str> = self.routing_key.split(".").collect();
-        if routing_key.len() == 4 {
-            Some(*routing_key.get(2).expect("get"))
-        } else {
-            None
-        }
-    }
-
-}
-impl TryInto<TransactionImpl> for MessageValideAction {
-    type Error = Box<dyn Error>;
-
-    fn try_into(self) -> Result<TransactionImpl, Self::Error> {
-        TransactionImpl::try_from(self.message)
-    }
+    pub certificat: Arc<EnveloppeCertificat>,
 }
 
-#[derive(Debug)]
-pub struct MessageTrigger {
-    pub message: MessageMilleGrille,
-    pub enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
-    pub reply_q: Option<String>,
-    pub correlation_id: Option<String>,
-    pub routing_key: Option<String>,
-    pub domaine: Option<String>,
-    pub exchange: Option<String>,
-    pub type_message: Option<TypeMessageIn>,
-}
+// #[derive(Clone, Debug)]
+// pub struct MessageValideAction {
+//     pub message: MessageMilleGrillesBufferDefault,
+//     // pub q: String,
+//     // pub reply_q: Option<String>,
+//     // pub correlation_id: Option<String>,
+//     // pub routing_key: String,
+//     // pub domaine: String,
+//     // pub action: String,
+//     // pub exchange: Option<String>,
+//     pub type_message: TypeMessageIn,
+// }
+// impl MessageValideAction {
+//     pub fn new<'a,S>(message: MessageSerialise, q: S, routing_key: S, domaine: S, action: S, type_message: TypeMessageIn)
+//         -> Self
+//         where S: Into<String>
+//     {
+//         MessageValideAction {
+//             message,
+//             q: q.into(),
+//             reply_q: None,
+//             correlation_id: None,
+//             routing_key: routing_key.into(),
+//             domaine: domaine.into(),
+//             action: action.into(),
+//             exchange: None,
+//             type_message,
+//         }
+//     }
+//
+//     pub fn from_message_millegrille(message: MessageMilleGrille, type_message: TypeMessageIn) -> Result<Self, Box<dyn Error>> {
+//         let (domaine, action) = match message.routage.as_ref() {
+//             Some(inner) => {
+//                 if inner.domaine.is_none() {
+//                     Err(format!("MessageValideAction.from_message_millegrille Domaine None"))?;
+//                 }
+//                 if inner.action.is_none() {
+//                     Err(format!("MessageValideAction.from_message_millegrille Action None"))?;
+//                 }
+//                 (inner.domaine.as_ref().expect("domaine").to_owned(), inner.action.as_ref().expect("action").to_owned())
+//             },
+//             None => Err(format!("MessageValideAction.from_message_millegrille Routage absent"))?
+//         };
+//
+//         let message_serialize = MessageSerialise::from_parsed(message)?;
+//
+//         Ok(Self::new(message_serialize, "interne", "interne",
+//                      domaine.as_str(), action.as_str(), type_message))
+//     }
+//
+//     pub fn get_reply_info(&self) -> Result<(String, String), String> {
+//         let reply_q = match &self.reply_q {
+//             Some(r) => r.to_owned(),
+//             None => Err(format!("Reply Q manquante"))?
+//         };
+//         let correlation_id = match &self.correlation_id {
+//             Some(r) => r.to_owned(),
+//             None => Err(format!("Correlation id manquant"))?
+//         };
+//
+//         Ok((reply_q, correlation_id))
+//     }
+//
+//     pub fn get_partition(&self) -> Option<&str> {
+//         let routing_key: Vec<&str> = self.routing_key.split(".").collect();
+//         if routing_key.len() == 4 {
+//             Some(*routing_key.get(2).expect("get"))
+//         } else {
+//             None
+//         }
+//     }
+//
+// }
+// impl TryInto<TransactionImpl> for MessageValideAction {
+//     type Error = Box<dyn Error>;
+//
+//     fn try_into(self) -> Result<TransactionImpl, Self::Error> {
+//         TransactionImpl::try_from(self.message)
+//     }
+// }
+
+// #[derive(Debug)]
+// pub struct MessageTrigger {
+//     pub message: MessageMilleGrille,
+//     pub enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
+//     pub reply_q: Option<String>,
+//     pub correlation_id: Option<String>,
+//     pub routing_key: Option<String>,
+//     pub domaine: Option<String>,
+//     pub exchange: Option<String>,
+//     pub type_message: Option<TypeMessageIn>,
+// }
 
 #[derive(Clone, Debug)]
 pub struct MessageCertificat {
@@ -612,7 +456,6 @@ pub struct MessageCertificat {
 #[derive(Clone, Debug)]
 pub enum TypeMessage {
     Valide(MessageValide),
-    ValideAction(MessageValideAction),
     Certificat(MessageCertificat),
     Regeneration,
 }
@@ -623,7 +466,7 @@ pub struct ErreurValidation {
 }
 
 impl ErreurValidation {
-    fn new(verification: ErreurVerification) -> Self {
+    pub fn new(verification: ErreurVerification) -> Self {
         Self {
             verification
         }
@@ -648,98 +491,49 @@ pub enum ErreurVerification {
     ErreurGenerique,
 }
 
-impl VerificateurPermissions for MessageValideAction {
-    fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
-        self.message.get_extensions()
-    }
-}
+// impl VerificateurPermissions for MessageValide {
+//     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
+//         self.message.get_extensions()
+//     }
+// }
 
-pub async fn valider_message<M>(
-    middleware: &M,
-    message: &mut MessageSerialise
-)
-    -> Result<(), ErreurValidation>
-    where M: ValidateurX509 + GenerateurMessages
-{
-
-    match &message.certificat {
-        Some(_) => (),
-        None => {
-            // let entete = message.get_entete();
-            let fingerprint = message.parsed.pubkey.as_str();
-            let certificat = match &message.get_msg().certificat {
-                Some(c) => {
-                    // Utiliser certificat attache au besoin
-                    let ca_pem = match &message.parsed.millegrille {
-                        Some(c) => Some(c.as_str()),
-                        None => None
-                    };
-                    match middleware.charger_enveloppe(&c, Some(fingerprint), ca_pem).await {
-                        Ok(e) => {
-                            // Set le certificat dans le message
-                            Ok(e)
-                        },
-                        Err(e) => {
-                            error!("Erreur chargement certificat {:?}", e);
-                            return Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))
-                        }
-                    }
-                },
-                None => {
-                    match middleware.get_certificat(fingerprint).await {
-                        Some(e) => {
-                            Ok(e)
-                        },
-                        None => {return Err(ErreurValidation::new(ErreurVerification::CertificatInconnu(fingerprint.into())))}
-                    }
-                }
-            }?;
-            message.set_certificat(certificat);
-
-            // Charger certificat de millegrille si present
-            match &message.get_msg().millegrille {
-                Some(c) => {
-                    let vec_cert = vec!(c.to_owned());
-                    // Utiliser certificat attache
-                    match middleware.charger_enveloppe(&vec_cert, None, None).await {
-                        Ok(e) => {
-                            // Set le certificat de millegrille dans le message
-                            message.set_millegrille(e);
-                        },
-                        Err(e) => {
-                            error!("Erreur chargement certificat {:?}", e);
-                            Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))?
-                        }
-                    }
-                },
-                None => ()
-            }
-        }
-    };
-
-    match verifier_message(message, middleware, None) {
-        Ok(v) => {
-            if v.valide() == true {
-                Ok(())
-            } else if v.signature_valide == false {
-                error!("verifier_message Signature invalide : {:?}", message);
-                Err(ErreurValidation::new(ErreurVerification::SignatureInvalide))
-            } else if v.certificat_valide == false {
-                Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))
-            } else if let Some(hachage_valide) = v.hachage_valide {
-                if hachage_valide == false {
-                    Err(ErreurValidation::new(ErreurVerification::HachageInvalide))
-                } else {
-                    Err(ErreurValidation::new(ErreurVerification::SignatureInvalide))
-                }
-            } else {
-                Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))
-            }
-        },
-        Err(e) => {
-            warn!("Validation message est invalide : {:?}", e);
-            Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))
-        },
-    }
-
-}
+// /// Valide le certificat de MilleGrillesRef pour le message.
+// pub async fn valider_certificat<'a, M, const C: usize>(
+//     middleware: &M,
+//     message: &mut MessageMilleGrillesRef<'a, C>
+// )
+//     -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
+//     where M: ValidateurX509 + GenerateurMessages
+// {
+//     // Verifier la signature du message. Lance une Err si invalide.
+//     if let Err(_) = message.verifier_signature() {
+//         Err(ErreurValidation::new(ErreurVerification::SignatureInvalide))?
+//     }
+//
+//     // Recuperer le certificat du message.
+//     let pubkey = message.pubkey;
+//     let certificat_pem = message.certificat.as_ref();
+//
+//     let enveloppe = if middleware.est_cache(pubkey) || certificat_pem.is_none() {
+//         // Utiliser le middleware pour recuperer le certificat
+//         match middleware.get_certificat(pubkey).await {
+//             Some(inner) => inner,
+//             None => Err(ErreurValidation::new(ErreurVerification::CertificatInconnu(pubkey.into())))?
+//         }
+//     } else {
+//         // Charger le certificat recu avec le message
+//         let vec_pem: Vec<String> = certificat_pem.unwrap().iter().map(|s| s.to_string()).collect();
+//         match middleware.charger_enveloppe(&vec_pem, Some(pubkey), message.millegrille).await {
+//             Ok(inner) => inner,
+//             Err(_) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+//         }
+//     };
+//
+//     match middleware.valider_pour_date(enveloppe.as_ref(), &message.estampille) {
+//         Ok(inner) => match inner {
+//             true => Ok(enveloppe),
+//             false => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))
+//         },
+//         Err(e) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))
+//     }
+// }

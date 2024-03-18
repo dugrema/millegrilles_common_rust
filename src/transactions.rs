@@ -7,6 +7,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
+use millegrilles_cryptographie::messages_structs::{RoutageMessage, epochseconds, optionepochseconds, MessageMilleGrillesBufferDefault};
 use mongodb::{bson::doc, Collection, Cursor};
 use mongodb::bson as bson;
 use mongodb::bson::{Bson, Document};
@@ -19,12 +20,13 @@ use tokio_stream::StreamExt;
 
 use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, FingerprintCert, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
-use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille, MessageMilleGrilleIdentificateurs, MessageSerialise, RoutageMessage};
+use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::messages_generiques::CommandeUsager;
 use crate::middleware::{map_serializable_to_bson, requete_certificat};
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
-use crate::verificateur::VerificateurMessage;
+use crate::recepteur_messages::{MessageValide, TypeMessage};
+// use crate::verificateur::VerificateurMessage;
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
@@ -55,8 +57,8 @@ pub async fn transmettre_evenement_persistance<S>(
         evenement_map.insert("correlation_id".into(), Value::from(correlation_id.to_owned()));
     }
 
-    let mut routage_builder = RoutageMessageAction::builder(domaine.as_ref(), EVENEMENT_TRANSACTION_PERSISTEE)
-        .exchanges(vec!(Securite::L4Secure));
+    let mut routage_builder = RoutageMessageAction::builder(
+        domaine.as_ref(), EVENEMENT_TRANSACTION_PERSISTEE, vec!(Securite::L4Secure));
     if let Some(p) = partition {
         routage_builder = routage_builder.partition(p.as_str());
     }
@@ -87,7 +89,7 @@ impl TriggerTransaction {
     }
 }
 
-pub async fn charger_transaction<M>(middleware: &M, nom_collection: &str, trigger: &TriggerTransaction) -> Result<TransactionImpl, String>
+pub async fn charger_transaction<M>(middleware: &M, nom_collection: &str, trigger: &TriggerTransaction) -> Result<TransactionValide, String>
 where
     M: ValidateurX509 + MongoDao,
 {
@@ -98,7 +100,7 @@ where
     let uuid_transaction = trigger.id.as_str();
 
     // Charger transaction a partir de la base de donnees
-    let collection = middleware.get_collection(nom_collection)?;
+    let collection = middleware.get_collection_typed::<TransactionOwned>(nom_collection)?;
 
     let filtre = doc! {TRANSACTION_CHAMP_ID: uuid_transaction};
 
@@ -111,29 +113,19 @@ where
     }
 }
 
-async fn extraire_transaction(validateur: &impl ValidateurX509, doc_transaction: Document) -> Result<TransactionImpl, String> {
-    let enveloppe = {
-        let fingerprint = match doc_transaction.get_str(TRANSACTION_CHAMP_PUBKEY) {
-            Ok(inner) => inner,
-            Err(e) => Err(format!("transactions.extraire_transaction Erreur champ pubkey absent : {:?}  doc ({:?})", e, doc_transaction))?
-        };
-
+async fn extraire_transaction(validateur: &impl ValidateurX509, transaction: TransactionOwned) -> Result<TransactionValide, String> {
+    let certificat = {
+        let fingerprint = transaction.pubkey.as_str();
         match validateur.get_certificat(fingerprint).await {
-            Some(e) => Some(e.clone()),
-            None => None,
+            Some(e) => e.clone(),
+            None => Err(format!("extraire_transaction Certificat {} introuvable", fingerprint))?,
         }
     };
-
-    match TransactionImpl::new(doc_transaction, enveloppe) {
-        Ok(inner) => Ok(inner),
-        Err(e) => Err(format!("transactions.extraire_transaction Erreur TransactionImpl::new() : {:?}", e))
-    }
+    Ok(TransactionValide { transaction, certificat })
 }
 
 pub trait Transaction: Clone + Debug + Send + Sync {
     fn get_contenu(&self) -> &str;
-    // fn contenu(self) -> Document;
-    // fn get_entete(&self) -> &Document;
     fn get_routage(&self) -> &RoutageMessage;
     fn get_id(&self) -> &str;
     fn get_uuid_transaction(&self) -> &str;
@@ -145,231 +137,295 @@ pub trait Transaction: Clone + Debug + Send + Sync {
         where S: DeserializeOwned;
 }
 
-#[derive(Clone, Debug, Deserialize)]
-/// Permet de charger une transaction MilleGrille
-pub struct DocumentTransactionMillegrille {
-    /// Identificateur unique du message. Correspond au hachage blake2s-256 en hex.
-    pub id: String,
+// #[derive(Clone, Debug, Deserialize)]
+// /// Permet de charger une transaction MilleGrille
+// pub struct DocumentTransactionMillegrille {
+//     /// Identificateur unique du message. Correspond au hachage blake2s-256 en hex.
+//     pub id: String,
+//
+//     /// Cle publique du certificat utilise pour la signature
+//     pub pubkey: String,
+//
+//     /// Date de creation du message
+//     #[serde(with = "epochseconds")]
+//     pub estampille: DateTime<Utc>,
+//
+//     /// Kind du message, correspond a enum MessageKind
+//     pub kind: u16,
+//
+//     /// Contenu du message en format json-string
+//     pub contenu: String,
+//
+//     /// Information de routage de message (optionnel, depend du kind)
+//     pub routage: Option<RoutageMessage>,
+//
+//     /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
+//     #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
+//     pub pre_migration: Option<HashMap<String, Value>>,
+//
+//     /// Signature ed25519 encodee en hex
+//     #[serde(rename = "sig")]
+//     pub signature: String,
+//
+//     /// Chaine de certificats en format PEM.
+//     #[serde(rename = "certificat", skip_serializing_if = "Option::is_none")]
+//     pub certificat: Option<Vec<String>>,
+//
+//     /// Certificat de millegrille (root).
+//     #[serde(rename = "millegrille", skip_serializing_if = "Option::is_none")]
+//     pub millegrille: Option<String>,
+//
+//     #[serde(rename = "_evenements", skip_serializing_if = "Option::is_none")]
+//     pub evenements: Option<HashMap<String, Value>>,
+//
+//     #[serde(skip)]
+//     contenu_valide: Option<(bool, bool)>,
+// }
 
-    /// Cle publique du certificat utilise pour la signature
-    pub pubkey: String,
+// pub struct TransactionOwned {
+//     pub message: MessageMilleGrillesOwned,
+//     pub certificat: Arc<EnveloppeCertificat>,
+// }
+//
+// impl TryInto<MessageValide> for TransactionOwned {
+//     type Error = String;
+//
+//     fn try_into(self) -> Result<MessageValide, Self::Error> {
+//         let kind = self.message.kind.clone();
+//         let routage_message = self.message.routage.clone();
+//
+//         let buffer = match serde_json::to_vec(&self.message) {
+//             Ok(inner) => inner,
+//             Err(e) => Err(format!("try_into Erreur : {:?}", e))?
+//         };
+//         let message = MessageMilleGrillesBufferDefault::from(buffer);
+//
+//         let type_message = match kind {
+//             MessageKind::Document => Err(String::from("Non supporte"))?,
+//             MessageKind::Requete |
+//             MessageKind::Commande |
+//             MessageKind::Transaction |
+//             MessageKind::Evenement => {
+//                 let routage = match &routage_message {
+//                     Some(inner) => inner,
+//                     None => Err(String::from("Non supporte"))?
+//                 };
+//                 let domaine = match routage.domaine.as_ref() {
+//                     Some(inner) => inner.to_owned(),
+//                     None => Err(String::from("Domaine requis"))?
+//                 };
+//                 let action = match routage.action.as_ref() {
+//                     Some(inner) => inner.to_owned(),
+//                     None => Err(String::from("Action requise"))?
+//                 };
+//
+//                 let routage = RoutageMessageAction::builder(domaine, action, vec![]).build();
+//
+//                 MessageValide {
+//                     message,
+//                     type_message: TypeMessage,
+//                     certificat: self.certificat,
+//                 }
+//             }
+//             MessageKind::Reponse => {
+//
+//             }
+//             MessageKind::ReponseChiffree |
+//             MessageKind::TransactionMigree |
+//             MessageKind::CommandeInterMillegrille => {
+//                 Err(String::from("Non supporte"))?
+//             }
+//         }
+//
+//         Ok(MessageValide{
+//             message,
+//             type_message: (),
+//             certificat: self.certificat,
+//         })
+//     }
+// }
 
-    /// Date de creation du message
-    pub estampille: DateEpochSeconds,
+// #[derive(Clone, Debug, Serialize)]
+// pub struct TransactionImpl {
+//     id: String,
+//     pubkey: String,
+//     estampille: DateTime<Utc>,
+//     kind: u16,
+//     contenu: String,
+//     routage: RoutageMessage,
+//     #[serde(rename="pre-migration")]
+//     pre_migration: Option<HashMap<String, Value>>,
+//     sig: String,
+//     #[serde(rename="_evenements")]
+//     evenements: HashMap<String, Value>,
+//     #[serde(skip)]
+//     enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
+// }
 
-    /// Kind du message, correspond a enum MessageKind
-    pub kind: u16,
+// impl TransactionImpl {
+//     pub fn new(enveloppe_transaction: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> Result<TransactionImpl, Box<dyn Error>> {
+//         let message_transaction: DocumentTransactionMillegrille = convertir_bson_deserializable(enveloppe_transaction)?;
+//         let uuid_transaction = message_transaction.id;
+//
+//         // let entete = contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
+//         let routage = match message_transaction.routage {
+//             Some(inner) => inner,
+//             None => Err(format!("transactions.TransactionImpl Routage absent de la transaction {}", uuid_transaction))?
+//         };
+//
+//         let evenements = match message_transaction.evenements {
+//             Some(inner) => inner,
+//             None => HashMap::new()
+//         };
+//
+//         Ok(TransactionImpl {
+//             id: uuid_transaction,
+//             pubkey: message_transaction.pubkey,
+//             estampille: message_transaction.estampille.get_datetime().to_owned(),
+//             kind: message_transaction.kind,
+//             contenu: message_transaction.contenu,
+//             routage,
+//             pre_migration: message_transaction.pre_migration,
+//             sig: message_transaction.signature,
+//             evenements,
+//             enveloppe_certificat,
+//         })
+//     }
+//
+//     pub fn set_evenements(&mut self, evenements: HashMap<String, Value>) {
+//         self.evenements = evenements;
+//     }
+// }
 
-    /// Contenu du message en format json-string
-    pub contenu: String,
+// impl TryFrom<MessageSerialise> for TransactionImpl {
+//     type Error = Box<dyn Error>;
+//
+//     fn try_from(value: MessageSerialise) -> Result<Self, Self::Error> {
+//         let routage = match value.parsed.routage {
+//             Some(inner) => inner,
+//             None => Err(format!("TryFrom<MessageSerialise> for TransactionImpl Routage absent"))?
+//         };
+//         Ok(TransactionImpl {
+//             id: value.parsed.id,
+//             pubkey: value.parsed.pubkey,
+//             estampille: value.parsed.estampille.get_datetime().to_owned(),
+//             kind: value.parsed.kind,
+//             contenu: value.parsed.contenu,
+//             routage,
+//             pre_migration: value.parsed.pre_migration,
+//             sig: value.parsed.signature,
+//             evenements: Default::default(),
+//             enveloppe_certificat: value.certificat,
+//         })
+//     }
+// }
 
-    /// Information de routage de message (optionnel, depend du kind)
-    pub routage: Option<RoutageMessage>,
+// impl Transaction for TransactionImpl {
+//
+//     fn get_contenu(&self) -> &str {
+//         self.contenu.as_str()
+//     }
+//
+//     fn get_routage(&self) -> &RoutageMessage {
+//         &self.routage
+//     }
+//
+//     fn get_id(&self) -> &str {
+//         &self.id
+//     }
+//
+//     fn get_uuid_transaction(&self) -> &str {
+//         self.get_id()
+//     }
+//
+//     fn get_estampille(&self) -> &DateTime<Utc> {
+//         &self.estampille
+//     }
+//
+//     fn get_enveloppe_certificat(&self) -> Option<&EnveloppeCertificat> {
+//         match &self.enveloppe_certificat {
+//             Some(e) => Some(e.as_ref()),
+//             None => None,
+//         }
+//     }
+//
+//     fn get_evenements(&self) -> &HashMap<String, Value> {
+//         &self.evenements
+//     }
+//
+//     fn convertir<S>(self) -> Result<S, Box<dyn Error>>
+//         where S: DeserializeOwned
+//     {
+//         Ok(serde_json::from_str(self.contenu.as_str())?)
+//     }
+// }
 
-    /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
-    #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
-    pub pre_migration: Option<HashMap<String, Value>>,
+// impl VerificateurPermissions for TransactionImpl {
+//     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
+//         match &self.enveloppe_certificat {
+//             Some(e) => e.get_extensions(),
+//             None => None,
+//         }
+//     }
+// }
 
-    /// Signature ed25519 encodee en hex
-    #[serde(rename = "sig")]
-    pub signature: String,
+// #[derive(Clone, Debug, Serialize)]
+// pub struct TransactionPersistee {
+//     id: String,
+//     pubkey: String,
+//     estampille: DateEpochSeconds,
+//     kind: u16,
+//     contenu: String,
+//     routage: RoutageMessage,
+//     #[serde(rename="pre-migration", skip_serializing_if = "Option::is_none")]
+//     pre_migration: Option<HashMap<String, Value>>,
+//     sig: String,
+//     #[serde(rename="_evenements")]
+//     pub evenements: Map<String, Value>,
+// }
 
-    /// Chaine de certificats en format PEM.
-    #[serde(rename = "certificat", skip_serializing_if = "Option::is_none")]
-    pub certificat: Option<Vec<String>>,
-
-    /// Certificat de millegrille (root).
-    #[serde(rename = "millegrille", skip_serializing_if = "Option::is_none")]
-    pub millegrille: Option<String>,
-
-    #[serde(rename = "_evenements", skip_serializing_if = "Option::is_none")]
-    pub evenements: Option<HashMap<String, Value>>,
-
-    #[serde(skip)]
-    contenu_valide: Option<(bool, bool)>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct TransactionImpl {
-    id: String,
-    pubkey: String,
-    estampille: DateTime<Utc>,
-    kind: u16,
-    contenu: String,
-    routage: RoutageMessage,
-    #[serde(rename="pre-migration")]
-    pre_migration: Option<HashMap<String, Value>>,
-    sig: String,
-    #[serde(rename="_evenements")]
-    evenements: HashMap<String, Value>,
-    #[serde(skip)]
-    enveloppe_certificat: Option<Arc<EnveloppeCertificat>>,
-}
-
-impl TransactionImpl {
-    pub fn new(enveloppe_transaction: Document, enveloppe_certificat: Option<Arc<EnveloppeCertificat>>) -> Result<TransactionImpl, Box<dyn Error>> {
-        let message_transaction: DocumentTransactionMillegrille = convertir_bson_deserializable(enveloppe_transaction)?;
-        let uuid_transaction = message_transaction.id;
-
-        // let entete = contenu.get_document(TRANSACTION_CHAMP_ENTETE).expect("en-tete");
-        let routage = match message_transaction.routage {
-            Some(inner) => inner,
-            None => Err(format!("transactions.TransactionImpl Routage absent de la transaction {}", uuid_transaction))?
-        };
-
-        let evenements = match message_transaction.evenements {
-            Some(inner) => inner,
-            None => HashMap::new()
-        };
-
-        Ok(TransactionImpl {
-            id: uuid_transaction,
-            pubkey: message_transaction.pubkey,
-            estampille: message_transaction.estampille.get_datetime().to_owned(),
-            kind: message_transaction.kind,
-            contenu: message_transaction.contenu,
-            routage,
-            pre_migration: message_transaction.pre_migration,
-            sig: message_transaction.signature,
-            evenements,
-            enveloppe_certificat,
-        })
-    }
-
-    pub fn set_evenements(&mut self, evenements: HashMap<String, Value>) {
-        self.evenements = evenements;
-    }
-}
-
-impl TryFrom<MessageSerialise> for TransactionImpl {
-    type Error = Box<dyn Error>;
-
-    fn try_from(value: MessageSerialise) -> Result<Self, Self::Error> {
-        let routage = match value.parsed.routage {
-            Some(inner) => inner,
-            None => Err(format!("TryFrom<MessageSerialise> for TransactionImpl Routage absent"))?
-        };
-        Ok(TransactionImpl {
-            id: value.parsed.id,
-            pubkey: value.parsed.pubkey,
-            estampille: value.parsed.estampille.get_datetime().to_owned(),
-            kind: value.parsed.kind,
-            contenu: value.parsed.contenu,
-            routage,
-            pre_migration: value.parsed.pre_migration,
-            sig: value.parsed.signature,
-            evenements: Default::default(),
-            enveloppe_certificat: value.certificat,
-        })
-    }
-}
-
-impl Transaction for TransactionImpl {
-
-    fn get_contenu(&self) -> &str {
-        self.contenu.as_str()
-    }
-
-    fn get_routage(&self) -> &RoutageMessage {
-        &self.routage
-    }
-
-    fn get_id(&self) -> &str {
-        &self.id
-    }
-
-    fn get_uuid_transaction(&self) -> &str {
-        self.get_id()
-    }
-
-    fn get_estampille(&self) -> &DateTime<Utc> {
-        &self.estampille
-    }
-
-    fn get_enveloppe_certificat(&self) -> Option<&EnveloppeCertificat> {
-        match &self.enveloppe_certificat {
-            Some(e) => Some(e.as_ref()),
-            None => None,
-        }
-    }
-
-    fn get_evenements(&self) -> &HashMap<String, Value> {
-        &self.evenements
-    }
-
-    fn convertir<S>(self) -> Result<S, Box<dyn Error>>
-        where S: DeserializeOwned
-    {
-        Ok(serde_json::from_str(self.contenu.as_str())?)
-    }
-}
-
-impl VerificateurPermissions for TransactionImpl {
-    fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
-        match &self.enveloppe_certificat {
-            Some(e) => e.get_extensions(),
-            None => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct TransactionPersistee {
-    id: String,
-    pubkey: String,
-    estampille: DateEpochSeconds,
-    kind: u16,
-    contenu: String,
-    routage: RoutageMessage,
-    #[serde(rename="pre-migration", skip_serializing_if = "Option::is_none")]
-    pre_migration: Option<HashMap<String, Value>>,
-    sig: String,
-    #[serde(rename="_evenements")]
-    pub evenements: Map<String, Value>,
-}
-
-impl TryFrom<MessageSerialise> for TransactionPersistee {
-    type Error = Box<dyn Error>;
-
-    fn try_from(mut value: MessageSerialise) -> Result<Self, Self::Error> {
-        let routage = match value.parsed.routage {
-            Some(inner) => inner,
-            None => Err(format!("TryFrom<MessageSerialise> for TransactionPersistee Routage absent"))?
-        };
-
-        let evenements = match value.parsed.attachements.take() {
-            Some(inner) => match inner.get("evenements") {
-                Some(evenements) => match evenements.as_object() {
-                    Some(inner) => inner.to_owned(),
-                    None => {
-                        debug!("attachements.evenements - mauvais format (pas dict) (1)");
-                        Map::new()
-                    }
-                },
-                None => {
-                    debug!("attachements.evenements absent (2)");
-                    Map::new()
-                }
-            },
-            None => {
-                debug!("attachements absent (3)");
-                Map::new()
-            }
-        };
-
-        Ok(TransactionPersistee {
-            id: value.parsed.id,
-            pubkey: value.parsed.pubkey,
-            estampille: value.parsed.estampille,
-            kind: value.parsed.kind,
-            contenu: value.parsed.contenu,
-            routage,
-            pre_migration: value.parsed.pre_migration,
-            sig: value.parsed.signature,
-            evenements,
-        })
-    }
-}
+// impl TryFrom<MessageSerialise> for TransactionPersistee {
+//     type Error = Box<dyn Error>;
+//
+//     fn try_from(mut value: MessageSerialise) -> Result<Self, Self::Error> {
+//         let routage = match value.parsed.routage {
+//             Some(inner) => inner,
+//             None => Err(format!("TryFrom<MessageSerialise> for TransactionPersistee Routage absent"))?
+//         };
+//
+//         let evenements = match value.parsed.attachements.take() {
+//             Some(inner) => match inner.get("evenements") {
+//                 Some(evenements) => match evenements.as_object() {
+//                     Some(inner) => inner.to_owned(),
+//                     None => {
+//                         debug!("attachements.evenements - mauvais format (pas dict) (1)");
+//                         Map::new()
+//                     }
+//                 },
+//                 None => {
+//                     debug!("attachements.evenements absent (2)");
+//                     Map::new()
+//                 }
+//             },
+//             None => {
+//                 debug!("attachements absent (3)");
+//                 Map::new()
+//             }
+//         };
+//
+//         Ok(TransactionPersistee {
+//             id: value.parsed.id,
+//             pubkey: value.parsed.pubkey,
+//             estampille: value.parsed.estampille,
+//             kind: value.parsed.kind,
+//             contenu: value.parsed.contenu,
+//             routage,
+//             pre_migration: value.parsed.pre_migration,
+//             sig: value.parsed.signature,
+//             evenements,
+//         })
+//     }
+// }
 
 pub enum EtatTransaction {
     Complete,
@@ -427,7 +483,8 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
     let exp_transactions = chrono::Utc::now() - chrono::Duration::days(15);
 
     for nom_collection in collections_transactions {
-        let collection = middleware.get_collection(nom_collection.as_str())?;
+        let collection =
+            middleware.get_collection_typed::<TransactionRef>(nom_collection.as_str())?;
 
         // Marquer les tranactions avec un compteur de resoumission >= limite comme abandonnees (erreur).
         let filtre_expiree = doc! {
@@ -482,11 +539,18 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
             "$inc": { TRANSACTION_CHAMP_COMPTE_RESOUMISE: 1 },
             "$currentDate": { TRANSACTION_CHAMP_DATE_RESOUMISE: true }
         };
-        while let Some(Ok(d)) = curseur.next().await {
-            let id_doc = d.get("_id").expect("_id");
-            let filtre_transaction_resoumise = doc! {"_id": id_doc};
+        // while let Some(Ok(transaction)) = curseur.next().await {
+        while match curseur.advance().await { Ok(inner) => inner, Err(e) => Err(String::from("Erreur curseur.advance"))?} {
+            let transaction = match curseur.deserialize_current() {
+                Ok(inner) => inner,
+                Err(e) => {
+                    warn!("Transaction mal formattee dans {} : {:?}", nom_collection, e);
+                    continue
+                }
+            };
+            let filtre_transaction_resoumise = doc! {"id": &transaction.id};
 
-            let resultat = resoumettre(middleware, &collection, &ops, d).await;
+            let resultat = resoumettre(middleware, &transaction).await;
 
             match resultat {
                 Ok(_) => {
@@ -508,69 +572,50 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
     Ok(())
 }
 
-async fn resoumettre<M>(middleware: &M, _collection: &Collection<Document>, _ops: &Document, d: Document) -> Result<(), ErreurResoumission>
+async fn resoumettre<'a, M>(middleware: &M, transaction: &TransactionRef<'a>) -> Result<(), ErreurResoumission>
 where
     M: GenerateurMessages + MongoDao
 {
-    let message_ids: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(d.clone()) {
-        Ok(inner) => inner,
-        Err(e) => {
-            error!("Identificateurs transactions illisibles, transaction ne peut pas etre re-emise {:?}Transaction: \n{:?}", e, d);
-            Err(ErreurResoumission::new(false, None::<String>))?
-        }
-    };
-
-    let uuid_transaction = message_ids.id.as_str();
-
-    let routage = match message_ids.routage {
-        Some(inner) => inner,
-        None => {
-            error!("Identificateurs routage absents, transaction ne peut pas etre re-emise. Transaction: \n{:?}", d);
-            Err(ErreurResoumission::new(false, Some(uuid_transaction.to_string())))?
-        }
-    };
-
-    // let entete_value = match d.get("en-tete") {
-    //     Some(e) => e,
-    //     None => {
-    //         error!("Erreur chargement entete pour resoumission de {:?}", d);
-    //         Err(ErreurResoumission::new(false, None::<String>))?
-    //     },
-    // };
-    // let entete: Entete = match serde_json::from_value::<Entete>(serde_json::to_value(entete_value).expect("val")) {
-    //     Ok(e) => e,
+    // let message_ids: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(d.clone()) {
+    //     Ok(inner) => inner,
     //     Err(e) => {
-    //         error!("En-tete illisible, transaction ne peut pas etre re-emise {:?}Transaction: \n{:?}", e, d);
+    //         error!("Identificateurs transactions illisibles, transaction ne peut pas etre re-emise {:?}Transaction: \n{:?}", e, d);
     //         Err(ErreurResoumission::new(false, None::<String>))?
     //     }
     // };
 
-    let domaine = match routage.domaine.as_ref() {
-        Some(d) => d.as_str(),
+    let uuid_transaction = transaction.id;
+
+    let routage = match &transaction.routage {
+        Some(inner) => inner,
         None => {
-            error!("Domaine absent, transaction ne peut etre re-emise : {:?}", d);
+            error!("Identificateurs routage absents, transaction ne peut pas etre re-emise. Message id: {}", uuid_transaction);
+            Err(ErreurResoumission::new(false, Some(uuid_transaction.to_string())))?
+        }
+    };
+
+    let domaine = match routage.domaine.as_ref() {
+        Some(d) => *d,
+        None => {
+            error!("Domaine absent, transaction ne peut etre re-emise : {}", uuid_transaction);
             Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
         }
     };
     let action = match routage.action.as_ref() {
-        Some(a) => a.as_str(),
+        Some(a) => *a,
         None => {
-            error!("Action absente, transaction ne peut etre re-emise : {:?}", d);
+            error!("Action absente, transaction ne peut etre re-emise : {}", uuid_transaction);
             Err(ErreurResoumission::new(false, Some(uuid_transaction)))?
         }
     };
     let partition = match routage.partition.as_ref() {
-        Some(p) => Some(p),
+        Some(p) => Some(p.to_string()),
         None => None
     };
 
-    // let filtre_transaction_resoumise = doc! {
-    //             TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: uuid_transaction,
-    //         };
-
     debug!("Transaction a resoumettre : {}", uuid_transaction);
     let resultat = transmettre_evenement_persistance(
-        middleware, uuid_transaction, domaine, action, partition, None, None).await;
+        middleware, uuid_transaction, domaine, action, partition.as_ref(), None, None).await;
 
     match &resultat {
         Ok(()) => {
@@ -601,7 +646,7 @@ impl ErreurResoumission {
     }
 }
 
-pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut transactions: Vec<TransactionPersistee>)
+pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut transactions: Vec<&mut TransactionRef<'a>>)
     -> Result<ResultatBatchInsert, String>
     where M: MongoDao
 {
@@ -649,25 +694,28 @@ pub async fn sauvegarder_batch<M>(middleware: &M, nom_collection: &str, mut tran
 
         // Serialiser les transactions vers le format bson
         while let Some(mut t) = transactions.pop() {
-            debug!("sauvegarder_batch Message a serialiser en bson : {:?}", t);
+            debug!("sauvegarder_batch Message a serialiser en bson Id: {}", t.id);
 
             // Injecter backup flag true (c'est une restoration, le backup existe deja)
-            match t.evenements.get("backup_flag") {
+            let evenements = match t.evenements.as_mut() {
+                Some(inner) => inner,
+                None => {
+                    t.evenements = Some(HashMap::new());
+                    t.evenements.as_mut().unwrap()
+                }
+            };
+            match evenements.get("backup_flag") {
                 Some(Value::Bool(true)) => {
                     // Ok
                 },
                 _ => {
                     // Set flag a true
-                    t.evenements.insert("backup_flag".into(), Value::Bool(true));
+                    evenements.insert("backup_flag".into(), Value::Bool(true));
                 }
             }
 
-            //if uuid_transactions.contains(&t.id) {
-                let bson_doc = bson::to_document(&t).expect("serialiser bson");
-                transactions_bson.push(bson_doc);
-            // } else {
-            //     debug!("sauvegarder_batch Skip transaction existante : {}", t.id);
-            // }
+            let bson_doc = bson::to_document(&t).expect("serialiser bson");
+            transactions_bson.push(bson_doc);
         }
 
     }
@@ -783,7 +831,7 @@ struct EvenementRegeneration {
 pub async fn regenerer<M,D,T>(middleware: &M, nom_domaine: D, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
     -> Result<(), Box<dyn Error>>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
+    M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
     D: AsRef<str>,
     T: TraiterTransaction,
 {
@@ -814,7 +862,7 @@ where
             .hint(Hint::Name(String::from("backup_transactions")))
             .build();
 
-        let collection_transactions = middleware.get_collection(nom_collection_transactions)?;
+        let collection_transactions = middleware.get_collection_typed::<TransactionRef>(nom_collection_transactions)?;
         if skip_certificats == false {
             let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
             regenerer_charger_certificats(middleware, curseur_certs, skip_certificats).await?;
@@ -826,8 +874,7 @@ where
     }?;
 
     {
-        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ)
-            .exchanges(vec![Securite::L3Protege])
+        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
             .build();
         let message = EvenementRegeneration { ok: true, termine: false, domaine: nom_domaine.into(), position: Some(0), err: None };
         if let Err(e) = middleware.emettre_evenement(routage, &message).await {
@@ -847,8 +894,7 @@ where
     middleware.reset_regeneration(); // Reactiver emission de messages
 
     {
-        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ)
-            .exchanges(vec![Securite::L3Protege])
+        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
             .build();
         let message = EvenementRegeneration { ok: true, termine: true, domaine: nom_domaine.into(), position: None, err: None };
         if let Err(e) = middleware.emettre_evenement(routage, &message).await {
@@ -867,19 +913,22 @@ where
 // }
 
 // S'assurer d'avoir tous les certificats dans redis ou cache
-async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Document>, skip_certificats: bool) -> Result<(), Box<dyn Error>>
+async fn regenerer_charger_certificats<'a, M>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, skip_certificats: bool)
+    -> Result<(), Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
-    while let Some(result) = curseur.next().await {
-        let transaction = result?;
+    //while let Some(result) = curseur.next().await {
+    while curseur.advance().await? {
+        let transaction = curseur.deserialize_current()?;
+        // let message = result?;
 
-        let message_identificateurs: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(transaction.clone()) {
-            Ok(inner) => inner,
-            Err(_e) => {
-                error!("transactions.regenerer_transactions Erreur transaction chargement identificateurs - ** SKIP **");
-                continue  // Skip
-            }
-        };
+        // let message_identificateurs: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(transaction.clone()) {
+        //     Ok(inner) => inner,
+        //     Err(_e) => {
+        //         error!("transactions.regenerer_transactions Erreur transaction chargement identificateurs - ** SKIP **");
+        //         continue  // Skip
+        //     }
+        // };
 
         // let entete = match get_entete_from_doc(&transaction) {
         //     Ok(t) => t,
@@ -889,14 +938,14 @@ async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Do
         //     }
         // };
 
-        let fingerprint_certificat = message_identificateurs.pubkey.as_str();
+        let fingerprint_certificat = transaction.pubkey;
         if middleware.get_certificat(fingerprint_certificat).await.is_none() {
             debug!("Certificat {} inconnu, charger via PKI", fingerprint_certificat);
             if requete_certificat(middleware, fingerprint_certificat).await?.is_none() {
                 warn!("Certificat {} inconnu, ** SKIP **", fingerprint_certificat);
             }
         }
-        if let Some(pre_migration) = message_identificateurs.pre_migration.as_ref() {
+        if let Some(pre_migration) = transaction.pre_migration.as_ref() {
             if let Some(pubkey) = pre_migration.get("pubkey") {
                 if let Some(pubkey_str) = pubkey.as_str() {
                     if middleware.get_certificat(pubkey_str).await.is_none() {
@@ -918,34 +967,38 @@ async fn regenerer_charger_certificats<M>(middleware: &M, mut curseur: Cursor<Do
 #[derive(Clone, Debug, Deserialize)]
 struct PreMigration {
     id: Option<String>,
-    estampille: Option<DateEpochSeconds>,
+    #[serde(with = "optionepochseconds")]
+    estampille: Option<DateTime<Utc>>,
     pubkey: Option<String>,
     idmg: Option<String>,
 }
 
-async fn regenerer_transactions<M, T>(middleware: &M, mut curseur: Cursor<Document>, processor: &T, skip_certificats: bool)
+async fn regenerer_transactions<'a, M, T>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
     -> Result<(), Box<dyn Error>>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
+    M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
     T: TraiterTransaction,
 {
-    while let Some(result) = curseur.next().await {
-        let transaction = result?;
+    // while let Some(result) = curseur.next().await {
+    while curseur.advance().await? {
+        let mut transaction = curseur.deserialize_current()?;
+        // let mut message = result?;
 
-        //let entete = match get_entete_from_doc(&transaction) {
-        let message_identificateurs: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(transaction.clone()) {
-            Ok(t) => t,
-            Err(_e) => {
-                error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
-                continue  // Skip
-            }
-        };
+        // //let entete = match get_entete_from_doc(&transaction) {
+        // let message_identificateurs: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(transaction.clone()) {
+        //     Ok(t) => t,
+        //     Err(_e) => {
+        //         error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
+        //         continue  // Skip
+        //     }
+        // };
 
-        let uuid_transaction = message_identificateurs.id.as_str();
-        debug!("regenerer_transactions Traiter transaction : {:?}", uuid_transaction);
+        // let uuid_transaction = message_identificateurs.id.as_str();
+        let message_id = transaction.id.to_owned();
+        debug!("regenerer_transactions Traiter transaction : {:?}", message_id);
 
         // Charger pubkey du certificat - en cas de migration, utiliser certificat original
-        let pre_migration = match message_identificateurs.pre_migration {
+        let pre_migration = match &transaction.pre_migration {
             Some(inner) => {
                 // Mapper pre-migration
                 Some(serde_json::from_value::<PreMigration>(serde_json::to_value(inner)?)?)
@@ -953,49 +1006,50 @@ where
             None => None
         };
 
-        let pubkey = match &message_identificateurs.kind {
-            &KIND_TRANSACTION_MIGREE => {
-                match &pre_migration {
-                    Some(inner) => match inner.pubkey.as_ref() {
-                        Some(inner) => inner.as_str(),
-                        None => message_identificateurs.pubkey.as_str()
-                    },
-                    None => message_identificateurs.pubkey.as_str()
-                }
-            },
-            _ => message_identificateurs.pubkey.as_str()
-        };
+        let certificat = {
+            let pubkey = match &transaction.kind {
+                millegrilles_cryptographie::messages_structs::MessageKind::TransactionMigree => {
+                    // &KIND_TRANSACTION_MIGREE => {
+                    match &pre_migration {
+                        Some(inner) => match inner.pubkey.as_ref() {
+                            Some(inner) => inner.as_str(),
+                            None => transaction.pubkey
+                        },
+                        None => transaction.pubkey
+                    }
+                },
+                _ => transaction.pubkey
+            };
 
-        let certificat = match middleware.get_certificat(pubkey).await {
-            Some(c) => Some(c),
-            None => {
-                if skip_certificats == false {
+            match middleware.get_certificat(pubkey).await {
+                Some(c) => c,
+                None => {
                     warn!("Certificat {} inconnu, ** SKIP **", pubkey);
                     continue;
                 }
-                None
             }
         };
-        let mut transaction_impl = TransactionImpl::new(transaction, certificat)?;
+        let mut transaction = TransactionValide { transaction: transaction.into(), certificat };
 
         if let Some(overrides) = pre_migration {
             if let Some(id) = overrides.id {
                 debug!("Override attributs pre_migration dans la transaction, nouvel id {}", id);
-                transaction_impl.id = id;
+                // transaction_impl.id = id;
+                transaction.transaction.id = id;
             }
             if let Some(pubkey) = overrides.pubkey {
                 debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
-                transaction_impl.pubkey = pubkey;
+                transaction.transaction.pubkey = pubkey;
             }
             if let Some(estampille) = overrides.estampille {
                 debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
-                transaction_impl.estampille = estampille.get_datetime().to_owned();
+                transaction.transaction.estampille = estampille.clone();
             }
         }
 
-        match processor.appliquer_transaction(middleware, transaction_impl).await {
+        match processor.appliquer_transaction(middleware, transaction).await {
             Ok(_resultat) => (),
-            Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", uuid_transaction, e)
+            Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", message_id, e)
         }
     }
 
@@ -1004,8 +1058,8 @@ where
 
 #[async_trait]
 pub trait TraiterTransaction {
-    async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionImpl) -> Result<Option<MessageMilleGrille>, String>
-        where M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage;
+    async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionValide) -> Result<Option<MessageMilleGrillesBufferDefault>, String>
+        where M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/;
 }
 
 /// Retourne le user_id dans la commande si certificat est exchange 2.prive, 3.protege ou 4.secure

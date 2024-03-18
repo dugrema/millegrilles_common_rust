@@ -27,7 +27,7 @@ use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, DecipherMgs4, Mgs4Cip
 use crate::constantes::*;
 use crate::generateur_messages::GenerateurMessages;
 use crate::hachages::Hacheur;
-use crate::verificateur::VerificateurMessage;
+// use crate::verificateur::VerificateurMessage;
 
 const PRESET_COMPRESSION_XZ: u32 = 6;
 const BUFFER_SIZE: usize = 64 * 1024;
@@ -647,7 +647,7 @@ impl CompressionChiffrageProcessor {
 #[async_trait]
 pub trait TraiterFichier {
     async fn traiter_fichier<M>(&mut self, middleware: &M, nom_fichier: &async_std::path::Path, stream: &mut (impl futures::io::AsyncRead+Send+Sync+Unpin)) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs4, Mgs4CipherData> + VerificateurMessage;
+    where M: GenerateurMessages + ValidateurX509 + Dechiffreur<DecipherMgs4, Mgs4CipherData> /*+ VerificateurMessage*/;
 }
 
 pub fn is_mimetype_video<S>(mimetype: S) -> bool

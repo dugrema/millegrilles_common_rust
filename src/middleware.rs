@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use tokio::sync::Notify;
@@ -20,21 +21,20 @@ use tokio::sync::Notify;
 use crate::backup::BackupStarter;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
 use crate::chiffrage::{ChiffrageFactoryImpl, ChiffrageFactory, CleChiffrageHandler};
-use crate::chiffrage_aesgcm::CipherMgs2;
 use crate::chiffrage_cle::CleDechiffree;
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
-use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
+use crate::formatteur_messages::{FormatteurMessage, build_message_action, build_reponse};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{MongoDao, verifier_erreur_duplication_mongo};
 use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
 use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::redis_dao::RedisDao;
-use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, TransactionImpl, transmettre_evenement_persistance};
-use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
-use crate::recepteur_messages::{MessageValideAction, TypeMessage};
+use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance};
+// use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
+use crate::recepteur_messages::{MessageValide, TypeMessage};
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
@@ -81,7 +81,8 @@ pub trait EmetteurNotificationsTrait: GenerateurMessages + ValidateurX509 {
 pub trait MiddlewareMessages:
     ValidateurX509 + GenerateurMessages + ConfigMessages + IsConfigurationPki +
     IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
-    VerificateurMessage + RedisTrait + ChiffrageFactoryTrait + RabbitMqTrait +
+    // VerificateurMessage +
+    RedisTrait + ChiffrageFactoryTrait + RabbitMqTrait +
     EmetteurNotificationsTrait
     // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
@@ -273,6 +274,10 @@ impl ValidateurX509 for MiddlewareMessage {
         }
     }
 
+    fn est_cache(&self, fingerprint: &str) -> bool {
+        self.ressources.validateur.est_cache(fingerprint)
+    }
+
     fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
         self.ressources.validateur.certificats_persister()
     }
@@ -396,48 +401,45 @@ impl FormatteurMessage for MiddlewareMessage {
 #[async_trait]
 impl GenerateurMessages for MiddlewareMessage {
 
-    async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M)
-        -> Result<(), String>
-        where M: Serialize + Send + Sync
+    async fn emettre_evenement<R,M>(&self, routage: R, message: M)
+                                    -> Result<(), String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.generateur_messages.emettre_evenement( routage, message).await
     }
 
-    async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
-        -> Result<TypeMessage, String>
-        where M: Serialize + Send + Sync
+    async fn transmettre_requete<R,M>(&self, routage: R, message: M)
+                                      -> Result<TypeMessage, String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.generateur_messages.transmettre_requete(routage, message).await
     }
 
-    async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
-        -> Result<Option<TypeMessage>, String>
-        where M: Serialize + Send + Sync
+    async fn soumettre_transaction<R,M>(&self, routage: R, message: M)
+                                        -> Result<Option<TypeMessage>, String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        self.ressources.generateur_messages.soumettre_transaction(routage, message, blocking).await
+        self.ressources.generateur_messages.soumettre_transaction(routage, message).await
     }
 
-    async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
-        -> Result<Option<TypeMessage>, String>
-        where M: Serialize + Send + Sync
+    async fn transmettre_commande<R,M>(&self, routage: R, message: M)
+                                       -> Result<Option<TypeMessage>, String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        self.ressources.generateur_messages.transmettre_commande(routage, message, blocking).await
+        self.ressources.generateur_messages.transmettre_commande(routage, message).await
     }
 
-    async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
+    async fn repondre<R,M>(&self, routage: R, message: M) -> Result<(), String>
+        where R: Into<RoutageMessageReponse> + Send, M: Serialize + Send + Sync
+    {
         self.ressources.generateur_messages.repondre(routage, message).await
     }
 
-    async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
-        -> Result<Option<TypeMessage>, String>
+    async fn emettre_message<M>(&self, type_message: TypeMessageOut, message: M)
+                                -> Result<Option<TypeMessage>, String>
+        where M: Into<MessageMilleGrillesBufferDefault> + Send
     {
-        self.ressources.generateur_messages.emettre_message(routage, type_message, message,  blocking).await
-    }
-
-    async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
-        -> Result<Option<TypeMessage>, String>
-    {
-        self.ressources.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
+        self.ressources.generateur_messages.emettre_message(type_message, message).await
     }
 
     fn mq_disponible(&self) -> bool {
@@ -484,8 +486,7 @@ impl EmetteurCertificat for MiddlewareMessage {
         let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
         let message = formatter_message_certificat(enveloppe_certificat)?;
 
-        let routage = RoutageMessageAction::builder("certificat", PKI_REQUETE_CERTIFICAT)
-            .exchanges(vec![Securite::L1Public])
+        let routage = RoutageMessageAction::builder("certificat", PKI_REQUETE_CERTIFICAT, vec![Securite::L1Public])
             .build();
 
         // Sauvegarder dans redis
@@ -524,22 +525,27 @@ pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_
     let message = formatter_message_certificat(enveloppe_certificat)?;
 
     let routage = RoutageMessageReponse::new(reply_q, correlation_id);
-    let message_formatte = match middleware.formatter_reponse(message, None) {
-        Ok(inner) => inner,
-        Err(e) => Err(format!("middleware.repondre_certificat Erreur formatter reponse : {:?}", e))?
-    };
+    // let message_formatte = match middleware.formatter_reponse(message, None) {
+    //     Ok(inner) => inner,
+    //     Err(e) => Err(format!("middleware.repondre_certificat Erreur formatter reponse : {:?}", e))?
+    // };
 
-    match middleware.repondre(routage, message_formatte).await {
+    match middleware.repondre(routage, message).await {
         Ok(_) => Ok(()),
         Err(e) => Err(format!("middleware.repondre_certificat Erreur emettre_certificat: {:?}", e)),
     }
 }
 
-impl VerificateurMessage for MiddlewareMessage {
-    fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
-        verifier_message(message, self, options)
-    }
-}
+// impl VerificateurMessage for MiddlewareMessage {
+//     fn verifier_message(
+//         &self,
+//         message: &mut MessageMilleGrillesRefDefault,
+//         options: Option<&ValidationOptions>
+//     ) -> Result<ResultatValidation, Box<dyn Error>>
+//     {
+//         verifier_message(message, self, options)
+//     }
+// }
 
 impl ChiffrageFactoryTrait for MiddlewareMessage {
     fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
@@ -560,7 +566,7 @@ impl CleChiffrageHandler for MiddlewareMessage {
         self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
     }
 
-    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
         where M: ConfigMessages
     {
         self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
@@ -572,9 +578,9 @@ impl ChiffrageFactory for MiddlewareMessage {
         self.chiffrage_factory.get_chiffreur()
     }
 
-    fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
-        self.chiffrage_factory.get_chiffreur_mgs2()
-    }
+    // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
+    //     self.chiffrage_factory.get_chiffreur_mgs2()
+    // }
 
     // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
     //     self.chiffrage_factory.get_chiffreur_mgs3()
@@ -721,8 +727,7 @@ pub async fn emettre_presence_domaine(
         "reclame_fuuids": reclame_fuuids,
     });
 
-    let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_PRESENCE_DOMAINE)
-        .exchanges(vec![Securite::L3Protege])
+    let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_PRESENCE_DOMAINE, vec![Securite::L3Protege])
         .build();
 
     Ok(middleware.emettre_evenement(routage, &message).await?)
@@ -789,36 +794,54 @@ pub struct ReponseEnveloppe {
 }
 
 pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
     where
-        M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
+        M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
         G: GestionnaireDomaine,
-        S: Serialize
+        S: Serialize + Send + Sync
 {
+    let mut routage = RoutageMessageAction::builder(domaine, action, vec![Securite::L3Protege]).build();
 
-    let mut transaction = middleware.formatter_message(
-        MessageKind::Transaction,
-        valeur,
-        Some(domaine),
-        Some(action),
-        None::<&str>,
-        None::<&str>,
-        None,
-        false
-    )?;
+    // Batir message
+    let (message, message_id, certificat) = {
+        let enveloppe_privee = middleware.get_enveloppe_signature();
+        let (message, message_id) = build_message_action(routage.clone(), valeur, enveloppe_privee.as_ref())?;
+        let certificat = enveloppe_privee.enveloppe.clone();
+        (message, message_id, certificat)
+    };
 
-    // Sauvegarder la transation
-    let msg = MessageSerialise::from_parsed(transaction)?;
-    let msg_action = MessageValideAction::new(msg, "", "", domaine, action, TypeMessageOut::Transaction);
+    // Completer routage avec nouveau correlation_id
+    routage.correlation_id = Some(message_id);
+    let type_message_out = TypeMessageOut::Transaction(routage);
+    let message_valide = MessageValide { message, type_message: type_message_out, certificat };
 
-    Ok(sauvegarder_traiter_transaction(middleware, msg_action, gestionnaire).await?)
+    Ok(sauvegarder_traiter_transaction(middleware, message_valide, gestionnaire).await?)
+
+    // let mut transaction = middleware.formatter_message(
+    //     MessageKind::Transaction,
+    //     valeur,
+    //     Some(domaine),
+    //     Some(action),
+    //     None::<&str>,
+    //     None::<&str>,
+    //     None,
+    //     false
+    // )?;
+    //
+    // // Sauvegarder la transation
+    // let msg = MessageSerialise::from_parsed(transaction)?;
+    // let msg_action = MessageValideAction::new(msg, "", "", domaine, action, TypeMessageOut::Transaction);
+    //
+    // Ok(sauvegarder_traiter_transaction(middleware, msg_action, gestionnaire).await?)
 }
 
 /// Sauvegarde une nouvelle transaction et de la traite immediatement
-pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, mut m: MessageValideAction, gestionnaire: &G)
-    -> Result<Option<MessageMilleGrille>, String>
+pub async fn sauvegarder_traiter_transaction<M, G>(
+    middleware: &M, message: MessageValide, gestionnaire: &G
+)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, String>
     where
-        M: ValidateurX509 + GenerateurMessages + MongoDao + VerificateurMessage,
+        M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
         G: GestionnaireDomaine
 {
     let nom_collection_transactions = match gestionnaire.get_collection_transactions() {
@@ -829,27 +852,38 @@ pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, mut m: Messag
     };
 
     // Retirer attachments - doivent etre traites dans la commande avant la sauvegarde
-    m.message.parsed.retirer_attachments();
+    //m.message.parsed.retirer_attachments();
 
-    let doc_transaction = match sauvegarder_transaction(middleware, &m, nom_collection_transactions.as_str()).await {
+    // let doc_transaction =
+    match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
         Ok(d) => Ok(d),
         Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur sauvegarde transaction : {:?}", e))
     }?;
 
-    // Convertir message en format transaction
-    let transaction = match TransactionImpl::new(doc_transaction, m.message.certificat) {
-        Ok(inner) => inner,
-        Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur TransactionImpl::new {:?}", e))?
+    // // Convertir message en format transaction
+    // let transaction = match TransactionImpl::new(doc_transaction, message.certificat) {
+    //     Ok(inner) => inner,
+    //     Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur TransactionImpl::new {:?}", e))?
+    // };
+    // let uuid_transaction = transaction.get_uuid_transaction().to_owned();
+
+    let message_id = match &message.type_message {
+        TypeMessageOut::Transaction(r) => {
+            match &r.correlation_id {
+                Some(inner) => inner.to_owned(),
+                None => Err(String::from("middleware.sauvegarder_traiter_transaction Correlation_id manquant de la transaction"))?
+            }
+        }
+        _ => Err(String::from("middleware.sauvegarder_traiter_transaction Mauvais type de message, doit etre Transaction"))?
     };
-    let uuid_transaction = transaction.get_uuid_transaction().to_owned();
 
     // Traiter transaction
-    let reponse = gestionnaire.aiguillage_transaction(middleware, transaction).await?;
+    let reponse = gestionnaire.aiguillage_transaction(middleware, message).await?;
 
     marquer_transaction(
         middleware,
         &nom_collection_transactions,
-        uuid_transaction,
+        message_id,
         EtatTransaction::Complete
     ).await?;
 
@@ -890,77 +924,80 @@ pub async fn sauvegarder_traiter_transaction<M, G>(middleware: &M, mut m: Messag
 //     Ok(())
 // }
 
-pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValideAction, nom_collection: &str) -> Result<Document, Box<dyn Error>>
+pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_collection: &str) -> Result<(), Box<dyn Error>>
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
-    debug!("Sauvegarder transaction avec document {:?}", &m.message);
-    let msg = m.message.get_msg();
+    let mut message_ref = m.message.parse()?;
+    if message_ref.attachements.is_some() {
+        // On doit retirer les attachements avant de sauvegarder le message.
+        message_ref.attachements = None;
+    }
 
     // Serialiser le message en serde::Value - permet de convertir en Document bson
-    let mut contenu_doc = match map_msg_to_bson(msg) {
+    let mut contenu_doc = match map_msg_to_bson(&message_ref) {
         Ok(d) => d,
-        Err(e) => Err(format!("Erreur conversion doc vers bson : {:?}", e))?
+        Err(e) => Err(format!("sauvegarder_transaction Erreur conversion doc vers bson : {:?}", e))?
     };
 
-    debug!("Transaction en format bson : {:?}", contenu_doc);
+    debug!("sauvegarder_transaction Transaction en format bson : {:?}", contenu_doc);
 
     let date_courante = chrono::Utc::now();
-    let uuid_transaction = msg.id.as_str();
-    let estampille = &msg.estampille;
-    let routage = msg.routage.as_ref();
+    let uuid_transaction = message_ref.id;
+    let estampille = &message_ref.estampille;
+    let routage = message_ref.routage.as_ref();
     match routage {
         Some(inner) => {
             if inner.domaine.is_none() {
-                Err(format!("Domaine absent de la transaction {}", uuid_transaction))?;
+                Err(format!("sauvegarder_transaction Domaine absent de la transaction {}", uuid_transaction))?;
             };
             if inner.action.is_none() {
-                Err(format!("Action absente de la transaction {}", uuid_transaction))?;
+                Err(format!("sauvegarder_transaction Action absente de la transaction {}", uuid_transaction))?;
             };
         },
-        None => Err(format!("Routage absent de la transaction {}", uuid_transaction))?,
+        None => Err(format!("sauvegarder_transaction Routage absent de la transaction {}", uuid_transaction))?,
     }
 
     let params_evenements = doc! {
         "document_persiste": date_courante,
-        "_estampille": estampille.get_datetime(),
+        "_estampille": estampille,
         "transaction_complete": false,
         "backup_flag": false,
         "signature_verifiee": date_courante,
     };
 
-    debug!("evenements tags : {:?}", params_evenements);
+    debug!("sauvegarder_transaction evenements tags : {:?}", params_evenements);
 
     // let mut contenu_doc_mut = contenu_doc.as_document_mut().expect("mut");
     contenu_doc.insert("_evenements", params_evenements);
 
     // contenu_doc.remove("_certificat");
 
-    debug!("Inserer nouvelle transaction\n:{:?}", contenu_doc);
+    debug!("sauvegarder_transaction Inserer nouvelle transaction\n:{:?}", contenu_doc);
 
     let collection = middleware.get_collection(nom_collection)?;
     match collection.insert_one(&contenu_doc, None).await {
         Ok(_) => {
-            debug!("Transaction sauvegardee dans collection de reception");
+            debug!("sauvegarder_transaction Transaction sauvegardee dans collection de reception");
             Ok(())
         },
         Err(e) => {
-            error!("Erreur sauvegarde transaction dans MongoDb : {:?}", e);
+            error!("sauvegarder_transaction Erreur sauvegarde transaction dans MongoDb : {:?}", e);
             //let kind = *e.kind.clone();
             let erreur_duplication = verifier_erreur_duplication_mongo(&*e.kind);
             if erreur_duplication {
                 // Ok, duplicate. On peut traiter la transaction (si ce n'est pas deja fait).
-                warn!("Transaction dupliquee (on va la traiter quand meme) : {:?}", uuid_transaction);
+                warn!("sauvegarder_transaction Transaction dupliquee (on va la traiter quand meme) : {:?}", uuid_transaction);
                 Ok(())
             } else {
-                Err(format!("Erreur sauvegarde transaction dans MongoDb : {:?}", &e))
+                Err(format!("sauvegarder_transaction Erreur sauvegarde transaction dans MongoDb : {:?}", &e))
             }
         }
     }?;
 
-    Ok(contenu_doc)
+    Ok(())
 }
 
-pub fn map_msg_to_bson(msg: &MessageMilleGrille) -> Result<Document, Box<dyn Error>> {
+pub fn map_msg_to_bson(msg: &MessageMilleGrillesRefDefault) -> Result<Document, Box<dyn Error>> {
     let val = match serde_json::to_value(msg) {
         Ok(v) => match v.as_object() {
             Some(o) => o.to_owned(),
@@ -1064,20 +1101,22 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     debug!("requete_certificat {}", fingerprint_str);
 
     let requete = json!({"fingerprint": fingerprint_str});
-    let routage = RoutageMessageAction::builder(PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT)
-        .exchanges(vec![Securite::L1Public])
+    let routage = RoutageMessageAction::builder(PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT, vec![Securite::L1Public])
         .build();
     let reponse_requete = middleware.transmettre_requete(routage, &requete).await?;
     debug!("requete_certificat Reponse : {:?}", reponse_requete);
     let reponse: ReponseEnveloppe = match reponse_requete {
         TypeMessage::Valide(m) => {
-            match m.message.parsed.map_contenu() {
-                Ok(m) => m,
-                Err(e) => {
-                    error!("requete_certificat Erreur requete certificat {} : mauvais type reponse ou inconnu : {:?}", fingerprint_str, e);
-                    return Ok(None)
-                }
-            }
+            let message_ref = m.message.parse()?;
+            serde_json::from_str(message_ref.contenu)?
+
+            // match m.message.parsed.map_contenu() {
+            //     Ok(m) => m,
+            //     Err(e) => {
+            //         error!("requete_certificat Erreur requete certificat {} : mauvais type reponse ou inconnu : {:?}", fingerprint_str, e);
+            //         return Ok(None)
+            //     }
+            // }
         },
         TypeMessage::Certificat(m) => {
             let enveloppe = m.enveloppe_certificat;

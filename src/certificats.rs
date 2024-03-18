@@ -34,8 +34,9 @@ use crate::hachages::hacher_bytes;
 use std::error::Error;
 use crate::constantes::Securite::L1Public;
 use std::convert::TryInto;
+use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRef;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::recepteur_messages::TypeMessage;
+use crate::recepteur_messages::{ErreurValidation, ErreurVerification, TypeMessage};
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -750,6 +751,42 @@ pub fn get_csr_subject(csr: &X509ReqRef) -> Result<HashMap<String, String>, Stri
     Ok(resultat)
 }
 
+/// Valide le certificat de MilleGrillesRef pour le message.
+pub async fn valider_certificat<'a, M, const C: usize>(
+    middleware: &M,
+    message: &MessageMilleGrillesRef<'a, C>
+)
+    -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
+    where M: ValidateurX509 + ?Sized
+{
+    // Recuperer le certificat du message.
+    let pubkey = message.pubkey;
+    let certificat_pem = message.certificat.as_ref();
+
+    let enveloppe = if middleware.est_cache(pubkey) || certificat_pem.is_none() {
+        // Utiliser le middleware pour recuperer le certificat
+        match middleware.get_certificat(pubkey).await {
+            Some(inner) => inner,
+            None => Err(ErreurValidation::new(ErreurVerification::CertificatInconnu(pubkey.into())))?
+        }
+    } else {
+        // Charger le certificat recu avec le message
+        let vec_pem: Vec<String> = certificat_pem.unwrap().iter().map(|s| s.to_string()).collect();
+        match middleware.charger_enveloppe(&vec_pem, Some(pubkey), message.millegrille).await {
+            Ok(inner) => inner,
+            Err(_) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+        }
+    };
+
+    match middleware.valider_pour_date(enveloppe.as_ref(), &message.estampille) {
+        Ok(inner) => match inner {
+            true => Ok(enveloppe),
+            false => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))
+        },
+        Err(e) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))
+    }
+}
+
 #[async_trait]
 pub trait ValidateurX509: Send + Sync {
 
@@ -763,6 +800,9 @@ pub trait ValidateurX509: Send + Sync {
     fn set_flag_persiste(&self, fingerprint: &str);
 
     async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>>;
+
+    /// Retourne true si le certificat est deja dans le cache.
+    fn est_cache(&self, fingerprint: &str) -> bool;
 
     /// Retourne une liste de certificats qui n'ont pas encore ete persiste.
     fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>>;
@@ -820,9 +860,21 @@ pub trait ValidateurX509: Send + Sync {
     fn valider_pour_date(&self, enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
         let before = enveloppe.not_valid_before()?;
         let after = enveloppe.not_valid_after()?;
-        Ok(date >= &before && date <= &after)
+        let valide = date >= &before && date <= &after;
+        match valide {
+            true => Ok(true),
+            false => Err(String::from("Certificat invalide"))
+        }
     }
 
+    /// Valide le certificat en fonction de la date du message.
+    async fn valider_certificat_message<'a, const C: usize>(
+        &self,
+        message: &MessageMilleGrillesRef<'a, C>
+    ) -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
+    {
+        valider_certificat(self, message).await
+    }
 }
 
 pub struct ValidateurX509Impl {
@@ -956,6 +1008,11 @@ impl ValidateurX509 for ValidateurX509Impl {
             },
             None => None,
         }
+    }
+
+    fn est_cache(&self, fingerprint: &str) -> bool {
+        let mut mutex = self.cache_certificats.lock().expect("lock");
+        mutex.contains_key(fingerprint)
     }
 
     /// Retourne une liste de certificats qui n'ont pas encore ete persiste.
@@ -1324,11 +1381,10 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
 {
     debug!("Charger les certificats de maitre des cles pour chiffrage");
     let requete = json!({});
-    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES)
-        .exchanges(vec![Securite::L3Protege])
+    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES, vec![Securite::L3Protege])
         .timeout_blocking(2000)
         .build();
-    match middleware.transmettre_commande(routage, &requete, true).await {
+    match middleware.transmettre_commande(routage, &requete).await {
         Ok(reponse) => {
             if let Some(TypeMessage::Valide(mva)) = reponse {
                 info!("Reponse certificat maitredescles : {:?}", mva);

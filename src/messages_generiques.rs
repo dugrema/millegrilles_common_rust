@@ -1,8 +1,6 @@
 use std::collections::HashMap;
-use chrono::{Utc, Timelike, Datelike};
+use chrono::{Utc, Timelike, Datelike, DateTime};
 use serde::{Deserialize, Serialize};
-use crate::chiffrage_cle::MetaInformationCle;
-use crate::formatteur_messages::{DateEpochSeconds, MessageMilleGrille};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageCedule {
@@ -41,8 +39,8 @@ impl MessageCedule {
         }
     }
 
-    pub fn get_date(&self) -> DateEpochSeconds {
-        DateEpochSeconds::from_i64(self.estampille as i64)
+    pub fn get_date(&self) -> DateTime<Utc> {
+        DateTime::from_timestamp(self.estampille as i64, 0).expect("datetime")
     }
 }
 

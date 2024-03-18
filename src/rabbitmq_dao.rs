@@ -11,6 +11,7 @@ use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options:
 use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
 use log::{debug, error, info, warn};
+use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use tokio::{sync, task};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
@@ -20,9 +21,7 @@ use tokio_stream::StreamExt;
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
-use crate::formatteur_messages::MessageMilleGrille;
-use crate::formatteur_messages::MessageSerialise;
-use crate::generateur_messages::GenerateurMessages;
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
 use crate::recepteur_messages::{intercepter_message, traiter_delivery, TypeMessage};
 
@@ -590,29 +589,42 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
         if let Some(message_traite) = resultat {
             let attente_reponse = match &message_traite {
                 TypeMessage::Valide(message) => {
-                    // Reponse valide, retransmettre sur la correlation appropriee
-                    if let Some(correlation_id) = message.correlation_id.as_ref() {
-                        let mut guard = rabbitmq.map_attente.lock().expect("lock");
-                        if let Some(attente_reponse) = guard.remove(correlation_id) {
-                            Some(attente_reponse)
-                        } else {
-                            info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
-                            None
-                        }
-                    } else {
-                        None
+                    match &message.type_message {
+                        TypeMessageOut::Reponse(r) => {
+                            // Reponse valide, retransmettre sur la correlation appropriee
+                            let correlation_id = r.correlation_id.as_str();
+                            let mut guard = rabbitmq.map_attente.lock().expect("lock");
+                            if let Some(attente_reponse) = guard.remove(correlation_id) {
+                                Some(attente_reponse)
+                            } else {
+                                info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
+                                None
+                            }
+                        },
+                        _ => None
                     }
+                    // if let Some(correlation_id) = message.type_message.as_ref() {
+                    //     let mut guard = rabbitmq.map_attente.lock().expect("lock");
+                    //     if let Some(attente_reponse) = guard.remove(correlation_id) {
+                    //         Some(attente_reponse)
+                    //     } else {
+                    //         info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
+                    //         None
+                    //     }
+                    // } else {
+                    //     None
+                    // }
                 },
-                TypeMessage::ValideAction(message) => {
-                    if message.action.as_str() == PKI_REQUETE_CERTIFICAT {
-                        if let Some(cert) = message.message.certificat.as_ref() {
-                            debug!("Certificat recu - {}", cert.fingerprint)
-                        }
-                    } else {
-                        warn!("thread_traiter_reply_q Recu message ValideAction, ignorer : {:?}", message);
-                    }
-                    None
-                },
+                // TypeMessage::ValideAction(message) => {
+                //     if message.action.as_str() == PKI_REQUETE_CERTIFICAT {
+                //         if let Some(cert) = message.message.certificat.as_ref() {
+                //             debug!("Certificat recu - {}", cert.fingerprint)
+                //         }
+                //     } else {
+                //         warn!("thread_traiter_reply_q Recu message ValideAction, ignorer : {:?}", message);
+                //     }
+                //     None
+                // },
                 TypeMessage::Certificat(certificat) => {
                     warn!("thread_traiter_reply_q Recu MessageCertificat (deja traite) sur thread consommation, skip : {:?}", certificat);
                     None
@@ -676,13 +688,26 @@ async fn thread_consumers_named_queues<M>(middleware: Arc<M>, rabbitmq: Arc<Rabb
 impl MqMessageSendInformation for RabbitMqExecutor {
     async fn send_out(&self, message: MessageOut) -> Result<Option<sync::oneshot::Receiver<TypeMessage>>, String> {
         let sender = self.tx_out.clone();
-        let correlation = message.correlation_id.clone();
+
+        let attente_correlation_id = match &message.type_message {
+            TypeMessageOut::Requete(r) |
+            TypeMessageOut::Commande(r) |
+            TypeMessageOut::Transaction(r) => {
+                match &r.correlation_id {
+                    Some(c) => Some(c.clone()),
+                    None => Some(message.message_id.clone())
+                }
+            }
+            TypeMessageOut::Reponse(_) => { None }
+            TypeMessageOut::Evenement(_) => { None }
+        };
+
         let attente_expiration = message.attente_expiration.clone();
         match sender.send(message).await {
             Ok(_) => {
                 // Ajouter message attente
                 if let Some(expiration) = attente_expiration {
-                    if let Some(c) = correlation {
+                    if let Some(c) = attente_correlation_id {
                         // Creer channel de reception one-shot
                         let (tx, rx) = sync::oneshot::channel();
 
@@ -690,9 +715,9 @@ impl MqMessageSendInformation for RabbitMqExecutor {
 
                         // Ajouter attente pour correlation
                         let attente = AttenteReponse {
-                            correlation: c.clone(),
+                            correlation: c.clone().into(),
                             sender: tx,
-                            expiration,
+                            expiration: expiration.to_owned(),
                         };
 
                         let mut guard = self.map_attente.lock().expect("lock");
@@ -893,152 +918,6 @@ async fn named_queue_traiter_messages<M>(
 
     info!("named_queue_traiter_messages Fermeture queue {:?}", nom_queue);
 }
-
-// pub struct RabbitMqExecutorRx {
-//     // pub rx_messages: Receiver<MessageInterne>,
-//     pub rx_reply: Receiver<MessageInterne>,
-//     pub rx_triggers: Receiver<MessageInterne>,
-// }
-
-// async fn boucle_execution<C>(
-//     configuration: Arc<C>,
-//     queues: Option<Vec<QueueType>>,
-//     tx_traiter_delivery: Sender<MessageInterne>,
-//     tx_traiter_reply: Sender<MessageInterne>,
-//     tx_traiter_trigger: Sender<MessageInterne>,
-//     tx_message_out: Arc<Mutex<Option<Sender<MessageOut>>>>,
-//     listeners: Option<Mutex<Callback<'_, EventMq>>>,
-//     reply_q: Arc<Mutex<Option<String>>>,
-//     securite: Securite
-// )
-//     where C: ConfigMessages
-// {
-//     let vec_queues = match queues {
-//         Some(v) => v,
-//         None => Vec::new(),
-//     };
-//
-//     // let mq: RabbitMq = initialiser(configuration.as_ref()).await.expect("Erreur connexion RabbitMq");
-//     let connexion = connecter(configuration.as_ref()).await?;
-//
-//     // Setup channels MQ
-//     let channel_reponses = connexion.create_channel().await.unwrap();
-//     let channel_out = connexion.create_channel().await.unwrap();
-//     let qos_options_reponses = BasicQosOptions { global: false };
-//     channel_reponses.basic_qos(20, qos_options_reponses).await.expect("channel_reponses basic_qos");
-//     let qos_options_out = BasicQosOptions { global: false };
-//     channel_out.basic_qos(20, qos_options_out).await.expect("channel_out basic_qos");
-//
-//     // Setup mpsc
-//     // let (tx_delivery, rx_delivery) = mpsc::channel(5);
-//     let (tx_out, rx_out) = mpsc::channel(3);
-//
-//     // Injecter tx_out dans tx_message_arc
-//     {
-//         let mut guard = tx_message_out.as_ref().lock().expect("Erreur injection tx_message");
-//         *guard = Some(tx_out);
-//     }
-//
-//     let mut futures = FuturesUnordered::new();
-//
-//     // Demarrer tasks de Q
-//     {
-//         let pki = configuration.get_configuration_pki();
-//         let reply_q = ReplyQueue {
-//             fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
-//             securite: securite.clone(),
-//             ttl: Some(300000),
-//             reply_q_name: reply_q.clone(),  // Permet de maj le nom de la reply_q globalement
-//         };
-//         futures.push(task::spawn(ecouter_consumer(
-//             channel_reponses,
-//             QueueType::ReplyQueue(reply_q),
-//             tx_traiter_reply.clone()
-//         )));
-//     }
-//
-//     for config_q in &vec_queues {
-//         let channel_main = conn.create_channel().await.expect("main_channel create_channel");
-//         let qos_options = BasicQosOptions { global: false };
-//         channel_main.basic_qos(1, qos_options).await.expect("main_channel basic_qos");
-//
-//         let sender = match &config_q {
-//             QueueType::ExchangeQueue(_) => tx_traiter_delivery.clone(),
-//             QueueType::ReplyQueue(_) => tx_traiter_reply.clone(),
-//             QueueType::Triggers(_q,_s) => tx_traiter_trigger.clone(),
-//         };
-//
-//         futures.push(task::spawn(
-//             ecouter_consumer(channel_main,config_q.clone(),sender)
-//         ));
-//     }
-//
-//     // Demarrer tasks de traitement de messages
-//     futures.push(task::spawn(
-//         task_emettre_messages(configuration.clone(), channel_out, securite.clone(), rx_out, reply_q.clone())
-//     ));
-//
-//     // Thread pour verifier etat connexion
-//     futures.push(task::spawn(entretien_connexion(arc_mq.clone())));
-//
-//     // Emettre message connexion completee
-//     match &listeners {
-//         Some(inner) => {
-//             debug!("MQ Connecte, appel les listeners");
-//             inner.lock().expect("callback").call(EventMq::Connecte);
-//         },
-//         None => {
-//             debug!("MQ Connecte, aucuns listeners");
-//         }
-//     }
-//
-//     // Executer threads. Des qu'une thread se termine, on abandonne la connexion
-//     info!("Debut execution consumers MQ");
-//     let resultat = futures.next().await;
-//
-//     info!("Fin execution consumers MQ/deconnexion, resultat : {:?}", resultat);
-//
-//     // Vider sender immediatement
-//     {
-//         let mut guard = tx_message_out.as_ref().lock()
-//             .expect("Erreur nettoyage tx_message");
-//         *guard = None;
-//     }
-//
-//     // Emettre message connexion perdue
-//     match &listeners {
-//         Some(inner) => {
-//             debug!("MQ Connecte, appel les listeners");
-//             inner.lock().expect("callback").call(EventMq::Deconnecte);
-//         },
-//         None => {
-//             debug!("MQ Connecte, aucuns listeners");
-//         }
-//     }
-//
-// }
-
-// /// Thread de verification de l'etat de connexion. Va se terminer si la connexion est fermee.
-// async fn entretien_connexion(mq: Arc<RabbitMqExecutor>) {
-//     loop {
-//         tokio::time::sleep(tokio::time::Duration::new(15, 0)).await;
-//         todo!("Fix me")
-//         // let status = mq.connexion.status();
-//         // debug!("Verification etat connexion MQ : {:?}", status);
-//         // if ! status.connected() {
-//         //     break
-//         // }
-//         // if status.errored() || status.closed() {
-//         //     warn!("Connexion MQ en erreur/fermee - note: indique erreur detection _connected_");
-//         //     break
-//         // }
-//         // if status.blocked() {
-//         //     warn!("Connexion MQ bloquee (recoverable)");
-//         //     break  // TODO - mettre compteur pour decider de fermer la connexion
-//         // }
-//     }
-//     warn!("Connexion MQ perdue, on va se reconnecter");
-// }
 
 async fn creer_reply_q(rabbitmq: Arc<RabbitMqExecutor>, channel: &Channel, rq: &ReplyQueue) -> Queue {
     let options = QueueDeclareOptions {
@@ -1338,25 +1217,21 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
 }
 
 fn concatener_rk(message: &MessageOut) -> Result<String, String> {
-    let domaine = match &message.domaine {
-        Some(d) => d.as_str(),
-        None => Err("Domaine manquant")?,
-    };
-
-    let mut vec_rk = Vec::new();
-
-    vec_rk.push(domaine);
-    if let Some(partition) = message.partition.as_ref() {
-        vec_rk.push(partition.as_str());
+    match &message.type_message {
+        TypeMessageOut::Requete(r) |
+        TypeMessageOut::Commande(r) |
+        TypeMessageOut::Transaction(r) |
+        TypeMessageOut::Evenement(r) => {
+            let mut vec_rk = Vec::new();
+            vec_rk.push(r.domaine.clone());
+            if let Some(partition) = r.partition.as_ref() {
+                vec_rk.push(partition.clone());
+            }
+            vec_rk.push(r.action.clone());
+            Ok(vec_rk.join(".").into())
+        }
+        TypeMessageOut::Reponse(_) => Err(String::from("concatener_rk Type reponse non supporte"))
     }
-
-    if let Some(action) = message.action.as_ref() {
-        vec_rk.push(action.as_str());
-    }
-
-    let routing_key: String = vec_rk.join(".").into();
-
-    Ok(routing_key)
 }
 
 async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
@@ -1376,40 +1251,66 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
 
     while let Some(message) = rx.recv().await {
         compteur += 1;
-        debug!("task_emettre_messages Emettre_message {}, On a recu de quoi", compteur);
+        debug!("task_emettre_messages Emettre_message {}", compteur);
 
-        let routing_key = match &message.domaine {
-            Some(_) => {
-                let rk = match concatener_rk(&message) {
-                    Ok(rk) => rk,
+        // Extraire metadata de routage
+        let (correlation_id, routing_key, exchanges) = match &message.type_message {
+            TypeMessageOut::Requete(r) |
+            TypeMessageOut::Commande(r) |
+            TypeMessageOut::Transaction(r) |
+            TypeMessageOut::Evenement(r) => {
+                let correlation_id = match r.correlation_id.as_ref() {
+                    Some(inner) => inner,
+                    None => &message.message_id
+                };
+
+                let routing_key = match concatener_rk(&message) {
+                    Ok(inner) => inner,
                     Err(e) => {
                         error!("task_emettre_messages Erreur preparation routing key {:?}", e);
                         continue
                     }
                 };
 
-                match &message.type_message {
-                    TypeMessageOut::Requete => format!("requete.{}", rk),
-                    TypeMessageOut::Commande => format!("commande.{}", rk),
-                    TypeMessageOut::Transaction => format!("transaction.{}", rk),
-                    TypeMessageOut::Reponse => {
-                        error!("Reponse avec domaine non supportee");
-                        continue;
-                    },
-                    TypeMessageOut::Evenement => format!("evenement.{}", rk),
-                }
-            },
-            None => String::from(""),
+                (correlation_id, routing_key, Some(&r.exchanges))
+            }
+            TypeMessageOut::Reponse(r) => {
+                (&r.correlation_id, String::from(""), None)
+            }
         };
 
-        let message_serialise = match MessageSerialise::from_parsed(message.message) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
-                continue;
-            },
-        };
-        let contenu = &message_serialise.parsed;
+        // let routing_key = match &message.domaine {
+        //     Some(_) => {
+        //         let rk = match concatener_rk(&message) {
+        //             Ok(rk) => rk,
+        //             Err(e) => {
+        //                 error!("task_emettre_messages Erreur preparation routing key {:?}", e);
+        //                 continue
+        //             }
+        //         };
+        //
+        //         match &message.type_message {
+        //             TypeMessageOut::Requete(_) => format!("requete.{}", rk),
+        //             TypeMessageOut::Commande(_) => format!("commande.{}", rk),
+        //             TypeMessageOut::Transaction(_) => format!("transaction.{}", rk),
+        //             TypeMessageOut::Reponse(_) => {
+        //                 error!("Reponse avec domaine non supportee");
+        //                 continue;
+        //             },
+        //             TypeMessageOut::Evenement => format!("evenement.{}", rk),
+        //         }
+        //     },
+        //     None => String::from(""),
+        // };
+
+        // let message_serialise = match MessageSerialise::from_parsed(message.message) {
+        //     Ok(m) => m,
+        //     Err(e) => {
+        //         error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
+        //         continue;
+        //     },
+        // };
+        // let contenu = &message_serialise.parsed;
 
         // Verifier etat du channel (doit etre connecte)
         let connecte = match channel_opt.as_ref() {
@@ -1451,68 +1352,40 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
         let channel = channel_opt.as_ref().expect("channel");
 
         // let correlation_id = contenu.id.as_str();
-        let correlation_id = match message.correlation_id.as_ref() {
-            Some(inner) => inner.as_str(),
-            None => contenu.id.as_str()
-        };
-        debug!("Emettre_message id {} (correlation {})", contenu.id, correlation_id);
-
-        let exchanges = match &message.exchanges {
-            Some(e) => Some(e.clone()),
-            None => {
-                let securite = rabbitmq.securite.clone();
-                match message.type_message {
-                    TypeMessageOut::Reponse => None,  // Aucun exchange pour une reponse
-                    _ => Some(vec![securite])  // Toutes les autre reponses, prendre exchange defaut
-                }
-            }
-        };
-
-        // let routing_key = match &message.domaine {
-        //     Some(_) => {
-        //         let rk = match concatener_rk(&message) {
-        //             Ok(rk) => rk,
-        //             Err(e) => {
-        //                 error!("task_emettre_messages Erreur preparation routing key {:?}", e);
-        //                 continue
-        //             }
-        //         };
-        //
-        //         match &message.type_message {
-        //             TypeMessageOut::Requete => format!("requete.{}", rk),
-        //             TypeMessageOut::Commande => format!("commande.{}", rk),
-        //             TypeMessageOut::Transaction => format!("transaction.{}", rk),
-        //             TypeMessageOut::Reponse => {
-        //                 error!("Reponse avec domaine non supportee");
-        //                 continue;
-        //             },
-        //             TypeMessageOut::Evenement => format!("evenement.{}", rk),
-        //         }
-        //     },
-        //     None => String::from(""),
+        // let correlation_id = match message.correlation_id.as_ref() {
+        //     Some(inner) => inner.as_str(),
+        //     None => contenu.id.as_str()
         // };
+        debug!("Emettre_message id {} (correlation {})", message.message_id, correlation_id);
 
-        // let message_serialise = match MessageSerialise::from_parsed(message.message) {
-        //     Ok(m) => m,
-        //     Err(e) => {
-        //         error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
-        //         continue;
-        //     },
+        // let exchanges = match &message.exchanges {
+        //     Some(e) => Some(e.clone()),
+        //     None => {
+        //         let securite = rabbitmq.securite.clone();
+        //         match message.type_message {
+        //             TypeMessageOut::Reponse => None,  // Aucun exchange pour une reponse
+        //             _ => Some(vec![securite])  // Toutes les autre reponses, prendre exchange defaut
+        //         }
+        //     }
         // };
 
         let options = BasicPublishOptions::default();
-        let payload = message_serialise.get_str().as_bytes().to_vec();
+        // let payload = message_serialise.get_str().as_bytes().to_vec();
+        let payload = message.message.buffer;
 
         let properties = {
             let mut properties = BasicProperties::default()
                 .with_correlation_id(correlation_id.clone().into());
 
-            match &message.replying_to {
-                Some(r) => {
+            match &message.type_message {
+                TypeMessageOut::Reponse(r) => {
+                    // Repondre vers une Q
+                    let reply_to = r.reply_to.as_str();
                     debug!("task_emettre_messages Emission message, reply_q en parametre : {:?}", r);
-                    properties = properties.with_reply_to(r.as_str().into());
+                    properties = properties.with_reply_to(reply_to.into());
                 },
-                None => {
+                _ => {
+                    // Donner le reply_q local pour recevoir une reponse
                     let lock_reply_q = rabbitmq.reply_q.lock().expect("lock");
                     debug!("task_emettre_messages Emission message, reply_q locale : {:?}", lock_reply_q);
                     match lock_reply_q.as_ref() {
@@ -1524,35 +1397,37 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                 }
             }
 
+            // match &message.replying_to {
+            //     Some(r) => {
+            //         debug!("task_emettre_messages Emission message, reply_q en parametre : {:?}", r);
+            //         properties = properties.with_reply_to(r.as_str().into());
+            //     },
+            //     None => {
+            //         let lock_reply_q = rabbitmq.reply_q.lock().expect("lock");
+            //         debug!("task_emettre_messages Emission message, reply_q locale : {:?}", lock_reply_q);
+            //         match lock_reply_q.as_ref() {
+            //             Some(qs) => {
+            //                 properties = properties.with_reply_to(qs.as_str().into());
+            //             },
+            //             None => ()
+            //         };
+            //     }
+            // }
+
             properties
         };
 
-        match exchanges {
-            Some(inner) => {
-                for exchange in inner {
-                    let resultat = channel.basic_publish(
-                        exchange.get_str(),
-                        &routing_key,
-                        options,
-                        payload.clone(),
-                        properties.clone()
-                    ).await;
-                    if resultat.is_err() {
-                        error!("task_emettre_messages Erreur emission message {:?}", resultat)
-                    } else {
-                        debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange)
-                    }
-                }
-            },
-            None => {
+        match &message.type_message {
+            TypeMessageOut::Reponse(r) => {
                 // Reply
-                let reply_to = message.replying_to.expect("reply_q");
+                // let reply_to = message.replying_to.expect("reply_q");
+                let reply_to = r.reply_to.as_str();
                 debug!("task_emettre_messages Emission message vers reply_q {} avec correlation_id {}", reply_to, correlation_id);
 
                 // C'est une reponse (message direct)
                 let resultat = channel.basic_publish(
                     "",
-                    &reply_to,
+                    reply_to,
                     options,
                     payload.to_vec(),
                     properties
@@ -1562,8 +1437,73 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                 } else {
                     debug!("task_emettre_messages Reponse {} emise vers {:?}", correlation_id, reply_to);
                 }
+            },
+            _ => {
+                match exchanges {
+                    Some(inner) => {
+                        for exchange in inner {
+                            let resultat = channel.basic_publish(
+                                exchange.get_str(),
+                                &routing_key,
+                                options,
+                                payload.clone(),
+                                properties.clone()
+                            ).await;
+                            match resultat {
+                                Ok(_) => {
+                                    debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange)
+                                },
+                                Err(e) => {
+                                    error!("task_emettre_messages Erreur emission message {:?}", e)
+                                }
+                            }
+                        }
+                    },
+                    None => warn!("Message {} sans exchanges - SKIP", message.message_id)
+                }
             }
         }
+
+        // match exchanges {
+        //     Some(inner) => {
+        //         for exchange in inner {
+        //             let resultat = channel.basic_publish(
+        //                 exchange.get_str(),
+        //                 &routing_key,
+        //                 options,
+        //                 payload.clone(),
+        //                 properties.clone()
+        //             ).await;
+        //             match resultat {
+        //                 Ok(()) => {
+        //                     debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange)
+        //                 },
+        //                 Err(e) => {
+        //                     error!("task_emettre_messages Erreur emission message {:?} : {:?}", resultat, e)
+        //                 }
+        //             }
+        //         }
+        //     },
+        //     None => {
+        //         // Reply
+        //         let reply_to = message.replying_to.expect("reply_q");
+        //         debug!("task_emettre_messages Emission message vers reply_q {} avec correlation_id {}", reply_to, correlation_id);
+        //
+        //         // C'est une reponse (message direct)
+        //         let resultat = channel.basic_publish(
+        //             "",
+        //             &reply_to,
+        //             options,
+        //             payload.to_vec(),
+        //             properties
+        //         ).await;
+        //         if resultat.is_err() {
+        //             error!("task_emettre_messages Erreur emission message {:?}", resultat);
+        //         } else {
+        //             debug!("task_emettre_messages Reponse {} emise vers {:?}", correlation_id, reply_to);
+        //         }
+        //     }
+        // }
     };
 
     info!("emettre_message : Fin thread");
@@ -1586,96 +1526,40 @@ pub enum MessageInterne {
 
 #[derive(Clone, Debug)]
 pub struct MessageOut {
-    pub message: MessageMilleGrille,
+    pub message: MessageMilleGrillesBufferDefault,
+    message_id: String,
     type_message: TypeMessageOut,
-    domaine: Option<String>,
-    action: Option<String>,
-    partition: Option<String>,
-    exchanges: Option<Vec<Securite>>,     // Utilise pour emission de message avec domaine_action
-    pub correlation_id: Option<String>,
-    pub replying_to: Option<String>,    // Utilise pour une reponse
     attente_expiration: Option<DateTime<Utc>>,
 }
 
 impl MessageOut {
-    pub fn new<S,T,U,V,W>(
-        domaine: S,
-        action: T,
-        partition: Option<U>,
-        message: MessageMilleGrille,
+    pub fn new<M,S>(
         type_message: TypeMessageOut,
-        exchanges: Option<Vec<Securite>>,
-        replying_to: Option<V>,
-        correlation_id: Option<W>,
-        attente_expiration: Option<DateTime<Utc>>,
-    )
-        -> MessageOut
+        message_id: S,
+        message: M,
+        attente_expiration: Option<DateTime<Utc>>
+    ) -> Self
         where
-            S: Into<String>,
-            T: Into<String>,
-            U: Into<String>,
-            V: Into<String>,
-            W: Into<String>,
+            M: Into<MessageMilleGrillesBufferDefault>,
+            S: Into<String>
     {
-        if type_message == TypeMessageOut::Reponse {
-            panic!("Reponse non supportee, utiliser MessageOut::new_reply()");
-        }
-
-        let corr_id = match correlation_id {
-            Some(c) => c.into(),
-            None => message.id.clone()
-        };
-
-        let rep_to = match replying_to {
-            Some(r) => Some(r.into()),
-            None => None,
-        };
-
-        let exchange_effectif = match exchanges {
-            Some(e) => Some(e),
-            None => None,  // vec!(Securite::L3Protege),
-        };
-
-        let partition_owned = match partition {
-            Some(p) => Some(p.into()),
-            None => None,
-        };
-
-        MessageOut {
+        let message = message.into();
+        Self {
             message,
+            message_id: message_id.into(),
             type_message,
-            domaine: Some(domaine.into()),
-            action: Some(action.into()),
-            partition: partition_owned,
-            exchanges: exchange_effectif,
-            correlation_id: Some(corr_id),
-            replying_to: rep_to,
             attente_expiration,
-        }
-    }
-
-    pub fn new_reply(message: MessageMilleGrille, correlation_id: &str, replying_to: &str) -> MessageOut {
-        MessageOut {
-            message,
-            type_message: TypeMessageOut::Reponse,
-            domaine: None,
-            action: None,
-            partition: None,
-            exchanges: None,
-            correlation_id: Some(correlation_id.to_owned()),
-            replying_to: Some(replying_to.to_owned()),
-            attente_expiration: None,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeMessageOut {
-    Requete,
-    Commande,
-    Transaction,
-    Reponse,
-    Evenement,
+    Requete(RoutageMessageAction),
+    Commande(RoutageMessageAction),
+    Transaction(RoutageMessageAction),
+    Reponse(RoutageMessageReponse),
+    Evenement(RoutageMessageAction),
 }
 
 impl From<MessageKind> for TypeMessageOut {
@@ -1683,10 +1567,6 @@ impl From<MessageKind> for TypeMessageOut {
         value.into()
     }
 }
-
-// https://users.rust-lang.org/t/callback-with-generic/52426
-// https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=f8a5ecf9873f6463ee29066465a0d5c8
-// use std::marker::PhantomData;
 
 #[derive(Clone, Debug, Copy)]
 pub enum EventMq {
@@ -1725,27 +1605,3 @@ impl<'a, T> Callback<'a, T> {
         debug!("{} End   {}", repeat, repeat);
     }
 }
-
-// #[cfg(test)]
-// mod rabbitmq_integration_test {
-//     use crate::configuration::charger_configuration;
-//     use crate::test_setup::setup;
-//
-//     use super::*;
-//
-//     #[tokio::test]
-//     async fn connecter_mq() {
-//         setup("connecter");
-//         debug!("Connecter");
-//
-//         let config = charger_configuration().expect("config");
-//         let connexion = connecter(&config).await.expect("connexion");
-//
-//         // debug!("Sleep 5 secondes");
-//         // tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
-//
-//         let status = connexion.status();
-//         debug!("Connexion status : {:?}", status);
-//         assert_eq!(status.connected(), true);
-//     }
-// }

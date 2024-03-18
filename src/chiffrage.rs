@@ -10,6 +10,7 @@ use base64_url::base64;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use log::{debug, error, info};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault};
 use multibase::Base;
 use openssl::pkey::{Id, PKey, Private, Public};
 use rand::Rng;
@@ -19,18 +20,16 @@ use zeroize::Zeroize;
 use crate::bson::Bson;
 
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, VerificateurPermissions};
-use crate::chiffrage_aesgcm::{CipherMgs2, Mgs2CipherKeys};
 use crate::chiffrage_cle::CommandeSauvegarderCle;
-// use crate::chiffrage_chacha20poly1305::{CipherMgs3, Mgs3CipherKeys};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::chiffrage_rsa::{chiffrer_asymetrique as chiffrer_asymetrique_aesgcm, dechiffrer_asymetrique as dechiffrer_asymetrique_aesgcm};
 use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherData, Mgs4CipherKeys};
 use crate::common_messages::DataChiffre;
 use crate::configuration::ConfigMessages;
 use crate::constantes::RolesCertificats;
-use crate::formatteur_messages::{DechiffrageInterMillegrille, MessageSerialise};
 use crate::generateur_messages::GenerateurMessages;
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
+use crate::recepteur_messages::{MessageValide, TypeMessage};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum FormatChiffrage { mgs2, mgs3, mgs4 }
@@ -165,7 +164,7 @@ pub trait MgsCipherData {
 pub trait MgsCipherKeys {
 
     fn get_dechiffrage(&self, enveloppe_demandeur: Option<&EnveloppeCertificat>)
-        -> Result<DechiffrageInterMillegrille, String>;
+        -> Result<DechiffrageInterMillegrilleOwned, String>;
 
     fn get_commande_sauvegarder_cles(
         &self,
@@ -202,7 +201,7 @@ pub trait CleChiffrageHandler {
         where M: GenerateurMessages;
 
     /// Recoit un certificat de chiffrage
-    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
         where M: ConfigMessages;
 }
 
@@ -232,7 +231,7 @@ pub trait ChiffrageFactory {
 
     // Toutes les versions supportees (requis pour le dechiffrage)
 
-    fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String>;
+    // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String>;
     // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String>;
     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String>;
 }
@@ -257,13 +256,13 @@ impl ChiffrageFactory for ChiffrageFactoryImpl {
         self.get_chiffreur_mgs4()
     }
 
-    fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
-        let fp_public_keys = self.get_publickeys_chiffrage();
-        match CipherMgs2::new(&fp_public_keys) {
-            Ok(c) => Ok(c),
-            Err(e) => Err(format!("ChiffrageFactoryImpl.get_chiffreur_mgs2 Erreur {:?}", e))
-        }
-    }
+    // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
+    //     let fp_public_keys = self.get_publickeys_chiffrage();
+    //     match CipherMgs2::new(&fp_public_keys) {
+    //         Ok(c) => Ok(c),
+    //         Err(e) => Err(format!("ChiffrageFactoryImpl.get_chiffreur_mgs2 Erreur {:?}", e))
+    //     }
+    // }
 
     // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
     //     let fp_public_keys = self.get_publickeys_chiffrage();
@@ -331,60 +330,66 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
         Ok(())
     }
 
-    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
         where M: ConfigMessages
     {
-        let cert_chiffrage = match &message.certificat {
-            Some(c) => c.clone(),
-            None => {
-                error!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait");
-                Err(format!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait"))?
-            }
-        };
-
-        // Valider le certificat
-        if ! cert_chiffrage.presentement_valide {
-            error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete");
-            Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
+        match message {
+            TypeMessage::Valide(m) => {}
+            TypeMessage::Certificat(m) => {}
+            TypeMessage::Regeneration => ()
         }
-
-        if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
-            error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete");
-            Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
-        }
-
-        info!("Certificat maitre des cles accepte {}", cert_chiffrage.fingerprint());
-
-        // Stocker cles chiffrage du maitre des cles
-        {
-            let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
-                Ok(f) => f,
-                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
-            };
-            let mut guard = match self.cles_chiffrage.lock() {
-                Ok(g) => g,
-                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
-            };
-            for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
-                guard.insert(fp.fingerprint.clone(), fp.clone());
-            }
-
-            // S'assurer d'avoir le certificat de millegrille local
-            let enveloppe_privee = middleware.get_configuration_pki().get_enveloppe_privee();
-            let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
-            let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
-                Ok(p) => p,
-                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
-            }.pop();
-            if let Some(mut pk_ca) = public_keys_ca {
-                pk_ca.est_cle_millegrille = true;
-                guard.insert(pk_ca.fingerprint.clone(), pk_ca);
-            }
-
-            debug!("Certificats chiffrage maj {:?}", guard);
-        }
-
-        Ok(())
+        todo!()
+        // let cert_chiffrage = match &message.certificat {
+        //     Some(c) => c.clone(),
+        //     None => {
+        //         error!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait");
+        //         Err(format!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait"))?
+        //     }
+        // };
+        //
+        // // Valider le certificat
+        // if ! cert_chiffrage.presentement_valide {
+        //     error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete");
+        //     Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
+        // }
+        //
+        // if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
+        //     error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete");
+        //     Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
+        // }
+        //
+        // info!("Certificat maitre des cles accepte {}", cert_chiffrage.fingerprint());
+        //
+        // // Stocker cles chiffrage du maitre des cles
+        // {
+        //     let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
+        //         Ok(f) => f,
+        //         Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
+        //     };
+        //     let mut guard = match self.cles_chiffrage.lock() {
+        //         Ok(g) => g,
+        //         Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
+        //     };
+        //     for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
+        //         guard.insert(fp.fingerprint.clone(), fp.clone());
+        //     }
+        //
+        //     // S'assurer d'avoir le certificat de millegrille local
+        //     let enveloppe_privee = middleware.get_configuration_pki().get_enveloppe_privee();
+        //     let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
+        //     let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
+        //         Ok(p) => p,
+        //         Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
+        //     }.pop();
+        //     if let Some(mut pk_ca) = public_keys_ca {
+        //         pk_ca.est_cle_millegrille = true;
+        //         guard.insert(pk_ca.fingerprint.clone(), pk_ca);
+        //     }
+        //
+        //     debug!("Certificats chiffrage maj {:?}", guard);
+        // }
+        //
+        // Ok(())
     }
 }
 
@@ -414,7 +419,7 @@ pub fn random_vec(nb_bytes: usize) -> Vec<u8> {
     v
 }
 
-pub type ChiffreurMgs2 = dyn Chiffreur<CipherMgs2, Mgs2CipherKeys>;
+// pub type ChiffreurMgs2 = dyn Chiffreur<CipherMgs2, Mgs2CipherKeys>;
 // pub type ChiffreurMgs3 = dyn Chiffreur<CipherMgs3, Mgs3CipherKeys>;
 pub type ChiffreurMgs4 = dyn Chiffreur<CipherMgs4, Mgs4CipherKeys>;
 
@@ -425,7 +430,7 @@ pub type MgsCipherDataCurrent = Mgs4CipherData;
 
 const MAXLEN_DATA_CHIFFRE: usize = 1024 * 1024 * 3;
 
-pub fn chiffrer_data<M,S>(middleware: &M, data_dechiffre: S) -> Result<(DataChiffre, DechiffrageInterMillegrille), Box<dyn Error>>
+pub fn chiffrer_data<M,S>(middleware: &M, data_dechiffre: S) -> Result<(DataChiffre, DechiffrageInterMillegrilleOwned), Box<dyn Error>>
     where M: ChiffrageFactoryTrait, S: Serialize
 {
     let (data_output, keys) = chiffrer_data_get_keys(middleware, data_dechiffre)?;

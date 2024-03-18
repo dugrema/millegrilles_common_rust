@@ -18,8 +18,8 @@ use serde::de::DeserializeOwned;
 use std::error::Error;
 use std::time::Duration;
 use std::vec::IntoIter;
+use chrono::{DateTime, Utc};
 use crate::bson::Array;
-use crate::formatteur_messages::DateEpochSeconds;
 use crate::rabbitmq_dao::emettre_certificat_compte;
 
 #[async_trait]
@@ -249,7 +249,7 @@ impl CurseurStream for CurseurMongo {
     }
 }
 
-pub fn convertir_value_mongodate(date: Value) -> Result<DateEpochSeconds, String> {
+pub fn convertir_value_mongodate(date: Value) -> Result<DateTime<Utc>, String> {
     match date.as_object() {
         Some(inner) => match inner.get("$date") {
             Some(inner) => match inner.as_object() {
@@ -258,7 +258,10 @@ pub fn convertir_value_mongodate(date: Value) -> Result<DateEpochSeconds, String
                         Some(inner) => {
                             match inner.parse::<i64>() {
                                 Ok(ms) => {
-                                    Ok(DateEpochSeconds::from_i64(ms/1000))
+                                    match DateTime::from_timestamp(ms/1000, 0) {
+                                        Some(inner) => Ok(inner),
+                                        None => Err(format!("convertir_value_mongodate Erreur conversion date (absente)"))
+                                    }
                                 },
                                 Err(e) => Err(format!("convertir_value_mongodate {:?}", e))
                             }

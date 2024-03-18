@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::str::from_utf8;
 use std::sync::{Arc, mpsc, Mutex};
 
 use async_std::fs::File;
@@ -9,6 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use futures::pin_mut;
 use log::{debug, error, info, warn};
+use millegrilles_cryptographie::messages_structs::{epochseconds, MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use mongodb::bson::{doc, Document};
 use mongodb::options::{FindOptions, Hint};
 use multibase::{Base, encode};
@@ -36,7 +38,7 @@ use crate::constantes::*;
 use crate::constantes::Securite::{L2Prive, L3Protege};
 // use crate::fichiers::FichierWriter;
 use crate::fichiers::{CompressionChiffrageProcessor, FichierCompressionChiffrage, FichierCompressionResult};
-use crate::formatteur_messages::{DateEpochSeconds, FormatteurMessage, MessageMilleGrille, MessageSerialise};
+use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::hachages::hacher_bytes;
 use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
@@ -44,8 +46,7 @@ use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
-use crate::transactions::{Transaction, TransactionImpl};
-use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
+// use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
@@ -61,7 +62,7 @@ const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage*/ + ChiffrageFactoryTrait  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     while let Some(commande) = rx.recv().await {
         let mut abandonner_backup = false;
@@ -90,16 +91,16 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
 
         if abandonner_backup {
             let routage = RoutageMessageReponse::new(commande.reply_q, commande.correlation_id);
-            let reponse = match middleware.formatter_reponse(json!({"ok": false, "code": 2}), None) {
-                Ok(inner) => inner,
-                Err(e) => {
-                    error!("backup.thread_backup Erreur reponse backup refuse (1.) domaine {} : {:?}", commande.nom_domaine, e);
-                    continue
-                }
-            };
+            // let reponse = match middleware.formatter_reponse(json!({"ok": false, "code": 2}), None) {
+            //     Ok(inner) => inner,
+            //     Err(e) => {
+            //         error!("backup.thread_backup Erreur reponse backup refuse (1.) domaine {} : {:?}", commande.nom_domaine, e);
+            //         continue
+            //     }
+            // };
 
             // Emettre le message
-            if let Err(e) = middleware.repondre(routage, reponse).await {
+            if let Err(e) = middleware.repondre(routage, json!({"ok": false, "code": 2})).await {
                 error!("backup.thread_backup Erreur reponse backup refuse (2.) domaine {} : {:?}", commande.nom_domaine, e);
             }
 
@@ -159,9 +160,9 @@ pub trait BackupStarter {
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
-    -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+    -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + VerificateurMessage + ChiffrageFactoryTrait
+        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage*/ + ChiffrageFactoryTrait
 {
     let nom_coll_str = commande.nom_collection_transactions.as_str();
     let nom_domaine_str = commande.nom_domaine.as_str();
@@ -169,8 +170,9 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     {
         // Indiquer au processus trigger qu'on demarre le backup
         let routage = RoutageMessageReponse::new(&commande.reply_q, &commande.correlation_id);
-        let reponse_demarrage = middleware.formatter_reponse(json!({"ok": true, "code": 0}), None)?;
-        middleware.repondre(routage, reponse_demarrage).await?;
+        // let reponse_demarrage = middleware.formatter_reponse(json!({"ok": true, "code": 0}), None)?;
+        // middleware.repondre(routage, reponse_demarrage).await?;
+        middleware.repondre(routage, json!({"ok": true, "code": 0})).await?;
     }
 
     // Persister et retirer les certificats des transactions recentes.
@@ -214,7 +216,7 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
 async fn generer_backup_wrapper<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation, tx_keepalive: tokio::sync::oneshot::Sender<bool>)
     -> Result<(), String>
     where
-        M: MongoDao + ValidateurX509 + FormatteurMessage + VerificateurMessage + GenerateurMessages + ChiffrageFactoryTrait,
+        M: MongoDao + ValidateurX509 + FormatteurMessage /*+ VerificateurMessage*/ + GenerateurMessages + ChiffrageFactoryTrait,
         S: CurseurStream + Send + 'static
 {
     let resultat = generer_backup(middleware, curseur, info_backup).await;
@@ -232,7 +234,7 @@ async fn generer_backup_wrapper<M,S>(middleware: &M, mut curseur: S, info_backup
 async fn generer_backup<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation)
     -> Result<(), Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + FormatteurMessage + VerificateurMessage + GenerateurMessages + ChiffrageFactoryTrait,
+        M: MongoDao + ValidateurX509 + FormatteurMessage /*+ VerificateurMessage*/ + GenerateurMessages + ChiffrageFactoryTrait,
         S: CurseurStream + Send + 'static
 {
     let timestamp_backup = Utc::now();
@@ -253,8 +255,8 @@ async fn generer_backup<M,S>(middleware: &M, mut curseur: S, info_backup: &Backu
     Ok(())
 }
 
-async fn verifier_transactions<M,S>(middleware: &M, curseur: &mut S, sender: Sender<MessageSerialise>) -> Result<bool, String>
-    where M: ValidateurX509 + VerificateurMessage, S: CurseurStream
+async fn verifier_transactions<M,S>(middleware: &M, curseur: &mut S, sender: Sender<MessageMilleGrillesBufferDefault>) -> Result<bool, String>
+    where M: ValidateurX509 /*+ VerificateurMessage*/, S: CurseurStream
 {
     debug!("verifier_transactions Debut");
     match _verifier_transactions_wrapper(middleware, curseur, sender).await {
@@ -263,84 +265,84 @@ async fn verifier_transactions<M,S>(middleware: &M, curseur: &mut S, sender: Sen
     }
 }
 
-async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, sender: Sender<MessageSerialise>) -> Result<bool, Box<dyn Error>>
-    where M: ValidateurX509 + VerificateurMessage, S: CurseurStream
+async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, sender: Sender<MessageMilleGrillesBufferDefault>) -> Result<bool, Box<dyn Error>>
+    where M: ValidateurX509 /*+ VerificateurMessage*/, S: CurseurStream
 {
     debug!("verifier_transactions Debut");
-
-    let mut compteur = 0;
-    let mut taille_transactions = 0;  // Calcul la taille dechiffree/decompressee
-    let options_validation = ValidationOptions::new(false, true, true);
-
-    while let Some(doc_transaction) = curseur.try_next().await? {
-        debug!("verifier_transactions Traiter transaction {:?}", doc_transaction);
-        compteur = compteur + 1;
-
-        // Verifier la transaction - doit etre completement valide, certificat connu
-        let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
-        let message_id = transaction.parsed.id.clone();
-
-        let fingerprint_certificat = transaction.parsed.pubkey.as_str();
-        match middleware.get_certificat(fingerprint_certificat).await {
-            Some(c) => transaction.set_certificat(c),
-            None => {
-                error!("verifier_transactions Certificat inconnu {}, transaction {:?} *** SKIPPED ***",
-                    fingerprint_certificat, transaction.parsed);
-                continue;
-            }
-        }
-
-        let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
-        debug!("verifier_transactions Resultat verification transaction : {:?}", resultat_verification);
-
-        if ! resultat_verification.valide() {
-            error!("verifier_transactions Transaction {:?} invalide, ** SKIP **", transaction.parsed);
-        }
-
-        // Inserer date de traitement de la transaction dans les attachements
-        match doc_transaction.get("_evenements") {
-            Some(d) => match d.as_document() {
-                Some(evenements_doc) => {
-                    let evenements_value: Map<String, Value> = convertir_bson_deserializable(evenements_doc.to_owned())?;
-                    let mut attachements = Map::new();
-                    attachements.insert("evenements".to_string(), Value::from(evenements_value));
-                    transaction.parsed.attachements = Some(attachements);
-                },
-                None => ()
-            },
-            None => ()
-        };
-
-        // Calculer la taille de la transaction pour appliquer la limite
-        {
-            // Retirer le certificat pour calculer la taille de la transaction
-            let cert = transaction.parsed.certificat.take();
-            match serde_json::to_string(&transaction.parsed) {
-                Ok(inner) => {
-                    taille_transactions = taille_transactions + inner.len();
-                },
-                Err(e) => {
-                    error!("verifier_transactions Erreur traitement transaction {:?}, taille inconnue : {:?}", doc_transaction, e);
-                }
-            }
-            transaction.parsed.certificat = cert;  // Remettre le certificat
-        }
-
-        // Transferer la transaction vers le processus d'ajout au catalogue
-        sender.send(transaction).await?;
-
-        if compteur >= TRANSACTIONS_MAX_NB || taille_transactions >= TRANSACTIONS_DECOMPRESSED_MAX_SIZE {
-            debug!("verifier_transactions Transactions pour catalogue : {}, taille initiale : {}", compteur, taille_transactions);
-            // Indiquer qu'on termine cette batch mais qu'il reste probablement des transactions
-            return Ok(false)
-        }
-    }
-
-    debug!("verifier_transactions Fin des transactions, dernier catalogue : {}, taille initiale : {}", compteur, taille_transactions);
-    Ok(true)
+    todo!("backup - fix me")
+    // let mut compteur = 0;
+    // let mut taille_transactions = 0;  // Calcul la taille dechiffree/decompressee
+    // let options_validation = ValidationOptions::new(false, true, true);
+    //
+    // while let Some(doc_transaction) = curseur.try_next().await? {
+    //     debug!("verifier_transactions Traiter transaction {:?}", doc_transaction);
+    //     compteur = compteur + 1;
+    //
+    //     // Verifier la transaction - doit etre completement valide, certificat connu
+    //     let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
+    //     let message_id = transaction.parsed.id.clone();
+    //
+    //     let fingerprint_certificat = transaction.parsed.pubkey.as_str();
+    //     match middleware.get_certificat(fingerprint_certificat).await {
+    //         Some(c) => transaction.set_certificat(c),
+    //         None => {
+    //             error!("verifier_transactions Certificat inconnu {}, transaction {:?} *** SKIPPED ***",
+    //                 fingerprint_certificat, transaction.parsed);
+    //             continue;
+    //         }
+    //     }
+    //
+    //     let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
+    //     debug!("verifier_transactions Resultat verification transaction : {:?}", resultat_verification);
+    //
+    //     if ! resultat_verification.valide() {
+    //         error!("verifier_transactions Transaction {:?} invalide, ** SKIP **", transaction.parsed);
+    //     }
+    //
+    //     // Inserer date de traitement de la transaction dans les attachements
+    //     match doc_transaction.get("_evenements") {
+    //         Some(d) => match d.as_document() {
+    //             Some(evenements_doc) => {
+    //                 let evenements_value: Map<String, Value> = convertir_bson_deserializable(evenements_doc.to_owned())?;
+    //                 let mut attachements = Map::new();
+    //                 attachements.insert("evenements".to_string(), Value::from(evenements_value));
+    //                 transaction.parsed.attachements = Some(attachements);
+    //             },
+    //             None => ()
+    //         },
+    //         None => ()
+    //     };
+    //
+    //     // Calculer la taille de la transaction pour appliquer la limite
+    //     {
+    //         // Retirer le certificat pour calculer la taille de la transaction
+    //         let cert = transaction.parsed.certificat.take();
+    //         match serde_json::to_string(&transaction.parsed) {
+    //             Ok(inner) => {
+    //                 taille_transactions = taille_transactions + inner.len();
+    //             },
+    //             Err(e) => {
+    //                 error!("verifier_transactions Erreur traitement transaction {:?}, taille inconnue : {:?}", doc_transaction, e);
+    //             }
+    //         }
+    //         transaction.parsed.certificat = cert;  // Remettre le certificat
+    //     }
+    //
+    //     // Transferer la transaction vers le processus d'ajout au catalogue
+    //     sender.send(transaction).await?;
+    //
+    //     if compteur >= TRANSACTIONS_MAX_NB || taille_transactions >= TRANSACTIONS_DECOMPRESSED_MAX_SIZE {
+    //         debug!("verifier_transactions Transactions pour catalogue : {}, taille initiale : {}", compteur, taille_transactions);
+    //         // Indiquer qu'on termine cette batch mais qu'il reste probablement des transactions
+    //         return Ok(false)
+    //     }
+    // }
+    //
+    // debug!("verifier_transactions Fin des transactions, dernier catalogue : {}, taille initiale : {}", compteur, taille_transactions);
+    // Ok(true)
 }
 
-async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<MessageSerialise>, info_backup: &BackupInformation) -> Result<(), String>
+async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<MessageMilleGrillesBufferDefault>, info_backup: &BackupInformation) -> Result<(), String>
     where M: GenerateurMessages + ChiffrageFactoryTrait + MongoDao
 {
     // Traiter transactions
@@ -378,7 +380,7 @@ async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, m
     Ok(())
 }
 
-async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<MessageSerialise>,
+async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<MessageMilleGrillesBufferDefault>,
                                        info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
     where M: GenerateurMessages + ChiffrageFactoryTrait + MongoDao
 {
@@ -389,7 +391,7 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
 
     // Creer un builder pour le nouveau catalogue. Va cumuler l'information des transactions.
     let mut builder = CatalogueBackupBuilder::new(
-        DateEpochSeconds::now(),
+        Utc::now(),
         info_backup.domaine.clone(),
         info_backup.partition.clone(),
         info_backup.uuid_backup.clone()
@@ -421,7 +423,7 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
 
 async fn traiter_transactions_catalogue<M>(
     middleware: &M, info_backup: &BackupInformation, builder: &mut CatalogueBackupBuilder,
-    receiver: &mut Receiver<MessageSerialise>, mut sender: Sender<TokioResult<Bytes>>
+    receiver: &mut Receiver<MessageMilleGrillesBufferDefault>, mut sender: Sender<TokioResult<Bytes>>
 )
     -> Result<bool, String>
     where M: GenerateurMessages
@@ -434,52 +436,55 @@ async fn traiter_transactions_catalogue<M>(
 
 async fn _traiter_transactions_catalogue_wrapper<M>(
     middleware: &M, info_backup: &BackupInformation, builder: &mut CatalogueBackupBuilder,
-    receiver: &mut Receiver<MessageSerialise>, mut sender: Sender<TokioResult<Bytes>>
+    receiver: &mut Receiver<MessageMilleGrillesBufferDefault>, mut sender: Sender<TokioResult<Bytes>>
 )
     -> Result<bool, Box<dyn Error>>
     where M: GenerateurMessages
 {
     let mut messages_recus = false;
+    todo!("backup - fix me")
 
-    let mut dernier_evenement = Utc::now();
-    let intervalle_evenements = Duration::seconds(5);
-
-    while let Some(mut transaction) = receiver.recv().await {
-        messages_recus = true;  // S'assurer d'avoir au moins une transaction a traiter dans le catalogue
-        let transaction_id = &transaction.parsed.id;
-        let fingerprint = &transaction.parsed.pubkey;
-        debug!("generer_catalogue Ajouter transaction {} au catalogue", transaction_id);
-
-        let date_traitement_transaction = trouver_date_traitement_transaction(&transaction.parsed)?;
-        match transaction.certificat {
-            Some(inner) => builder.ajouter_certificat(inner.as_ref()),
-            None => {
-                warn!("generer_catalogue Certificat {} absent pour transaction {} - on ajoute la transaction au catalogue quand meme", fingerprint, transaction_id)
-            }
-        };
-
-        builder.ajouter_transaction(transaction_id, &date_traitement_transaction);
-
-        // Retirer le certificat de la transaction - le backup les store separement
-        transaction.parsed.retirer_certificats();
-
-        // Convertir value en bytes
-        let mut contenu_bytes = {
-            let contenu_str = serde_json::to_string(&transaction.parsed)?;
-            contenu_str.as_bytes().to_owned()
-        };
-        // Ajouter line feed (\n)
-        contenu_bytes.push(NEW_LINE_BYTE);
-
-        // Write
-        sender.send(TokioResult::Ok(Bytes::from(contenu_bytes))).await?;
-    }
-
-    Ok(messages_recus)
+    // let mut dernier_evenement = Utc::now();
+    // let intervalle_evenements = Duration::seconds(5);
+    //
+    // while let Some(mut transaction) = receiver.recv().await {
+    //     messages_recus = true;  // S'assurer d'avoir au moins une transaction a traiter dans le catalogue
+    //     let mut message_ref = transaction.parse()?;
+    //     let transaction_id = message_ref.id;
+    //     let fingerprint = message_ref.pubkey;
+    //     debug!("generer_catalogue Ajouter transaction {} au catalogue", transaction_id);
+    //
+    //     let date_traitement_transaction = trouver_date_traitement_transaction(&message_ref)?;
+    //     match message_ref.certificat {
+    //         Some(inner) => builder.ajouter_certificat(inner.as_ref()),
+    //         None => {
+    //             warn!("generer_catalogue Certificat {} absent pour transaction {} - on ajoute la transaction au catalogue quand meme", fingerprint, transaction_id)
+    //         }
+    //     };
+    //
+    //     builder.ajouter_transaction(transaction_id, &date_traitement_transaction);
+    //
+    //     // Retirer le certificat de la transaction - le backup les store separement
+    //     // transaction.parsed.retirer_certificats();
+    //     message_ref.certificat = None;
+    //
+    //     // Convertir value en bytes
+    //     let mut contenu_bytes = {
+    //         let contenu_str = serde_json::to_string(&message_ref)?;
+    //         contenu_str.as_bytes().to_owned()
+    //     };
+    //     // Ajouter line feed (\n)
+    //     contenu_bytes.push(NEW_LINE_BYTE);
+    //
+    //     // Write
+    //     sender.send(TokioResult::Ok(Bytes::from(contenu_bytes))).await?;
+    // }
+    //
+    // Ok(messages_recus)
 }
 
-fn trouver_date_traitement_transaction(transaction: &MessageMilleGrille) -> Result<DateEpochSeconds, Box<dyn Error>> {
-    debug!("trouver_date_transaction Dans transaction : {:?}", transaction);
+fn trouver_date_traitement_transaction(transaction: &MessageMilleGrillesRefDefault) -> Result<DateTime<Utc>, Box<dyn Error>> {
+    debug!("trouver_date_transaction Dans transaction : {:?}", transaction.id);
     match &transaction.attachements {
         Some(attachements) => match attachements.get("evenements") {
             None => (),
@@ -495,9 +500,13 @@ fn trouver_date_traitement_transaction(transaction: &MessageMilleGrille) -> Resu
                                             debug!("trouver_date_transaction Date attachement string : {}", date_string);
                                             match date_string.parse::<i64>() {
                                                 Ok(inner) => {
-                                                    let date_epoch = DateEpochSeconds::from_i64(inner/1000);
-                                                    debug!("trouver_date_transaction Date attachement string : {:?}", date_epoch);
-                                                    return Ok(date_epoch)
+                                                    match DateTime::from_timestamp(inner/1000, 0) {
+                                                        Some(inner) => return Ok(inner),
+                                                        None => warn!("trouver_date_transaction Erreur conversion date (absente)")
+                                                    }
+                                                    // let date_epoch = DateEpochSeconds::from_i64(inner/1000);
+                                                    // debug!("trouver_date_transaction Date attachement string : {:?}", date_epoch);
+                                                    // return Ok(date_epoch)
                                                 },
                                                 Err(e) => {
                                                     warn!("trouver_date_transaction Erreur parse date transaction_traitee {:?}, fallback estampille", e);
@@ -542,41 +551,43 @@ async fn serialiser_catalogue<M>(
         None => Vec::new()
     };
 
-    let mut catalogue_signe = middleware.formatter_message(
-        MessageKind::Commande, &catalogue, Some(DOMAINE_BACKUP), Some("backupTransactions"),
-        None::<&str>, None::<&str>, None, false)?;
+    // let mut catalogue_signe = middleware.formatter_message(
+    //     MessageKind::Commande, &catalogue, Some(DOMAINE_BACKUP), Some("backupTransactions"),
+    //     None::<&str>, None::<&str>, None, false)?;
 
-    let uuid_message_backup = catalogue_signe.id.clone();
+    // let uuid_message_backup = catalogue_signe.id.clone();
 
     debug!("sauvegarder_catalogue Catalogue serialise");
 
-    let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions")
-        .exchanges(vec![Securite::L2Prive])
+    let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions", vec![Securite::L2Prive])
         .timeout_blocking(90_000)
         .build();
 
-    let reponse = middleware.emettre_message_millegrille(
-        routage, true, TypeMessageOut::Commande, catalogue_signe).await;
+    // let reponse = middleware.emettre_message_millegrille(
+    //     routage, true, TypeMessageOut::Commande, catalogue_signe).await;
+
+    let reponse = middleware.transmettre_commande(routage, catalogue).await;
 
     let reponse = match reponse {
         Ok(result) => match result {
             Some(r) => match r {
                 TypeMessage::Valide(r) => r,
                 _ => {
-                    Err(format!("backup.serialiser_catalogue Erreur sauvegarder fichier backup {}, ** SKIPPED **", uuid_message_backup))?
+                    Err(String::from("backup.serialiser_catalogue Erreur sauvegarder fichier backup, ** SKIPPED **"))?
                 }
             },
             None => {
-                Err(format!("backup.serialiser_catalogue Aucune reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup))?
+                Err(String::from("backup.serialiser_catalogue Aucune reponse, on assume que le backup a echoue, ** SKIPPED **"))?
             }
         },
         Err(_) => {
-            Err(format!("backup.serialiser_catalogue Timeout reponse, on assume que le backup de {} a echoue, ** SKIPPED **", uuid_message_backup))?
+            Err(format!("backup.serialiser_catalogue Timeout reponse, on assume que le backup a echoue, ** SKIPPED **"))?
         }
     };
 
-    debug!("Reponse backup {} : {:?}", uuid_message_backup, reponse.message.parsed);
-    let reponse_mappee: ReponseBackup = reponse.message.parsed.map_contenu()?;
+    let message_ref = reponse.message.parse()?;
+    debug!("Reponse backup {:?}", from_utf8(reponse.message.buffer.as_slice()));
+    let reponse_mappee: ReponseBackup = serde_json::from_str(message_ref.contenu)?;
 
     if let Some(true) = reponse_mappee.ok {
         debug!("Catalogue transactions sauvegarde OK")
@@ -955,11 +966,14 @@ pub struct BackupInformation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CatalogueBackup {
     /// Heure de la premiere transaction du backup (traitement interne initial)
-    pub date_backup: DateEpochSeconds,
+    #[serde(with = "epochseconds")]
+    pub date_backup: DateTime<Utc>,
     /// Heure de la premiere transaction du backup
-    pub date_transactions_debut: DateEpochSeconds,
+    #[serde(with = "epochseconds")]
+    pub date_transactions_debut: DateTime<Utc>,
     /// Heure de la derniere tranaction du backup
-    pub date_transactions_fin: DateEpochSeconds,
+    #[serde(with = "epochseconds")]
+    pub date_transactions_fin: DateTime<Utc>,
     /// True si c'est un snapshot
     // pub snapshot: bool,
     /// Nom du domaine
@@ -1006,7 +1020,7 @@ pub struct CatalogueBackup {
 
 impl CatalogueBackup {
 
-    pub fn builder(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueBackupBuilder {
+    pub fn builder(heure: DateTime<Utc>, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueBackupBuilder {
         CatalogueBackupBuilder::new(heure, nom_domaine, partition, uuid_backup)
     }
 
@@ -1026,9 +1040,9 @@ impl CatalogueBackup {
 
 #[derive(Clone, Debug)]
 pub struct CatalogueBackupBuilder {
-    date_backup: DateEpochSeconds,      // Date de creation du backup (now)
-    date_debut_backup: Option<DateEpochSeconds>,  // Date de traitement de la premiere transaction
-    date_fin_backup: Option<DateEpochSeconds>,  // Date de traitement de la derniere transaction
+    date_backup: DateTime<Utc>,      // Date de creation du backup (now)
+    date_debut_backup: Option<DateTime<Utc>>,  // Date de traitement de la premiere transaction
+    date_fin_backup: Option<DateTime<Utc>>,  // Date de traitement de la derniere transaction
     nom_domaine: String,
     partition: Option<String>,
     uuid_backup: String,                // Identificateur unique de ce backup
@@ -1045,7 +1059,7 @@ pub struct CatalogueBackupBuilder {
 
 impl CatalogueBackupBuilder {
 
-    fn new(heure: DateEpochSeconds, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> Self {
+    fn new(heure: DateTime<Utc>, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> Self {
         CatalogueBackupBuilder {
             date_backup: heure.clone(),
             date_debut_backup: None,  // Va etre la date de la derniere transaction
@@ -1064,13 +1078,13 @@ impl CatalogueBackupBuilder {
         self.certificats.ajouter_certificat(certificat).expect("certificat");
     }
 
-    fn ajouter_transaction(&mut self, uuid_transaction: &str, date_estampille: &DateEpochSeconds) {
+    fn ajouter_transaction(&mut self, uuid_transaction: &str, date_estampille: &DateTime<Utc>) {
         self.uuid_transactions.push(String::from(uuid_transaction));
 
         // Ajuste date debut et fin des transactions du backup
         match &self.date_debut_backup {
             Some(d) => {
-                if d.get_datetime() > date_estampille.get_datetime() {
+                if d > date_estampille {
                     self.date_debut_backup = Some(date_estampille.to_owned());
                 }
             },
@@ -1078,7 +1092,7 @@ impl CatalogueBackupBuilder {
         }
         match &self.date_fin_backup {
             Some(d) => {
-                if d.get_datetime() < date_estampille.get_datetime() {
+                if d < date_estampille {
                     self.date_fin_backup = Some(date_estampille.to_owned());
                 }
             },
@@ -1102,7 +1116,8 @@ impl CatalogueBackupBuilder {
 
     pub fn build(self) -> CatalogueBackup {
 
-        let date_str = self.date_backup.format_ymdh();
+        // let date_str = self.date_backup.format_ymdh();
+        let date_str = format!("{}", self.date_backup.format("%Y%m%d%H"));
 
         // Build collections de certificats
         let catalogue_nomfichier = match &self.partition {
@@ -1384,7 +1399,7 @@ fn bytes_to_part(filename: &str, contenu: Vec<u8>, mimetype: Option<&str>) -> Pa
 }
 
 /// Reset l'etat de backup des transactions d'une collection
-pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
+pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
     where M: MongoDao + GenerateurMessages,
 {
     let collection = middleware.get_collection(nom_collection_transactions)?;
@@ -1397,14 +1412,14 @@ pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &
         },
     };
     debug!("reset_backup_flag Filtre update flags sur {} : {:?}, ops: {:?}", nom_collection_transactions, filtre, ops);
-    let reponse = match collection.update_many(filtre, ops, None).await {
+    let (reponse, _) = match collection.update_many(filtre, ops, None).await {
         Ok(r) => {
             debug!("reset_backup_flag Update result {} : {:?}", nom_collection_transactions, r);
-            middleware.formatter_reponse(json!({"ok": true, "count": r.modified_count}), None)?
+            middleware.build_reponse(json!({"ok": true, "count": r.modified_count}))?
         },
         Err(e) => {
             error!("reset_backup_flag Erreur sur {} : {:?}", nom_collection_transactions, e);
-            middleware.formatter_reponse(json!({"ok": false, "err": format!("{:?}", e)}), None)?
+            middleware.build_reponse(json!({"ok": false, "err": format!("{:?}", e)}))?
         }
     };
 
@@ -1429,8 +1444,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
     };
 
     let mut fingerprint_traites_set = HashSet::new();
-    let routage = RoutageMessageAction::builder(DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT)
-        .exchanges(vec![Securite::L3Protege])
+    let routage = RoutageMessageAction::builder(DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege])
         .timeout_blocking(3000)
         .build();
 
@@ -1454,7 +1468,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
                 // "ca": ...
             });
 
-            match middleware.transmettre_commande(routage.clone(), &commande_sauvegarde, true).await {
+            match middleware.transmettre_commande(routage.clone(), &commande_sauvegarde).await {
                 Ok(_) => {
                     // Conserver marqueur pour indiquer que le certificat a ete traite
                     fingerprint_traites_set.insert(fingerprint);
@@ -1502,8 +1516,7 @@ pub async fn emettre_evenement_backup<M>(
         "timestamp": timestamp.timestamp(),
     });
 
-    let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ)
-        .exchanges(vec![L2Prive])
+    let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ, vec![L2Prive])
         .build();
 
     Ok(middleware.emettre_evenement(routage, &value).await?)
@@ -1520,8 +1533,7 @@ pub async fn emettre_evenement_backup_catalogue<M>(
         "transactions_traitees": transactions_traitees,
     });
 
-    let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ)
-        .exchanges(vec![L2Prive])
+    let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ, vec![L2Prive])
         .build();
 
     Ok(middleware.emettre_evenement(routage, &value).await?)
@@ -1536,8 +1548,7 @@ pub async fn emettre_evenement_restauration<M>(
         "domaine": domaine,
     });
 
-    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, "restaurationMaj")
-        .exchanges(vec![L3Protege])
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, "restaurationMaj", vec![L3Protege])
         .build();
 
     Ok(middleware.emettre_evenement(routage, &value).await?)
@@ -1552,8 +1563,7 @@ pub async fn emettre_evenement_regeneration<M>(
         "domaine": domaine,
     });
 
-    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, "regenerationMaj")
-        .exchanges(vec![L3Protege])
+    let routage = RoutageMessageAction::builder(BACKUP_NOM_DOMAINE_GLOBAL, "regenerationMaj", vec![L3Protege])
         .build();
 
     Ok(middleware.emettre_evenement(routage, &value).await?)
@@ -1565,494 +1575,496 @@ struct ReponseCertificat {
     chaine_pem: Option<Vec<String>>,
 }
 
-#[cfg(test)]
-mod backup_tests {
-    use std::io::ErrorKind;
-
-    use async_std::fs;
-    use chrono::TimeZone;
-    use mongodb::Database;
-    use openssl::x509::store::X509Store;
-    use openssl::x509::X509;
-    use serde_json::json;
-
-    use crate::backup_restoration::TransactionReader;
-    use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
-    use crate::certificats::certificats_tests::{CERT_CORE, charger_enveloppe_privee_env, prep_enveloppe};
-    // use crate::middleware_db::preparer_middleware_db;
-    use crate::chiffrage::{ChiffrageFactoryImpl, CipherMgsCurrent, CleChiffrageHandler, MgsCipherData, MgsCipherKeysCurrent};
-    use crate::generateur_messages::RoutageMessageReponse;
-    use crate::test_setup::setup;
-
-    use super::*;
-
-    const NOM_DOMAINE_BACKUP: &str = "DomaineTest";
-    const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
-
-    trait TestChiffreurMgs4Trait: Chiffreur<CipherMgsCurrent, MgsCipherKeysCurrent> + ValidateurX509 +
-        FormatteurMessage + VerificateurMessage {}
-
-    struct TestChiffreurMgs4 {
-        cles_chiffrage: Vec<FingerprintCertPublicKey>,
-        validateur: Arc<ValidateurX509Impl>,
-        enveloppe_privee: Arc<EnveloppePrivee>,
-    }
-
-    impl ChiffrageFactoryTrait for TestChiffreurMgs4 {
-        fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
-            todo!("fix me")
-        }
-    }
-
-    #[async_trait]
-    impl CleChiffrageHandler for TestChiffreurMgs4 {
-        fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-            self.cles_chiffrage.clone()
-        }
-
-        async fn charger_certificats_chiffrage<M>(&self, _middleware: &M)
-            -> Result<(), Box<dyn Error>>
-            where M: GenerateurMessages
-        {
-            Ok(())  // Rien a faire
-        }
-
-        async fn recevoir_certificat_chiffrage<M>(&self, _middleware: &M, _message: &MessageSerialise) -> Result<(), String>
-            where M: ConfigMessages
-        {
-            Ok(())  // Rien a faire
-        }
-    }
-
-    #[async_trait]
-    impl Chiffreur<CipherMgsCurrent, MgsCipherKeysCurrent> for TestChiffreurMgs4 {
-        fn get_cipher(&self) -> Result<CipherMgsCurrent, Box<dyn Error>> {
-            let fp_public_keys = self.get_publickeys_chiffrage();
-            Ok(CipherMgs4::new(&fp_public_keys)?)
-        }
-    }
-
-    #[async_trait]
-    impl ValidateurX509 for TestChiffreurMgs4 {
-        async fn charger_enveloppe(&self, _chaine_pem: &Vec<String>, _fingerprint: Option<&str>, _ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
-            todo!()
-        }
-
-        async fn cacher(&self, _certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
-            todo!()
-        }
-
-        fn set_flag_persiste(&self, fingerprint: &str) {
-            todo!()
-        }
-
-        async fn get_certificat(&self, _fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-            Some(self.enveloppe_privee.enveloppe.clone())
-        }
-
-        fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
-            todo!()
-        }
-
-        fn idmg(&self) -> &str {
-            todo!()
-        }
-
-        fn ca_pem(&self) -> &str {
-            todo!()
-        }
-
-        fn ca_cert(&self) -> &X509 {
-            todo!()
-        }
-
-        fn store(&self) -> &X509Store {
-            todo!()
-        }
-
-        fn store_notime(&self) -> &X509Store {
-            todo!()
-        }
-
-        async fn entretien_validateur(&self) {
-            todo!()
-        }
-    }
-
-    impl IsConfigurationPki for TestChiffreurMgs4 {
-        fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
-            self.enveloppe_privee.clone()
-        }
-    }
-
-    impl VerificateurMessage for TestChiffreurMgs4 {
-        fn verifier_message(&self, _message: &mut MessageSerialise, _options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
-            Ok(ResultatValidation {
-                signature_valide: true,
-                hachage_valide: Some(true),
-                certificat_valide: true,
-                regles_valides: true
-            })
-        }
-    }
-
-    impl FormatteurMessage for TestChiffreurMgs4 {
-        fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
-            todo!()
-        }
-
-        fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
-            todo!()
-        }
-    }
-
-    impl MongoDao for TestChiffreurMgs4 {
-        fn get_database(&self) -> Result<Database, String> {
-            todo!()
-        }
-    }
-
-    #[async_trait]
-    impl GenerateurMessages for TestChiffreurMgs4 {
-        async fn emettre_evenement<M>(&self, _routage: RoutageMessageAction, _message: &M) -> Result<(), String> where M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn transmettre_requete<M>(&self, _routage: RoutageMessageAction, _message: &M) -> Result<TypeMessage, String> where M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn soumettre_transaction<M>(&self, _routage: RoutageMessageAction, _message: &M, _blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn transmettre_commande<M>(&self, _routage: RoutageMessageAction, _message: &M, _blocking: bool) -> Result<Option<TypeMessage>, String> where M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn repondre(&self, _routage: RoutageMessageReponse, _message: MessageMilleGrille) -> Result<(), String> {
-            todo!()
-        }
-
-        async fn emettre_message(&self, _routage: RoutageMessageAction, _type_message: TypeMessageOut, _message: &str, _blocking: bool) -> Result<Option<TypeMessage>, String> {
-            todo!()
-        }
-
-        async fn emettre_message_millegrille(&self, _routage: RoutageMessageAction, _blocking: bool, _type_message: TypeMessageOut, message: MessageMilleGrille) -> Result<Option<TypeMessage>, String> {
-            let json_message = match serde_json::to_string(&message) {
-                Ok(j) => j,
-                Err(e) => Err(format!("emettre_message_millegrille Erreur conversion json : {:?}", e))?
-            };
-            debug!("emettre_message_millegrille(stub) {:?}", json_message);
-            Ok(None)
-        }
-
-        fn mq_disponible(&self) -> bool {
-            todo!()
-        }
-
-        fn set_regeneration(&self) {
-            todo!()
-        }
-
-        fn reset_regeneration(&self) {
-            todo!()
-        }
-
-        fn get_mode_regeneration(&self) -> bool {
-            todo!()
-        }
-
-        fn get_securite(&self) -> &Securite {
-            todo!()
-        }
-    }
-
-    #[test]
-    fn init_backup_information() {
-        setup("init_backup_information");
-
-        let info = BackupInformation::new(
-            NOM_DOMAINE_BACKUP,
-            NOM_COLLECTION_BACKUP,
-            None
-        ).expect("init");
-
-        let workpath = info.workpath.to_str().unwrap();
-
-        assert_eq!(&info.nom_collection_transactions, NOM_COLLECTION_BACKUP);
-        // assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
-        // assert_eq!(info.chiffrer, false);
-        assert_eq!(workpath.starts_with("/tmp/."), true);
-    }
-
-    #[test]
-    fn init_backup_horaire_builder() {
-        setup("init_backup_horaire_builder");
-
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 0);
-        let uuid_backup = Uuid::new_v4().to_string();
-
-        let catalogue_builder = CatalogueBackupBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup);
-
-        assert_eq!(catalogue_builder.date_backup.get_datetime().timestamp(), heure.get_datetime().timestamp());
-        assert_eq!(&catalogue_builder.nom_domaine, NOM_DOMAINE_BACKUP);
-    }
-
-    #[test]
-    fn build_catalogue() {
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
-
-        let catalogue_builder = CatalogueBackupBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
-
-        let catalogue = catalogue_builder.build();
-        debug!("Catalogue : {:?}", catalogue);
-
-        assert_eq!(catalogue.date_backup, heure);
-        assert_eq!(&catalogue.uuid_backup, uuid_backup);
-        assert_eq!(&catalogue.catalogue_nomfichier, "DomaineTest_2021080105.json.xz");
-        // assert_eq!(&catalogue.transactions_nomfichier, "Domaine.test_2021080105.jsonl.xz");
-    }
-
-    #[test]
-    fn build_catalogue_params() {
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
-
-        let transactions_hachage = "zABCD1234";
-
-        let mut catalogue_builder = CatalogueBackupBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
-
-        catalogue_builder.data_hachage_bytes = transactions_hachage.to_owned();
-
-        let catalogue = catalogue_builder.build();
-
-        assert_eq!(&catalogue.data_hachage_bytes, transactions_hachage);
-    }
-
-    #[test]
-    fn serialiser_catalogue() {
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
-
-        let catalogue_builder = CatalogueBackupBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
-
-        let catalogue = catalogue_builder.build();
-
-        let _ = serde_json::to_value(catalogue).expect("value");
-
-        // debug!("Valeur catalogue : {:?}", value);
-    }
-
-    #[test]
-    fn catalogue_to_json() {
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
-
-        let catalogue_builder = CatalogueBackupBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
-
-        let catalogue = catalogue_builder.build();
-
-        let value = serde_json::to_value(catalogue).expect("value");
-        let catalogue_str = serde_json::to_string(&value).expect("json");
-        // debug!("Json catalogue : {:?}", catalogue_str);
-
-        assert_eq!(true, catalogue_str.find("1627794000").expect("val") > 0);
-        assert_eq!(true, catalogue_str.find(NOM_DOMAINE_BACKUP).expect("val") > 0);
-        assert_eq!(true, catalogue_str.find(uuid_backup).expect("val") > 0);
-    }
-
-    #[test]
-    fn build_catalogue_1certificat() {
-        let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-        let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
-
-        let mut catalogue_builder = CatalogueBackupBuilder::new(
-            heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
-
-        let certificat = prep_enveloppe(CERT_CORE);
-        // debug!("!!! Enveloppe : {:?}", certificat);
-
-        catalogue_builder.ajouter_certificat(&certificat);
-
-        let catalogue = catalogue_builder.build();
-        debug!("!!! Catalogue : {:?}", catalogue);
-        assert_eq!(catalogue.certificats.len(), 1);
-    }
-
-    // #[tokio::test]
-    // async fn roundtrip_json() {
-    //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions.jsonl.xz");
-    //
-    //     let mut writer = TransactionWriter::new(path_fichier.as_path(), None::<&MiddlewareDb>).await.expect("writer");
-    //     let doc_json = json!({
-    //         "contenu": "Du contenu a encoder",
-    //         "valeur": 1234,
-    //         // "date": Utc.timestamp(1629464027, 0),
-    //     });
-    //     writer.write_json_line(&doc_json).await.expect("write");
-    //     writer.write_json_line(&doc_json).await.expect("write");
-    //     writer.write_json_line(&doc_json).await.expect("write");
-    //
-    //     let _ = writer.fermer().await.expect("fermer");
-    //     debug!("File du writer : {:?}", path_fichier);
-    //
-    //     let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
-    //     let mut reader = TransactionReader::new(fichier_cs, None).expect("reader");
-    //     debug!("Extraction transactions du xz");
-    //     let transactions = reader.read_transactions().await.expect("transactions");
-    //     for t in transactions {
-    //         debug!("Transaction : {:?}", t);
-    //         assert_eq!(&doc_json, &t);
-    //     }
-    //
-    // }
-
-    fn get_doc_reference() -> (String, Document) {
-        let doc_bson = doc! {
-            "_id": "Un ID dummy qui doit etre retire",
-            "contenu": "Du contenu BSON (Document) a encoder",
-            "valeur": 5678,
-            "date": Utc.timestamp(1629464026, 0),
-        };
-
-        (String::from("zSEfXUAj2MrtorrFTqvt38Je8XrW78425oDMseC3QMiX29xXi1SPu4xhzjDoNTizh7eXHgpbsc5UY9aasHoy2tXCpURFjt"), doc_bson)
-    }
-
-    // #[tokio::test]
-    // async fn ecrire_transactions_writer_bson() {
-    //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz");
-    //     let mut writer = TransactionWriter::new(path_fichier.as_path(), None::<&MiddlewareDb>).await.expect("writer");
-    //
-    //     let (mh_reference, doc_bson) = get_doc_reference();
-    //     writer.write_bson_line(&doc_bson).await.expect("write");
-    //
-    //     let (mh, _) = writer.fermer().await.expect("fermer");
-    //     // debug!("File du writer : {:?}, multihash: {}", file, mh);
-    //
-    //     assert_eq!(mh.as_str(), &mh_reference);
-    // }
-
-    // #[tokio::test]
-    // async fn charger_transactions() {
-    //     let path_fichier = PathBuf::from("/tmp/test_charger_fichier.json");
-    //     {
-    //         let mut fichier = File::create(&path_fichier).await.expect("create");
-    //         fichier.write("Allo".as_bytes()).await.expect("write");
-    //         fichier.close().await.expect("close");
-    //     }
-    //
-    //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
-    //     let uuid_backup = "DUMMY-11d8-4ff2-aa6f-1a605bd17336";
-    //
-    //     let mut catalogue_builder = CatalogueBackupBuilder::new(
-    //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
-    //
-    //     catalogue_builder.charger_transactions_chiffrees(&path_fichier).await.expect("transactions");
-    //
-    //     debug!("Transactions hachage : {}", catalogue_builder.data_hachage_bytes);
-    //     debug!("Transactions data : {}", catalogue_builder.data_transactions);
-    //
-    //     assert_eq!("zSEfXUBUUM6YRxhgeJraN95eUyibKjQUg9oxHtnsKSix7GNPjxZHvhQVwTweuwySe9fdeHtFpg6kQtNgDNp6GQw1uj9Qff", catalogue_builder.data_hachage_bytes);
-    //     assert_eq!("mQWxsbw", catalogue_builder.data_transactions);
-    // }
-
-    // /// Test de chiffrage du backup - round trip
-    // #[tokio::test]
-    // async fn chiffrer_roundtrip_backup() {
-    //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
-    //     let enveloppe = Arc::new(enveloppe);
-    //
-    //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.mgs");
-    //     let _fp_certs = vec!(FingerprintCertPublicKey::new(
-    //         String::from("dummy"),
-    //         enveloppe.certificat().public_key().clone().expect("cle"),
-    //         true
-    //     ));
-    //
-    //     let (fingerprint_cert, chiffreur) = creer_test_middleware(enveloppe.clone(), validateur);
-    //
-    //     let mut writer = TransactionWriter::new(
-    //         path_fichier.as_path(),
-    //         Some(&chiffreur)
-    //     ).await.expect("writer");
-    //
-    //     let (mh_reference, doc_bson) = get_doc_reference();
-    //     writer.write_bson_line(&doc_bson).await.expect("write chiffre");
-    //     let (mh, decipher_data_option) = writer.fermer().await.expect("fermer");
-    //
-    //     // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
-    //     assert_ne!(mh.as_str(), &mh_reference);
-    //
-    //     let decipher_keys = decipher_data_option.expect("decipher data");
-    //     let mut decipher_key = decipher_keys.get_cipher_data(fingerprint_cert.as_str()).expect("cle");
-    //     decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
-    //     debug!("Cle dechiffree : {:?}", decipher_key);
-    //
-    //     todo!("Fix decipher keys mgs4");
-    //
-    //     // let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
-    //     // let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
-    //     // let transactions = reader.read_transactions().await.expect("transactions");
-    //     //
-    //     // for t in transactions {
-    //     //     debug!("Transaction dechiffree : {:?}", t);
-    //     //     let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
-    //     //     assert_eq!(valeur_chiffre, 5678);
-    //     // }
-    //
-    // }
-
-    // fn creer_test_middleware(enveloppe: Arc<EnveloppePrivee>, validateur: Arc<ValidateurX509Impl>) -> (String, TestChiffreurMgs4) {
-    //     let mut fp_public_keys = Vec::new();
-    //     let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
-    //     let cle_publique = &enveloppe.enveloppe.cle_publique;
-    //     fp_public_keys.push(FingerprintCertPublicKey {
-    //         fingerprint: fingerprint_cert.clone(),
-    //         public_key: cle_publique.to_owned(),
-    //         est_cle_millegrille: false,
-    //     });
-    //     let cle_publique_ca = &enveloppe.enveloppe_ca.cle_publique;
-    //     fp_public_keys.push(FingerprintCertPublicKey {
-    //         fingerprint: enveloppe.enveloppe_ca.fingerprint.clone(),
-    //         public_key: cle_publique_ca.to_owned(),
-    //         est_cle_millegrille: true,
-    //     });
-    //     let chiffreur = TestChiffreurMgs4 { cles_chiffrage: fp_public_keys, validateur, enveloppe_privee: enveloppe };
-    //     (fingerprint_cert, chiffreur)
-    // }
-
-    // #[tokio::test]
-    // async fn test_emettre_fichiers_backup() {
-    //
-    //     // Setup
-    //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
-    //     let enveloppe = Arc::new(enveloppe);
-    //     let (_fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
-    //
-    //     //let temp_dir = tempdir().expect("tempdir");
-    //     let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
-    //     match fs::create_dir(&temp_dir).await {
-    //         Ok(()) => (),
-    //         Err(e) => {
-    //             match e.kind() {
-    //                 ErrorKind::AlreadyExists => (),
-    //                 _ => panic!("Erreur createdir: {:?}", e)
-    //             }
-    //         }
-    //     }
-    //
-    //     let fichiers_backup = vec!["/tmp/test_generer_fichiers_backup/catalogue_0.json"];
-    //
-    //     emettre_backup_transactions(&m, "DUMMY_COLLECTION", &fichiers_backup)
-    //         .await.expect("emettre_backup_transactions");
-    //
-    // }
-
-}
+// #[cfg(test)]
+// mod backup_tests {
+//     use std::io::ErrorKind;
+//
+//     use async_std::fs;
+//     use chrono::TimeZone;
+//     use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+//     use mongodb::Database;
+//     use openssl::x509::store::X509Store;
+//     use openssl::x509::X509;
+//     use serde_json::json;
+//
+//     use crate::backup_restoration::TransactionReader;
+//     use crate::certificats::{FingerprintCertPublicKey, ValidateurX509Impl};
+//     use crate::certificats::certificats_tests::{CERT_CORE, charger_enveloppe_privee_env, prep_enveloppe};
+//     // use crate::middleware_db::preparer_middleware_db;
+//     use crate::chiffrage::{ChiffrageFactoryImpl, CipherMgsCurrent, CleChiffrageHandler, MgsCipherData, MgsCipherKeysCurrent};
+//     use crate::generateur_messages::RoutageMessageReponse;
+//     use crate::test_setup::setup;
+//
+//     use super::*;
+//
+//     const NOM_DOMAINE_BACKUP: &str = "DomaineTest";
+//     const NOM_COLLECTION_BACKUP: &str = "CollectionBackup";
+//
+//     trait TestChiffreurMgs4Trait: Chiffreur<CipherMgsCurrent, MgsCipherKeysCurrent> + ValidateurX509 +
+//         FormatteurMessage + VerificateurMessage {}
+//
+//     struct TestChiffreurMgs4 {
+//         cles_chiffrage: Vec<FingerprintCertPublicKey>,
+//         validateur: Arc<ValidateurX509Impl>,
+//         enveloppe_privee: Arc<EnveloppePrivee>,
+//     }
+//
+//     impl ChiffrageFactoryTrait for TestChiffreurMgs4 {
+//         fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
+//             todo!("fix me")
+//         }
+//     }
+//
+//     #[async_trait]
+//     impl CleChiffrageHandler for TestChiffreurMgs4 {
+//         fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+//             self.cles_chiffrage.clone()
+//         }
+//
+//         async fn charger_certificats_chiffrage<M>(&self, _middleware: &M)
+//             -> Result<(), Box<dyn Error>>
+//             where M: GenerateurMessages
+//         {
+//             Ok(())  // Rien a faire
+//         }
+//
+//         async fn recevoir_certificat_chiffrage<M>(&self, _middleware: &M, _message: &TypeMessage) -> Result<(), String>
+//             where M: ConfigMessages
+//         {
+//             Ok(())  // Rien a faire
+//         }
+//     }
+//
+//     #[async_trait]
+//     impl Chiffreur<CipherMgsCurrent, MgsCipherKeysCurrent> for TestChiffreurMgs4 {
+//         fn get_cipher(&self) -> Result<CipherMgsCurrent, Box<dyn Error>> {
+//             let fp_public_keys = self.get_publickeys_chiffrage();
+//             Ok(CipherMgs4::new(&fp_public_keys)?)
+//         }
+//     }
+//
+//     #[async_trait]
+//     impl ValidateurX509 for TestChiffreurMgs4 {
+//         async fn charger_enveloppe(&self, _chaine_pem: &Vec<String>, _fingerprint: Option<&str>, _ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+//             todo!()
+//         }
+//
+//         async fn cacher(&self, _certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
+//             todo!()
+//         }
+//
+//         fn set_flag_persiste(&self, fingerprint: &str) {
+//             todo!()
+//         }
+//
+//         async fn get_certificat(&self, _fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
+//             Some(self.enveloppe_privee.enveloppe.clone())
+//         }
+//
+//         fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
+//             todo!()
+//         }
+//
+//         fn idmg(&self) -> &str {
+//             todo!()
+//         }
+//
+//         fn ca_pem(&self) -> &str {
+//             todo!()
+//         }
+//
+//         fn ca_cert(&self) -> &X509 {
+//             todo!()
+//         }
+//
+//         fn store(&self) -> &X509Store {
+//             todo!()
+//         }
+//
+//         fn store_notime(&self) -> &X509Store {
+//             todo!()
+//         }
+//
+//         async fn entretien_validateur(&self) {
+//             todo!()
+//         }
+//     }
+//
+//     impl IsConfigurationPki for TestChiffreurMgs4 {
+//         fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee> {
+//             self.enveloppe_privee.clone()
+//         }
+//     }
+//
+//     impl VerificateurMessage for TestChiffreurMgs4 {
+//         fn verifier_message(
+//             &self,
+//             message: &MessageMilleGrillesRefDefault,
+//             options: Option<&ValidationOptions>
+//         ) -> Result<ResultatValidation, Box<dyn Error>> {
+//             Ok(ResultatValidation {
+//                 signature_valide: true,
+//                 hachage_valide: Some(true),
+//                 certificat_valide: true,
+//                 regles_valides: true
+//             })
+//         }
+//     }
+//
+//     impl FormatteurMessage for TestChiffreurMgs4 {
+//         fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
+//             todo!()
+//         }
+//
+//         fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
+//             todo!()
+//         }
+//     }
+//
+//     impl MongoDao for TestChiffreurMgs4 {
+//         fn get_database(&self) -> Result<Database, String> {
+//             todo!()
+//         }
+//     }
+//
+//     #[async_trait]
+//     impl GenerateurMessages for TestChiffreurMgs4 {
+//
+//         async fn emettre_evenement<R, M>(&self, routage: R, message: &M) -> Result<(), String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn transmettre_requete<R, M>(&self, routage: R, message: &M) -> Result<TypeMessage, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn soumettre_transaction<R, M>(&self, routage: R, message: &M) -> Result<Option<TypeMessage>, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn transmettre_commande<R, M>(&self, routage: R, message: &M) -> Result<Option<TypeMessage>, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn repondre<R, M>(&self, routage: R, message: M) -> Result<(), String> where R: Into<RoutageMessageReponse>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn emettre_message<M>(&self, type_message: TypeMessageOut, message: M) -> Result<Option<TypeMessage>, String> where M: Into<MessageMilleGrillesBufferDefault> {
+//             let json_message = match serde_json::to_string(&message) {
+//                 Ok(j) => j,
+//                 Err(e) => Err(format!("emettre_message Erreur conversion json : {:?}", e))?
+//             };
+//             debug!("emettre_message(stub) {:?}", json_message);
+//             Ok(None)
+//         }
+//
+//         fn mq_disponible(&self) -> bool {
+//             todo!()
+//         }
+//
+//         fn set_regeneration(&self) {
+//             todo!()
+//         }
+//
+//         fn reset_regeneration(&self) {
+//             todo!()
+//         }
+//
+//         fn get_mode_regeneration(&self) -> bool {
+//             todo!()
+//         }
+//
+//         fn get_securite(&self) -> &Securite {
+//             todo!()
+//         }
+//     }
+//
+//     #[test]
+//     fn init_backup_information() {
+//         setup("init_backup_information");
+//
+//         let info = BackupInformation::new(
+//             NOM_DOMAINE_BACKUP,
+//             NOM_COLLECTION_BACKUP,
+//             None
+//         ).expect("init");
+//
+//         let workpath = info.workpath.to_str().unwrap();
+//
+//         assert_eq!(&info.nom_collection_transactions, NOM_COLLECTION_BACKUP);
+//         // assert_eq!(&info.nom_domaine, NOM_DOMAINE_BACKUP);
+//         // assert_eq!(info.chiffrer, false);
+//         assert_eq!(workpath.starts_with("/tmp/."), true);
+//     }
+//
+//     // #[test]
+//     // fn init_backup_horaire_builder() {
+//     //     setup("init_backup_horaire_builder");
+//     //
+//     //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 0);
+//     //     let uuid_backup = Uuid::new_v4().to_string();
+//     //
+//     //     let catalogue_builder = CatalogueBackupBuilder::new(
+//     //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup);
+//     //
+//     //     assert_eq!(catalogue_builder.date_backup.get_datetime().timestamp(), heure.get_datetime().timestamp());
+//     //     assert_eq!(&catalogue_builder.nom_domaine, NOM_DOMAINE_BACKUP);
+//     // }
+//
+//     // #[test]
+//     // fn build_catalogue() {
+//     //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+//     //     let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+//     //
+//     //     let catalogue_builder = CatalogueBackupBuilder::new(
+//     //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
+//     //
+//     //     let catalogue = catalogue_builder.build();
+//     //     debug!("Catalogue : {:?}", catalogue);
+//     //
+//     //     assert_eq!(catalogue.date_backup, heure);
+//     //     assert_eq!(&catalogue.uuid_backup, uuid_backup);
+//     //     assert_eq!(&catalogue.catalogue_nomfichier, "DomaineTest_2021080105.json.xz");
+//     //     // assert_eq!(&catalogue.transactions_nomfichier, "Domaine.test_2021080105.jsonl.xz");
+//     // }
+//
+//     // #[test]
+//     // fn build_catalogue_params() {
+//     //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+//     //     let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+//     //
+//     //     let transactions_hachage = "zABCD1234";
+//     //
+//     //     let mut catalogue_builder = CatalogueBackupBuilder::new(
+//     //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
+//     //
+//     //     catalogue_builder.data_hachage_bytes = transactions_hachage.to_owned();
+//     //
+//     //     let catalogue = catalogue_builder.build();
+//     //
+//     //     assert_eq!(&catalogue.data_hachage_bytes, transactions_hachage);
+//     // }
+//
+//     // #[test]
+//     // fn serialiser_catalogue() {
+//     //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+//     //     let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+//     //
+//     //     let catalogue_builder = CatalogueBackupBuilder::new(
+//     //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
+//     //
+//     //     let catalogue = catalogue_builder.build();
+//     //
+//     //     let _ = serde_json::to_value(catalogue).expect("value");
+//     //
+//     //     // debug!("Valeur catalogue : {:?}", value);
+//     // }
+//
+//     // #[test]
+//     // fn catalogue_to_json() {
+//     //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+//     //     let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+//     //
+//     //     let catalogue_builder = CatalogueBackupBuilder::new(
+//     //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
+//     //
+//     //     let catalogue = catalogue_builder.build();
+//     //
+//     //     let value = serde_json::to_value(catalogue).expect("value");
+//     //     let catalogue_str = serde_json::to_string(&value).expect("json");
+//     //     // debug!("Json catalogue : {:?}", catalogue_str);
+//     //
+//     //     assert_eq!(true, catalogue_str.find("1627794000").expect("val") > 0);
+//     //     assert_eq!(true, catalogue_str.find(NOM_DOMAINE_BACKUP).expect("val") > 0);
+//     //     assert_eq!(true, catalogue_str.find(uuid_backup).expect("val") > 0);
+//     // }
+//
+//     // #[test]
+//     // fn build_catalogue_1certificat() {
+//     //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+//     //     let uuid_backup = "1cf5b0a8-11d8-4ff2-aa6f-1a605bd17336";
+//     //
+//     //     let mut catalogue_builder = CatalogueBackupBuilder::new(
+//     //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
+//     //
+//     //     let certificat = prep_enveloppe(CERT_CORE);
+//     //     // debug!("!!! Enveloppe : {:?}", certificat);
+//     //
+//     //     catalogue_builder.ajouter_certificat(&certificat);
+//     //
+//     //     let catalogue = catalogue_builder.build();
+//     //     debug!("!!! Catalogue : {:?}", catalogue);
+//     //     assert_eq!(catalogue.certificats.len(), 1);
+//     // }
+//
+//     // #[tokio::test]
+//     // async fn roundtrip_json() {
+//     //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions.jsonl.xz");
+//     //
+//     //     let mut writer = TransactionWriter::new(path_fichier.as_path(), None::<&MiddlewareDb>).await.expect("writer");
+//     //     let doc_json = json!({
+//     //         "contenu": "Du contenu a encoder",
+//     //         "valeur": 1234,
+//     //         // "date": Utc.timestamp(1629464027, 0),
+//     //     });
+//     //     writer.write_json_line(&doc_json).await.expect("write");
+//     //     writer.write_json_line(&doc_json).await.expect("write");
+//     //     writer.write_json_line(&doc_json).await.expect("write");
+//     //
+//     //     let _ = writer.fermer().await.expect("fermer");
+//     //     debug!("File du writer : {:?}", path_fichier);
+//     //
+//     //     let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
+//     //     let mut reader = TransactionReader::new(fichier_cs, None).expect("reader");
+//     //     debug!("Extraction transactions du xz");
+//     //     let transactions = reader.read_transactions().await.expect("transactions");
+//     //     for t in transactions {
+//     //         debug!("Transaction : {:?}", t);
+//     //         assert_eq!(&doc_json, &t);
+//     //     }
+//     //
+//     // }
+//
+//     fn get_doc_reference() -> (String, Document) {
+//         let doc_bson = doc! {
+//             "_id": "Un ID dummy qui doit etre retire",
+//             "contenu": "Du contenu BSON (Document) a encoder",
+//             "valeur": 5678,
+//             "date": Utc.timestamp(1629464026, 0),
+//         };
+//
+//         (String::from("zSEfXUAj2MrtorrFTqvt38Je8XrW78425oDMseC3QMiX29xXi1SPu4xhzjDoNTizh7eXHgpbsc5UY9aasHoy2tXCpURFjt"), doc_bson)
+//     }
+//
+//     // #[tokio::test]
+//     // async fn ecrire_transactions_writer_bson() {
+//     //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.xz");
+//     //     let mut writer = TransactionWriter::new(path_fichier.as_path(), None::<&MiddlewareDb>).await.expect("writer");
+//     //
+//     //     let (mh_reference, doc_bson) = get_doc_reference();
+//     //     writer.write_bson_line(&doc_bson).await.expect("write");
+//     //
+//     //     let (mh, _) = writer.fermer().await.expect("fermer");
+//     //     // debug!("File du writer : {:?}, multihash: {}", file, mh);
+//     //
+//     //     assert_eq!(mh.as_str(), &mh_reference);
+//     // }
+//
+//     // #[tokio::test]
+//     // async fn charger_transactions() {
+//     //     let path_fichier = PathBuf::from("/tmp/test_charger_fichier.json");
+//     //     {
+//     //         let mut fichier = File::create(&path_fichier).await.expect("create");
+//     //         fichier.write("Allo".as_bytes()).await.expect("write");
+//     //         fichier.close().await.expect("close");
+//     //     }
+//     //
+//     //     let heure = DateEpochSeconds::from_heure(2021, 08, 01, 5);
+//     //     let uuid_backup = "DUMMY-11d8-4ff2-aa6f-1a605bd17336";
+//     //
+//     //     let mut catalogue_builder = CatalogueBackupBuilder::new(
+//     //         heure.clone(), NOM_DOMAINE_BACKUP.to_owned(), None, uuid_backup.to_owned());
+//     //
+//     //     catalogue_builder.charger_transactions_chiffrees(&path_fichier).await.expect("transactions");
+//     //
+//     //     debug!("Transactions hachage : {}", catalogue_builder.data_hachage_bytes);
+//     //     debug!("Transactions data : {}", catalogue_builder.data_transactions);
+//     //
+//     //     assert_eq!("zSEfXUBUUM6YRxhgeJraN95eUyibKjQUg9oxHtnsKSix7GNPjxZHvhQVwTweuwySe9fdeHtFpg6kQtNgDNp6GQw1uj9Qff", catalogue_builder.data_hachage_bytes);
+//     //     assert_eq!("mQWxsbw", catalogue_builder.data_transactions);
+//     // }
+//
+//     // /// Test de chiffrage du backup - round trip
+//     // #[tokio::test]
+//     // async fn chiffrer_roundtrip_backup() {
+//     //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
+//     //     let enveloppe = Arc::new(enveloppe);
+//     //
+//     //     let path_fichier = PathBuf::from("/tmp/fichier_writer_transactions_bson.jsonl.mgs");
+//     //     let _fp_certs = vec!(FingerprintCertPublicKey::new(
+//     //         String::from("dummy"),
+//     //         enveloppe.certificat().public_key().clone().expect("cle"),
+//     //         true
+//     //     ));
+//     //
+//     //     let (fingerprint_cert, chiffreur) = creer_test_middleware(enveloppe.clone(), validateur);
+//     //
+//     //     let mut writer = TransactionWriter::new(
+//     //         path_fichier.as_path(),
+//     //         Some(&chiffreur)
+//     //     ).await.expect("writer");
+//     //
+//     //     let (mh_reference, doc_bson) = get_doc_reference();
+//     //     writer.write_bson_line(&doc_bson).await.expect("write chiffre");
+//     //     let (mh, decipher_data_option) = writer.fermer().await.expect("fermer");
+//     //
+//     //     // Verifier que le hachage n'est pas egal au hachage de la version non chiffree
+//     //     assert_ne!(mh.as_str(), &mh_reference);
+//     //
+//     //     let decipher_keys = decipher_data_option.expect("decipher data");
+//     //     let mut decipher_key = decipher_keys.get_cipher_data(fingerprint_cert.as_str()).expect("cle");
+//     //     decipher_key.dechiffrer_cle(enveloppe.cle_privee()).expect("dechiffrer");
+//     //     debug!("Cle dechiffree : {:?}", decipher_key);
+//     //
+//     //     todo!("Fix decipher keys mgs4");
+//     //
+//     //     // let fichier_cs = Box::new(File::open(path_fichier.as_path()).await.expect("open read"));
+//     //     // let mut reader = TransactionReader::new(fichier_cs, Some(&decipher_key)).expect("reader");
+//     //     // let transactions = reader.read_transactions().await.expect("transactions");
+//     //     //
+//     //     // for t in transactions {
+//     //     //     debug!("Transaction dechiffree : {:?}", t);
+//     //     //     let valeur_chiffre = t.get("valeur").expect("valeur").as_i64().expect("val");
+//     //     //     assert_eq!(valeur_chiffre, 5678);
+//     //     // }
+//     //
+//     // }
+//
+//     // fn creer_test_middleware(enveloppe: Arc<EnveloppePrivee>, validateur: Arc<ValidateurX509Impl>) -> (String, TestChiffreurMgs4) {
+//     //     let mut fp_public_keys = Vec::new();
+//     //     let fingerprint_cert = enveloppe.enveloppe.fingerprint.clone();
+//     //     let cle_publique = &enveloppe.enveloppe.cle_publique;
+//     //     fp_public_keys.push(FingerprintCertPublicKey {
+//     //         fingerprint: fingerprint_cert.clone(),
+//     //         public_key: cle_publique.to_owned(),
+//     //         est_cle_millegrille: false,
+//     //     });
+//     //     let cle_publique_ca = &enveloppe.enveloppe_ca.cle_publique;
+//     //     fp_public_keys.push(FingerprintCertPublicKey {
+//     //         fingerprint: enveloppe.enveloppe_ca.fingerprint.clone(),
+//     //         public_key: cle_publique_ca.to_owned(),
+//     //         est_cle_millegrille: true,
+//     //     });
+//     //     let chiffreur = TestChiffreurMgs4 { cles_chiffrage: fp_public_keys, validateur, enveloppe_privee: enveloppe };
+//     //     (fingerprint_cert, chiffreur)
+//     // }
+//
+//     // #[tokio::test]
+//     // async fn test_emettre_fichiers_backup() {
+//     //
+//     //     // Setup
+//     //     let (validateur, enveloppe) = charger_enveloppe_privee_env();
+//     //     let enveloppe = Arc::new(enveloppe);
+//     //     let (_fingerprint_cert, m) = creer_test_middleware(enveloppe.clone(), validateur);
+//     //
+//     //     //let temp_dir = tempdir().expect("tempdir");
+//     //     let temp_dir = PathBuf::from(format!("/tmp/test_generer_fichiers_backup"));
+//     //     match fs::create_dir(&temp_dir).await {
+//     //         Ok(()) => (),
+//     //         Err(e) => {
+//     //             match e.kind() {
+//     //                 ErrorKind::AlreadyExists => (),
+//     //                 _ => panic!("Erreur createdir: {:?}", e)
+//     //             }
+//     //         }
+//     //     }
+//     //
+//     //     let fichiers_backup = vec!["/tmp/test_generer_fichiers_backup/catalogue_0.json"];
+//     //
+//     //     emettre_backup_transactions(&m, "DUMMY_COLLECTION", &fichiers_backup)
+//     //         .await.expect("emettre_backup_transactions");
+//     //
+//     // }
+//
+// }

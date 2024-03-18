@@ -11,6 +11,7 @@ use dryoc::constants::{
     CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE
 };
 use log::debug;
+use millegrilles_cryptographie::messages_structs::DechiffrageInterMillegrilleOwned;
 use multibase::{Base, decode, encode};
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
@@ -19,7 +20,6 @@ use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey};
 use crate::chiffrage::{CipherMgs, CleSecrete, DecipherMgs, FormatChiffrage, MgsCipherData, MgsCipherKeys};
 use crate::chiffrage_cle::{CleDechiffree, CommandeSauvegarderCle, FingerprintCleChiffree};
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, CleDerivee, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, rechiffrer_cles};
-use crate::formatteur_messages::DechiffrageInterMillegrille;
 use crate::hachages::Hacheur;
 
 const CONST_TAILLE_BLOCK_MGS4: usize = 64 * 1024;
@@ -452,7 +452,7 @@ impl Mgs4CipherKeys {
 impl MgsCipherKeys for Mgs4CipherKeys {
 
     fn get_dechiffrage(&self, enveloppe_demandeur: Option<&EnveloppeCertificat>)
-        -> Result<DechiffrageInterMillegrille, String>
+        -> Result<DechiffrageInterMillegrilleOwned, String>
     {
         let mut cles = self.cles_to_map();
         if let Some(cert) = enveloppe_demandeur {
@@ -463,7 +463,7 @@ impl MgsCipherKeys for Mgs4CipherKeys {
             cles.insert(cert.fingerprint.clone(), cle_rechiffree);
         }
 
-        Ok(DechiffrageInterMillegrille {
+        Ok(DechiffrageInterMillegrilleOwned {
             cle_id: Some(self.hachage_bytes.clone()),
             format: self.get_format(),
             hachage: Some(self.hachage_bytes.clone()),

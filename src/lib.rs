@@ -22,21 +22,18 @@ pub mod messages_generiques;
 pub mod domaines;
 pub mod middleware_db;
 pub mod redis_dao;
-// pub mod chacha20poly1305_incremental;
 pub mod chiffrage_ed25519;
-// pub mod chiffrage_chacha20poly1305;
 pub mod chiffrage_rsa;
-pub mod chiffrage_aesgcm;
 pub mod chiffrage_cle;
 pub mod backup_restoration;
 pub mod chiffrage_streamxchacha20poly1305;
 pub mod math;
 pub mod notifications;
 pub mod jwt_handler;
-
-mod rabbitmq_dao_tests;
+mod db_structs;
 
 // Re-exports
+pub use millegrilles_cryptographie;
 pub use async_trait;
 pub use base64_url;
 pub use bytes;

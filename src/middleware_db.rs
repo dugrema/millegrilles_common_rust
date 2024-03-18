@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::FuturesUnordered;
 use log::{debug, error, info, warn};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use mongodb::Database;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
@@ -16,12 +17,11 @@ use tokio::task::JoinHandle;
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, VerificateurPermissions};
 use crate::chiffrage::{ChiffrageFactory, ChiffrageFactoryImpl, CleChiffrageHandler};
-use crate::chiffrage_aesgcm::CipherMgs2;
 use crate::chiffrage_cle::CleDechiffree;
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
-use crate::formatteur_messages::{FormatteurMessage, MessageMilleGrille, MessageSerialise};
+use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{charger_certificat_redis, ChiffrageFactoryTrait, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
@@ -29,7 +29,7 @@ use crate::notifications::NotificationMessageInterne;
 use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 use crate::redis_dao::RedisDao;
-use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
+// use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
 // Middleware avec MongoDB
 pub struct MiddlewareDb {
@@ -115,11 +115,15 @@ impl BackupStarter for MiddlewareDb {
     fn get_tx_backup(&self) -> Sender<CommandeBackup> { self.tx_backup.clone() }
 }
 
-impl VerificateurMessage for MiddlewareDb {
-    fn verifier_message(&self, message: &mut MessageSerialise, options: Option<&ValidationOptions>) -> Result<ResultatValidation, Box<dyn Error>> {
-        verifier_message(message, self, options)
-    }
-}
+// impl VerificateurMessage for MiddlewareDb {
+//     fn verifier_message(
+//         &self,
+//         message: &mut MessageMilleGrillesRefDefault,
+//         options: Option<&ValidationOptions>
+//     ) -> Result<ResultatValidation, Box<dyn Error>> {
+//         verifier_message(message, self, options)
+//     }
+// }
 
 #[async_trait]
 impl ValidateurX509 for MiddlewareDb {
@@ -196,6 +200,10 @@ impl ValidateurX509 for MiddlewareDb {
         }
     }
 
+    fn est_cache(&self, fingerprint: &str) -> bool {
+        self.ressources.ressources.validateur.est_cache(fingerprint)
+    }
+
     fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
         self.ressources.ressources.validateur.certificats_persister()
     }
@@ -237,48 +245,44 @@ impl ValidateurX509 for MiddlewareDb {
 #[async_trait]
 impl GenerateurMessages for MiddlewareDb {
 
-    async fn emettre_evenement<M>(&self, routage: RoutageMessageAction, message: &M)
-        -> Result<(), String>
-        where M: Serialize + Send + Sync
+    async fn emettre_evenement<R,M>(&self, routage: R, message: M)
+                                    -> Result<(), String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.ressources.generateur_messages.emettre_evenement( routage, message).await
     }
 
-    async fn transmettre_requete<M>(&self, routage: RoutageMessageAction, message: &M)
-        -> Result<TypeMessage, String>
-        where M: Serialize + Send + Sync
+    async fn transmettre_requete<R,M>(&self, routage: R, message: M)
+                                      -> Result<TypeMessage, String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.ressources.generateur_messages.transmettre_requete(routage, message).await
     }
 
-    async fn soumettre_transaction<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
-        -> Result<Option<TypeMessage>, String>
-        where M: Serialize + Send + Sync
+    async fn soumettre_transaction<R,M>(&self, routage: R, message: M)
+                                        -> Result<Option<TypeMessage>, String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        self.ressources.ressources.generateur_messages.soumettre_transaction(routage, message, blocking).await
+        self.ressources.ressources.generateur_messages.soumettre_transaction(routage, message).await
     }
 
-    async fn transmettre_commande<M>(&self, routage: RoutageMessageAction, message: &M, blocking: bool)
-        -> Result<Option<TypeMessage>, String>
-        where M: Serialize + Send + Sync
+    async fn transmettre_commande<R,M>(&self, routage: R, message: M)
+                                       -> Result<Option<TypeMessage>, String>
+        where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        self.ressources.ressources.generateur_messages.transmettre_commande(routage, message, blocking).await
+        self.ressources.ressources.generateur_messages.transmettre_commande(routage, message).await
     }
 
-    async fn repondre(&self, routage: RoutageMessageReponse, message: MessageMilleGrille) -> Result<(), String> {
+    async fn repondre<R,M>(&self, routage: R, message: M) -> Result<(), String>
+        where R: Into<RoutageMessageReponse> + Send, M: Serialize + Send + Sync {
         self.ressources.ressources.generateur_messages.repondre(routage, message).await
     }
 
-    async fn emettre_message(&self, routage: RoutageMessageAction, type_message: TypeMessageOut, message: &str, blocking: bool)
-        -> Result<Option<TypeMessage>, String>
+    async fn emettre_message<M>(&self, type_message: TypeMessageOut, message: M)
+                                -> Result<Option<TypeMessage>, String>
+        where M: Into<MessageMilleGrillesBufferDefault> + Send
     {
-        self.ressources.ressources.generateur_messages.emettre_message(routage, type_message, message,  blocking).await
-    }
-
-    async fn emettre_message_millegrille(&self, routage: RoutageMessageAction, blocking: bool, type_message: TypeMessageOut, message: MessageMilleGrille)
-        -> Result<Option<TypeMessage>, String>
-    {
-        self.ressources.ressources.generateur_messages.emettre_message_millegrille(routage, blocking, type_message, message).await
+        self.ressources.ressources.generateur_messages.emettre_message(type_message, message).await
     }
 
     fn mq_disponible(&self) -> bool { self.ressources.ressources.generateur_messages.mq_disponible() }
@@ -307,7 +311,7 @@ impl CleChiffrageHandler for MiddlewareDb {
         self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
     }
 
-    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &MessageSerialise) -> Result<(), String>
+    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
         where M: ConfigMessages
     {
         self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
@@ -326,8 +330,7 @@ impl EmetteurCertificat for MiddlewareDb {
             .collect();
         // let exchanges = vec!(Securite::L1Public, Securite::L2Prive, Securite::L3Protege);
 
-        let routage = RoutageMessageAction::builder("certificat", "infoCertificat")
-            .exchanges(exchanges)
+        let routage = RoutageMessageAction::builder("certificat", "infoCertificat", exchanges)
             .build();
 
         // Sauvegarder dans redis
@@ -361,9 +364,9 @@ impl ChiffrageFactory for MiddlewareDb {
         self.chiffrage_factory.get_chiffreur()
     }
 
-    fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
-        self.chiffrage_factory.get_chiffreur_mgs2()
-    }
+    // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
+    //     self.chiffrage_factory.get_chiffreur_mgs2()
+    // }
 
     // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
     //     self.chiffrage_factory.get_chiffreur_mgs3()

@@ -162,11 +162,11 @@ pub fn kind_rank<S>(kind: S) -> u16
 impl From<TypeMessageOut> for MessageKind {
     fn from(value: TypeMessageOut) -> Self {
         match value {
-            TypeMessageOut::Requete => MessageKind::Requete,
-            TypeMessageOut::Commande => MessageKind::Commande,
-            TypeMessageOut::Transaction => MessageKind::Transaction,
-            TypeMessageOut::Reponse => MessageKind::Reponse,
-            TypeMessageOut::Evenement => MessageKind::Evenement,
+            TypeMessageOut::Requete(_) => MessageKind::Requete,
+            TypeMessageOut::Commande(_) => MessageKind::Commande,
+            TypeMessageOut::Transaction(_) => MessageKind::Transaction,
+            TypeMessageOut::Reponse(_) => MessageKind::Reponse,
+            TypeMessageOut::Evenement(_) => MessageKind::Evenement,
         }
     }
 }

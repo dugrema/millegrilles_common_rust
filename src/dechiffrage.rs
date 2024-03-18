@@ -71,14 +71,15 @@ pub async fn get_cles_rechiffrees<M,S,T>(
             "domaine": domaine_str,
         })
     };
-    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE)
-        .exchanges(vec![Securite::L3Protege])
+    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE, vec![Securite::L3Protege])
         .build();
 
     debug!("dechiffrer_documents Requete cles config notifications : {:?}", requete_cles);
     let reponse_cles: ReponseDechiffrageCles = match middleware.transmettre_requete(routage, &requete_cles).await? {
         TypeMessage::Valide(inner) => {
-            match inner.message.parsed.map_contenu() {
+            let message_ref = inner.message.parse()?;
+            match serde_json::from_str(message_ref.contenu) {
+            // match inner.message.parsed.map_contenu() {
                 Ok(inner) => inner,
                 Err(e) => Err(format!("dechiffrage.get_cles_dechiffrees Erreur mapping reponse rechiffrage {:?} : {:?}", inner, e))?
             }

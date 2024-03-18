@@ -12,7 +12,6 @@ use crate::certificats::{EnveloppePrivee, ordered_map};
 use crate::chiffrage::{CleSecrete, FormatChiffrage};
 use crate::chiffrage_ed25519::dechiffrer_asymmetrique_ed25519;
 use crate::constantes::*;
-use crate::formatteur_messages::MessageMilleGrille;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
 use crate::signatures::{signer_identite, signer_message, verifier_message};
@@ -23,17 +22,22 @@ pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>
     where M: GenerateurMessages
 {
     let routage = RoutageMessageAction::builder(
-        DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE)
+        DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE, vec![Securite::L1Public])
         .build();
 
     let requete = json!({"liste_hachage_bytes": hachage_bytes});
 
     match middleware.transmettre_requete(routage, &requete).await? {
         TypeMessage::Valide(r) => {
-            match r.message.parsed.map_contenu() {
+            let message_ref = r.message.parse()?;
+            match serde_json::from_str(message_ref.contenu) {
                 Ok(r) => Ok(r),
                 Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))
             }
+            // match r.message.parsed.map_contenu() {
+            //     Ok(r) => Ok(r),
+            //     Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))
+            // }
         },
         _ => Err(format!("chiffrage_cles.requete_charger_cles Mauvais type de reponse pour les cles"))
     }
