@@ -29,12 +29,6 @@ const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(400);
 const FLAG_TTL: &str = "x-message-ttl";
 
-// pub struct RabbitMq {
-//     pub connexion: Connection,
-// }
-// impl RabbitMq {
-// }
-
 #[derive(Clone, Debug)]
 pub struct ConfigRoutingExchange {
     pub routing_key: String,
@@ -64,15 +58,6 @@ pub enum QueueType {
     ReplyQueue(ReplyQueue),
     Triggers(String, Securite),
 }
-
-// pub async fn initialiser(configuration: &impl ConfigMessages) -> Result<RabbitMq, lapin::Error> {
-//
-//     let connexion = connecter(configuration).await?;
-//
-//     Ok(RabbitMq{
-//         connexion,
-//     })
-// }
 
 pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     where C: ConfigMessages
@@ -228,61 +213,6 @@ fn get_tls_config(pki: &ConfigurationPki, mq: &ConfigurationMq) -> OwnedTLSConfi
         cert_chain: Some(cert_chain.to_owned()),
     }
 }
-
-// pub fn executer_mq<'a>(
-//     configuration: Arc<impl ConfigMessages + 'static>,
-//     queues: Option<Vec<QueueType>>,
-//     listeners: Option<Mutex<Callback<'static, EventMq>>>,
-//     securite: Securite
-// ) -> Result<RabbitMqExecutorConfig, String> {
-//
-//     // Creer le channel utilise pour recevoir et traiter les messages mis sur les Q
-//     let (tx_traiter_message, rx_traiter_message) = mpsc::channel(1);
-//     let (tx_traiter_reply, rx_traiter_reply) = mpsc::channel(1);
-//     let (tx_traiter_trigger, rx_traiter_trigger) = mpsc::channel(1);
-//
-//     // Preparer recepteur de tx_message_out pour emettre des messages vers MQ (cree dans la boucle)
-//     let tx_message_out = Arc::new(Mutex::new(None));
-//
-//     let reply_q =  Arc::new(Mutex::new(None));
-//
-//     // let boucle_execution = tokio::spawn(
-//     //     boucle_execution(
-//     //         configuration,
-//     //         queues,
-//     //         tx_traiter_message.clone(),
-//     //         tx_traiter_reply.clone(),
-//     //         tx_traiter_trigger.clone(),
-//     //         tx_message_out.clone(),
-//     //         listeners,
-//     //         reply_q.clone(),
-//     //         securite.clone(),
-//     //     )
-//     // );
-//
-//     let executor = RabbitMqExecutor {
-//         tx_out: tx_message_out.clone(),
-//         tx_reply: tx_traiter_reply.clone(),
-//         reply_q,
-//         securite: securite.clone()
-//     };
-//
-//     let mut rx_named_queues = HashMap::new();
-//     // todo Configuration Queues deja fournies
-//
-//     let rx_queues = RabbitMqExecutorRx {
-//         rx_messages: rx_traiter_message,
-//         rx_reply: rx_traiter_reply,
-//         rx_triggers: rx_traiter_trigger,
-//     };
-//
-//     Ok(RabbitMqExecutorConfig {
-//         executor,
-//         rx_queues,
-//         securite: securite.clone(),
-//         rx_named_queues: Mutex::new(rx_named_queues),
-//     })
-// }
 
 #[async_trait]
 pub trait MqMessageSendInformation {
@@ -1289,39 +1219,6 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
             }
         };
 
-        // let routing_key = match &message.domaine {
-        //     Some(_) => {
-        //         let rk = match concatener_rk(&message) {
-        //             Ok(rk) => rk,
-        //             Err(e) => {
-        //                 error!("task_emettre_messages Erreur preparation routing key {:?}", e);
-        //                 continue
-        //             }
-        //         };
-        //
-        //         match &message.type_message {
-        //             TypeMessageOut::Requete(_) => format!("requete.{}", rk),
-        //             TypeMessageOut::Commande(_) => format!("commande.{}", rk),
-        //             TypeMessageOut::Transaction(_) => format!("transaction.{}", rk),
-        //             TypeMessageOut::Reponse(_) => {
-        //                 error!("Reponse avec domaine non supportee");
-        //                 continue;
-        //             },
-        //             TypeMessageOut::Evenement => format!("evenement.{}", rk),
-        //         }
-        //     },
-        //     None => String::from(""),
-        // };
-
-        // let message_serialise = match MessageSerialise::from_parsed(message.message) {
-        //     Ok(m) => m,
-        //     Err(e) => {
-        //         error!("task_emettre_messages Erreur traitement message, on drop : {:?}", e);
-        //         continue;
-        //     },
-        // };
-        // let contenu = &message_serialise.parsed;
-
         // Verifier etat du channel (doit etre connecte)
         let connecte = match channel_opt.as_ref() {
             Some(channel) => {
@@ -1361,26 +1258,9 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
 
         let channel = channel_opt.as_ref().expect("channel");
 
-        // let correlation_id = contenu.id.as_str();
-        // let correlation_id = match message.correlation_id.as_ref() {
-        //     Some(inner) => inner.as_str(),
-        //     None => contenu.id.as_str()
-        // };
         debug!("Emettre_message id {} (correlation {})", message.message_id, correlation_id);
 
-        // let exchanges = match &message.exchanges {
-        //     Some(e) => Some(e.clone()),
-        //     None => {
-        //         let securite = rabbitmq.securite.clone();
-        //         match message.type_message {
-        //             TypeMessageOut::Reponse => None,  // Aucun exchange pour une reponse
-        //             _ => Some(vec![securite])  // Toutes les autre reponses, prendre exchange defaut
-        //         }
-        //     }
-        // };
-
         let options = BasicPublishOptions::default();
-        // let payload = message_serialise.get_str().as_bytes().to_vec();
         let payload = message.message.buffer;
 
         let properties = {
@@ -1407,30 +1287,12 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                 }
             }
 
-            // match &message.replying_to {
-            //     Some(r) => {
-            //         debug!("task_emettre_messages Emission message, reply_q en parametre : {:?}", r);
-            //         properties = properties.with_reply_to(r.as_str().into());
-            //     },
-            //     None => {
-            //         let lock_reply_q = rabbitmq.reply_q.lock().expect("lock");
-            //         debug!("task_emettre_messages Emission message, reply_q locale : {:?}", lock_reply_q);
-            //         match lock_reply_q.as_ref() {
-            //             Some(qs) => {
-            //                 properties = properties.with_reply_to(qs.as_str().into());
-            //             },
-            //             None => ()
-            //         };
-            //     }
-            // }
-
             properties
         };
 
         match &message.type_message {
             TypeMessageOut::Reponse(r) => {
                 // Reply
-                // let reply_to = message.replying_to.expect("reply_q");
                 let reply_to = r.reply_to.as_str();
                 debug!("task_emettre_messages Emission message vers reply_q {} avec correlation_id {}", reply_to, correlation_id);
 
@@ -1460,12 +1322,8 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                                 properties.clone()
                             ).await;
                             match resultat {
-                                Ok(_) => {
-                                    debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange)
-                                },
-                                Err(e) => {
-                                    error!("task_emettre_messages Erreur emission message {:?}", e)
-                                }
+                                Ok(_) => debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange),
+                                Err(e) => error!("task_emettre_messages Erreur emission message {:?}", e)
                             }
                         }
                     },
@@ -1474,46 +1332,6 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
             }
         }
 
-        // match exchanges {
-        //     Some(inner) => {
-        //         for exchange in inner {
-        //             let resultat = channel.basic_publish(
-        //                 exchange.get_str(),
-        //                 &routing_key,
-        //                 options,
-        //                 payload.clone(),
-        //                 properties.clone()
-        //             ).await;
-        //             match resultat {
-        //                 Ok(()) => {
-        //                     debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange)
-        //                 },
-        //                 Err(e) => {
-        //                     error!("task_emettre_messages Erreur emission message {:?} : {:?}", resultat, e)
-        //                 }
-        //             }
-        //         }
-        //     },
-        //     None => {
-        //         // Reply
-        //         let reply_to = message.replying_to.expect("reply_q");
-        //         debug!("task_emettre_messages Emission message vers reply_q {} avec correlation_id {}", reply_to, correlation_id);
-        //
-        //         // C'est une reponse (message direct)
-        //         let resultat = channel.basic_publish(
-        //             "",
-        //             &reply_to,
-        //             options,
-        //             payload.to_vec(),
-        //             properties
-        //         ).await;
-        //         if resultat.is_err() {
-        //             error!("task_emettre_messages Erreur emission message {:?}", resultat);
-        //         } else {
-        //             debug!("task_emettre_messages Reponse {} emise vers {:?}", correlation_id, reply_to);
-        //         }
-        //     }
-        // }
     };
 
     info!("emettre_message : Fin thread");
