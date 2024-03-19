@@ -212,9 +212,17 @@ pub fn verifier_reponse_ok(message: &TypeMessage) -> bool {
                     return false
                 }
             };
-            match serde_json::from_str::<MessageConfirmation>(message_ref.contenu) {
-                Ok(r) => r.ok.unwrap_or_else(|| false),
-                Err(_) => false
+            match message_ref.contenu() {
+                Ok(inner) => {
+                    match inner.deserialize::<MessageConfirmation>() {
+                        Ok(r) => r.ok.unwrap_or_else(|| false),
+                        Err(_) => false
+                    }
+                },
+                Err(e) => {
+                    error!("chiffrage_cle.requete_charger_cles Erreur contenu() {:?}", e);
+                    false
+                }
             }
         },
         _ => false

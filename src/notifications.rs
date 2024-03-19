@@ -158,7 +158,8 @@ impl EmetteurNotifications {
                         let enveloppe_maitredescles = match middleware.transmettre_requete(routage, &json!({})).await? {
                             TypeMessage::Valide(m) => {
                                 let message_ref = m.message.parse()?;
-                                let certificat_message: MessageCertificat = serde_json::from_str(message_ref.contenu)?;
+                                let message_contenu = message_ref.contenu()?;
+                                let certificat_message: MessageCertificat = message_contenu.deserialize()?;
                                 // let certificat_pem: Vec<String> = m.message.parsed.map_contenu(Some("certificat"))?;
                                 let certificat_pem = certificat_message.certificat;
                                 debug!("emettre_notification_proprietaire Certificat maitre des cles {:?}", certificat_pem);

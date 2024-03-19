@@ -587,7 +587,8 @@ async fn serialiser_catalogue<M>(
 
     let message_ref = reponse.message.parse()?;
     debug!("Reponse backup {:?}", from_utf8(reponse.message.buffer.as_slice()));
-    let reponse_mappee: ReponseBackup = serde_json::from_str(message_ref.contenu)?;
+    let message_contenu = message_ref.contenu()?;
+    let reponse_mappee: ReponseBackup = message_contenu.deserialize()?;
 
     if let Some(true) = reponse_mappee.ok {
         debug!("Catalogue transactions sauvegarde OK")

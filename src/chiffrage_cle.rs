@@ -30,7 +30,11 @@ pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>
     match middleware.transmettre_requete(routage, &requete).await? {
         TypeMessage::Valide(r) => {
             let message_ref = r.message.parse()?;
-            match serde_json::from_str(message_ref.contenu) {
+            let message_contenu = match message_ref.contenu() {
+                Ok(inner) => inner,
+                Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur contenu() {:?}", e))?
+            };
+            match message_contenu.deserialize() {
                 Ok(r) => Ok(r),
                 Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))
             }

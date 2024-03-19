@@ -199,7 +199,8 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
                 match action.as_str() {
                     EVENEMENT_CEDULE => {
                         let message_ref = m.message.parse()?;
-                        let trigger: MessageCedule = serde_json::from_str(message_ref.contenu)?;
+                        let message_contenu = message_ref.contenu()?;
+                        let trigger: MessageCedule = message_contenu.deserialize()?;
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
                     },
@@ -378,10 +379,11 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
             match message {
                 TypeMessage::Valide(inner) => {
+                    let type_message = inner.type_message.clone();  // Pour message erreur
                     match self.traiter_message_valide_action(middleware.clone(), inner).await {
                         Ok(r) => r,
                         Err(e) => {
-                            error!("domaines.consommer_messages/ValideAction Erreur traitement message domaine={} : {:?}", self.get_nom_domaine(), e);
+                            error!("domaines.consommer_messages/ValideAction Erreur traitement message domaine={} routage:{:?} : {:?}", self.get_nom_domaine(), type_message, e);
                         }
                     }
                     // warn!("Recu MessageValide sur thread consommation, skip : {:?}", inner)
@@ -468,7 +470,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     /// Traite une transaction en la chargeant, dirigeant vers l'aiguillage puis la marque comme traitee
-    async fn traiter_transaction<M>(self: &'static Self, middleware: &M, m: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, String>
+    async fn traiter_transaction<M>(self: &'static Self, middleware: &M, m: MessageValide)
+        -> Result<Option<MessageMilleGrillesBufferDefault>, String>
         where M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/
     {
         // let trigger = match serde_json::from_value::<TriggerTransaction>(Value::Object(m.message.get_msg().contenu.clone())) {
@@ -479,7 +482,11 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             Ok(inner) => inner,
             Err(e) => Err(format!("traiter_transaction Erreur parse message {}", e))?
         };
-        let trigger: TriggerTransaction = match serde_json::from_str(message_ref.contenu) {
+        let message_contenu = match message_ref.contenu() {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("Erreur conversion message contenu {:?} : {:?}", m, e))?
+        };
+        let trigger: TriggerTransaction = match message_contenu.deserialize() {
             Ok(inner) => inner,
             Err(e) => Err(format!("Erreur conversion message vers Trigger {:?} : {:?}", m, e))?
         };
@@ -649,7 +656,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     },
                     EVENEMENT_CEDULE => {
                         let message_ref = m.message.parse()?;
-                        let trigger: MessageCedule = serde_json::from_str(message_ref.contenu)?;
+                        let message_contenu = message_ref.contenu()?;
+                        let trigger: MessageCedule = message_contenu.deserialize()?;
                         // self.verifier_backup_cedule(middleware.as_ref(), &trigger).await?;
                         self.traiter_cedule(middleware.as_ref(), &trigger).await?;
                         Ok(None)
@@ -767,7 +775,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let message_ref = message.message.parse()?;
 
         debug!("GestionnaireDomaine.demarrer_backup {} : {}", self.get_nom_domaine(), message_ref.id);
-        let message_backup: MessageBackupTransactions = serde_json::from_str(message_ref.contenu)?;
+        let message_contenu = message_ref.contenu()?;
+        let message_backup: MessageBackupTransactions = message_contenu.deserialize()?;
         let complet = match message_backup.complet.as_ref() { Some(v) => v.to_owned(), None => false };
 
         if let Some(nom_collection_transactions) = self.get_collection_transactions() {

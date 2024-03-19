@@ -1110,8 +1110,8 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     let reponse: ReponseEnveloppe = match reponse_requete {
         TypeMessage::Valide(m) => {
             let message_ref = m.message.parse()?;
-            serde_json::from_str(message_ref.contenu)?
-
+            todo!("fix me")
+            //serde_json::from_str(message_ref.contenu)?
             // match m.message.parsed.map_contenu() {
             //     Ok(m) => m,
             //     Err(e) => {

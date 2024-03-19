@@ -106,7 +106,7 @@ impl<'a, const C: usize> From<MessageMilleGrillesRef<'a, C>> for TransactionRef<
             id: value.id,
             pubkey: value.pubkey,
             estampille: value.estampille,
-            kind: value.kind,
+            kind: value.kind.clone(),
             contenu: value.contenu,
             routage: value.routage,
             pre_migration: value.pre_migration,
