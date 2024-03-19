@@ -31,10 +31,11 @@ use blake2::{Blake2s256, Digest};
 
 use crate::constantes::*;
 use crate::hachages::hacher_bytes;
-use std::error::Error;
+// use std::error::Error;
 use crate::constantes::Securite::L1Public;
 use std::convert::TryInto;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRef;
+use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::{ErreurValidation, ErreurVerification, TypeMessage};
 
@@ -85,7 +86,7 @@ pub fn charger_csr(pem: &str) -> Result<X509Req, String> {
     }
 }
 
-pub fn csr_calculer_fingerprintpk(pem: &str) -> Result<String, Box<dyn Error>> {
+pub fn csr_calculer_fingerprintpk(pem: &str) -> Result<String, Error> {
     let csr_parsed = charger_csr(pem)?;
     // let cle_publique = csr_parsed.public_key()?;
     // let fingerprint = calculer_fingerprint_pk(&cle_publique)?;
@@ -103,8 +104,10 @@ pub fn charger_chaine(pem: &str) -> Result<Vec<X509>, ErrorStack> {
     stack
 }
 
-pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&str>) -> Result<EnveloppeCertificat, ErrorStack> {
+pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&str>) -> Result<EnveloppeCertificat, Error> {
+    debug!("Charger enveloppe : {}", pem);
     let chaine_x509 = charger_chaine(pem)?;
+    debug!("Chaine X.509 : {:?}", chaine_x509);
 
     let millegrille = match ca_pem {
         Some(c) => X509::stack_from_pem(c.as_bytes())?.pop(),
@@ -112,7 +115,10 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&s
     };
 
     // Calculer fingerprint du certificat
-    let cert: &X509 = chaine_x509.get(0).unwrap();
+    let cert: &X509 = match chaine_x509.get(0) {
+        Some(inner) => inner,
+        None => Err("charger_enveloppe Certificat non parse")?
+    };
     let fingerprint = calculer_fingerprint(cert).expect("fingerprint");
     debug!("Fingerprint certificat : {:?}", fingerprint);
 
@@ -341,7 +347,7 @@ pub fn build_store(ca_cert: &X509, check_time: bool) -> Result<X509Store, ErrorS
 }
 
 pub fn charger_enveloppe_privee<V>(path_cert: &Path, path_cle: &Path, validateur: Arc<V>)
-    -> Result<EnveloppePrivee, ErrorStack>
+    -> Result<EnveloppePrivee, Error>
     where V: ValidateurX509
 {
     let path_cle_str = format!("cle : {:?}", path_cle);
@@ -557,7 +563,7 @@ impl EnveloppeCertificat {
 
     /// Retourne la cle publique pour le certificat (leaf) et le CA (millegrille)
     /// Utilise pour chiffrage de cles secretes
-    pub fn fingerprint_cert_publickeys(&self) -> Result<Vec<FingerprintCertPublicKey>, Box<dyn Error>> {
+    pub fn fingerprint_cert_publickeys(&self) -> Result<Vec<FingerprintCertPublicKey>, Error> {
         let cert_leaf = self.chaine.get(0).expect("leaf");
         let fp_leaf = calculer_fingerprint(cert_leaf)?;
         let fpleaf = FingerprintCertPublicKey { fingerprint: fp_leaf, public_key: cert_leaf.public_key()?, est_cle_millegrille: false };
@@ -932,7 +938,10 @@ impl ValidateurX509 for ValidateurX509Impl {
             Some(e) => Ok(e),
             None => {
                 // Creer l'enveloppe et conserver dans le cache local
-                let pem_str: String = chaine_pem.join("\n");
+                let pem_str: String = chaine_pem.iter()
+                    .map(|c|c.replace("\\n", "\n"))
+                    .collect::<Vec<String>>()
+                    .join("\n");
                 debug!("charger_enveloppe Alignement du _certificat en string concatenee\n{}", pem_str);
                 match charger_enveloppe(pem_str.as_str(), Some(&self.store), ca_pem) {
                     Ok(e) => {
@@ -1376,7 +1385,7 @@ pub struct MessageInfoCertificat {
 }
 
 pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), Error>
     where G: GenerateurMessages
 {
     debug!("Charger les certificats de maitre des cles pour chiffrage");

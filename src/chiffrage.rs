@@ -333,63 +333,55 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
         where M: ConfigMessages
     {
-        match message {
-            TypeMessage::Valide(m) => {}
-            TypeMessage::Certificat(m) => {}
-            TypeMessage::Regeneration => ()
+        let cert_chiffrage = match message {
+            TypeMessage::Valide(m) => m.certificat.as_ref(),
+            TypeMessage::Certificat(m) => &m.enveloppe_certificat,
+            TypeMessage::Regeneration => return Ok(())
+        };
+
+        // Valider le certificat
+        if ! cert_chiffrage.presentement_valide {
+            error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete");
+            Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
         }
-        todo!()
-        // let cert_chiffrage = match &message.certificat {
-        //     Some(c) => c.clone(),
-        //     None => {
-        //         error!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait");
-        //         Err(format!("recevoir_certificat_chiffrage Message de certificat de MilleGrille recu, certificat n'est pas extrait"))?
-        //     }
-        // };
-        //
-        // // Valider le certificat
-        // if ! cert_chiffrage.presentement_valide {
-        //     error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete");
-        //     Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
-        // }
-        //
-        // if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
-        //     error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete");
-        //     Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
-        // }
-        //
-        // info!("Certificat maitre des cles accepte {}", cert_chiffrage.fingerprint());
-        //
-        // // Stocker cles chiffrage du maitre des cles
-        // {
-        //     let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
-        //         Ok(f) => f,
-        //         Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
-        //     };
-        //     let mut guard = match self.cles_chiffrage.lock() {
-        //         Ok(g) => g,
-        //         Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
-        //     };
-        //     for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
-        //         guard.insert(fp.fingerprint.clone(), fp.clone());
-        //     }
-        //
-        //     // S'assurer d'avoir le certificat de millegrille local
-        //     let enveloppe_privee = middleware.get_configuration_pki().get_enveloppe_privee();
-        //     let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
-        //     let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
-        //         Ok(p) => p,
-        //         Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
-        //     }.pop();
-        //     if let Some(mut pk_ca) = public_keys_ca {
-        //         pk_ca.est_cle_millegrille = true;
-        //         guard.insert(pk_ca.fingerprint.clone(), pk_ca);
-        //     }
-        //
-        //     debug!("Certificats chiffrage maj {:?}", guard);
-        // }
-        //
-        // Ok(())
+
+        if ! cert_chiffrage.verifier_roles(vec![RolesCertificats::MaitreDesCles]) {
+            error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete");
+            Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'a pas le role MaitreCles' - rejete"))?;
+        }
+
+        info!("Certificat maitre des cles accepte {}", cert_chiffrage.fingerprint());
+
+        // Stocker cles chiffrage du maitre des cles
+        {
+            let fps = match cert_chiffrage.fingerprint_cert_publickeys() {
+                Ok(f) => f,
+                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cert_chiffrage.fingerprint_cert_publickeys: {:?}", e))?
+            };
+            let mut guard = match self.cles_chiffrage.lock() {
+                Ok(g) => g,
+                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur cles_chiffrage.lock(): {:?}", e))?
+            };
+            for fp in fps.iter().filter(|f| ! f.est_cle_millegrille) {
+                guard.insert(fp.fingerprint.clone(), fp.clone());
+            }
+
+            // S'assurer d'avoir le certificat de millegrille local
+            let enveloppe_privee = middleware.get_configuration_pki().get_enveloppe_privee();
+            let enveloppe_ca = &enveloppe_privee.enveloppe_ca;
+            let public_keys_ca = match enveloppe_ca.fingerprint_cert_publickeys() {
+                Ok(p) => p,
+                Err(e) => Err(format!("middleware_db.recevoir_certificat_chiffrage Erreur enveloppe_ca.fingerprint_cert_publickeys: {:?}", e))?
+            }.pop();
+            if let Some(mut pk_ca) = public_keys_ca {
+                pk_ca.est_cle_millegrille = true;
+                guard.insert(pk_ca.fingerprint.clone(), pk_ca);
+            }
+
+            debug!("Certificats chiffrage maj {:?}", guard);
+        }
+
+        Ok(())
     }
 }
 

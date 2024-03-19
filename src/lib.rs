@@ -31,6 +31,7 @@ pub mod math;
 pub mod notifications;
 pub mod jwt_handler;
 pub mod db_structs;
+mod error;
 
 // Re-exports
 pub use millegrilles_cryptographie;
