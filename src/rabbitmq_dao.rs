@@ -1216,19 +1216,29 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
     Ok(())
 }
 
+fn concatener_rk_message_action(kind: &str, routage: &RoutageMessageAction) -> String {
+    let mut vec_rk = vec![kind];
+    vec_rk.push(routage.domaine.as_str());
+    if let Some(partition) = routage.partition.as_ref() {
+        vec_rk.push(partition.as_str());
+    }
+    vec_rk.push(routage.action.as_str());
+    vec_rk.join(".")
+}
+
 fn concatener_rk(message: &MessageOut) -> Result<String, String> {
     match &message.type_message {
-        TypeMessageOut::Requete(r) |
-        TypeMessageOut::Commande(r) |
-        TypeMessageOut::Transaction(r) |
+        TypeMessageOut::Requete(r) => {
+            Ok(concatener_rk_message_action("requete", r))
+        }
+        TypeMessageOut::Commande(r) => {
+            Ok(concatener_rk_message_action("commande", r))
+        }
+        TypeMessageOut::Transaction(r) => {
+            Ok(concatener_rk_message_action("transaction", r))
+        }
         TypeMessageOut::Evenement(r) => {
-            let mut vec_rk = Vec::new();
-            vec_rk.push(r.domaine.clone());
-            if let Some(partition) = r.partition.as_ref() {
-                vec_rk.push(partition.clone());
-            }
-            vec_rk.push(r.action.clone());
-            Ok(vec_rk.join(".").into())
+            Ok(concatener_rk_message_action("evenement", r))
         }
         TypeMessageOut::Reponse(_) => Err(String::from("concatener_rk Type reponse non supporte"))
     }
