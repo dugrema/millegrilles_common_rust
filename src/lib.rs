@@ -30,7 +30,7 @@ pub mod chiffrage_streamxchacha20poly1305;
 pub mod math;
 pub mod notifications;
 pub mod jwt_handler;
-mod db_structs;
+pub mod db_structs;
 
 // Re-exports
 pub use millegrilles_cryptographie;

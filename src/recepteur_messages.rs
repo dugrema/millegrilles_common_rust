@@ -107,6 +107,7 @@ pub async fn traiter_delivery<M,S>(
                 blocking: None,
                 ajouter_ca: false,
                 timeout_blocking: None,
+                queue_reception: Some(nom_q.to_string())
             };
 
             match type_message_string.as_str() {

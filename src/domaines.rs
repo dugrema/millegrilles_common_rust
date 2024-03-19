@@ -323,8 +323,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T)
         -> Result<Option<MessageMilleGrillesBufferDefault>, String>
         where
-            M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
-            T: TryInto<TransactionValide>;
+            M: ValidateurX509 + GenerateurMessages + MongoDao,
+            T: TryInto<TransactionValide> + Send;
 
     /// Methode qui peut etre re-implementee dans une impl
     async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)

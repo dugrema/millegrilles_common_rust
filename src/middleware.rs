@@ -805,7 +805,9 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
     // Batir message
     let (message, message_id, certificat) = {
         let enveloppe_privee = middleware.get_enveloppe_signature();
-        let (message, message_id) = build_message_action(routage.clone(), valeur, enveloppe_privee.as_ref())?;
+        let (message, message_id) = build_message_action(
+            millegrilles_cryptographie::messages_structs::MessageKind::Transaction,
+            routage.clone(), valeur, enveloppe_privee.as_ref())?;
         let certificat = enveloppe_privee.enveloppe.clone();
         (message, message_id, certificat)
     };

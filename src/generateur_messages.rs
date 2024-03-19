@@ -38,6 +38,7 @@ pub struct RoutageMessageAction {
     pub blocking: Option<bool>,
     pub ajouter_ca: bool,
     pub timeout_blocking: Option<u64>,
+    pub queue_reception: Option<String>,
 }
 impl RoutageMessageAction {
 
@@ -50,6 +51,7 @@ impl RoutageMessageAction {
             user_id: None,
             partition: None, exchanges: exchanges.into(), reply_to: None, correlation_id: None,
             ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
+            queue_reception: None
         }
     }
 
@@ -84,6 +86,7 @@ pub struct RoutageMessageActionBuilder {
     blocking: Option<bool>,
     ajouter_ca: bool,
     timeout_blocking: Option<u64>,
+    queue_reception: Option<String>,
 }
 impl RoutageMessageActionBuilder {
     pub fn new<S,T,V>(domaine: S, action: T, exchanges: V) -> Self
@@ -95,6 +98,7 @@ impl RoutageMessageActionBuilder {
             user_id: None,
             partition: None, exchanges: exchanges.into(), reply_to: None, correlation_id: None,
             ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
+            queue_reception: None,
         }
     }
 
@@ -149,6 +153,13 @@ impl RoutageMessageActionBuilder {
         self
     }
 
+    pub fn queue_reception<S>(mut self, queue_reception: S) -> Self
+        where S: Into<String>
+    {
+        self.queue_reception = Some(queue_reception.into());
+        self
+    }
+
     pub fn build(self) -> RoutageMessageAction {
         RoutageMessageAction {
             domaine: self.domaine,
@@ -162,6 +173,7 @@ impl RoutageMessageActionBuilder {
             blocking: self.blocking,
             ajouter_ca: self.ajouter_ca,
             timeout_blocking: self.timeout_blocking,
+            queue_reception: self.queue_reception,
         }
     }
 }
@@ -376,7 +388,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         // Batir message
         let (message, message_id) = {
             let guard_enveloppe_privee = self.enveloppe_privee.lock().expect("lock");
-            build_message_action(routage.clone(), message, guard_enveloppe_privee.as_ref())?
+            build_message_action(millegrilles_cryptographie::messages_structs::MessageKind::Evenement,
+                                 routage.clone(), message, guard_enveloppe_privee.as_ref())?
         };
 
         // Completer routage avec nouveau correlation_id
@@ -399,7 +412,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
         let (message, message_id) = {
             let guard_enveloppe_privee = self.enveloppe_privee.lock().expect("lock");
-            build_message_action(routage.clone(), message, guard_enveloppe_privee.as_ref())?
+            build_message_action(millegrilles_cryptographie::messages_structs::MessageKind::Requete,
+                                 routage.clone(), message, guard_enveloppe_privee.as_ref())?
         };
         routage.correlation_id = Some(message_id);
         let type_message = TypeMessageOut::Requete(routage);
@@ -430,7 +444,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
         let (message, message_id) = {
             let guard_enveloppe_privee = self.enveloppe_privee.lock().expect("lock");
-            build_message_action(routage.clone(), message, guard_enveloppe_privee.as_ref())?
+            build_message_action(millegrilles_cryptographie::messages_structs::MessageKind::Transaction,
+                                 routage.clone(), message, guard_enveloppe_privee.as_ref())?
         };
         routage.correlation_id = Some(message_id);
         let type_message = TypeMessageOut::Transaction(routage);
@@ -452,7 +467,8 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
         let (message, message_id) = {
             let guard_enveloppe_privee = self.enveloppe_privee.lock().expect("lock");
-            build_message_action(routage.clone(), message, guard_enveloppe_privee.as_ref())?
+            build_message_action(millegrilles_cryptographie::messages_structs::MessageKind::Commande,
+                                 routage.clone(), message, guard_enveloppe_privee.as_ref())?
         };
         routage.correlation_id = Some(message_id);
         let type_message = TypeMessageOut::Commande(routage);

@@ -37,7 +37,46 @@ use crate::dechiffrage::dechiffrer_data;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::mongo_dao::convertir_to_bson;
 
-pub fn build_message_action<R,M>(routage: R, message: M, enveloppe_privee: &EnveloppePrivee)
+pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
+                        -> Result<(MessageMilleGrillesBufferDefault, String), String>
+    where M: Serialize + Send + Sync
+{
+    let contenu = match serde_json::to_string(&message) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
+    };
+
+    let estampille = Utc::now();
+
+    let mut cle_privee_u8 = SecretKey::default();
+    match enveloppe_privee.cle_privee().raw_private_key() {
+        Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
+        Err(e) => Err(format!("build_reponse Erreur raw_private_key {:?}", e))?
+    };
+    let signing_key = SigningKey::from_bytes(&cle_privee_u8);
+
+    let pem_vec = enveloppe_privee.enveloppe.get_pem_vec_extracted();
+
+    // Allouer un Vec et serialiser le message signe.
+    let mut buffer = Vec::new();
+    let message_id = {
+        let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
+        certificat.extend(pem_vec.iter().map(|s| s.as_str()));
+
+        let generateur = MessageMilleGrillesBuilderDefault::new(
+            millegrilles_cryptographie::messages_structs::MessageKind::Reponse, contenu.as_str(), estampille, &signing_key)
+            .certificat(certificat);
+
+        let message_ref = generateur.build_into_alloc(&mut buffer)?;
+        message_ref.id.to_owned()
+    };
+
+    // Retourner le nouveau message
+    Ok((MessageMilleGrillesBufferDefault::from(buffer), message_id))
+}
+
+pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messages_structs::MessageKind,
+                                 routage: R, message: M, enveloppe_privee: &EnveloppePrivee)
                                  -> Result<(MessageMilleGrillesBufferDefault, String), String>
     where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync
 {
@@ -66,7 +105,7 @@ pub fn build_message_action<R,M>(routage: R, message: M, enveloppe_privee: &Enve
         certificat.extend(pem_vec.iter().map(|s| s.as_str()));
 
         let generateur = MessageMilleGrillesBuilderDefault::new(
-            millegrilles_cryptographie::messages_structs::MessageKind::Commande, contenu.as_str(), estampille, &signing_key)
+            type_message, contenu.as_str(), estampille, &signing_key)
             .routage(routage_message)
             .certificat(certificat);
 
@@ -79,42 +118,15 @@ pub fn build_message_action<R,M>(routage: R, message: M, enveloppe_privee: &Enve
     Ok((MessageMilleGrillesBufferDefault::from(buffer), message_id))
 }
 
-pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
-                        -> Result<(MessageMilleGrillesBufferDefault, String), String>
-    where M: Serialize + Send + Sync
-{
-    let contenu = match serde_json::to_string(&message) {
-        Ok(inner) => inner,
-        Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
-    };
-
-    let estampille = Utc::now();
-
-    let mut cle_privee_u8 = SecretKey::default();
-    match enveloppe_privee.cle_privee().raw_private_key() {
-        Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
-        Err(e) => Err(format!("build_reponse Erreur raw_private_key {:?}", e))?
-    };
-    let signing_key = SigningKey::from_bytes(&cle_privee_u8);
-
-    let pem_vec = enveloppe_privee.enveloppe.get_pem_vec_extracted();
-
-    // Allouer un Vec et serialiser le message signe.
-    let mut buffer = Vec::new();
-    let message_id = {
-        let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
-        certificat.extend(pem_vec.iter().map(|s| s.as_str()));
-
-        let generateur = MessageMilleGrillesBuilderDefault::new(
-            millegrilles_cryptographie::messages_structs::MessageKind::Commande, contenu.as_str(), estampille, &signing_key)
-            .certificat(certificat);
-
-        let message_ref = generateur.build_into_alloc(&mut buffer)?;
-        message_ref.id.to_owned()
-    };
-
-    // Retourner le nouveau message
-    Ok((MessageMilleGrillesBufferDefault::from(buffer), message_id))
+#[derive(Serialize)]
+struct ReponseMessage<'a> {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    err: Option<&'a str>,
 }
 
 pub trait FormatteurMessage {
@@ -124,11 +136,11 @@ pub trait FormatteurMessage {
     /// Permet de modifier l'enveloppe utilisee pour la signature de messages
     fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>);
 
-    fn build_message_action<R, M>(&self, routage: R, message: M)
+    fn build_message_action<R, M>(&self, type_message: millegrilles_cryptographie::messages_structs::MessageKind, routage: R, message: M)
                                   -> Result<(MessageMilleGrillesBufferDefault, String), String>
         where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
         let enveloppe_privee = self.get_enveloppe_signature();
-        build_message_action(routage, message, enveloppe_privee.as_ref())
+        build_message_action(type_message, routage, message, enveloppe_privee.as_ref())
     }
 
     fn build_reponse<M>(&self, message: M)
@@ -220,14 +232,35 @@ pub trait FormatteurMessage {
     //                            None::<&str>, None::<&str>, None::<&str>, None::<&str>, None,
     //                            false)
     // }
-    //
-    // fn reponse_ok(&self) -> Result<Option<MessageMilleGrille>, String> {
-    //     let reponse = json!({"ok": true});
-    //     match self.formatter_reponse(&reponse,None) {
-    //         Ok(m) => Ok(Some(m)),
-    //         Err(e) => Err(format!("Erreur preparation reponse_ok : {:?}", e))?
-    //     }
-    // }
+
+    fn reponse_ok<O>(&self, code: O, message: Option<&str>)
+        -> Result<MessageMilleGrillesBufferDefault, String>
+        where O: Into<Option<usize>>
+    {
+        let code = code.into();
+        let message = match message { Some(inner) => { Some(inner.into()) }, None => None };
+        let reponse = ReponseMessage { ok: true, code, message, err: None };
+        match self.build_reponse(reponse) {
+            Ok(m) => Ok(m.0),
+            Err(e) => Err(format!("Erreur preparation reponse_ok : {:?}", e))?
+        }
+    }
+
+    fn reponse_err<O>(&self, code: O, message: Option<&str>, err: Option<&str>)
+        -> Result<MessageMilleGrillesBufferDefault, String>
+        where O: Into<Option<usize>>
+    {
+        let code = code.into();
+        let message = match message { Some(inner) => { Some(inner.into()) }, None => None };
+        let err = match err { Some(inner) => { Some(inner.into()) }, None => None };
+
+        let reponse = ReponseMessage { ok: false, code, message, err };
+
+        match self.build_reponse(reponse) {
+            Ok(m) => Ok(m.0),
+            Err(e) => Err(format!("Erreur preparation reponse_ok : {:?}", e))?
+        }
+    }
 
 }
 
