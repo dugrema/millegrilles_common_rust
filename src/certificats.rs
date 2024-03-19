@@ -149,7 +149,7 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&s
         cle_publique,
         intermediaire,
         millegrille,
-        presentement_valide,
+        // presentement_valide,
         fingerprint,
         date_enveloppe: Instant::now(),
         extensions_millegrille: extensions,
@@ -391,7 +391,7 @@ pub struct EnveloppeCertificat {
     pub cle_publique: PKey<Public>,
     intermediaire: Stack<X509>,
     millegrille: Option<X509>,
-    pub presentement_valide: bool,
+    // pub presentement_valide: bool,
     pub fingerprint: String,
     date_enveloppe: Instant,
     extensions_millegrille: ExtensionsMilleGrille,
@@ -406,7 +406,7 @@ impl EnveloppeCertificat {
     //     &self.chaine.iter().last().expect("cert")
     // }
 
-    pub fn presentement_valide(&self) -> bool { self.presentement_valide }
+    // pub fn presentement_valide(&self) -> bool { self.presentement_valide }
 
     pub fn fingerprint(&self) -> &String { &self.fingerprint }
 
@@ -606,7 +606,7 @@ impl Clone for EnveloppeCertificat {
             cle_publique: self.cle_publique.clone(),
             intermediaire,
             millegrille: self.millegrille.clone(),
-            presentement_valide: self.presentement_valide,
+            // presentement_valide: self.presentement_valide,
             fingerprint: self.fingerprint.clone(),
             date_enveloppe: self.date_enveloppe.clone(),
             extensions_millegrille: self.extensions_millegrille.clone(),
@@ -625,7 +625,7 @@ impl Clone for EnveloppeCertificat {
         self.cle_publique = source.cle_publique.clone();
         self.intermediaire = intermediaire;
         self.millegrille = source.millegrille.clone();
-        self.presentement_valide = source.presentement_valide;
+        // self.presentement_valide = source.presentement_valide;
         self.fingerprint = source.fingerprint.clone();
         self.date_enveloppe = source.date_enveloppe.clone();
         self.extensions_millegrille = source.extensions_millegrille.clone();
@@ -691,7 +691,7 @@ impl EnveloppePrivee {
 
     pub fn cle_publique(&self) -> &PKey<Public> { &self.enveloppe.cle_publique }
 
-    pub fn presentement_valide(&self) -> bool { self.enveloppe.presentement_valide }
+    // pub fn presentement_valide(&self) -> bool { self.enveloppe.presentement_valide }
 
     pub fn fingerprint(&self) -> &String { self.enveloppe.fingerprint() }
 

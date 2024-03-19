@@ -7,6 +7,7 @@ use base64::{Engine as _, engine::general_purpose};
 
 use async_trait::async_trait;
 use base64_url::base64;
+use chrono::Utc;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use log::{debug, error, info};
@@ -19,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 use crate::bson::Bson;
 
-use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, VerificateurPermissions};
+use crate::certificats::{emettre_commande_certificat_maitredescles, EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, VerificateurPermissions};
 use crate::chiffrage_cle::CommandeSauvegarderCle;
 use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::chiffrage_rsa::{chiffrer_asymetrique as chiffrer_asymetrique_aesgcm, dechiffrer_asymetrique as dechiffrer_asymetrique_aesgcm};
@@ -202,7 +203,7 @@ pub trait CleChiffrageHandler {
 
     /// Recoit un certificat de chiffrage
     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
-        where M: ConfigMessages;
+        where M: ValidateurX509 + ConfigMessages;
 }
 
 /// Permet de recuperer un Cipher deja initalise avec les certificats de MaitreDesCles.
@@ -331,7 +332,7 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
     }
 
     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
-        where M: ConfigMessages
+        where M: ValidateurX509 + ConfigMessages
     {
         let cert_chiffrage = match message {
             TypeMessage::Valide(m) => m.certificat.as_ref(),
@@ -340,7 +341,8 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
         };
 
         // Valider le certificat
-        if ! cert_chiffrage.presentement_valide {
+
+        if ! middleware.valider_pour_date(cert_chiffrage, &Utc::now())? {
             error!("recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete");
             Err(format!("middleware_db.recevoir_certificat_chiffrage Certificat de maitre des cles recu n'est pas presentement valide - rejete"))?;
         }

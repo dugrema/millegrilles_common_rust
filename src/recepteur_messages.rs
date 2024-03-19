@@ -4,6 +4,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::str::from_utf8;
 use std::sync::Arc;
+use chrono::Utc;
 
 use lapin::message::Delivery;
 use log::{debug, error, info, trace, warn};
@@ -123,7 +124,7 @@ pub async fn traiter_delivery<M,S>(
 
         // Valider le message. Lance une Err si le certificat est invalide ou inconnu.
         let certificat = middleware.valider_certificat_message(&message_ref).await?;
-        if ! certificat.presentement_valide {
+        if ! middleware.valider_pour_date(certificat.as_ref(), &Utc::now())? {
             Err(String::from("Le certificat d'un message recu n'est pas presentement valide"))?
         }
 

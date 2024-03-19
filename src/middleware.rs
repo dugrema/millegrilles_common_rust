@@ -567,7 +567,7 @@ impl CleChiffrageHandler for MiddlewareMessage {
     }
 
     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
-        where M: ConfigMessages
+        where M: ValidateurX509 + ConfigMessages
     {
         self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
     }
