@@ -107,7 +107,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
                     match self.traiter_message_valide_action(middleware.clone(), inner).await {
                         Ok(r) => r,
                         Err(e) => {
-                            error!("domaines.consommer_messages/ValideAction Erreur traitement message domaine={} : {:?}", self.get_nom_domaine(), e);
+                            error!("GestionnaireMessages domaines.consommer_messages/ValideAction Erreur traitement message domaine={} : {:?}", self.get_nom_domaine(), e);
                         }
                     }
                 },
@@ -384,7 +384,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     match self.traiter_message_valide_action(middleware.clone(), inner).await {
                         Ok(r) => r,
                         Err(e) => {
-                            error!("domaines.consommer_messages/ValideAction Erreur traitement message domaine={} routage:{:?} : {:?}", self.get_nom_domaine(), type_message, e);
+                            error!("GestionnaireDomaine domaines.consommer_messages/ValideAction Erreur traitement message domaine={} routage:{:?} : {:?}", self.get_nom_domaine(), type_message, e);
                         }
                     }
                     // warn!("Recu MessageValide sur thread consommation, skip : {:?}", inner)
@@ -440,7 +440,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let resultat = match &message.type_message {
             TypeMessageOut::Requete(_) => self.consommer_requete(middleware.as_ref(), message).await,
             TypeMessageOut::Commande(_) => self.consommer_commande_trait(middleware.clone(), message).await,
-            TypeMessageOut::Transaction(_) => Err(format!("domaines.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
+            // TypeMessageOut::Transaction(_) => Err(format!("domaines.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
+            TypeMessageOut::Transaction(_) => self.consommer_transaction(middleware.as_ref(), message).await,
             TypeMessageOut::Reponse(_) => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
             TypeMessageOut::Evenement(_) => self.consommer_evenement_trait(middleware.clone(), message).await,
         }?;

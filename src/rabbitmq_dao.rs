@@ -885,7 +885,8 @@ async fn creer_reply_q(rabbitmq: Arc<RabbitMqExecutor>, channel: &Channel, rq: &
         rk_fingerprint,  // Ecouter les requetes pour notre certificat
     );
 
-    let exchanges: Vec<String> = securite_cascade_public(&rq.securite).iter().map(|s| s.get_str().to_owned()).collect();
+    // let exchanges: Vec<String> = securite_cascade_public(&rq.securite).iter().map(|s| s.get_str().to_owned()).collect();
+    let exchanges: Vec<&str> = vec!["1.public"];
     debug!("creer_reply_q Binding sur exchanges : {:?}", exchanges);
 
     let nom_queue = reply_queue.name().as_str();
@@ -894,7 +895,7 @@ async fn creer_reply_q(rabbitmq: Arc<RabbitMqExecutor>, channel: &Channel, rq: &
             debug!("creer_reply_q Mapping rk {} sur reply-Q {} exchange {}", rk, nom_queue, exchange);
             let _ = channel.queue_bind(
                 nom_queue,
-                &exchange,
+                *exchange,
                 &rk,
                 QueueBindOptions::default(),
                 FieldTable::default()

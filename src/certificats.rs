@@ -1574,12 +1574,13 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
 {
     debug!("Charger les certificats de maitre des cles pour chiffrage");
     let requete = json!({});
-    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES, vec![Securite::L3Protege])
+    let routage = RoutageMessageAction::builder(
+        DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES, vec![Securite::L1Public])
         .timeout_blocking(2000)
         .build();
-    match middleware.transmettre_commande(routage, &requete).await {
+    match middleware.transmettre_requete(routage, &requete).await {
         Ok(reponse) => {
-            if let Some(TypeMessage::Valide(mva)) = reponse {
+            if let TypeMessage::Valide(mva) = reponse {
                 info!("Reponse certificat maitredescles : {:?}", mva);
             }
         },
