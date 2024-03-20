@@ -277,3 +277,34 @@ pub fn convertir_value_mongodate(date: Value) -> Result<DateTime<Utc>, String> {
         None => Err("convertir_value_mongodate top level n'est pas object".to_string()),
     }
 }
+
+// Source : https://github.com/mongodb/bson-rust/issues/303
+pub mod opt_chrono_datetime_as_bson_datetime {
+    use chrono::Utc;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use mongodb::bson;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(
+        #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+        chrono::DateTime<Utc>,
+    );
+
+    pub fn serialize<S>(
+        value: &Option<chrono::DateTime<Utc>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+    {
+        value.map(Helper).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<chrono::DateTime<Utc>>, D::Error>
+        where
+            D: Deserializer<'de>,
+    {
+        let helper: Option<Helper> = Option::deserialize(deserializer)?;
+        Ok(helper.map(|Helper(external)| external))
+    }
+}

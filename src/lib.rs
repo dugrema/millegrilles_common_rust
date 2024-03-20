@@ -31,7 +31,7 @@ pub mod math;
 pub mod notifications;
 pub mod jwt_handler;
 pub mod db_structs;
-mod error;
+pub mod error;
 
 // Re-exports
 pub use millegrilles_cryptographie;
@@ -56,6 +56,7 @@ pub use tokio_util;
 pub use uuid;
 pub use serde;
 pub use serde_json;
+pub use serde_helpers;
 pub use chacha20poly1305;
 
 #[cfg(test)]
