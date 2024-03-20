@@ -203,8 +203,20 @@ pub fn verifier_certificat(cert: &X509, chaine_pem: &StackRef<X509>, store: &X50
                     },
                 };
             } else {
-                warn!("Organization manquante du certificat, on le considere invalide");
-                resultat = false;
+                let common_name = match cert.subject_name().entries_by_nid(Nid::COMMONNAME).next() {
+                    Some(o) => {
+                        let data = o.data().as_slice().to_vec();
+                        match String::from_utf8(data) {
+                            Ok(o) => Some(o),
+                            Err(_) => None,
+                        }
+                    },
+                    None => None,
+                };
+                if common_name != Some("MilleGrille".to_string()) {
+                    warn!("Organization manquante du certificat, on le considere invalide\n{:?}", cert);
+                    resultat = false;
+                }
             }
         } else {
             debug!("Certificat store considere le certificat invalide");
