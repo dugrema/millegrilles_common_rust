@@ -491,9 +491,9 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
     };
 
     while let Some(message) = rx.recv().await {
-        debug!("Message reply q : {:?}", message);
         let resultat = match message {
             MessageInterne::Delivery(delivery, _routing) => {
+                debug!("Message reply q : {:?}", delivery.routing_key);
                 let nom_queue = match rabbitmq.reply_q.lock().expect("lock").clone() {
                     Some(q) => q,
                     None => "_reply".into()
@@ -525,6 +525,7 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
                             let correlation_id = r.correlation_id.as_str();
                             let mut guard = rabbitmq.map_attente.lock().expect("lock");
                             if let Some(attente_reponse) = guard.remove(correlation_id) {
+                                debug!("thread_traiter_reply_q Reponse pour correlation_id {} recue, traiter", correlation_id);
                                 Some(attente_reponse)
                             } else {
                                 info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
@@ -565,6 +566,7 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
             match attente_reponse {
                 Some(a) => {
                     // On a une correlation, rediriger le message en attente
+                    debug!("thread_traiter_reply_q Traiter reponse correlation_id: {}", a.correlation);
                     if let Err(e) = a.sender.send(message_traite) {
                         error!("thread_traiter_reply_q Erreur transmission reponse attente correlation {} : {:?}", a.correlation, e);
                     }
@@ -573,7 +575,7 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
                     // Aucune correlation (message non sollicite). Voir si on intercepte le message
                     // pour le passer a une chaine de traitement differente.
                     if intercepter_message(middleware.as_ref(), &message_traite).await == false {
-                        info!("Message sur reply_q sans attente et non intercepte, on skip : {:?}", message_traite);
+                        info!("Message sur reply_q sans attente et non intercepte, on skip");
                     }
                 }
             }
@@ -805,9 +807,10 @@ async fn named_queue_traiter_messages<M>(
 
     // Demarrer ecoute de messages
     while let Some(message) = rx.recv().await {
-        debug!("NamedQueue.run Message recu : {:?}", message);
+        // debug!("NamedQueue.run Message recu : {:?}", message);
         let resultat = match message {
             MessageInterne::Delivery(delivery, _routing) => {
+                debug!("NamedQueue.run Message recu : {:?}", delivery.routing_key);
                 match traiter_delivery(
                     middleware.as_ref(),
                     nom_queue.as_str(),
@@ -821,6 +824,7 @@ async fn named_queue_traiter_messages<M>(
                 }
             },
             MessageInterne::Trigger(delivery, nom_queue) => {
+                debug!("NamedQueue.run Trigger recu : {:?}", delivery.routing_key);
                 match traiter_delivery(
                     middleware.as_ref(),
                     nom_queue.as_str(),
@@ -1088,7 +1092,7 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
     debug!("task_traitement_reponses consumer pret {}", nom_queue);
 
     while let Some(delivery) = consumer.next().await {
-        debug!("ecouter_consumer({}): Reception nouveau message {}: {:?}", &nom_queue, &nom_queue, &delivery);
+        debug!("ecouter_consumer({}): Reception nouveau message {}", &nom_queue, &nom_queue);
 
         let (channel, delivery) = match delivery {
             Ok(r) => r,
@@ -1195,7 +1199,7 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
         debug!("task_emettre_messages Emettre_message {}", compteur);
 
         // Extraire metadata de routage
-        let (correlation_id, routing_key, exchanges) = match &message.type_message {
+        let (correlation_id, routing_key, exchanges, reply_to) = match &message.type_message {
             TypeMessageOut::Requete(r) |
             TypeMessageOut::Commande(r) |
             TypeMessageOut::Transaction(r) |
@@ -1213,10 +1217,10 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                     }
                 };
 
-                (correlation_id, routing_key, Some(&r.exchanges))
+                (correlation_id, routing_key, Some(&r.exchanges), r.reply_to.as_ref())
             }
             TypeMessageOut::Reponse(r) => {
-                (&r.correlation_id, String::from(""), None)
+                (&r.correlation_id, String::from(""), None, None)
             }
         };
 
@@ -1276,15 +1280,23 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                     properties = properties.with_reply_to(reply_to.into());
                 },
                 _ => {
-                    // Donner le reply_q local pour recevoir une reponse
-                    let lock_reply_q = rabbitmq.reply_q.lock().expect("lock");
-                    debug!("task_emettre_messages Emission message, reply_q locale : {:?}", lock_reply_q);
-                    match lock_reply_q.as_ref() {
-                        Some(qs) => {
-                            properties = properties.with_reply_to(qs.as_str().into());
+                    match reply_to {
+                        Some(inner) => {
+                            debug!("task_emettre_messages Emission message, reply_q custom : {:?}", inner);
+                            properties = properties.with_reply_to(inner.as_str().into());
                         },
-                        None => ()
-                    };
+                        None => {
+                            // Donner le reply_q local pour recevoir une reponse
+                            let lock_reply_q = rabbitmq.reply_q.lock().expect("lock");
+                            debug!("task_emettre_messages Emission message, reply_q locale : {:?}", lock_reply_q);
+                            match lock_reply_q.as_ref() {
+                                Some(qs) => {
+                                    properties = properties.with_reply_to(qs.as_str().into());
+                                },
+                                None => ()
+                            };
+                        }
+                    }
                 }
             }
 
@@ -1323,7 +1335,7 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                                 properties.clone()
                             ).await;
                             match resultat {
-                                Ok(_) => debug!("task_emettre_messages Message {} emis sur {:?}", routing_key, exchange),
+                                Ok(_) => debug!("task_emettre_messages Message {}/{:?} emis sur {:?}", routing_key, properties, exchange),
                                 Err(e) => error!("task_emettre_messages Erreur emission message {:?}", e)
                             }
                         }

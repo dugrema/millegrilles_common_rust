@@ -37,7 +37,7 @@ use std::convert::TryInto;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRef;
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::recepteur_messages::{ErreurValidation, ErreurVerification, TypeMessage};
+use crate::recepteur_messages::{ErreurValidation, ErreurVerification, MessageValide, TypeMessage};
 use crate::verificateur::charger_regles_verification;
 
 // OID des extensions x509v3 de MilleGrille
@@ -1569,24 +1569,31 @@ pub struct MessageInfoCertificat {
 }
 
 pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
-    -> Result<(), Error>
+    -> Option<TypeMessage>
     where G: GenerateurMessages
 {
     debug!("Charger les certificats de maitre des cles pour chiffrage");
     let requete = json!({});
     let routage = RoutageMessageAction::builder(
         DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES, vec![Securite::L1Public])
-        .timeout_blocking(2000)
+        .timeout_blocking(7500)
         .build();
+
     match middleware.transmettre_requete(routage, &requete).await {
         Ok(reponse) => {
-            if let TypeMessage::Valide(mva) = reponse {
-                info!("Reponse certificat maitredescles : {:?}", mva);
+            if let TypeMessage::Valide(mva) = &reponse {
+                info!("emettre_commande_certificat_maitredescles Reponse certificat maitredescles : {:?}", mva.type_message);
+                Some(reponse)
+            } else {
+                warn!("emettre_commande_certificat_maitredescles Reponse de mauvais type");
+                None
             }
         },
-        Err(e) => info!("Timeout transmettre_commande maitredescles (OK, reponse en evenement) : {}", e)
+        Err(e) => {
+            info!("Timeout transmettre_commande maitredescles (OK, reponse en evenement) : {}", e);
+            None
+        }
     }
-    Ok(())
 }
 
 // #[derive(Debug)]

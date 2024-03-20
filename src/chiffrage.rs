@@ -199,7 +199,7 @@ pub trait CleChiffrageHandler {
     /// Recycle les certificats de chiffrage - fait une requete pour obtenir les certs courants
     async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
         -> Result<(), Box<dyn Error>>
-        where M: GenerateurMessages;
+        where M: GenerateurMessages + ValidateurX509 + ConfigMessages;
 
     /// Recoit un certificat de chiffrage
     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
@@ -296,7 +296,7 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
 
     async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
         -> Result<(), Box<dyn Error>>
-        where M: GenerateurMessages
+        where M: GenerateurMessages + ValidateurX509 + ConfigMessages
     {
         debug!("Charger les certificats de maitre des cles pour chiffrage");
 
@@ -315,7 +315,9 @@ impl CleChiffrageHandler for ChiffrageFactoryImpl {
             debug!("charger_certificats_chiffrage Reload certificats maitre des cles, presentement CA : {:?}", *guard);
         }
 
-        emettre_commande_certificat_maitredescles(middleware).await?;
+        if let Some(certificat) = emettre_commande_certificat_maitredescles(middleware).await {
+            self.recevoir_certificat_chiffrage(middleware, &certificat).await?;
+        }
 
         // Donner une chance aux certificats de rentrer
         tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;

@@ -514,13 +514,13 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     {
         let message = message.into();
 
-        let (attendre, correlation_id) = match &type_message {
+        let (attendre, timeout_blocking, correlation_id) = match &type_message {
             TypeMessageOut::Requete(r) => {
                 let correlation_id = match r.correlation_id.as_ref() {
                     Some(inner) => inner.as_str(),
                     None => Err(String::from("emettre_message Correlation_id manquant"))?,
                 };
-                (true, correlation_id.to_string())
+                (true, r.timeout_blocking.clone(), correlation_id.to_string())
             }
             TypeMessageOut::Commande(r) |
             TypeMessageOut::Transaction(r) => {
@@ -529,17 +529,17 @@ impl GenerateurMessages for GenerateurMessagesImpl {
                     None => Err(String::from("emettre_message Correlation_id manquant"))?,
                 };
                 let attendre = r.blocking.unwrap_or_else(|| true);
-                (attendre, correlation_id.to_string())
+                (attendre, r.timeout_blocking.clone(), correlation_id.to_string())
             }
             TypeMessageOut::Reponse(r) => {
-                (false, r.correlation_id.clone())
+                (false, None, r.correlation_id.clone())
             }
             TypeMessageOut::Evenement(r) => {
                 let correlation_id = match r.correlation_id.as_ref() {
                     Some(inner) => inner.as_str(),
                     None => Err(String::from("emettre_message Correlation_id manquant"))?,
                 };
-                (false, correlation_id.to_string())
+                (false, None, correlation_id.to_string())
             }
         };
 
@@ -551,16 +551,16 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         //     TypeMessageOut::Evenement => false,
         // };
 
-        // let attente_expiration = match attendre {
-        //     true => {
-        //         let timeout_messages = routage.timeout_blocking.unwrap_or_else(|| 15_000);
-        //         let expiration: DateTime<Utc> = Utc::now() + chrono::Duration::milliseconds(timeout_messages as i64);
-        //         Some(expiration)
-        //     },
-        //     false => {
-        //         None
-        //     }
-        // };
+        let attente_expiration = match attendre {
+            true => {
+                let timeout_messages = timeout_blocking.unwrap_or_else(|| 15_000);
+                let expiration: DateTime<Utc> = Utc::now() + chrono::Duration::milliseconds(timeout_messages as i64);
+                Some(expiration)
+            },
+            false => {
+                None
+            }
+        };
 
         // let replying_to = if routage.ajouter_reply_q {
         //     self.rabbitmq.reply_q.lock().expect("lock").clone()
@@ -568,7 +568,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         //     routage.reply_to
         // };
 
-        let message_out = MessageOut::new(type_message, &correlation_id, message, None);
+        let message_out = MessageOut::new(type_message, &correlation_id, message, attente_expiration);
 
         // let message_out = MessageOut::new(
         //     routage,

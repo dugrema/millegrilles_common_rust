@@ -35,9 +35,9 @@ pub async fn traiter_delivery<M,S>(
     // Transferer le Vec<u8> du delivery vers un buffer de message et
     // faire le parsing (validation structure).
     let message: MessageMilleGrillesBufferDefault = delivery.data.into();
-    debug!("traiter_delivery Recu message\n{}", from_utf8(message.buffer.as_slice())?);
     let (type_message, certificat) = {
         let mut message_ref = message.parse()?;
+        debug!("traiter_delivery Recu message {:?}", message_ref.routage);
 
         // Verifier la signature du message. Lance une Err si le message est invalide.
         message_ref.verifier_signature()?;

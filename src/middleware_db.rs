@@ -305,7 +305,7 @@ impl CleChiffrageHandler for MiddlewareDb {
 
     async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
         -> Result<(), Box<dyn Error>>
-        where M: GenerateurMessages
+        where M: GenerateurMessages + ValidateurX509 + ConfigMessages
     {
         debug!("Charger les certificats de maitre des cles pour chiffrage");
         self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
