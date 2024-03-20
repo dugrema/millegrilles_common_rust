@@ -35,6 +35,7 @@ use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance};
 // use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
+use crate::error::Error as CommonError;
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
@@ -841,7 +842,7 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
 pub async fn sauvegarder_traiter_transaction<M, G>(
     middleware: &M, message: MessageValide, gestionnaire: &G
 )
-    -> Result<Option<MessageMilleGrillesBufferDefault>, String>
+    -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
         G: GestionnaireDomaine
@@ -849,7 +850,7 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
     let nom_collection_transactions = match gestionnaire.get_collection_transactions() {
         Some(n) => n,
         None => {
-            return Err(format!("middleware.sauvegarder_traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))
+            Err(format!("middleware.sauvegarder_traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
         }
     };
 
@@ -870,13 +871,14 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
     // let uuid_transaction = transaction.get_uuid_transaction().to_owned();
 
     let message_id = match &message.type_message {
+        TypeMessageOut::Commande(r) |
         TypeMessageOut::Transaction(r) => {
             match &r.correlation_id {
                 Some(inner) => inner.to_owned(),
                 None => Err(String::from("middleware.sauvegarder_traiter_transaction Correlation_id manquant de la transaction"))?
             }
         }
-        _ => Err(String::from("middleware.sauvegarder_traiter_transaction Mauvais type de message, doit etre Transaction"))?
+        _ => Err(String::from("middleware.sauvegarder_traiter_transaction Mauvais type de message, doit etre Commande ou Transaction"))?
     };
 
     // Traiter transaction

@@ -27,6 +27,7 @@ use crate::middleware::{map_serializable_to_bson, requete_certificat};
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 // use crate::verificateur::VerificateurMessage;
+use crate::error::Error as CommonError;
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
@@ -1058,7 +1059,7 @@ where
 
 #[async_trait]
 pub trait TraiterTransaction {
-    async fn appliquer_transaction<M,T>(&self, middleware: &M, transaction: T) -> Result<Option<MessageMilleGrillesBufferDefault>, String>
+    async fn appliquer_transaction<M,T>(&self, middleware: &M, transaction: T) -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
         where
             M: ValidateurX509 + GenerateurMessages + MongoDao,
             T: TryInto<TransactionValide> + Send;

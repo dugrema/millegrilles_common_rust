@@ -25,6 +25,7 @@ use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{emettre_certificat_compte, NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation};
+use crate::error::Error as CommonError;
 
 #[async_trait]
 pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
@@ -322,7 +323,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         where M: Middleware + 'static;
 
     async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, String>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
         where
             M: ValidateurX509 + GenerateurMessages + MongoDao,
             T: TryInto<TransactionValide> + Send;
@@ -471,7 +472,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Traite une transaction en la chargeant, dirigeant vers l'aiguillage puis la marque comme traitee
     async fn traiter_transaction<M>(self: &'static Self, middleware: &M, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, String>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
         where M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/
     {
         // let trigger = match serde_json::from_value::<TriggerTransaction>(Value::Object(m.message.get_msg().contenu.clone())) {
@@ -494,7 +495,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let nom_collection_transactions = match self.get_collection_transactions() {
             Some(n) => n,
             None => {
-                return Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))
+                Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
             }
         };
 
@@ -509,7 +510,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 let nom_collection_transactions = match self.get_collection_transactions() {
                     Some(n) => n,
                     None => {
-                        return Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))
+                        Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
                     }
                 };
                 marquer_transaction(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete).await?;
@@ -527,7 +528,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
                 Ok(None)
             },
-            Err(e) => Err(e)
+            Err(e) => Err(e)?
         }
     }
 

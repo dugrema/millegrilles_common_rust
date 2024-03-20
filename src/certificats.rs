@@ -3,7 +3,7 @@ use std::error;
 use std::fmt::{Debug, Formatter};
 use std::fs::read_to_string;
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -38,6 +38,7 @@ use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRef;
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::{ErreurValidation, ErreurVerification, TypeMessage};
+use crate::verificateur::charger_regles_verification;
 
 // OID des extensions x509v3 de MilleGrille
 const OID_EXCHANGES: &str = "1.2.3.4.0";
@@ -74,9 +75,8 @@ impl CacheCertificat {
     }
 }
 
-pub fn charger_certificat(pem: &str) -> X509 {
-    let cert_x509 = X509::from_pem(pem.as_bytes()).unwrap();
-    cert_x509
+pub fn charger_certificat(pem: &str) -> Result<X509, ErrorStack> {
+    X509::from_pem(pem.as_bytes())
 }
 
 pub fn charger_csr(pem: &str) -> Result<X509Req, String> {
@@ -315,7 +315,7 @@ pub fn calculer_idmg_ref(cert: &X509Ref) -> Result<String, String> {
 
 pub fn build_store_path(ca_path: &Path) -> Result<ValidateurX509Impl, ErrorStack> {
     let ca_pem: String = read_to_string(ca_path).unwrap();
-    let ca_cert: X509 = charger_certificat(&ca_pem);
+    let ca_cert: X509 = charger_certificat(&ca_pem)?;
     let store: X509Store = build_store(&ca_cert, true)?;
     let store_notime: X509Store = build_store(&ca_cert, false)?;
 
@@ -335,12 +335,12 @@ pub fn build_store_path(ca_path: &Path) -> Result<ValidateurX509Impl, ErrorStack
 
 pub fn build_store(ca_cert: &X509, check_time: bool) -> Result<X509Store, ErrorStack> {
     let mut builder = X509StoreBuilder::new()?;
-    let ca_cert = ca_cert.to_owned();  // Requis par methode add_cert
-    let _ = builder.add_cert(ca_cert);
+    let ca_cert = ca_cert.to_owned();
+    builder.add_cert(ca_cert)?;
 
     if check_time == false {
         // Verification manuelle de la date de validite.
-        builder.set_flags(X509VerifyFlags::NO_CHECK_TIME).expect("set_flags");
+        builder.set_flags(X509VerifyFlags::NO_CHECK_TIME)?;
     }
 
     Ok(builder.build())
@@ -793,6 +793,141 @@ pub async fn valider_certificat<'a, M, const C: usize>(
     }
 }
 
+pub async fn valider_certificat_regle<'a, M, const C: usize>(
+    middleware: &M,
+    message: &MessageMilleGrillesRef<'a, C>,
+    regle: &str
+)
+    -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
+    where M: ValidateurX509 + ?Sized
+{
+    // Recuperer la chaine de certificat du message.
+    let certificat_pem = match message.certificat.as_ref() {
+        Some(inner) => inner,
+        None => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+    };
+    let millegrille_pem = match message.millegrille.as_ref() {
+        Some(inner) => *inner,
+        None => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+    };
+
+    // Charger la regle de validation
+    let mut regles = match charger_regles_verification(&PathBuf::from(PATH_REGLES_VALIDATION)) {
+        Ok(inner) => inner,
+        Err(e) => {
+            warn!("valider_certificat_regle Erreur chargement fichier idmg_validation.json : {:?}", e);
+            Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))?
+        }
+    };
+    let regle = match regles.regles.remove(regle) {
+        Some(inner) => inner,
+        None => {
+            warn!("valider_certificat_regle Regle {} absente du fichier idmg_validation.json", regle);
+            Err(ErreurValidation::new(ErreurVerification::ErreurGenerique))?
+        }
+    };
+
+    let pubkey_message = message.pubkey;
+
+    // Charger une enveloppe avec les PEMs
+    let vec_pem: Vec<String> = certificat_pem.iter().map(|s| s.to_string()).collect();
+    debug!("valider_certificat_regle Charger certificat\n{:?}", vec_pem);
+    let enveloppe = match middleware.charger_enveloppe(&vec_pem, Some(pubkey_message), Some(millegrille_pem)).await {
+        Ok(inner) => inner,
+        Err(_) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+    };
+    debug!("valider_certificat_regle Charger certificat millegrille\n{}", millegrille_pem);
+    let enveloppe_millegrille = match middleware.charger_enveloppe(&vec![millegrille_pem.to_string()], None, None).await {
+        Ok(inner) => inner,
+        Err(_) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+    };
+    match enveloppe_millegrille.est_ca() {
+        Ok(inner) => {
+            if ! inner {
+                warn!("valider_certificat_regle Certificat de MilleGrille n'est pas CA");
+                Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+            }
+        },
+        Err(e) => {
+            warn!("valider_certificat_regle Certificat de MilleGrille n'est pas CA");
+            Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+        }
+    }
+
+    // Verifier que la pubkey correspond
+    let pubkey_enveloppe = match enveloppe.fingerprint_pk() {
+        Ok(inner) => inner,
+        Err(e) => {
+            warn!("valider_certificat_regle Erreur chargement pubkey de l'enveloppe");
+            Err(ErreurValidation::new(ErreurVerification::SignatureInvalide))?
+        }
+    };
+    if pubkey_enveloppe.as_str() != pubkey_message {
+        warn!("valider_certificat_regle Pubkey mismatch avec message");
+        Err(ErreurValidation::new(ErreurVerification::SignatureInvalide))?
+    }
+
+    let idmg = match enveloppe_millegrille.calculer_idmg() {
+        Ok(inner) => inner,
+        Err(e) => {
+            warn!("valider_certificat_regle Erreur calcul idmg : {:?}", e);
+            Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+        }
+    };
+    if let Some(liste_idmg) = regle.idmg.as_ref() {
+        if ! liste_idmg.contains(&idmg) {
+            warn!("valider_certificat_regle Certificat de MilleGrille n'est pas dans la liste");
+            Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+        }
+        debug!("valider_certificat_regle Idmg valide : {}", idmg);
+    }
+
+    let valider_date_courante = regle.date_courante.unwrap_or_else(||false);
+
+    // Build store pour verifier le certificat avec la date du message
+    let cert_millegrille = &enveloppe_millegrille.certificat;
+    let store = match build_store(cert_millegrille, valider_date_courante) {
+        Ok(inner) => inner,
+        Err(e) => {
+            warn!("valider_certificat_regle Erreur preparation store (no date)");
+            Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+        }
+    };
+
+    let certificat_x509 = &enveloppe.certificat;
+    let chaine_x509 = &enveloppe.intermediaire;
+    debug!("Valider certificat (chaine: {})\n{:?}", chaine_x509.len(), certificat_x509);
+    match verifier_certificat(certificat_x509, chaine_x509.as_ref(), &store) {
+        Ok(inner) => {
+            if ! inner {
+                warn!("valider_certificat_regle Certificat invalide");
+                Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+            }
+        },
+        Err(e) => {
+            warn!("valider_certificat_regle Erreur verification certificat : {:?}", e);
+            Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+        }
+    }
+
+    // Verifier date de validite du certificat par rapport au message
+    let estampille = &message.estampille;
+    match valider_pour_date(enveloppe.as_ref(), estampille) {
+        Ok(inner) => {
+            if ! inner {
+                warn!("valider_certificat_regle Date certificat leaf invalide pour message");
+                Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+            }
+        },
+        Err(e) => {
+            warn!("valider_certificat_regle Erreur verification date message avec certificat : {:?}", e);
+            Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+        }
+    }
+
+    Ok(enveloppe)
+}
+
 #[async_trait]
 pub trait ValidateurX509: Send + Sync {
 
@@ -864,13 +999,7 @@ pub trait ValidateurX509: Send + Sync {
     /// Valider le certificat pour une fourchette de date.
     /// Note : ne valide pas la chaine
     fn valider_pour_date(&self, enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
-        let before = enveloppe.not_valid_before()?;
-        let after = enveloppe.not_valid_after()?;
-        let valide = date >= &before && date <= &after;
-        match valide {
-            true => Ok(true),
-            false => Err(String::from("Certificat invalide"))
-        }
+        valider_pour_date(enveloppe, date)
     }
 
     /// Valide le certificat en fonction de la date du message.
@@ -880,6 +1009,29 @@ pub trait ValidateurX509: Send + Sync {
     ) -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
     {
         valider_certificat(self, message).await
+    }
+
+    /// Valide le certificat en fonction d'une regle dans configuration/idmg_validation.json
+    /// Les champs certificat et millegrille du message doivent etre remplis.
+    async fn valider_certificat_idmg<'a, const C: usize>(
+        &self,
+        message: &MessageMilleGrillesRef<'a, C>,
+        regle: &str
+    ) -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
+    {
+        valider_certificat_regle(self, message, regle).await
+    }
+}
+
+/// Valider le certificat pour une fourchette de date.
+/// Note : ne valide pas la chaine
+pub fn valider_pour_date(enveloppe: &EnveloppeCertificat, date: &DateTime<Utc>) -> Result<bool, String> {
+    let before = enveloppe.not_valid_before()?;
+    let after = enveloppe.not_valid_after()?;
+    let valide = date >= &before && date <= &after;
+    match valide {
+        true => Ok(true),
+        false => Err(String::from("Certificat invalide"))
     }
 }
 
@@ -900,8 +1052,8 @@ impl ValidateurX509Impl {
     }
 
     /// Expose la fonction pour creer un certificat
-    fn charger_certificat(pem: &str) -> Result<(X509, String), String> {
-        let cert = charger_certificat(pem);
+    fn charger_certificat(pem: &str) -> Result<(X509, String), Error> {
+        let cert = charger_certificat(pem)?;
         let fingerprint = calculer_fingerprint(&cert)?;
         Ok((cert, fingerprint))
     }
@@ -921,7 +1073,8 @@ impl ValidateurX509 for ValidateurX509Impl {
                 debug!("charger_enveloppe Charger le _certificat pour trouver fingerprint");
                 match chaine_pem.get(0) {
                     Some(pem) => {
-                        match ValidateurX509Impl::charger_certificat(pem.as_str()) {
+                        let pem_str = pem.replace("\\n", "\n");
+                        match ValidateurX509Impl::charger_certificat(pem_str.as_str()) {
                             Ok(r) => Ok(r.1),
                             Err(e) => Err(format!("Erreur chargement enveloppe certificat : {:?}", e)),
                         }
@@ -939,7 +1092,7 @@ impl ValidateurX509 for ValidateurX509Impl {
             None => {
                 // Creer l'enveloppe et conserver dans le cache local
                 let pem_str: String = chaine_pem.iter()
-                    .map(|c|c.replace("\\n", "\n"))
+                    .map(|c|c.replace("\\n", "\n").replace("\\r", "\r"))
                     .collect::<Vec<String>>()
                     .join("\n");
                 debug!("charger_enveloppe Alignement du _certificat en string concatenee\n{}", pem_str);
@@ -1404,90 +1557,90 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
     Ok(())
 }
 
-#[derive(Debug)]
-pub struct VerificateurRegles<'a> {
-    /// Regles "or", une seule regle doit etre valide
-    pub regles_disjointes: Option<Vec<Box<dyn RegleValidation + 'a>>>,
-    /// Regles "and", toutes doivent etre valides
-    pub regles_conjointes: Option<Vec<Box<dyn RegleValidation + 'a>>>
-}
-
-impl<'a> VerificateurRegles<'a> {
-
-    pub fn new() -> Self {
-        VerificateurRegles { regles_disjointes: None, regles_conjointes: None }
-    }
-
-    pub fn ajouter_conjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
-        let regles = match &mut self.regles_conjointes {
-            Some(r) => r,
-            None => {
-                self.regles_conjointes = Some(Vec::new());
-                match &mut self.regles_conjointes { Some(r) => r, None => panic!("vec mut")}
-            }
-        };
-        regles.push(Box::new(regle));
-    }
-
-    pub fn ajouter_disjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
-        let regles = match &mut self.regles_disjointes {
-            Some(r) => r,
-            None => {
-                self.regles_disjointes = Some(Vec::new());
-                match &mut self.regles_disjointes { Some(r) => r, None => panic!("vec mut")}
-            }
-        };
-        regles.push(Box::new(regle));
-    }
-
-    pub fn verifier(&self, certificat: &EnveloppeCertificat) -> bool {
-        // Verifier conjonction
-        if let Some(regles) = &self.regles_conjointes {
-            for r in regles {
-                if ! r.verifier(certificat) {
-                    return false;  // Court-circuit
-                }
-            }
-            // Toutes les regles sont true
-        }
-
-        // Verifier disjonction
-        if let Some(regles) = &self.regles_disjointes {
-            for r in regles {
-                if r.verifier(certificat) {
-                    return true;  // Court-circuit
-                }
-            }
-
-            // Aucunes des regles "or" n'a ete true
-            return false
-        }
-
-        // Toutes les regles "and" et "or" sont true
-        true
-    }
-
-}
-
-pub trait RegleValidation: Debug + Send + Sync {
-    /// Retourne true si la regle est valide pour ce certificat
-    fn verifier(&self, certificat: &EnveloppeCertificat) -> bool;
-}
-
-/// Regle de validation pour un IDMG tiers
-#[derive(Debug)]
-pub struct RegleValidationIdmg { pub idmg: String }
-impl RegleValidation for RegleValidationIdmg {
-    fn verifier(&self, certificat: &EnveloppeCertificat) -> bool {
-        match certificat.idmg() {
-            Ok(i) => i.as_str() == self.idmg.as_str(),
-            Err(e) => {
-                info!("RegleValidationIdmg Erreur verification idmg : {:?}", e);
-                false
-            }
-        }
-    }
-}
+// #[derive(Debug)]
+// pub struct VerificateurRegles<'a> {
+//     /// Regles "or", une seule regle doit etre valide
+//     pub regles_disjointes: Option<Vec<Box<dyn RegleValidation + 'a>>>,
+//     /// Regles "and", toutes doivent etre valides
+//     pub regles_conjointes: Option<Vec<Box<dyn RegleValidation + 'a>>>
+// }
+//
+// impl<'a> VerificateurRegles<'a> {
+//
+//     pub fn new() -> Self {
+//         VerificateurRegles { regles_disjointes: None, regles_conjointes: None }
+//     }
+//
+//     pub fn ajouter_conjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
+//         let regles = match &mut self.regles_conjointes {
+//             Some(r) => r,
+//             None => {
+//                 self.regles_conjointes = Some(Vec::new());
+//                 match &mut self.regles_conjointes { Some(r) => r, None => panic!("vec mut")}
+//             }
+//         };
+//         regles.push(Box::new(regle));
+//     }
+//
+//     pub fn ajouter_disjointe<R>(&mut self, regle: R) where R: RegleValidation + 'a {
+//         let regles = match &mut self.regles_disjointes {
+//             Some(r) => r,
+//             None => {
+//                 self.regles_disjointes = Some(Vec::new());
+//                 match &mut self.regles_disjointes { Some(r) => r, None => panic!("vec mut")}
+//             }
+//         };
+//         regles.push(Box::new(regle));
+//     }
+//
+//     pub fn verifier(&self, certificat: &EnveloppeCertificat) -> bool {
+//         // Verifier conjonction
+//         if let Some(regles) = &self.regles_conjointes {
+//             for r in regles {
+//                 if ! r.verifier(certificat) {
+//                     return false;  // Court-circuit
+//                 }
+//             }
+//             // Toutes les regles sont true
+//         }
+//
+//         // Verifier disjonction
+//         if let Some(regles) = &self.regles_disjointes {
+//             for r in regles {
+//                 if r.verifier(certificat) {
+//                     return true;  // Court-circuit
+//                 }
+//             }
+//
+//             // Aucunes des regles "or" n'a ete true
+//             return false
+//         }
+//
+//         // Toutes les regles "and" et "or" sont true
+//         true
+//     }
+//
+// }
+//
+// pub trait RegleValidation: Debug + Send + Sync {
+//     /// Retourne true si la regle est valide pour ce certificat
+//     fn verifier(&self, certificat: &EnveloppeCertificat) -> bool;
+// }
+//
+// /// Regle de validation pour un IDMG tiers
+// #[derive(Debug)]
+// pub struct RegleValidationIdmg { pub idmg: String }
+// impl RegleValidation for RegleValidationIdmg {
+//     fn verifier(&self, certificat: &EnveloppeCertificat) -> bool {
+//         match certificat.idmg() {
+//             Ok(i) => i.as_str() == self.idmg.as_str(),
+//             Err(e) => {
+//                 info!("RegleValidationIdmg Erreur verification idmg : {:?}", e);
+//                 false
+//             }
+//         }
+//     }
+// }
 
 #[cfg(test)]
 pub mod certificats_tests {
