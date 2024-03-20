@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use tokio::sync::Notify;
@@ -937,8 +937,11 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
         message_ref.attachements = None;
     }
 
+    // Fix deserialization contenu en utilisant une version owned
+    let message_owned: MessageMilleGrillesOwned = serde_json::from_slice(m.message.buffer.as_slice())?;
+
     // Serialiser le message en serde::Value - permet de convertir en Document bson
-    let mut contenu_doc = match map_msg_to_bson(&message_ref) {
+    let mut contenu_doc = match map_msg_to_bson(message_owned) {
         Ok(d) => d,
         Err(e) => Err(format!("sauvegarder_transaction Erreur conversion doc vers bson : {:?}", e))?
     };
@@ -1001,7 +1004,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
     Ok(())
 }
 
-pub fn map_msg_to_bson(msg: &MessageMilleGrillesRefDefault) -> Result<Document, Box<dyn Error>> {
+pub fn map_msg_to_bson(msg: MessageMilleGrillesOwned) -> Result<Document, Box<dyn Error>> {
     let val = match serde_json::to_value(msg) {
         Ok(v) => match v.as_object() {
             Some(o) => o.to_owned(),
