@@ -122,10 +122,11 @@ pub async fn traiter_delivery<M,S>(
         };
 
         // Valider le message. Lance une Err si le certificat est invalide ou inconnu.
-        let certificat = middleware.valider_certificat_message(&message_ref).await?;
-        if ! middleware.valider_pour_date(certificat.as_ref(), &Utc::now())? {
-            Err(String::from("Le certificat d'un message recu n'est pas presentement valide"))?
-        }
+        let certificat = middleware.valider_certificat_message(
+            &message_ref, true).await?;
+        // if ! middleware.valider_pour_date(certificat.as_ref(), &Utc::now())? {
+        //     Err(String::from("Le certificat d'un message recu n'est pas presentement valide"))?
+        // }
 
         debug!("Message valide {}", correlation_id);
         (type_message, certificat)

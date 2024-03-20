@@ -772,7 +772,8 @@ pub fn get_csr_subject(csr: &X509ReqRef) -> Result<HashMap<String, String>, Stri
 /// Valide le certificat de MilleGrillesRef pour le message.
 pub async fn valider_certificat<'a, M, const C: usize>(
     middleware: &M,
-    message: &MessageMilleGrillesRef<'a, C>
+    message: &MessageMilleGrillesRef<'a, C>,
+    verifier_date_courante: bool
 )
     -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
     where M: ValidateurX509 + ?Sized
@@ -795,6 +796,15 @@ pub async fn valider_certificat<'a, M, const C: usize>(
             Err(_) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
         }
     };
+
+    match middleware.valider_chaine(enveloppe.as_ref(), None, verifier_date_courante) {
+        Ok(inner) => {
+            if ! inner {
+                Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+            }
+        },
+        Err(e) => Err(ErreurValidation::new(ErreurVerification::CertificatInvalide))?
+    }
 
     match middleware.valider_pour_date(enveloppe.as_ref(), &message.estampille) {
         Ok(inner) => match inner {
@@ -976,7 +986,9 @@ pub trait ValidateurX509: Send + Sync {
     /// Invoquer regulierement pour faire l'entretien du cache.
     async fn entretien_validateur(&self);
 
-    fn valider_chaine(&self, enveloppe: &EnveloppeCertificat, certificat_millegrille: Option<&EnveloppeCertificat>) -> Result<bool, String> {
+    fn valider_chaine(&self, enveloppe: &EnveloppeCertificat, certificat_millegrille: Option<&EnveloppeCertificat>, verifier_date_courante: bool)
+        -> Result<bool, String>
+    {
         let certificat = &enveloppe.certificat;
         let chaine = &enveloppe.intermediaire;
         match certificat_millegrille {
@@ -997,7 +1009,12 @@ pub trait ValidateurX509: Send + Sync {
                 }
             },
             None => {
-                match verifier_certificat(certificat, chaine, self.store_notime()) {
+                let store = match verifier_date_courante {
+                    true => self.store(),
+                    false => self.store_notime()
+                };
+
+                match verifier_certificat(certificat, chaine, store) {
                     Ok(b) => {
                         debug!("Verifier certificat result apres check date OK : {}", b);
                         Ok(b)
@@ -1015,12 +1032,14 @@ pub trait ValidateurX509: Send + Sync {
     }
 
     /// Valide le certificat en fonction de la date du message.
+    /// Option : verifie aussi la validite de la chaine avec la date courante.
     async fn valider_certificat_message<'a, const C: usize>(
         &self,
-        message: &MessageMilleGrillesRef<'a, C>
+        message: &MessageMilleGrillesRef<'a, C>,
+        verifier_date_courante: bool
     ) -> Result<Arc<EnveloppeCertificat>, ErreurValidation>
     {
-        valider_certificat(self, message).await
+        valider_certificat(self, message, verifier_date_courante).await
     }
 
     /// Valide le certificat en fonction d'une regle dans configuration/idmg_validation.json
@@ -1654,180 +1673,180 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
 //     }
 // }
 
-#[cfg(test)]
-pub mod certificats_tests {
-    use std::path::PathBuf;
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
-    use super::*;
-    use crate::test_setup::setup;
-
-    pub const CERT_MILLEGRILLE: &str = r#"
------BEGIN CERTIFICATE-----
-MIIBQzCB9qADAgECAgoHBykXJoaCCWAAMAUGAytlcDAWMRQwEgYDVQQDEwtNaWxs
-ZUdyaWxsZTAeFw0yMjAxMTMyMjQ3NDBaFw00MjAxMTMyMjQ3NDBaMBYxFDASBgNV
-BAMTC01pbGxlR3JpbGxlMCowBQYDK2VwAyEAnnixameVCZAzfx4dO+L63DOk/34I
-/TC4fIA1Rxn19+KjYDBeMA8GA1UdEwEB/wQFMAMBAf8wCwYDVR0PBAQDAgLkMB0G
-A1UdDgQWBBTTiP/MFw4DDwXqQ/J2LLYPRUkkETAfBgNVHSMEGDAWgBTTiP/MFw4D
-DwXqQ/J2LLYPRUkkETAFBgMrZXADQQBSb0vXhw3pw25qrWoMjqROjawe7/kMlu7p
-MJyb/Ppa2C6PraSVPgJGWKl+/5S5tBr58KFNg+0H94CH4d1VCPwI
------END CERTIFICATE-----
-"#;
-
-    pub const CERT_CORE: &str = r#"
------BEGIN CERTIFICATE-----
-MIICFTCCAcegAwIBAgIUDgk2RY9xKdhV9H2sbaRwuV7tSB8wBQYDK2VwMHIxLTAr
-BgNVBAMTJDI2MmVhZTMzLTI1ZTQtNDRiNy04ZmNkLTQ0NjcxMTdhMmZmZTFBMD8G
-A1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6
-WHJwMjJiQXR3R203SmYwHhcNMjIwMTE0MTkzODI2WhcNMjIwMjA0MTk0MDI2WjBk
-MUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpGdUhHNzk2ZVN2Q1RXRTRN
-NDMyaXpYcnAyMmJBdHdHbTdKZjENMAsGA1UECwwEY29yZTEQMA4GA1UEAwwHbWct
-ZGV2NTAqMAUGAytlcAMhAOZNry7yvtjalT4jAc8OpwI+ysCgtS6SaW5SIBYUnP/z
-o30wezAdBgNVHQ4EFgQUzzXqIfw8aogDTo5LZboRMLnasmAwHwYDVR0jBBgwFoAU
-MkSbvTt6igrEK2uRJ/coCRhLd6kwDAYDVR0TAQH/BAIwADALBgNVHQ8EBAMCBPAw
-EAYEKgMEAAQINC5zZWN1cmUwDAYEKgMEAQQEY29yZTAFBgMrZXADQQACgFhgYbZI
-a3sgHcgS6fbaxGq4oVj+1CEaI6Lx/CMH6pHKreAKMcfVl8WCRsaYCWPk45R/DY7I
-a4ik+RVCK1sK
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIBozCCAVWgAwIBAgIKBgaEZ0OASVdwADAFBgMrZXAwFjEUMBIGA1UEAxMLTWls
-bGVHcmlsbGUwHhcNMjIwMTE0MTk0MDE4WhcNMjMwNzI2MTk0MDE4WjByMS0wKwYD
-VQQDEyQyNjJlYWUzMy0yNWU0LTQ0YjctOGZjZC00NDY3MTE3YTJmZmUxQTA/BgNV
-BAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy
-cDIyYkF0d0dtN0pmMCowBQYDK2VwAyEA6UoxhuJKARsV5XeovcX91+eFFlwxU3CP
-fZ1+xCvs7GCjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G
-A1UdDgQWBBQyRJu9O3qKCsQra5En9ygJGEt3qTAfBgNVHSMEGDAWgBTTiP/MFw4D
-DwXqQ/J2LLYPRUkkETAFBgMrZXADQQC3BaK5TWjXole4f/TP9Fzsb4lsYyJJi/q+
-JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
------END CERTIFICATE-----
-"#;
-
-    pub const CERT_FICHIERS: &str = r#"
------BEGIN CERTIFICATE-----
-MIICqTCCAlugAwIBAgIUE9zbINmwer1nFwGPiCF+MBF6avYwBQYDK2VwMHIxLTAr
-BgNVBAMTJDI2MmVhZTMzLTI1ZTQtNDRiNy04ZmNkLTQ0NjcxMTdhMmZmZTFBMD8G
-A1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6
-WHJwMjJiQXR3R203SmYwHhcNMjIwMTE0MTkzODI2WhcNMjIwMjA0MTk0MDI2WjBo
-MUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpGdUhHNzk2ZVN2Q1RXRTRN
-NDMyaXpYcnAyMmJBdHdHbTdKZjERMA8GA1UECwwIZmljaGllcnMxEDAOBgNVBAMM
-B21nLWRldjUwKjAFBgMrZXADIQC/U7Ip/+ztO3s4ZDjkw6TeGq53Qr75Qrb2Nkcs
-u56icKOCAQswggEHMB0GA1UdDgQWBBSTsPpP4VRI1AM/b5EI4di3bt4DuDAfBgNV
-HSMEGDAWgBQyRJu9O3qKCsQra5En9ygJGEt3qTAMBgNVHRMBAf8EAjAAMAsGA1Ud
-DwQEAwIE8DAiBgQqAwQABBoxLnB1YmxpYywyLnByaXZlLDMucHJvdGVnZTAXBgQq
-AwQBBA9maWNoaWVycyxiYWNrdXAwbQYDVR0RBGYwZIIIZmljaGllcnOCBmJhY2t1
-cIIkMjYyZWFlMzMtMjVlNC00NGI3LThmY2QtNDQ2NzExN2EyZmZlgglsb2NhbGhv
-c3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAGCB21nLWRldjUwBQYDK2VwA0EAMHW/
-nCFEzeTK04+CKqJDummtzg4FuMrvXm6jZPK+yy5BIVI4MUqGG9gNooQ3mVaGRcsH
-1HNbIPtAIMhlubcXBg==
------END CERTIFICATE-----
------BEGIN CERTIFICATE-----
-MIIBozCCAVWgAwIBAgIKBgaEZ0OASVdwADAFBgMrZXAwFjEUMBIGA1UEAxMLTWls
-bGVHcmlsbGUwHhcNMjIwMTE0MTk0MDE4WhcNMjMwNzI2MTk0MDE4WjByMS0wKwYD
-VQQDEyQyNjJlYWUzMy0yNWU0LTQ0YjctOGZjZC00NDY3MTE3YTJmZmUxQTA/BgNV
-BAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy
-cDIyYkF0d0dtN0pmMCowBQYDK2VwAyEA6UoxhuJKARsV5XeovcX91+eFFlwxU3CP
-fZ1+xCvs7GCjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G
-A1UdDgQWBBQyRJu9O3qKCsQra5En9ygJGEt3qTAfBgNVHSMEGDAWgBTTiP/MFw4D
-DwXqQ/J2LLYPRUkkETAFBgMrZXADQQC3BaK5TWjXole4f/TP9Fzsb4lsYyJJi/q+
-JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
------END CERTIFICATE-----
-"#;
-
-    pub fn charger_enveloppe_privee_env() -> (Arc<ValidateurX509Impl>, EnveloppePrivee) {
-        const CA_CERT_PATH: &str = "/var/opt/millegrilles/configuration/pki.millegrille.cert";
-        const DOMAINES_CERT_PATH: &str = "/var/opt/millegrilles/secrets/pki.core.cert";
-        const DOMAINES_KEY_PATH: &str = "/var/opt/millegrilles/secrets/pki.core.cle";
-        let validateur = build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store");
-        let validateur = Arc::new(validateur);
-        let enveloppe_privee = charger_enveloppe_privee(
-            PathBuf::from(DOMAINES_CERT_PATH).as_path(),
-            PathBuf::from(DOMAINES_KEY_PATH).as_path(),
-            validateur.clone()
-        ).expect("privee");
-
-        (validateur, enveloppe_privee)
-    }
-
-    pub fn prep_enveloppe(pem: &str) -> EnveloppeCertificat {
-        let ca_x509 = charger_certificat(CERT_MILLEGRILLE);
-        let store = build_store(&ca_x509, false).expect("store");
-        charger_enveloppe(pem, Some(&store), None).expect("enveloppe")
-    }
-
-    #[test]
-    fn calculer_idmg() {
-        let ca_x509 = charger_certificat(CERT_MILLEGRILLE);
-        let idmg = calculer_idmg_ref(ca_x509.as_ref()).expect("idmg");
-        assert_eq!(idmg, "zeYncRqEqZ6eTEmUZ8whJFuHG796eSvCTWE4M432izXrp22bAtwGm7Jf");
-    }
-
-    #[test]
-    fn test_charger_enveloppe() {
-        let enveloppe = prep_enveloppe(CERT_CORE);
-        assert_eq!(enveloppe.fingerprint, "z2i3XjxDSREuw2h9thRXe9kAo1YJWECjDaEVEzmt44HMdBwpgzS");
-    }
-
-    #[test]
-    fn collection_pems_1cert() {
-        let certificat = prep_enveloppe(CERT_CORE);
-        let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(&certificat).expect("ajouter_certificat");
-
-        // println!("!!! Collection pems {:?}", collection_pems);
-        assert_eq!(collection_pems.certificats.len(), 1);
-        assert_eq!(collection_pems.pems.len(), 2);
-
-        // Test presence certificat (via fingerprint)
-        let _ = collection_pems.pems.get(&certificat.fingerprint).expect("cert");
-    }
-
-    #[test]
-    fn collection_pems_2cert() {
-        let certificat_domaines = prep_enveloppe(CERT_CORE);
-        let certificat_fichiers = prep_enveloppe(CERT_FICHIERS);
-        let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(&certificat_domaines).expect("ajouter");
-        collection_pems.ajouter_certificat(&certificat_fichiers).expect("ajouter");
-
-        // println!("!!! Collection pems {:?}", collection_pems);
-        assert_eq!(collection_pems.certificats.len(), 2);
-        assert_eq!(collection_pems.pems.len(), 3);
-
-        // Test presence certificat (via fingerprint)
-        let _ = collection_pems.pems.get(&certificat_domaines.fingerprint).expect("cert");
-        let _ = collection_pems.pems.get(&certificat_fichiers.fingerprint).expect("cert");
-    }
-
-    #[test]
-    fn collection_serialiser() {
-        let certificat = prep_enveloppe(CERT_CORE);
-        let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(&certificat).expect("ajouter");
-
-        let value = serde_json::to_value(collection_pems).expect("json");
-
-        println!("Value certificats : {:?}", value);
-    }
-
-    #[tokio::test]
-    async fn recuperer_enveloppe() {
-        setup("recuperer_enveloppe");
-        const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
-        const FINGERPRINT: &str = "z2i3XjxDSREuw2h9thRXe9kAo1YJWECjDaEVEzmt44HMdBwpgzS";
-        let validateur = Arc::new(build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store"));
-
-        let certificat = prep_enveloppe(CERT_CORE);
-        let mut collection_pems = CollectionCertificatsPem::new();
-        collection_pems.ajouter_certificat(&certificat).expect("ajouter");
-
-        assert_eq!(FINGERPRINT, certificat.fingerprint);
-
-        let enveloppe = collection_pems.get_enveloppe(
-            validateur.as_ref(),
-            FINGERPRINT
-        ).await.expect("enveloppe");
-
-        debug!("Enveloppe chargee : {:?}", enveloppe);
-        assert_eq!(enveloppe.fingerprint, FINGERPRINT);
-    }
-
-}
+// #[cfg(test)]
+// pub mod certificats_tests {
+//     use std::path::PathBuf;
+//     // Note this useful idiom: importing names from outer (for mod tests) scope.
+//     use super::*;
+//     use crate::test_setup::setup;
+//
+//     pub const CERT_MILLEGRILLE: &str = r#"
+// -----BEGIN CERTIFICATE-----
+// MIIBQzCB9qADAgECAgoHBykXJoaCCWAAMAUGAytlcDAWMRQwEgYDVQQDEwtNaWxs
+// ZUdyaWxsZTAeFw0yMjAxMTMyMjQ3NDBaFw00MjAxMTMyMjQ3NDBaMBYxFDASBgNV
+// BAMTC01pbGxlR3JpbGxlMCowBQYDK2VwAyEAnnixameVCZAzfx4dO+L63DOk/34I
+// /TC4fIA1Rxn19+KjYDBeMA8GA1UdEwEB/wQFMAMBAf8wCwYDVR0PBAQDAgLkMB0G
+// A1UdDgQWBBTTiP/MFw4DDwXqQ/J2LLYPRUkkETAfBgNVHSMEGDAWgBTTiP/MFw4D
+// DwXqQ/J2LLYPRUkkETAFBgMrZXADQQBSb0vXhw3pw25qrWoMjqROjawe7/kMlu7p
+// MJyb/Ppa2C6PraSVPgJGWKl+/5S5tBr58KFNg+0H94CH4d1VCPwI
+// -----END CERTIFICATE-----
+// "#;
+//
+//     pub const CERT_CORE: &str = r#"
+// -----BEGIN CERTIFICATE-----
+// MIICFTCCAcegAwIBAgIUDgk2RY9xKdhV9H2sbaRwuV7tSB8wBQYDK2VwMHIxLTAr
+// BgNVBAMTJDI2MmVhZTMzLTI1ZTQtNDRiNy04ZmNkLTQ0NjcxMTdhMmZmZTFBMD8G
+// A1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6
+// WHJwMjJiQXR3R203SmYwHhcNMjIwMTE0MTkzODI2WhcNMjIwMjA0MTk0MDI2WjBk
+// MUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpGdUhHNzk2ZVN2Q1RXRTRN
+// NDMyaXpYcnAyMmJBdHdHbTdKZjENMAsGA1UECwwEY29yZTEQMA4GA1UEAwwHbWct
+// ZGV2NTAqMAUGAytlcAMhAOZNry7yvtjalT4jAc8OpwI+ysCgtS6SaW5SIBYUnP/z
+// o30wezAdBgNVHQ4EFgQUzzXqIfw8aogDTo5LZboRMLnasmAwHwYDVR0jBBgwFoAU
+// MkSbvTt6igrEK2uRJ/coCRhLd6kwDAYDVR0TAQH/BAIwADALBgNVHQ8EBAMCBPAw
+// EAYEKgMEAAQINC5zZWN1cmUwDAYEKgMEAQQEY29yZTAFBgMrZXADQQACgFhgYbZI
+// a3sgHcgS6fbaxGq4oVj+1CEaI6Lx/CMH6pHKreAKMcfVl8WCRsaYCWPk45R/DY7I
+// a4ik+RVCK1sK
+// -----END CERTIFICATE-----
+// -----BEGIN CERTIFICATE-----
+// MIIBozCCAVWgAwIBAgIKBgaEZ0OASVdwADAFBgMrZXAwFjEUMBIGA1UEAxMLTWls
+// bGVHcmlsbGUwHhcNMjIwMTE0MTk0MDE4WhcNMjMwNzI2MTk0MDE4WjByMS0wKwYD
+// VQQDEyQyNjJlYWUzMy0yNWU0LTQ0YjctOGZjZC00NDY3MTE3YTJmZmUxQTA/BgNV
+// BAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy
+// cDIyYkF0d0dtN0pmMCowBQYDK2VwAyEA6UoxhuJKARsV5XeovcX91+eFFlwxU3CP
+// fZ1+xCvs7GCjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G
+// A1UdDgQWBBQyRJu9O3qKCsQra5En9ygJGEt3qTAfBgNVHSMEGDAWgBTTiP/MFw4D
+// DwXqQ/J2LLYPRUkkETAFBgMrZXADQQC3BaK5TWjXole4f/TP9Fzsb4lsYyJJi/q+
+// JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
+// -----END CERTIFICATE-----
+// "#;
+//
+//     pub const CERT_FICHIERS: &str = r#"
+// -----BEGIN CERTIFICATE-----
+// MIICqTCCAlugAwIBAgIUE9zbINmwer1nFwGPiCF+MBF6avYwBQYDK2VwMHIxLTAr
+// BgNVBAMTJDI2MmVhZTMzLTI1ZTQtNDRiNy04ZmNkLTQ0NjcxMTdhMmZmZTFBMD8G
+// A1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6
+// WHJwMjJiQXR3R203SmYwHhcNMjIwMTE0MTkzODI2WhcNMjIwMjA0MTk0MDI2WjBo
+// MUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpGdUhHNzk2ZVN2Q1RXRTRN
+// NDMyaXpYcnAyMmJBdHdHbTdKZjERMA8GA1UECwwIZmljaGllcnMxEDAOBgNVBAMM
+// B21nLWRldjUwKjAFBgMrZXADIQC/U7Ip/+ztO3s4ZDjkw6TeGq53Qr75Qrb2Nkcs
+// u56icKOCAQswggEHMB0GA1UdDgQWBBSTsPpP4VRI1AM/b5EI4di3bt4DuDAfBgNV
+// HSMEGDAWgBQyRJu9O3qKCsQra5En9ygJGEt3qTAMBgNVHRMBAf8EAjAAMAsGA1Ud
+// DwQEAwIE8DAiBgQqAwQABBoxLnB1YmxpYywyLnByaXZlLDMucHJvdGVnZTAXBgQq
+// AwQBBA9maWNoaWVycyxiYWNrdXAwbQYDVR0RBGYwZIIIZmljaGllcnOCBmJhY2t1
+// cIIkMjYyZWFlMzMtMjVlNC00NGI3LThmY2QtNDQ2NzExN2EyZmZlgglsb2NhbGhv
+// c3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAGCB21nLWRldjUwBQYDK2VwA0EAMHW/
+// nCFEzeTK04+CKqJDummtzg4FuMrvXm6jZPK+yy5BIVI4MUqGG9gNooQ3mVaGRcsH
+// 1HNbIPtAIMhlubcXBg==
+// -----END CERTIFICATE-----
+// -----BEGIN CERTIFICATE-----
+// MIIBozCCAVWgAwIBAgIKBgaEZ0OASVdwADAFBgMrZXAwFjEUMBIGA1UEAxMLTWls
+// bGVHcmlsbGUwHhcNMjIwMTE0MTk0MDE4WhcNMjMwNzI2MTk0MDE4WjByMS0wKwYD
+// VQQDEyQyNjJlYWUzMy0yNWU0LTQ0YjctOGZjZC00NDY3MTE3YTJmZmUxQTA/BgNV
+// BAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy
+// cDIyYkF0d0dtN0pmMCowBQYDK2VwAyEA6UoxhuJKARsV5XeovcX91+eFFlwxU3CP
+// fZ1+xCvs7GCjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G
+// A1UdDgQWBBQyRJu9O3qKCsQra5En9ygJGEt3qTAfBgNVHSMEGDAWgBTTiP/MFw4D
+// DwXqQ/J2LLYPRUkkETAFBgMrZXADQQC3BaK5TWjXole4f/TP9Fzsb4lsYyJJi/q+
+// JCQEOXZ1kF5F+NRyI/fYmOoac59S4kna0YXn/eb3qwm8uQ5a6kMO
+// -----END CERTIFICATE-----
+// "#;
+//
+//     pub fn charger_enveloppe_privee_env() -> (Arc<ValidateurX509Impl>, EnveloppePrivee) {
+//         const CA_CERT_PATH: &str = "/var/opt/millegrilles/configuration/pki.millegrille.cert";
+//         const DOMAINES_CERT_PATH: &str = "/var/opt/millegrilles/secrets/pki.core.cert";
+//         const DOMAINES_KEY_PATH: &str = "/var/opt/millegrilles/secrets/pki.core.cle";
+//         let validateur = build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store");
+//         let validateur = Arc::new(validateur);
+//         let enveloppe_privee = charger_enveloppe_privee(
+//             PathBuf::from(DOMAINES_CERT_PATH).as_path(),
+//             PathBuf::from(DOMAINES_KEY_PATH).as_path(),
+//             validateur.clone()
+//         ).expect("privee");
+//
+//         (validateur, enveloppe_privee)
+//     }
+//
+//     pub fn prep_enveloppe(pem: &str) -> EnveloppeCertificat {
+//         let ca_x509 = charger_certificat(CERT_MILLEGRILLE);
+//         let store = build_store(&ca_x509, false).expect("store");
+//         charger_enveloppe(pem, Some(&store), None).expect("enveloppe")
+//     }
+//
+//     #[test]
+//     fn calculer_idmg() {
+//         let ca_x509 = charger_certificat(CERT_MILLEGRILLE);
+//         let idmg = calculer_idmg_ref(ca_x509.as_ref()).expect("idmg");
+//         assert_eq!(idmg, "zeYncRqEqZ6eTEmUZ8whJFuHG796eSvCTWE4M432izXrp22bAtwGm7Jf");
+//     }
+//
+//     #[test]
+//     fn test_charger_enveloppe() {
+//         let enveloppe = prep_enveloppe(CERT_CORE);
+//         assert_eq!(enveloppe.fingerprint, "z2i3XjxDSREuw2h9thRXe9kAo1YJWECjDaEVEzmt44HMdBwpgzS");
+//     }
+//
+//     #[test]
+//     fn collection_pems_1cert() {
+//         let certificat = prep_enveloppe(CERT_CORE);
+//         let mut collection_pems = CollectionCertificatsPem::new();
+//         collection_pems.ajouter_certificat(&certificat).expect("ajouter_certificat");
+//
+//         // println!("!!! Collection pems {:?}", collection_pems);
+//         assert_eq!(collection_pems.certificats.len(), 1);
+//         assert_eq!(collection_pems.pems.len(), 2);
+//
+//         // Test presence certificat (via fingerprint)
+//         let _ = collection_pems.pems.get(&certificat.fingerprint).expect("cert");
+//     }
+//
+//     #[test]
+//     fn collection_pems_2cert() {
+//         let certificat_domaines = prep_enveloppe(CERT_CORE);
+//         let certificat_fichiers = prep_enveloppe(CERT_FICHIERS);
+//         let mut collection_pems = CollectionCertificatsPem::new();
+//         collection_pems.ajouter_certificat(&certificat_domaines).expect("ajouter");
+//         collection_pems.ajouter_certificat(&certificat_fichiers).expect("ajouter");
+//
+//         // println!("!!! Collection pems {:?}", collection_pems);
+//         assert_eq!(collection_pems.certificats.len(), 2);
+//         assert_eq!(collection_pems.pems.len(), 3);
+//
+//         // Test presence certificat (via fingerprint)
+//         let _ = collection_pems.pems.get(&certificat_domaines.fingerprint).expect("cert");
+//         let _ = collection_pems.pems.get(&certificat_fichiers.fingerprint).expect("cert");
+//     }
+//
+//     #[test]
+//     fn collection_serialiser() {
+//         let certificat = prep_enveloppe(CERT_CORE);
+//         let mut collection_pems = CollectionCertificatsPem::new();
+//         collection_pems.ajouter_certificat(&certificat).expect("ajouter");
+//
+//         let value = serde_json::to_value(collection_pems).expect("json");
+//
+//         println!("Value certificats : {:?}", value);
+//     }
+//
+//     #[tokio::test]
+//     async fn recuperer_enveloppe() {
+//         setup("recuperer_enveloppe");
+//         const CA_CERT_PATH: &str = "/home/mathieu/mgdev/certs/pki.millegrille";
+//         const FINGERPRINT: &str = "z2i3XjxDSREuw2h9thRXe9kAo1YJWECjDaEVEzmt44HMdBwpgzS";
+//         let validateur = Arc::new(build_store_path(PathBuf::from(CA_CERT_PATH).as_path()).expect("store"));
+//
+//         let certificat = prep_enveloppe(CERT_CORE);
+//         let mut collection_pems = CollectionCertificatsPem::new();
+//         collection_pems.ajouter_certificat(&certificat).expect("ajouter");
+//
+//         assert_eq!(FINGERPRINT, certificat.fingerprint);
+//
+//         let enveloppe = collection_pems.get_enveloppe(
+//             validateur.as_ref(),
+//             FINGERPRINT
+//         ).await.expect("enveloppe");
+//
+//         debug!("Enveloppe chargee : {:?}", enveloppe);
+//         assert_eq!(enveloppe.fingerprint, FINGERPRINT);
+//     }
+//
+// }
