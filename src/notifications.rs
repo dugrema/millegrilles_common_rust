@@ -11,7 +11,7 @@ use std::io::prelude::*;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use millegrilles_cryptographie::messages_structs::{optionepochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{optionepochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
 use multibase::{Base, encode};
 
 use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey, ValidateurX509};
@@ -191,27 +191,34 @@ impl EmetteurNotifications {
                     let commande = cles_rechiffrees.get_commande_sauvegarder_cles(
                         "Messagerie", None, identificateurs_document)?;
 
-                    todo!("messages inter-millegrilles fix-me")
-                    // // Signer commande
+                    // Signer commande
                     // let mut commande_signee = middleware.formatter_message(
                     //     MessageKind::Commande, &commande,
                     //     Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
                     //     Some(partition.as_str()), None::<&str>, None, false)?;
-                    //
-                    // commande_signee.ajouter_attachement("partition", partition);
-                    //
-                    // {
-                    //     // Conserver ref_hachage_bytes
-                    //     let mut guard = self.ref_hachage_bytes.lock().expect("lock");
-                    //     guard.replace(commande.hachage_bytes.clone());
-                    // }
-                    //
-                    // // Conserver commande signee
-                    // let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
-                    // guard.replace(commande_signee.clone());
-                    //
-                    // // Retourner commande signee
-                    // commande_outer = Some(commande_signee);
+                    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE, vec![Securite::L3Protege])
+                        .partition(partition.as_str())
+                        .build();
+                    let (commande_signee, message_id) = middleware.build_message_action(
+                        millegrilles_cryptographie::messages_structs::MessageKind::Commande, routage, commande)?;
+
+                    let commande_signee_ref = commande_signee.parse()?;
+                    let mut commande_signee: MessageMilleGrillesOwned = commande_signee_ref.into();
+                    commande_signee.ajouter_attachement("partition", partition);
+                    let commande_signee: MessageMilleGrillesBufferDefault = commande_signee.try_into()?;
+
+                    {
+                        // Conserver message_id
+                        let mut guard = self.ref_hachage_bytes.lock().expect("lock");
+                        guard.replace(message_id);
+                    }
+
+                    // Conserver commande signee
+                    let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
+                    guard.replace(commande_signee.clone());
+
+                    // Retourner commande signee
+                    commande_outer = Some(commande_signee);
                 }
 
                 commande_outer
