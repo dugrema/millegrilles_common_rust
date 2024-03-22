@@ -468,7 +468,9 @@ impl MgsCipherKeys for Mgs4CipherKeys {
             format: self.get_format(),
             hachage: Some(self.hachage_bytes.clone()),
             header: Some(self.header.clone()),
+            nonce: None,
             cles: Some(cles),
+            verification: None,
         })
     }
 

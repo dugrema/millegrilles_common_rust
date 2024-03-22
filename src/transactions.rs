@@ -37,7 +37,7 @@ pub async fn transmettre_evenement_persistance<S>(
     partition: Option<&String>,
     reply_to: Option<&String>,
     correlation_id: Option<&String>
-) -> Result<(), String>
+) -> Result<(), crate::error::Error>
     where S: AsRef<str>
 {
     let mut evenement = json!({

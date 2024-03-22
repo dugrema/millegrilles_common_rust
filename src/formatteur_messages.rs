@@ -37,15 +37,13 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::mongo_dao::convertir_to_bson;
 
 pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
-                        -> Result<(MessageMilleGrillesBufferDefault, String), String>
+                        -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
     where M: Serialize + Send + Sync
 {
     let contenu = match serde_json::to_string(&message) {
         Ok(inner) => inner,
         Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
     };
-
-    let estampille = Utc::now();
 
     let mut cle_privee_u8 = SecretKey::default();
     match enveloppe_privee.cle_privee().raw_private_key() {
@@ -63,7 +61,8 @@ pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
         certificat.extend(pem_vec.iter().map(|s| s.as_str()));
 
         let generateur = MessageMilleGrillesBuilderDefault::new(
-            millegrilles_cryptographie::messages_structs::MessageKind::Reponse, contenu.as_str(), estampille, &signing_key)
+            millegrilles_cryptographie::messages_structs::MessageKind::Reponse, contenu.as_str())
+            .signing_key(&signing_key)
             .certificat(certificat);
 
         let message_ref = generateur.build_into_alloc(&mut buffer)?;
@@ -76,7 +75,7 @@ pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
 
 pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messages_structs::MessageKind,
                                  routage: R, message: M, enveloppe_privee: &EnveloppePrivee)
-                                 -> Result<(MessageMilleGrillesBufferDefault, String), String>
+                                 -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
     where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync
 {
     let routage = routage.into();
@@ -84,8 +83,6 @@ pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messa
         Ok(inner) => inner,
         Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
     };
-
-    let estampille = Utc::now();
 
     let routage_message: RoutageMessage = (&routage).into();
 
@@ -104,8 +101,9 @@ pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messa
         certificat.extend(pem_vec.iter().map(|s| s.as_str()));
 
         let generateur = MessageMilleGrillesBuilderDefault::new(
-            type_message, contenu.as_str(), estampille, &signing_key)
+            type_message, contenu.as_str())
             .routage(routage_message)
+            .signing_key(&signing_key)
             .certificat(certificat);
 
         // Allouer un Vec et serialiser le message signe.
@@ -136,77 +134,19 @@ pub trait FormatteurMessage {
     fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>);
 
     fn build_message_action<R, M>(&self, type_message: millegrilles_cryptographie::messages_structs::MessageKind, routage: R, message: M)
-                                  -> Result<(MessageMilleGrillesBufferDefault, String), String>
+                                  -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
         where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
         let enveloppe_privee = self.get_enveloppe_signature();
         build_message_action(type_message, routage, message, enveloppe_privee.as_ref())
     }
 
     fn build_reponse<M>(&self, message: M)
-                        -> Result<(MessageMilleGrillesBufferDefault, String), String>
+                        -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
         where M: Serialize + Send + Sync {
         let enveloppe_privee = self.get_enveloppe_signature();
         build_reponse(message, enveloppe_privee.as_ref())
     }
 
-    // /// Implementation de formattage et signature d'un message de MilleGrille
-    // fn formatter_message<S,T,U,V,W>(
-    //     &self,
-    //     kind: MessageKind,
-    //     contenu: &S,
-    //     domaine: Option<T>,
-    //     action: Option<U>,
-    //     partition: Option<V>,
-    //     user_id: Option<W>,
-    //     version: Option<i32>,
-    //     ajouter_ca: bool
-    // ) -> Result<MessageMilleGrille, Box<dyn Error>>
-    // where
-    //     S: Serialize,
-    //     T: AsRef<str>,
-    //     U: AsRef<str>,
-    //     V: AsRef<str>,
-    //     W: AsRef<str>
-    // {
-    //     let enveloppe = self.get_enveloppe_signature();
-    //     MessageMilleGrille::new_signer(
-    //         enveloppe.as_ref(), kind, contenu,
-    //         domaine, action, partition, user_id, version, ajouter_ca)
-    // }
-    //
-    // fn formatter_reponse<S>(
-    //     &self,
-    //     contenu: S,
-    //     version: Option<i32>
-    // ) -> Result<MessageMilleGrille, Box<dyn Error>>
-    // where
-    //     S: Serialize,
-    // {
-    //     let enveloppe = self.get_enveloppe_signature();
-    //     MessageMilleGrille::new_signer(
-    //         enveloppe.as_ref(), MessageKind::Reponse, &contenu,
-    //         None::<&str>, None::<&str>, None::<&str>, None::<&str>, version, false)
-    // }
-    //
-    // /// Repondre en chiffrant le contenu avec le certificat du demandeur
-    // fn formatter_reponse_chiffree<M,S>(
-    //     &self,
-    //     middleware: &M,
-    //     contenu: S,
-    //     certificat_demandeur: &EnveloppeCertificat
-    // ) -> Result<MessageMilleGrille, Box<dyn Error>>
-    // where
-    //     M: ChiffrageFactoryTrait,
-    //     S: Serialize,
-    // {
-    //     let enveloppe = self.get_enveloppe_signature();
-    //     let reponse_chiffree = MessageReponseChiffree::new(
-    //         middleware, contenu, certificat_demandeur)?;
-    //     MessageMilleGrille::new_signer(
-    //         enveloppe.as_ref(), MessageKind::ReponseChiffree, &reponse_chiffree,
-    //         None::<&str>, None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
-    // }
-    //
     // fn formatter_inter_millegrille<M,S>(
     //     &self,
     //     middleware: &M,
@@ -223,13 +163,6 @@ pub trait FormatteurMessage {
     //     MessageMilleGrille::new_signer(
     //         enveloppe.as_ref(), MessageKind::ReponseChiffree, &reponse_chiffree,
     //         None::<&str>, None::<&str>, None::<&str>, None::<&str>, None::<i32>, false)
-    // }
-    //
-    // fn confirmation(&self, ok: bool, message: Option<&str>) -> Result<MessageMilleGrille, Box<dyn Error>> {
-    //     let reponse = json!({"ok": ok, "message": message});
-    //     self.formatter_message(MessageKind::Reponse, &reponse,
-    //                            None::<&str>, None::<&str>, None::<&str>, None::<&str>, None,
-    //                            false)
     // }
 
     fn reponse_ok<O>(&self, code: O, message: Option<&str>)
@@ -262,18 +195,6 @@ pub trait FormatteurMessage {
     }
 
 }
-
-// /// Identificateurs d'un message MilleGrille (sans contenu/signature)
-// #[derive(Clone, Debug, Deserialize)]
-// pub struct MessageMilleGrilleIdentificateurs {
-//     pub id: String,
-//     pub pubkey: String,
-//     pub estampille: DateEpochSeconds,
-//     pub kind: u16,
-//     pub routage: Option<RoutageMessage>,
-//     #[serde(rename="pre-migration")]
-//     pub pre_migration: Option<HashMap<String, Value>>,
-// }
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
 // /// Structure a utiliser pour creer un nouveau message
@@ -913,171 +834,6 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
 //
 // }
 
-// impl VerificateurPermissions for MessageSerialise {
-//     fn get_extensions(&self) -> Option<&ExtensionsMilleGrille> {
-//         // Valider certificat. Doit etre de niveau 4.secure
-//         match &self.certificat {
-//             Some(c) => c.get_extensions(),
-//             None => None,
-//         }
-//     }
-// }
-
-// #[derive(Clone, Debug, PartialEq)]
-// /// Date a utiliser pour conserver compatibilite avec messages MilleGrille (format epoch secondes i64).
-// pub struct DateEpochSeconds {
-//     date: DateTime<Utc>,
-// }
-
-// impl DateEpochSeconds {
-//     pub fn now() -> DateEpochSeconds {
-//         DateEpochSeconds { date: Utc::now() }
-//     }
-//
-//     pub fn from_i64(ts_seconds: i64) -> DateEpochSeconds {
-//         let date_naive = NaiveDateTime::from_timestamp(ts_seconds, 0);
-//         let date = DateTime::from_utc(date_naive, Utc);
-//         DateEpochSeconds { date }
-//     }
-//
-//     pub fn from_heure(annee: i32, mois: u32, jour: u32, heure: u32) -> DateEpochSeconds {
-//         let date_naive = NaiveDate::from_ymd(annee, mois, jour);
-//         let heure_naive = NaiveTime::from_hms(heure, 0, 0);
-//         let datetime_naive = NaiveDateTime::new(date_naive, heure_naive);
-//         let date = DateTime::from_utc(datetime_naive, Utc);
-//
-//         DateEpochSeconds { date }
-//     }
-//
-//     pub fn get_datetime(&self) -> &DateTime<Utc> {
-//         &self.date
-//     }
-//
-//     pub fn format_ymdh(&self) -> String {
-//         self.date.format("%Y%m%d%H").to_string()
-//     }
-//
-//     /// Retirer l'heure (mettre a 0/minuit UTC)
-//     pub fn get_jour(&self) -> Self {
-//         let date_naive = self.date.naive_utc().date();
-//         let heure_naive = NaiveTime::from_hms(0, 0, 0);
-//         let datetime_naive = NaiveDateTime::new(date_naive, heure_naive);
-//         let date = DateTime::from_utc(datetime_naive, Utc);
-//         DateEpochSeconds { date }
-//     }
-// }
-
-// impl Default for DateEpochSeconds {
-//     fn default() -> Self {
-//         DateEpochSeconds::now()
-//     }
-// }
-//
-// impl From<DateTime<Utc>> for DateEpochSeconds {
-//     fn from(dt: DateTime<Utc>) -> Self {
-//         DateEpochSeconds {date: dt}
-//     }
-// }
-//
-// impl Into<Value> for DateEpochSeconds {
-//     fn into(self) -> Value {
-//         Value::Number(Number::from(self.date.timestamp()))
-//     }
-// }
-//
-// impl Into<Bson> for DateEpochSeconds {
-//     fn into(self) -> Bson {
-//         // Bson::DateTime(bson::DateTime::from(self.date))
-//         Bson::Int32(self.date.timestamp() as i32)
-//     }
-// }
-//
-// impl TryFrom<Bson> for DateEpochSeconds {
-//     type Error = String;
-//
-//     fn try_from(value: Bson) -> Result<Self, Self::Error> {
-//         match value.as_datetime() {
-//             Some(inner_d) => {
-//                 Ok(DateEpochSeconds {
-//                     date: inner_d.to_chrono()
-//                 })
-//             },
-//             None => Err(format!("Mauvais format bson (pas datetime)"))
-//         }
-//     }
-// }
-//
-// impl Serialize for DateEpochSeconds {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-//         let ts = self.date.timestamp();
-//         serializer.serialize_i32(ts as i32)
-//     }
-// }
-//
-// impl<'de> Deserialize<'de> for DateEpochSeconds {
-//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-//         deserializer.deserialize_u32(DateEpochSecondsVisitor)
-//     }
-//
-//     fn deserialize_in_place<D>(deserializer: D, place: &mut Self) -> Result<(), D::Error> where D: Deserializer<'de> {
-//         let date_inner = deserializer.deserialize_i64(DateEpochSecondsVisitor)?;
-//         place.date = date_inner.date;
-//         Ok(())
-//     }
-// }
-
-// struct DateEpochSecondsVisitor;
-//
-// impl <'de> Visitor<'de> for DateEpochSecondsVisitor {
-//
-//     type Value = DateEpochSeconds;
-//
-//     fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
-//         formatter.write_str("integer")
-//     }
-//
-//     fn visit_i8<E>(self, value: i8) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         self.visit_i64(value as i64)
-//     }
-//
-//     fn visit_i16<E>(self, value: i16) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         self.visit_i64(value as i64)
-//     }
-//
-//     fn visit_i32<E>(self, value: i32) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         self.visit_i64(value as i64)
-//     }
-//
-//     fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         Ok(DateEpochSeconds::from_i64(value))
-//     }
-//
-//     fn visit_u8<E>(self, value: u8) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         self.visit_i64(value as i64)
-//     }
-//
-//     fn visit_u16<E>(self, value: u16) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         self.visit_i64(value as i64)
-//     }
-//
-//     fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         self.visit_i64(value as i64)
-//     }
-//
-//     fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
-//     where E: serde::de::Error {
-//         self.visit_i64(value as i64)
-//     }
-//
-// }
-
 pub fn ordered_map<S>(value: &HashMap<String, String>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -1105,29 +861,6 @@ pub struct MessageInterMillegrille {
     pub origine: String,
     pub dechiffrage: DechiffrageInterMillegrilleOwned,
 }
-
-// impl TryFrom<MessageMilleGrille> for MessageInterMillegrille {
-//     type Error = String;
-//
-//     fn try_from(value: MessageMilleGrille) -> Result<Self, Self::Error> {
-//
-//         let origine = match value.origine {
-//             Some(inner) => inner,
-//             None => Err(format!("origine manquant"))?
-//         };
-//
-//         let dechiffrage = match value.dechiffrage {
-//             Some(inner) => inner,
-//             None => Err(format!("dechiffrage manquant"))?
-//         };
-//
-//         Ok(Self {
-//             contenu: value.contenu,
-//             origine,
-//             dechiffrage,
-//         })
-//     }
-// }
 
 impl MessageInterMillegrille {
     pub fn new<M,S>(middleware: &M, contenu: S, certificats_demandeur: Option<Vec<&EnveloppeCertificat>>)
@@ -1299,101 +1032,3 @@ impl MessageInterMillegrille {
 //         Ok(data_dechiffre)
 //     }
 // }
-
-#[cfg(test)]
-mod serialization_tests {
-    use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
-    use crate::test_setup::setup;
-
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
-    use super::*;
-
-    /// Sample
-    //const MESSAGE_STR: &str = r#"{"_certificat":["-----BEGIN CERTIFICATE-----\nMIID/zCCAuegAwIBAgIUFGTSBu4f2hbzgnca0GuSsmLgr7UwDQYJKoZIhvcNAQEL\nBQAwgYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRj\nYjFhYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5\nZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMB4X\nDTIxMDgzMDExNTcxNVoXDTIxMDkyOTExNTkxNVowZjE/MD0GA1UECgw2ejJXMkVD\nblA5ZWF1TlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdz\nMREwDwYDVQQLDAhkb21haW5lczEQMA4GA1UEAwwHbWctZGV2NDCCASIwDQYJKoZI\nhvcNAQEBBQADggEPADCCAQoCggEBAMcAz3SshFSHxyd+KfTZVHWG3OQg9t7kdHtV\nkrXySXdPYc+svArawMKhy/XRrFJ+NfLNoUyz+KPma5mEWxXZDRZVyvmdodDh/eNu\nqJ4aB078AkxyKWNgT/aF1/EuZ+pZseVlaDrD1yoEiC4stXwm6ay7mnWTyczDt8FI\ntCZ6/9nDNwPsnwC6cbqXRH4gqkwDqBGolX9Jz6TU4pqisIroacwOW+NEmNassM2b\nQqP/W4saEQQqD2BV78I9hQxouE8JLR6SIL5XD7j6Pq6pG86TSkFGAqQsSPd1w+5l\nxMRQgitYJ7ITo/Eq0qmAxv1INnxLyLmXQ2FysUNVTtgGgN3O7OUCAwEAAaOBgTB/\nMB0GA1UdDgQWBBQSOxwSTijPrcKRmCWzoFpf8cJQbDAfBgNVHSMEGDAWgBT170DQ\ne1NxyrKp2GduPOZ6P9b5iDAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIE8DAQBgQq\nAwQABAg0LnNlY3VyZTAQBgQqAwQBBAhkb21haW5lczANBgkqhkiG9w0BAQsFAAOC\nAQEARX75Y2kVlxiJSmbDi1hZRj3mfe7ihT69EL51R6YiB0c/fpQUYxWfpddbg4DY\nlzAssE2XtSv1gYBZkZJXGWS4jB6dW6r+7Mhbtb6ZSXXG5ba9LydSxI8++//GZwG/\np8nce6fNmR8b06s/TQjpqwOa+hXqiqkWzqoVal/ucQWhdLtTkx/DVFUjHMcDMhZT\nVKIX7/SGEi9uGM9LNIVhCc7TsndcmiNXkV7ybiJ02rqxXPrD0QJ6h28rHIEGbWWs\napOlHiqtHYWQCuM0h5kygqknYKmHZIFBfba/xCf1rJi9HQUFZZfuw0VS9BcFmBg/\n5Hx8faWZNWWE9Iu+366P1t9GxA==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIID+DCCAmCgAwIBAgIJJ0USglmGk0UAMA0GCSqGSIb3DQEBDQUAMBYxFDASBgNV\nBAMTC01pbGxlR3JpbGxlMB4XDTIxMDcyMDEzNTc0MFoXDTI0MDcyMjEzNTc0MFow\ngYgxLTArBgNVBAMTJGJiM2I5MzE2LWI0YzctNGJiYS05ODU4LTdlMGU0MTRjYjFh\nYjEWMBQGA1UECxMNaW50ZXJtZWRpYWlyZTE/MD0GA1UEChM2ejJXMkVDblA5ZWF1\nTlhENjI4YWFpVVJqNnRKZlNZaXlnVGFmZkMxYlRiQ05IQ3RvbWhvUjdzMIIBIjAN\nBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqCNK7g/7AzTTRT3SX7vTzQIKhXvZ\nTkjphiJ38SoL4jZnv4tEyTV2j2a6v8UgluG/zab6W38n0YpLr1/J2+xVNOKO5P4t\ni//Qiygjkbl/2HGSjttorwdnybFIUdDqMQAHHZMfuvgZOgzXOG4xRxAD/uoTh1+B\ndj55uLKIwITtAY7e/Zxwia8cH9qPLRUETdp2/3rIGHSSkj1GDucnipGJHqrD2wF5\nylgy1kLLzV87wF55g7+nHYFpWXl19h8pAfxrQM1wMIY/rqAKwYoitePRaaLPfTKR\nTrzP4Ei4lStzuR4MocO2wZRSKKNuJw5GFML7PQf+ZV43KOGlpq8GmyNZxQIDAQAB\no1YwVDASBgNVHRMBAf8ECDAGAQH/AgEEMB0GA1UdDgQWBBT170DQe1NxyrKp2Gdu\nPOZ6P9b5iDAfBgNVHSMEGDAWgBQasUCD0J+bwB2Yk8olJGvr057k7jANBgkqhkiG\n9w0BAQ0FAAOCAYEAcH0Qbyeap2+uCTXyua+z8JpPAgW25GefOAkyzsaEgaSrOp7U\nic16YmZQz6QXZSkq0+agZ0dVue+9J5iPniujJjkACdClWsMl98eFcen0gb35humU\n20QDgvTDdmNpb2psfVfLMn50B1FxcYTVV3J2jjgBQa0/Q69+DPAbagKF/TJgMERY\nm8vBiHLruFWx7iuO5l9zI9/TCfMdZ1c0i+caUEEf4urCmxp7BjdWfDp+HshcJqok\nQN8PMVu4GfexJOD9gdHBaIA2VAuTCElL9K1Iy5kUcklu0qFxBKDi1N0mKOUeaGnq\nxbVEt7CZD3fF0xKnyNXAZzoCvqvkXtUORdkiZIH7k3EPgpgmLKvx2WNyXgFKs7y0\nMsucRkCixTRCdoju5h410hh7hpfR6eT+kHicJMSH1MKDJ/72MeFNeiOatKq8x72L\nzgGYVkuDlfXjPr5zPalw3BVNToikhVAgvVENiEaRzBKDJIkq1MnwK6VAzLMC60Cm\nSLqr6N7dHrSBO27B\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIEBjCCAm6gAwIBAgIKCSg3VilRiEQQADANBgkqhkiG9w0BAQ0FADAWMRQwEgYD\nVQQDEwtNaWxsZUdyaWxsZTAeFw0yMTAyMjgyMzM4NDRaFw00MTAyMjgyMzM4NDRa\nMBYxFDASBgNVBAMTC01pbGxlR3JpbGxlMIIBojANBgkqhkiG9w0BAQEFAAOCAY8A\nMIIBigKCAYEAo7LsB6GKr+aKqzmF7jxa3GDzu7PPeOBtUL/5Q6OlZMfMKLdqTGd6\npg12GT2esBh2KWUTt6MwOz3NDgA2Yk+WU9huqmtsz2n7vqIgookhhLaQt/OoPeau\nbJyhm3BSd+Fpf56H1Ya/qZl1Bow/h8r8SjImm8ol1sG9j+bTnaA5xWF4X2Jj7k2q\nTYrJJYLTU+tEnL9jH2quaHyiuEnSOfMmSLeiaC+nyY/MuX2Qdr3LkTTTrF+uOji+\njTBFdZKxK1qGKSJ517jz9/gkDCe7tDnlTOS4qxQlIGPqVP6hcBPaeXjiQ6h1KTl2\n1B5THx0yh0G9ixg90XUuDTHXgIw3vX5876ShxNXZ2ahdxbg38m4QlFMag1RfHh9Z\nXPEPUOjEnAEUp10JgQcd70gXDet27BF5l9rXygxsNz6dqlP7oo2yI8XvdtMcFiYM\neFM1FF+KadV49cXTePqKMpir0mBtGLwtaPNAUZNGCcZCuxF/mt9XOYoBTUEIv1cq\nLsLVaM53fUFFAgMBAAGjVjBUMBIGA1UdEwEB/wQIMAYBAf8CAQUwHQYDVR0OBBYE\nFBqxQIPQn5vAHZiTyiUka+vTnuTuMB8GA1UdIwQYMBaAFBqxQIPQn5vAHZiTyiUk\na+vTnuTuMA0GCSqGSIb3DQEBDQUAA4IBgQBLjk2y9nDW2MlP+AYSZlArX9XewMCh\n2xAjU63+nBG/1nFe5u3YdciLsJyiFBlOY2O+ZGliBcQ6EhFx7SoPRDB7v7YKv8+O\nEYZOSyule+SlSk2Dv89eYdmgqess/3YyuJN8XDyEbIbP7UD2KtklxhwkpiWcVSC3\nNK3ALaXwB/5dniuhxhgcoDhztvR7JiCD3fi1Gwi8zUR4BiZOgDQbn2O3NlgFNjDk\n6eRNicWDJ19XjNRxuCKn4/8GlEdLPwlf4CoqKb+O31Bll4aWkWRb9U5lpk/Ia0Kr\no/PtNHZNEcxOrpmmiCIN1n5+Fpk5dIEKqSepWWLGpe1Omg2KPSBjFPGvciluoqfG\nerI92ipS7xJLW1dkpwRGM2H42yD/RLLocPh5ZuW369snbw+axbcvHdST4LGU0Cda\nyGZTCkka1NZqVTise4N+AV//BQjPsxdXyabarqD9ycrd5EFGOQQAFadIdQy+qZvJ\nqn8fGEjvtcCyXhnbCjCO8gykHrRTXO2icrQ=\n-----END CERTIFICATE-----\n"],"_signature":"mAWm3oYujnuCUtXlqyUnLWRNDJFtDUiG3wmy1sdU8YLTf0yNDENYLB8t1jUtXYyHRx5Dawd6sy0RhKXCUwnWl9q+Q/9u+wAwSxvR+dKiweYsdDZJAXrTwkYQmEu/X8/vbQcVMVX8VWwinDgalFSR0q//6V14Bp8jgAKFZifd2N9gPSEy0RBze1TUHuNlW7phUP5dAPcviiDLbpcQNJ3suD8Oq9m3ob61N04QFMvr8glWGs8yf0VbEJ8UXi22WOL/L02UWcMuqf5v9SKaKd/7we/jVW10GnYfH/coWdl62FrTNLBMGonkO9KzR8dXxNzDMvpt4A1kpcEZ7488EjTAhgzs","alpaca":true,"en-tete":{"estampille":1631884993,"fingerprint_certificat":"zQmSTKik15nFmLe4tQtndoEWA6aDdGUcVjpNHt4RtKQvnC3","hachage_contenu":"mEiCerWQ+xmJBauIR2JdRX1pBa+1wYlUNg/Q0dbhCGUOSww","idmg":"z2W2ECnP9eauNXD628aaiURj6tJfSYiygTaffC1bTbCNHCtomhoR7s","uuid_transaction":"6ba61473-18fc-4ff2-9de7-95470eadb2d8","version":1},"texte":"oui!","valeur":1}"#;
-    const MESSAGE_STR: &str = r#"{"id":"45e8347dd1adbb7b633bb0fd2621596cff22657ddd219ac6327e5a70a3f5f353","pubkey":"30d241f794e561486abd5a2ffddf86ff08f89b78856080466aedff7837b8ba89","estampille":1681766892,"kind":1,"contenu":"{\"alpaca\":true,\"texte\":\"oui!\",\"valeur\":1}","routage":{"action":"requeteDummy","domaine":"Dummy"},"sig":"e0275248dfce879afc78b2e4798cf621b2885ea822e0a733138ce7494386443fb84e2cad5dbbd10a1aa5c712972fc3c0e476d012f9347cada283d201d1f71e0c","certificat":["-----BEGIN CERTIFICATE-----\nMIIClDCCAkagAwIBAgIUVFctVKeWq04RXiftJ3tj/Fw8mLIwBQYDK2VwMHIxLTAr\nBgNVBAMTJDI2Yzc0YmYwLWE1NWUtNDBjYi04M2U2LTdlYTgxOGUyZDQxNjFBMD8G\nA1UEChM4emVZbmNScUVxWjZlVEVtVVo4d2hKRnVIRzc5NmVTdkNUV0U0TTQzMml6\nWHJwMjJiQXR3R203SmYwHhcNMjMwNDE2MjIwNzM5WhcNMjMwNTE3MjIwNzU5WjCB\ngTEtMCsGA1UEAwwkYTcxMzA3YzUtMWNiOC00NGI1LWExM2EtY2Q5NDQwM2I2N2Vm\nMQ0wCwYDVQQLDARjb3JlMUEwPwYDVQQKDDh6ZVluY1JxRXFaNmVURW1VWjh3aEpG\ndUhHNzk2ZVN2Q1RXRTRNNDMyaXpYcnAyMmJBdHdHbTdKZjAqMAUGAytlcAMhADDS\nQfeU5WFIar1aL/3fhv8I+Jt4hWCARmrt/3g3uLqJo4HdMIHaMCsGBCoDBAAEIzQu\nc2VjdXJlLDMucHJvdGVnZSwyLnByaXZlLDEucHVibGljMAwGBCoDBAEEBGNvcmUw\nTAYEKgMEAgREQ29yZUJhY2t1cCxDb3JlQ2F0YWxvZ3VlcyxDb3JlTWFpdHJlRGVz\nQ29tcHRlcyxDb3JlUGtpLENvcmVUb3BvbG9naWUwDwYDVR0RBAgwBoIEY29yZTAf\nBgNVHSMEGDAWgBQHLJvHVM5P2+40plzpsr4b47oS7zAdBgNVHQ4EFgQUwnVgI/E/\nAZJlrA2h7rPLMaHmOqQwBQYDK2VwA0EAc717NCOIchhGhCJUZY+WeajoeubIwpGq\nqyRJ5bgC6XZJ8wVzpikUIvT3PcafQKdTGWtNOT0Jehi2xjLOT36ZAg==\n-----END CERTIFICATE-----\n","-----BEGIN CERTIFICATE-----\nMIIBozCCAVWgAwIBAgIKEiZUUAGScUVHVDAFBgMrZXAwFjEUMBIGA1UEAxMLTWls\nbGVHcmlsbGUwHhcNMjMwNDE2MjEzNDM5WhcNMjQxMDI1MjEzNDM5WjByMS0wKwYD\nVQQDEyQyNmM3NGJmMC1hNTVlLTQwY2ItODNlNi03ZWE4MThlMmQ0MTYxQTA/BgNV\nBAoTOHplWW5jUnFFcVo2ZVRFbVVaOHdoSkZ1SEc3OTZlU3ZDVFdFNE00MzJpelhy\ncDIyYkF0d0dtN0pmMCowBQYDK2VwAyEAb0VPx+wJvYRWgBnxW1QuMMAj1U6nhdqd\na1bz0mVXWoSjYzBhMBIGA1UdEwEB/wQIMAYBAf8CAQAwCwYDVR0PBAQDAgEGMB0G\nA1UdDgQWBBQHLJvHVM5P2+40plzpsr4b47oS7zAfBgNVHSMEGDAWgBTTiP/MFw4D\nDwXqQ/J2LLYPRUkkETAFBgMrZXADQQDHCMn7gdqOu7NAbYNRKQBa8/YZGoifuRuB\nCdVpEB7NGL1mWYfv78Rbtgw26ESC9aRbbL3imXBKQt1CgeCTN5gF\n-----END CERTIFICATE-----\n"]}"#;
-
-    // #[test]
-    // fn serializer_date() {
-    //     setup("serializer_date");
-    //     let date = DateEpochSeconds::from_i64(1629813607);
-    //
-    //     let value = serde_json::to_value(date).unwrap();
-    //
-    //     let date_epoch_secs = value.as_i64().expect("i64");
-    //     assert_eq!(date_epoch_secs, 1629813607);
-    // }
-    //
-    // #[test]
-    // fn deserializer_date() {
-    //     setup("deserializer_date");
-    //     let value_int = 1629813607;
-    //     let value = Value::from(value_int);
-    //
-    //     let date: DateEpochSeconds = serde_json::from_value(value).expect("date");
-    //
-    //     assert_eq!(date.date.timestamp() as i32, value_int);
-    // }
-    //
-    // #[test]
-    // fn lire_message_millegrille() {
-    //     setup("lire_message_millegrille");
-    //     let (_, _) = charger_enveloppe_privee_env();
-    //     let message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
-    //     let contenu = &message.get_msg().contenu;
-    //     debug!("Contenu parsed : {:?}", contenu);
-    //
-    //     let map_parsed: HashMap<String, Value> = message.parsed.map_contenu().expect("map_contenu");
-    //
-    //     assert_eq!("45e8347dd1adbb7b633bb0fd2621596cff22657ddd219ac6327e5a70a3f5f353", message.parsed.id);
-    //     assert_eq!("oui!", map_parsed.get("texte").expect("texte").as_str().expect("str"));
-    //     assert_eq!(true, map_parsed.get("alpaca").expect("texte").as_bool().expect("bool"));
-    //     assert_eq!(1, map_parsed.get("valeur").expect("texte").as_i64().expect("i64"));
-    // }
-    //
-    // #[tokio::test]
-    // async fn valider_message_millegrille() {
-    //     setup("valider_message_millegrille");
-    //     let (validateur_arc, _) = charger_enveloppe_privee_env();
-    //     let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
-    //     debug!("Message serialise a valider\n{:?}", message);
-    //
-    //     let validateur = validateur_arc.as_ref();
-    //     let resultat = message.valider(validateur, None).await.expect("valider");
-    //     assert_eq!(true, resultat.signature_valide);
-    //     // assert_eq!(false, resultat.certificat_valide);  // Expire
-    //     assert_eq!(Some(true), resultat.hachage_valide);
-    // }
-    //
-    // #[tokio::test]
-    // async fn valider_message_corrompu() {
-    //     setup("valider_message_millegrille");
-    //     let (validateur_arc, _) = charger_enveloppe_privee_env();
-    //     let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
-    //
-    //     // Corrompre le message
-    //     message.parsed.contenu = message.parsed.contenu.replace("true", "false");
-    //
-    //     let validateur = validateur_arc.as_ref();
-    //     let resultat = message.valider(validateur, None).await.expect("valider");
-    //     assert_eq!(true, resultat.signature_valide);
-    //     // assert_eq!(false, resultat.certificat_valide);  // expire
-    //     assert_eq!(Some(false), resultat.hachage_valide);
-    // }
-    //
-    // #[tokio::test]
-    // async fn valider_hachage_corrompu() {
-    //     setup("valider_message_millegrille");
-    //     let (validateur_arc, _) = charger_enveloppe_privee_env();
-    //     let mut message = MessageSerialise::from_str(MESSAGE_STR).expect("msg");
-    //
-    //     // Corrompre le message
-    //     message.parsed.id = String::from("45e8347dd1adbb7b633bb0fd2621596cff22657ddd219ac6327e5a70a3f5f354");
-    //
-    //     let validateur = validateur_arc.as_ref();
-    //     let resultat = message.valider(validateur, None).await.expect("valider");
-    //     assert_eq!(false, resultat.signature_valide);
-    //     // assert_eq!(false, resultat.certificat_valide);  // expire
-    //     assert_eq!(Some(false), resultat.hachage_valide);
-    // }
-
-}

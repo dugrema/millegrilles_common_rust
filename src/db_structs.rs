@@ -57,7 +57,7 @@ pub struct TransactionRef<'a> {
 
     /// Attachements au message. Traite comme attachments non signes (doivent etre validable separement).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub attachements: Option<HashMap<&'a str, Value>>,
+    pub attachements: Option<HashMap<String, Value>>,
 
     #[serde(rename = "_evenements")]
     pub evenements: Option<HashMap<&'a str, Value>>,

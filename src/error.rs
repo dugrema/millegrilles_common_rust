@@ -7,7 +7,12 @@ pub enum Error {
     String(String),
     Openssl(ErrorStack),
     SerdeJson(serde_json::Error),
-    Io(std::io::Error)
+    Io(std::io::Error),
+    Multibase(multibase::Error),
+    Multihash(multihash::Error),
+    Chacha20poly1350(chacha20poly1305::Error),
+    Dryoc(dryoc::Error),
+    MillegrillesCryptographie(millegrilles_cryptographie::error::Error),
 }
 
 impl fmt::Display for Error {
@@ -42,5 +47,11 @@ impl From<String> for Error {
 impl From<&str> for Error {
     fn from(value: &str) -> Self {
         Self::String(value.to_string())
+    }
+}
+
+impl From<millegrilles_cryptographie::error::Error> for Error {
+    fn from(value: millegrilles_cryptographie::error::Error) -> Self {
+        Error::MillegrillesCryptographie(value)
     }
 }

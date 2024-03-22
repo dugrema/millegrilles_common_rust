@@ -11,14 +11,18 @@ use std::io::prelude::*;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use millegrilles_cryptographie::messages_structs::{optionepochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
+use millegrilles_cryptographie::chiffrage_mgs4::CleSecreteCipher;
+use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
+use millegrilles_cryptographie::heapless;
+use millegrilles_cryptographie::messages_structs::{optionepochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesBuilderDefault, RoutageMessage};
+use millegrilles_cryptographie::x25519::{CleDerivee, deriver_asymetrique_ed25519};
 use multibase::{Base, encode};
 
 use crate::certificats::{EnveloppeCertificat, FingerprintCertPublicKey, ValidateurX509};
 
 use crate::chiffrage::{CipherMgs, CleSecrete, MgsCipherKeys};
 use crate::chiffrage_cle::{CleDechiffree, CommandeSauvegarderCle};
-use crate::chiffrage_ed25519::{CleDerivee, deriver_asymetrique_ed25519};
+// use crate::chiffrage_ed25519::{CleDerivee, deriver_asymetrique_ed25519};
 use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
 use crate::common_messages::{MessageReponse, verifier_reponse_ok, verifier_reponse_ok_option};
 use crate::constantes::*;
@@ -77,7 +81,7 @@ struct Notification {
 
 pub struct EmetteurNotifications {
     from: Option<String>,
-    cle_derivee_proprietaire: CleDerivee,
+    cle_derivee_proprietaire: CleSecreteCipher,
     commande_cle_proprietaire: Mutex<Option<MessageMilleGrillesBufferDefault>>,
     commande_cle_transmise: Mutex<bool>,
     ref_hachage_bytes: Mutex<Option<String>>,
@@ -93,11 +97,13 @@ impl EmetteurNotifications {
     pub fn new(enveloppe_ca: &EnveloppeCertificat, champ_from: Option<String>) -> Result<Self, Box<dyn Error>> {
 
         let cle_millegrille_public = &enveloppe_ca.cle_publique;
+        let fingerprint_ca = enveloppe_ca.fingerprint.clone();
         let cle_derivee_proprietaire = deriver_asymetrique_ed25519(cle_millegrille_public)?;
+        let cle_cipher = CleSecreteCipher::CleDerivee((fingerprint_ca, cle_derivee_proprietaire));
 
         Ok(EmetteurNotifications {
             from: champ_from,
-            cle_derivee_proprietaire,
+            cle_derivee_proprietaire: cle_cipher,
             commande_cle_proprietaire: Mutex::new(None::<MessageMilleGrillesBufferDefault>),
             commande_cle_transmise: Mutex::new(false),
             ref_hachage_bytes: Mutex::new(None),
@@ -116,137 +122,172 @@ impl EmetteurNotifications {
     {
         let commande_transmise = self.commande_cle_transmise.lock().expect("lock").clone();
 
-        // Creer cipher pour chiffrer contenu du message, utiliser la cle secrete connue
-        let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
-        // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
-        let message_contenu = Self::chiffrer_contenu_notification(&contenu, &mut cipher)?;
-        let hachage_contenu = cipher.get_hachage().expect("get_hachage").to_owned();
+        let enveloppe_signature = middleware.get_enveloppe_signature();
+        // let mut cle_privee_u8 = SecretKey::default();
+        // match enveloppe_signature.cle_privee().raw_private_key() {
+        //     Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
+        //     Err(e) => Err(Error::String(format!("build_reponse Erreur raw_private_key {:?}", e)))?
+        // };
+        // let signing_key = SigningKey::from_bytes(&cle_privee_u8);
 
-        // Convertir contenu en message de notification
-        let expiration = match expiration {
-            // Some(e) => Some(DateEpochSeconds::from_i64(e)),
-            Some(e) => DateTime::from_timestamp(e as i64, 0),
-            None => None
-        };
-
-        let mut cle_id = cipher.get_hachage().expect("get_hachage").to_owned();
-
-        let cle = match commande_transmise {
-            true => {
-                // Remplacer ref_hachage_bytes
-                match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
-                    Some(c) => {
-                        cle_id = c.clone();
-                    },
-                    None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
-                };
-                None
-            },
-            false => {
-                debug!("emettre_notification_proprietaire Emettre commande cle");
-                let mut commande_outer = match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
-                    Some(c) => Some(c.clone()),
-                    None => None
-                };
-
-                if commande_outer.is_none() {
-                    debug!("emettre_notification_proprietaire Generer la commande MaitreDesCles");
-                    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES, vec![Securite::L1Public])
-                        .build();
-
-                    let (public_keys, partition) = {
-                        let enveloppe_maitredescles = match middleware.transmettre_requete(routage, &json!({})).await? {
-                            TypeMessage::Valide(m) => {
-                                let message_ref = m.message.parse()?;
-                                let message_contenu = message_ref.contenu()?;
-                                let certificat_message: MessageCertificat = message_contenu.deserialize()?;
-                                // let certificat_pem: Vec<String> = m.message.parsed.map_contenu(Some("certificat"))?;
-                                let certificat_pem = certificat_message.certificat;
-                                debug!("emettre_notification_proprietaire Certificat maitre des cles {:?}", certificat_pem);
-                                middleware.charger_enveloppe(&certificat_pem, None, None).await?
-                            },
-                            _ => Err(format!("notifications.emettre_notification_proprietaire Erreur reception certificat maitre des cles (mauvais type reponse)"))?
-                        };
-
-                        // &Vec<FingerprintCertPublicKey>
-                        let enveloppe_ca = middleware.get_enveloppe_signature().enveloppe_ca.clone();
-                        let mut fpkeys = Vec::new();
-                        fpkeys.push(FingerprintCertPublicKey {
-                            fingerprint: enveloppe_ca.fingerprint.clone(),
-                            public_key: enveloppe_ca.cle_publique.clone(),
-                            est_cle_millegrille: true,
-                        });
-                        fpkeys.push(FingerprintCertPublicKey {
-                            fingerprint: enveloppe_maitredescles.fingerprint.clone(),
-                            public_key: enveloppe_maitredescles.cle_publique.clone(),
-                            est_cle_millegrille: false,
-                        });
-
-                        (fpkeys, enveloppe_maitredescles.fingerprint.clone())
-                    };
-
-                    let mut identificateurs_document = HashMap::new();
-                    identificateurs_document.insert("notification".to_string(), "true".to_string());
-                    let cles_rechiffrees = cipher.get_cipher_keys(&public_keys)?;
-                    let commande = cles_rechiffrees.get_commande_sauvegarder_cles(
-                        "Messagerie", None, identificateurs_document)?;
-
-                    // Signer commande
-                    // let mut commande_signee = middleware.formatter_message(
-                    //     MessageKind::Commande, &commande,
-                    //     Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
-                    //     Some(partition.as_str()), None::<&str>, None, false)?;
-                    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE, vec![Securite::L3Protege])
-                        .partition(partition.as_str())
-                        .build();
-                    let (commande_signee, message_id) = middleware.build_message_action(
-                        millegrilles_cryptographie::messages_structs::MessageKind::Commande, routage, commande)?;
-
-                    let commande_signee_ref = commande_signee.parse()?;
-                    let mut commande_signee: MessageMilleGrillesOwned = commande_signee_ref.into();
-                    commande_signee.ajouter_attachement("partition", partition);
-                    let commande_signee: MessageMilleGrillesBufferDefault = commande_signee.try_into()?;
-
-                    {
-                        // Conserver message_id
-                        let mut guard = self.ref_hachage_bytes.lock().expect("lock");
-                        guard.replace(message_id);
-                    }
-
-                    // Conserver commande signee
-                    let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
-                    guard.replace(commande_signee.clone());
-
-                    // Retourner commande signee
-                    commande_outer = Some(commande_signee);
-                }
-
-                commande_outer
-            }
-        };
-
-        // let mut commande = NotificationContenu {
-        //     niveau: niveau.to_owned(),
-        //     message: message_contenu,
-        //     // ref_hachage_bytes: cipher.get_hachage().expect("get_hachage").to_owned(),
-        //     // format: "mgs4".into(),
-        //     // header: Some(cipher.get_header().to_owned()),
-        //     // message_chiffre,
+        // let contenu = match serde_json::to_string(&contenu) {
+        //     Ok(inner) => inner,
+        //     Err(e) => Err(Error::String(format!("Erreur serde::to_vec : {:?}", e)))?
         // };
 
-        let message_a_signer = MessageInterMillegrille {
-            contenu: message_contenu,
-            origine: middleware.idmg().to_owned(),
-            dechiffrage: DechiffrageInterMillegrilleOwned {
-                hachage: None,
-                cle_id: Some(cle_id),
-                format: "mgs4".to_owned(),
-                header: Some(cipher.get_header().to_owned()),
-                cles: None,
-            }
-        };
+        // Recuperer
+        let cle_proprietaire = &self.cle_derivee_proprietaire;
+        let cipher = millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4::with_secret(cle_proprietaire.to_owned());
 
-        todo!("messages inter-millegrilles fix-me")
+        let pem_vec = enveloppe_signature.enveloppe.get_pem_vec_extracted();
+        let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
+        certificat.extend(pem_vec.iter().map(|s| s.as_str()));
+
+        todo!("fix me")
+        // let generateur = MessageMilleGrillesBuilderDefault::new(
+        //     millegrilles_cryptographie::messages_structs::MessageKind::CommandeInterMillegrille,
+        //     &contenu?
+        // )
+        //     .routage(RoutageMessage::for_action(DOMAINE_NOM_MESSAGERIE, "nouveauMessage"))
+        //     .origine("ORIGINE")
+        //     .enveloppe_signature(enveloppe_signature.as_ref())
+        //     .cles_chiffrage(enveloppes);
+
+        // // Creer cipher pour chiffrer contenu du message, utiliser la cle secrete connue
+        // let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
+        // // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
+        // let message_contenu = Self::chiffrer_contenu_notification(&contenu, &mut cipher)?;
+        // let hachage_contenu = cipher.get_hachage().expect("get_hachage").to_owned();
+        //
+        // // Convertir contenu en message de notification
+        // let expiration = match expiration {
+        //     // Some(e) => Some(DateEpochSeconds::from_i64(e)),
+        //     Some(e) => DateTime::from_timestamp(e as i64, 0),
+        //     None => None
+        // };
+        //
+        // let mut cle_id = cipher.get_hachage().expect("get_hachage").to_owned();
+        //
+        // let cle = match commande_transmise {
+        //     true => {
+        //         // Remplacer ref_hachage_bytes
+        //         match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
+        //             Some(c) => {
+        //                 cle_id = c.clone();
+        //             },
+        //             None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
+        //         };
+        //         None
+        //     },
+        //     false => {
+        //         debug!("emettre_notification_proprietaire Emettre commande cle");
+        //         let mut commande_outer = match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
+        //             Some(c) => Some(c.clone()),
+        //             None => None
+        //         };
+        //
+        //         if commande_outer.is_none() {
+        //             debug!("emettre_notification_proprietaire Generer la commande MaitreDesCles");
+        //             let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES, vec![Securite::L1Public])
+        //                 .build();
+        //
+        //             let (public_keys, partition) = {
+        //                 let enveloppe_maitredescles = match middleware.transmettre_requete(routage, &json!({})).await? {
+        //                     TypeMessage::Valide(m) => {
+        //                         let message_ref = m.message.parse()?;
+        //                         let message_contenu = message_ref.contenu()?;
+        //                         let certificat_message: MessageCertificat = message_contenu.deserialize()?;
+        //                         // let certificat_pem: Vec<String> = m.message.parsed.map_contenu(Some("certificat"))?;
+        //                         let certificat_pem = certificat_message.certificat;
+        //                         debug!("emettre_notification_proprietaire Certificat maitre des cles {:?}", certificat_pem);
+        //                         middleware.charger_enveloppe(&certificat_pem, None, None).await?
+        //                     },
+        //                     _ => Err(format!("notifications.emettre_notification_proprietaire Erreur reception certificat maitre des cles (mauvais type reponse)"))?
+        //                 };
+        //
+        //                 // &Vec<FingerprintCertPublicKey>
+        //                 let enveloppe_ca = middleware.get_enveloppe_signature().enveloppe_ca.clone();
+        //                 let mut fpkeys = Vec::new();
+        //                 fpkeys.push(FingerprintCertPublicKey {
+        //                     fingerprint: enveloppe_ca.fingerprint.clone(),
+        //                     public_key: enveloppe_ca.cle_publique.clone(),
+        //                     est_cle_millegrille: true,
+        //                 });
+        //                 fpkeys.push(FingerprintCertPublicKey {
+        //                     fingerprint: enveloppe_maitredescles.fingerprint.clone(),
+        //                     public_key: enveloppe_maitredescles.cle_publique.clone(),
+        //                     est_cle_millegrille: false,
+        //                 });
+        //
+        //                 (fpkeys, enveloppe_maitredescles.fingerprint.clone())
+        //             };
+        //
+        //             let mut identificateurs_document = HashMap::new();
+        //             identificateurs_document.insert("notification".to_string(), "true".to_string());
+        //             let cles_rechiffrees = cipher.get_cipher_keys(&public_keys)?;
+        //             let commande = cles_rechiffrees.get_commande_sauvegarder_cles(
+        //                 "Messagerie", None, identificateurs_document)?;
+        //
+        //             // Signer commande
+        //             // let mut commande_signee = middleware.formatter_message(
+        //             //     MessageKind::Commande, &commande,
+        //             //     Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
+        //             //     Some(partition.as_str()), None::<&str>, None, false)?;
+        //             let routage = RoutageMessageAction::builder(
+        //                 DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE, vec![Securite::L3Protege]
+        //             )
+        //                 .partition(partition.as_str())
+        //                 .build();
+        //             let (commande_signee, message_id) = middleware.build_message_action(
+        //                 millegrilles_cryptographie::messages_structs::MessageKind::Commande, routage, commande)?;
+        //
+        //             let commande_signee_ref = commande_signee.parse()?;
+        //             let mut commande_signee: MessageMilleGrillesOwned = commande_signee_ref.into();
+        //             commande_signee.ajouter_attachement("partition", partition);
+        //             let commande_signee: MessageMilleGrillesBufferDefault = commande_signee.try_into()?;
+        //
+        //             {
+        //                 // Conserver message_id
+        //                 let mut guard = self.ref_hachage_bytes.lock().expect("lock");
+        //                 guard.replace(message_id);
+        //             }
+        //
+        //             // Conserver commande signee
+        //             let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
+        //             guard.replace(commande_signee.clone());
+        //
+        //             // Retourner commande signee
+        //             commande_outer = Some(commande_signee);
+        //         }
+        //
+        //         commande_outer
+        //     }
+        // };
+        //
+        // // let mut commande = NotificationContenu {
+        // //     niveau: niveau.to_owned(),
+        // //     message: message_contenu,
+        // //     // ref_hachage_bytes: cipher.get_hachage().expect("get_hachage").to_owned(),
+        // //     // format: "mgs4".into(),
+        // //     // header: Some(cipher.get_header().to_owned()),
+        // //     // message_chiffre,
+        // // };
+        //
+        // let message_a_signer = MessageInterMillegrille {
+        //     contenu: message_contenu,
+        //     origine: middleware.idmg().to_owned(),
+        //     dechiffrage: DechiffrageInterMillegrilleOwned {
+        //         hachage: None,
+        //         cle_id: Some(cle_id),
+        //         format: "mgs4".to_owned(),
+        //         header: Some(cipher.get_header().to_owned()),
+        //         nonce: None,
+        //         cles: None,
+        //         verification: None,
+        //     }
+        // };
+        //
+        // todo!("messages inter-millegrilles fix-me")
         // let mut message_signe = middleware.formatter_message(
         //     MessageKind::CommandeInterMillegrille, &message_a_signer,
         //     Some(DOMAINE_NOM_MESSAGERIE), Some("nouveauMessage"), None::<&str>,
@@ -339,37 +380,37 @@ impl EmetteurNotifications {
 
         let cle_deja_sauvegardee = cle_dechiffree.is_some();
 
-        let (cle_derivee, cle_id) = match cle_dechiffree {
-            Some(inner) => {
-                let public_peer = [0u8; 32]; // Dummy vide
-                let cle_derivee = CleDerivee { secret: inner.cle_secrete, public_peer };
-                (cle_derivee, Some(inner.hachage_bytes))
-            },
-            None => {
-                debug!("emettre_notification_usager Generer une nouvelle cle secrete pour notifications de l'usager");
-                let cle_privee = middleware.get_enveloppe_signature();
-                let cle_millegrille_public = &cle_privee.enveloppe_ca.cle_publique;
-                let cle_derivee_proprietaire = deriver_asymetrique_ed25519(cle_millegrille_public)?;
-                (cle_derivee_proprietaire, None)
-            }
-        };
-
-        let mut cipher = CipherMgs4::new_avec_secret(&cle_derivee)?;
-        // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
-        let message_contenu = Self::chiffrer_contenu_notification(&contenu, &mut cipher)?;
-        let hachage_contenu = cipher.get_hachage().expect("get_hachage").to_owned();
-        // Convertir contenu en message de notification
-        let expiration = match expiration {
-            // Some(e) => Some(DateEpochSeconds::from_i64(e)),
-            Some(e) => DateTime::from_timestamp(e as i64, 0),
-            None => None
-        };
-        let mut cle_id = match cle_id {
-            Some(inner) => inner,
-            None => cipher.get_hachage().expect("get_hachage").to_owned()
-        };
-
         todo!("messages inter-millegrilles fix-me")
+        // let (cle_derivee, cle_id) = match cle_dechiffree {
+        //     Some(inner) => {
+        //         let public_peer = [0u8; 32]; // Dummy vide
+        //         let cle_derivee = CleDerivee { secret: inner.cle_secrete, public_peer };
+        //         (cle_derivee, Some(inner.hachage_bytes))
+        //     },
+        //     None => {
+        //         debug!("emettre_notification_usager Generer une nouvelle cle secrete pour notifications de l'usager");
+        //         let cle_privee = middleware.get_enveloppe_signature();
+        //         let cle_millegrille_public = &cle_privee.enveloppe_ca.cle_publique;
+        //         let cle_derivee_proprietaire = deriver_asymetrique_ed25519(cle_millegrille_public)?;
+        //         (cle_derivee_proprietaire, None)
+        //     }
+        // };
+        //
+        // let mut cipher = CipherMgs4::new_avec_secret(&cle_derivee)?;
+        // // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
+        // let message_contenu = Self::chiffrer_contenu_notification(&contenu, &mut cipher)?;
+        // let hachage_contenu = cipher.get_hachage().expect("get_hachage").to_owned();
+        // // Convertir contenu en message de notification
+        // let expiration = match expiration {
+        //     // Some(e) => Some(DateEpochSeconds::from_i64(e)),
+        //     Some(e) => DateTime::from_timestamp(e as i64, 0),
+        //     None => None
+        // };
+        // let mut cle_id = match cle_id {
+        //     Some(inner) => inner,
+        //     None => cipher.get_hachage().expect("get_hachage").to_owned()
+        // };
+        //
         // let commande_cles_messagerie = if cle_deja_sauvegardee == false {
         //     debug!("emettre_notification_usager Generer commande maitre des cles");
         //     let mut identificateurs_document = HashMap::new();

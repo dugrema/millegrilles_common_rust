@@ -246,40 +246,40 @@ impl ValidateurX509 for MiddlewareDb {
 impl GenerateurMessages for MiddlewareDb {
 
     async fn emettre_evenement<R,M>(&self, routage: R, message: M)
-                                    -> Result<(), String>
+                                    -> Result<(), crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.ressources.generateur_messages.emettre_evenement( routage, message).await
     }
 
     async fn transmettre_requete<R,M>(&self, routage: R, message: M)
-                                      -> Result<TypeMessage, String>
+                                      -> Result<TypeMessage, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.ressources.generateur_messages.transmettre_requete(routage, message).await
     }
 
     async fn soumettre_transaction<R,M>(&self, routage: R, message: M)
-                                        -> Result<Option<TypeMessage>, String>
+                                        -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.ressources.generateur_messages.soumettre_transaction(routage, message).await
     }
 
     async fn transmettre_commande<R,M>(&self, routage: R, message: M)
-                                       -> Result<Option<TypeMessage>, String>
+                                       -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.ressources.generateur_messages.transmettre_commande(routage, message).await
     }
 
-    async fn repondre<R,M>(&self, routage: R, message: M) -> Result<(), String>
+    async fn repondre<R,M>(&self, routage: R, message: M) -> Result<(), crate::error::Error>
         where R: Into<RoutageMessageReponse> + Send, M: Serialize + Send + Sync {
         self.ressources.ressources.generateur_messages.repondre(routage, message).await
     }
 
     async fn emettre_message<M>(&self, type_message: TypeMessageOut, message: M)
-                                -> Result<Option<TypeMessage>, String>
+                                -> Result<Option<TypeMessage>, crate::error::Error>
         where M: Into<MessageMilleGrillesBufferDefault> + Send
     {
         self.ressources.ressources.generateur_messages.emettre_message(type_message, message).await

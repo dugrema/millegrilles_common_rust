@@ -34,6 +34,7 @@ use crate::hachages::hacher_bytes;
 // use std::error::Error;
 use crate::constantes::Securite::L1Public;
 use std::convert::TryInto;
+use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRef;
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
@@ -741,6 +742,21 @@ impl Debug for EnveloppePrivee {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(format!("Enveloppe privee {}", self.fingerprint()).as_str())
     }
+}
+
+impl TryInto<SigningKey> for &EnveloppePrivee {
+
+    type Error = Error;
+
+    fn try_into<'a>(self) -> Result<SigningKey, Error> {
+        let mut cle_privee_u8 = SecretKey::default();
+        match self.cle_privee().raw_private_key() {
+            Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
+            Err(e) => Err(Error::String(format!("TryInto<SigningKey> for &EnveloppePrivee Erreur raw_private_key {:?}", e)))?
+        };
+        Ok(SigningKey::from_bytes(&cle_privee_u8))
+    }
+
 }
 
 // impl Clone for EnveloppePrivee {

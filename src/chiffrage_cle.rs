@@ -18,7 +18,7 @@ use crate::signatures::{signer_identite, signer_message, verifier_message};
 
 /// Effectue une requete pour charger des cles a partir du maitre des cles
 pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>)
-    -> Result<ReponseDechiffrageCles, String>
+    -> Result<ReponseDechiffrageCles, crate::error::Error>
     where M: GenerateurMessages
 {
     let routage = RoutageMessageAction::builder(
@@ -36,14 +36,14 @@ pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>
             };
             match message_contenu.deserialize() {
                 Ok(r) => Ok(r),
-                Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))
+                Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))?
             }
             // match r.message.parsed.map_contenu() {
             //     Ok(r) => Ok(r),
             //     Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))
             // }
         },
-        _ => Err(format!("chiffrage_cles.requete_charger_cles Mauvais type de reponse pour les cles"))
+        _ => Err(format!("chiffrage_cles.requete_charger_cles Mauvais type de reponse pour les cles"))?
     }
 }
 
