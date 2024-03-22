@@ -11,6 +11,7 @@ use chrono::{DateTime, Duration, Utc};
 use futures::pin_mut;
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::messages_structs::{epochseconds, MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::bson::{doc, Document};
 use mongodb::options::{FindOptions, Hint};
 use multibase::{Base, encode};
@@ -29,24 +30,19 @@ use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}, codec::{BytesCo
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
-use crate::certificats::{CollectionCertificatsPem, EnveloppeCertificat, EnveloppePrivee, ValidateurX509};
-use crate::chiffrage::{Chiffreur, CipherMgsCurrent, MgsCipherDataCurrent, MgsCipherKeys, MgsCipherKeysCurrent};
-// use crate::chiffrage_chacha20poly1305::{CipherMgs3, DecipherMgs3, Mgs3CipherData, Mgs3CipherKeys};
-use crate::chiffrage_streamxchacha20poly1305::{CipherMgs4, Mgs4CipherKeys};
+use crate::certificats::{CollectionCertificatsPem, ValidateurX509};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::constantes::Securite::{L2Prive, L3Protege};
-// use crate::fichiers::FichierWriter;
 use crate::fichiers::{CompressionChiffrageProcessor, FichierCompressionChiffrage, FichierCompressionResult};
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::hachages::hacher_bytes;
-use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
+use crate::middleware::IsConfigurationPki;
 use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
-// use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
 
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
@@ -62,7 +58,7 @@ const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage*/ + ChiffrageFactoryTrait  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage + ChiffrageFactoryTrait*/  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
 {
     while let Some(commande) = rx.recv().await {
         let mut abandonner_backup = false;
@@ -139,7 +135,7 @@ pub trait BackupStarter {
     fn get_tx_backup(&self) -> Sender<CommandeBackup>;
 
     async fn demarrer_backup<S,T,Q,C>(&self, nom_domaine: S, nom_collection_transactions: T, complet: bool, reply_q: Q, correlation_id: C)
-        -> Result<(), Box<dyn Error>>
+        -> Result<(), crate::error::Error>
         where S: Into<String> + Send, T: Into<String> + Send, Q: Into<String> + Send, C: Into<String> + Send
     {
         let commande = CommandeBackup {
@@ -152,7 +148,9 @@ pub trait BackupStarter {
 
         let tx_backup = self.get_tx_backup();
         debug!("backup.BackupStarter Demarrage backup {:?}", &commande);
-        tx_backup.send(commande).await?;
+        if let Err(e) = tx_backup.send(commande).await {
+            Err(crate::error::Error::String(format!("backup.BackupStarter Erreur send trigger demarrage : {:?}", e)))?
+        }
 
         Ok(())
     }
@@ -162,7 +160,7 @@ pub trait BackupStarter {
 pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage*/ + ChiffrageFactoryTrait
+        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage + ChiffrageFactoryTrait */
 {
     let nom_coll_str = commande.nom_collection_transactions.as_str();
     let nom_domaine_str = commande.nom_domaine.as_str();
@@ -216,7 +214,7 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
 async fn generer_backup_wrapper<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation, tx_keepalive: tokio::sync::oneshot::Sender<bool>)
     -> Result<(), String>
     where
-        M: MongoDao + ValidateurX509 + FormatteurMessage /*+ VerificateurMessage*/ + GenerateurMessages + ChiffrageFactoryTrait,
+        M: MongoDao + ValidateurX509 + FormatteurMessage + GenerateurMessages /*+ VerificateurMessage + ChiffrageFactoryTrait */,
         S: CurseurStream + Send + 'static
 {
     let resultat = generer_backup(middleware, curseur, info_backup).await;
@@ -234,7 +232,7 @@ async fn generer_backup_wrapper<M,S>(middleware: &M, mut curseur: S, info_backup
 async fn generer_backup<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation)
     -> Result<(), Box<dyn Error>>
     where
-        M: MongoDao + ValidateurX509 + FormatteurMessage /*+ VerificateurMessage*/ + GenerateurMessages + ChiffrageFactoryTrait,
+        M: MongoDao + ValidateurX509 + FormatteurMessage + GenerateurMessages /*+ VerificateurMessage + ChiffrageFactoryTrait */,
         S: CurseurStream + Send + 'static
 {
     let timestamp_backup = Utc::now();
@@ -343,7 +341,7 @@ async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, se
 }
 
 async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<MessageMilleGrillesBufferDefault>, info_backup: &BackupInformation) -> Result<(), String>
-    where M: GenerateurMessages + ChiffrageFactoryTrait + MongoDao
+    where M: GenerateurMessages + MongoDao /* + ChiffrageFactoryTrait */
 {
     // Traiter transactions
     match _generer_catalogue_wrapper(middleware, receiver, info_backup).await {
@@ -382,11 +380,11 @@ async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, m
 
 async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<MessageMilleGrillesBufferDefault>,
                                        info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + ChiffrageFactoryTrait + MongoDao
+    where M: GenerateurMessages + MongoDao /* + ChiffrageFactoryTrait */
 {
     debug!("_generer_catalogue_wrapper Debut generer catalogue");
     // let mut messages_recus = false;
-    let mut buffer_output = Vec::new();
+    let mut buffer_output: Vec<u8> = Vec::new();
     buffer_output.reserve(5_000_000);
 
     // Creer un builder pour le nouveau catalogue. Va cumuler l'information des transactions.
@@ -400,25 +398,26 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
     let (mut chiffreur, sender) = CompressionChiffrageProcessor::new();
 
     let sender_handler = traiter_transactions_catalogue(middleware, info_backup, &mut builder, &mut receiver, sender);
-    let chiffreur_handler = chiffreur.run_vec(middleware.get_chiffrage_factory(), &mut buffer_output);
-
-    let resultat = try_join!(sender_handler, chiffreur_handler)?;
-
-    if builder.uuid_transactions.len() == 0 {
-        debug!("_generer_catalogue_wrapper Fin generer catalogue (0 transactions)");
-        return Ok(())  // Rien a faire
-    }
-
-    let chiffrage_resultat = resultat.1;
-    debug!("Resultat chiffrage (vec: {}, hachage: {}, bytes: {}): {:?}",
-        buffer_output.len(), chiffrage_resultat.hachage, chiffrage_resultat.byte_count, chiffrage_resultat.cipher_data);
-
-    // Generer le catalogue, emettre la commande pour sauvegarder le fichier
-    serialiser_catalogue(middleware, builder, &buffer_output, chiffrage_resultat, info_backup).await?;
-    debug!("_generer_catalogue_wrapper Catalogue chiffre et signe pour domaine {}, uuid {}", info_backup.domaine, info_backup.uuid_backup);
-
-    debug!("_generer_catalogue_wrapper Fin generer catalogue");
-    Ok(())
+    todo!("Fix chiffrage")
+    // let chiffreur_handler = chiffreur.run_vec(middleware.get_chiffrage_factory(), &mut buffer_output);
+    //
+    // let resultat = try_join!(sender_handler, chiffreur_handler)?;
+    //
+    // if builder.uuid_transactions.len() == 0 {
+    //     debug!("_generer_catalogue_wrapper Fin generer catalogue (0 transactions)");
+    //     return Ok(())  // Rien a faire
+    // }
+    //
+    // let chiffrage_resultat = resultat.1;
+    // debug!("Resultat chiffrage (vec: {}, hachage: {}, bytes: {}): {:?}",
+    //     buffer_output.len(), chiffrage_resultat.hachage, chiffrage_resultat.byte_count, chiffrage_resultat.cipher_data);
+    //
+    // // Generer le catalogue, emettre la commande pour sauvegarder le fichier
+    // serialiser_catalogue(middleware, builder, &buffer_output, chiffrage_resultat, info_backup).await?;
+    // debug!("_generer_catalogue_wrapper Catalogue chiffre et signe pour domaine {}, uuid {}", info_backup.domaine, info_backup.uuid_backup);
+    //
+    // debug!("_generer_catalogue_wrapper Fin generer catalogue");
+    // Ok(())
 }
 
 async fn traiter_transactions_catalogue<M>(
@@ -535,75 +534,76 @@ async fn serialiser_catalogue<M>(
 {
     let nom_collection_transactions = info_backup.nom_collection_transactions.as_str();
 
-    builder.set_cles(&chiffrage.cipher_data);
-
-    builder.charger_transactions_chiffrees(transactions_chiffrees).await?;  // Charger, hacher transactions
-
-    // Comparer hachages ecrits et lus
-    if chiffrage.hachage.as_str() != builder.data_hachage_bytes.as_str() {
-        Err(format!("sauvegarder_catalogue Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon",
-                    chiffrage.hachage, builder.data_hachage_bytes))?;
-    }
-    let mut catalogue = builder.build();
-
-    let uuid_transactions = match catalogue.uuid_transactions.take() {
-        Some(inner) => inner,
-        None => Vec::new()
-    };
-
-    // let mut catalogue_signe = middleware.formatter_message(
-    //     MessageKind::Commande, &catalogue, Some(DOMAINE_BACKUP), Some("backupTransactions"),
-    //     None::<&str>, None::<&str>, None, false)?;
-
-    // let uuid_message_backup = catalogue_signe.id.clone();
-
-    debug!("sauvegarder_catalogue Catalogue serialise");
-
-    let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions", vec![Securite::L2Prive])
-        .timeout_blocking(90_000)
-        .build();
-
-    // let reponse = middleware.emettre_message_millegrille(
-    //     routage, true, TypeMessageOut::Commande, catalogue_signe).await;
-
-    let reponse = middleware.transmettre_commande(routage, catalogue).await;
-
-    let reponse = match reponse {
-        Ok(result) => match result {
-            Some(r) => match r {
-                TypeMessage::Valide(r) => r,
-                _ => {
-                    Err(String::from("backup.serialiser_catalogue Erreur sauvegarder fichier backup, ** SKIPPED **"))?
-                }
-            },
-            None => {
-                Err(String::from("backup.serialiser_catalogue Aucune reponse, on assume que le backup a echoue, ** SKIPPED **"))?
-            }
-        },
-        Err(_) => {
-            Err(format!("backup.serialiser_catalogue Timeout reponse, on assume que le backup a echoue, ** SKIPPED **"))?
-        }
-    };
-
-    let message_ref = reponse.message.parse()?;
-    debug!("Reponse backup {:?}", from_utf8(reponse.message.buffer.as_slice()));
-    let message_contenu = message_ref.contenu()?;
-    let reponse_mappee: ReponseBackup = message_contenu.deserialize()?;
-
-    if let Some(true) = reponse_mappee.ok {
-        debug!("Catalogue transactions sauvegarde OK")
-    } else {
-        Err(format!("backup.serialiser_catalogue Erreur sauvegarde catalogue transactions {:?} (application backup), ABORT. Erreur : {:?}",
-                    nom_collection_transactions, reponse_mappee.err))?;
-    }
-
-    // Marquer transactions comme etant completees
-    marquer_transaction_backup_complete(
-        middleware,
-        nom_collection_transactions,
-        &uuid_transactions).await?;
-
-    Ok(())
+    todo!("fix chiffrage")
+    // builder.set_cles(&chiffrage.cipher_data);
+    //
+    // builder.charger_transactions_chiffrees(transactions_chiffrees).await?;  // Charger, hacher transactions
+    //
+    // // Comparer hachages ecrits et lus
+    // if chiffrage.hachage.as_str() != builder.data_hachage_bytes.as_str() {
+    //     Err(format!("sauvegarder_catalogue Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon",
+    //                 chiffrage.hachage, builder.data_hachage_bytes))?;
+    // }
+    // let mut catalogue = builder.build();
+    //
+    // let uuid_transactions = match catalogue.uuid_transactions.take() {
+    //     Some(inner) => inner,
+    //     None => Vec::new()
+    // };
+    //
+    // // let mut catalogue_signe = middleware.formatter_message(
+    // //     MessageKind::Commande, &catalogue, Some(DOMAINE_BACKUP), Some("backupTransactions"),
+    // //     None::<&str>, None::<&str>, None, false)?;
+    //
+    // // let uuid_message_backup = catalogue_signe.id.clone();
+    //
+    // debug!("sauvegarder_catalogue Catalogue serialise");
+    //
+    // let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions", vec![Securite::L2Prive])
+    //     .timeout_blocking(90_000)
+    //     .build();
+    //
+    // // let reponse = middleware.emettre_message_millegrille(
+    // //     routage, true, TypeMessageOut::Commande, catalogue_signe).await;
+    //
+    // let reponse = middleware.transmettre_commande(routage, catalogue).await;
+    //
+    // let reponse = match reponse {
+    //     Ok(result) => match result {
+    //         Some(r) => match r {
+    //             TypeMessage::Valide(r) => r,
+    //             _ => {
+    //                 Err(String::from("backup.serialiser_catalogue Erreur sauvegarder fichier backup, ** SKIPPED **"))?
+    //             }
+    //         },
+    //         None => {
+    //             Err(String::from("backup.serialiser_catalogue Aucune reponse, on assume que le backup a echoue, ** SKIPPED **"))?
+    //         }
+    //     },
+    //     Err(_) => {
+    //         Err(format!("backup.serialiser_catalogue Timeout reponse, on assume que le backup a echoue, ** SKIPPED **"))?
+    //     }
+    // };
+    //
+    // let message_ref = reponse.message.parse()?;
+    // debug!("Reponse backup {:?}", from_utf8(reponse.message.buffer.as_slice()));
+    // let message_contenu = message_ref.contenu()?;
+    // let reponse_mappee: ReponseBackup = message_contenu.deserialize()?;
+    //
+    // if let Some(true) = reponse_mappee.ok {
+    //     debug!("Catalogue transactions sauvegarde OK")
+    // } else {
+    //     Err(format!("backup.serialiser_catalogue Erreur sauvegarde catalogue transactions {:?} (application backup), ABORT. Erreur : {:?}",
+    //                 nom_collection_transactions, reponse_mappee.err))?;
+    // }
+    //
+    // // Marquer transactions comme etant completees
+    // marquer_transaction_backup_complete(
+    //     middleware,
+    //     nom_collection_transactions,
+    //     &uuid_transactions).await?;
+    //
+    // Ok(())
 }
 
 
@@ -1025,18 +1025,18 @@ impl CatalogueBackup {
         CatalogueBackupBuilder::new(heure, nom_domaine, partition, uuid_backup)
     }
 
-    pub fn get_cipher_data(&self) -> Result<MgsCipherDataCurrent, Box<dyn Error>> {
-        match &self.cle {
-            Some(c) => {
-                let header = self.header.as_ref().expect("header");
-                MgsCipherDataCurrent::new(
-                    c.as_str(),
-                    header,
-                )
-            },
-            None => Err("Non chiffre")?,
-        }
-    }
+    // pub fn get_cipher_data(&self) -> Result<MgsCipherDataCurrent, Box<dyn Error>> {
+    //     match &self.cle {
+    //         Some(c) => {
+    //             let header = self.header.as_ref().expect("header");
+    //             MgsCipherDataCurrent::new(
+    //                 c.as_str(),
+    //                 header,
+    //             )
+    //         },
+    //         None => Err("Non chiffre")?,
+    //     }
+    // }
 }
 
 #[derive(Clone, Debug)]
@@ -1054,7 +1054,7 @@ pub struct CatalogueBackupBuilder {
     uuid_transactions: Vec<String>,     // Liste des transactions inclues (pas mis dans catalogue)
     data_hachage_bytes: String,         // Hachage du contenu chiffre
     data_transactions: String,          // Contenu des transactions en base64 (chiffre)
-    cles: Option<MgsCipherKeysCurrent>,       // Cles pour dechiffrer le contenu
+    // cles: Option<MgsCipherKeysCurrent>,       // Cles pour dechiffrer le contenu
     // backup_precedent: Option<EnteteBackupPrecedent>,
 }
 
@@ -1070,7 +1070,7 @@ impl CatalogueBackupBuilder {
             uuid_transactions: Vec::new(),
             data_hachage_bytes: "".to_owned(),
             data_transactions: "".to_owned(),
-            cles: None,
+            // cles: None,
             // backup_precedent: None,
         }
     }
@@ -1101,9 +1101,9 @@ impl CatalogueBackupBuilder {
         }
     }
 
-    fn set_cles(&mut self, cles: &MgsCipherKeysCurrent) {
-        self.cles = Some(cles.clone());
-    }
+    // fn set_cles(&mut self, cles: &MgsCipherKeysCurrent) {
+    //     self.cles = Some(cles.clone());
+    // }
 
     async fn charger_transactions_chiffrees(&mut self, transactions: &Vec<u8>) -> Result<(), Box<dyn Error>> {
         // Hacher le contenu (pour verification)
@@ -1128,42 +1128,43 @@ impl CatalogueBackupBuilder {
             None => format!("{}_{}.json.xz", &self.nom_domaine, date_str)
         };
 
-        let (format, cle, header) = match self.cles {
-            Some(cles) => {
-                (Some(cles.get_format()), cles.get_cle_millegrille(), Some(cles.header))
-            },
-            None => (None, None, None)
-        };
-
-        let date_transactions_debut = match self.date_debut_backup {
-            Some(d) => d,
-            None => self.date_backup.clone()
-        };
-        let date_transactions_fin = match self.date_fin_backup {
-            Some(d) => d,
-            None => self.date_backup.clone()
-        };
-
-        CatalogueBackup {
-            date_backup: self.date_backup,
-            date_transactions_debut,
-            date_transactions_fin,
-            domaine: self.nom_domaine,
-            partition: self.partition,
-            uuid_backup: self.uuid_backup,
-            catalogue_nomfichier,
-
-            certificats: self.certificats,
-
-            data_hachage_bytes: self.data_hachage_bytes,
-            data_transactions: self.data_transactions,
-            nombre_transactions: self.uuid_transactions.len(),
-            uuid_transactions: Some(self.uuid_transactions),
-
-            // entete: None,  // En-tete chargee lors de la deserialization
-
-            cle, iv: None, tag: None, header, format,
-        }
+        todo!("fix chiffrage")
+        // let (format, cle, header) = match self.cles {
+        //     Some(cles) => {
+        //         (Some(cles.get_format()), cles.get_cle_millegrille(), Some(cles.header))
+        //     },
+        //     None => (None, None, None)
+        // };
+        //
+        // let date_transactions_debut = match self.date_debut_backup {
+        //     Some(d) => d,
+        //     None => self.date_backup.clone()
+        // };
+        // let date_transactions_fin = match self.date_fin_backup {
+        //     Some(d) => d,
+        //     None => self.date_backup.clone()
+        // };
+        //
+        // CatalogueBackup {
+        //     date_backup: self.date_backup,
+        //     date_transactions_debut,
+        //     date_transactions_fin,
+        //     domaine: self.nom_domaine,
+        //     partition: self.partition,
+        //     uuid_backup: self.uuid_backup,
+        //     catalogue_nomfichier,
+        //
+        //     certificats: self.certificats,
+        //
+        //     data_hachage_bytes: self.data_hachage_bytes,
+        //     data_transactions: self.data_transactions,
+        //     nombre_transactions: self.uuid_transactions.len(),
+        //     uuid_transactions: Some(self.uuid_transactions),
+        //
+        //     // entete: None,  // En-tete chargee lors de la deserialization
+        //
+        //     cle, iv: None, tag: None, header, format,
+        // }
     }
 
 }
@@ -1400,7 +1401,7 @@ fn bytes_to_part(filename: &str, contenu: Vec<u8>, mimetype: Option<&str>) -> Pa
 }
 
 /// Reset l'etat de backup des transactions d'une collection
-pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where M: MongoDao + GenerateurMessages,
 {
     let collection = middleware.get_collection(nom_collection_transactions)?;

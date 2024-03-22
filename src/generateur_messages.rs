@@ -8,12 +8,12 @@ use log::{debug, error};
 use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
 use millegrilles_cryptographie::heapless;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferAlloc, MessageMilleGrillesBufferDefault, RoutageMessage, MessageMilleGrillesBuilderDefault};
+use millegrilles_cryptographie::x509::EnveloppePrivee;
 use serde::Serialize;
 use tokio::sync;
 use serde_json::{json, Value};
 use x509_parser::nom::AsBytes;
 
-use crate::certificats::EnveloppePrivee;
 use crate::chiffrage_cle::CommandeSauvegarderCle;
 use crate::common_messages::MessageReponse;
 use crate::configuration::ConfigurationPki;

@@ -22,7 +22,7 @@ use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{ChiffrageFactoryTrait, IsConfigurationPki};
+use crate::middleware::IsConfigurationPki;
 use crate::recepteur_messages::{intercepter_message, traiter_delivery, TypeMessage};
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
@@ -156,14 +156,17 @@ pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<d
 
     // Preparer certificat pour auth SSL
     let enveloppe = config_pki.get_enveloppe_privee().clone();
-    let ca_cert_pem = enveloppe.chaine_pem().last().expect("last").as_str();
+    let ca_cert_pem = enveloppe.ca_pem.as_str();
     let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
 
     // Essayer d'emettre le certificat vers les hosts, en ordre
     for host in hosts {
         debug!("Creation compte MQ avec host : {}", host);
 
-        let identity = reqwest::Identity::from_pem(enveloppe.clecert_pem.as_bytes())?;
+        let pem_cert = enveloppe.chaine_pem.join("\n");
+        let pem_cle = enveloppe.cle_privee_pem.as_str();
+        let clecert_pem = format!("{}\n{}", pem_cle, pem_cert);
+        let identity = reqwest::Identity::from_pem(clecert_pem.as_bytes())?;
 
         let client = reqwest::Client::builder()
             .add_root_certificate(root_ca.clone())
@@ -354,7 +357,7 @@ pub async fn notify_wait_thread(rabbitmq: Arc<RabbitMqExecutor>) {
 pub async fn run_rabbitmq<C,M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
     where
         C: ConfigMessages + 'static,
-        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
 {
     let mut futures = FuturesUnordered::new();
     futures.push(task::spawn(thread_connexion(rabbitmq.clone(), config.clone())));
@@ -402,7 +405,7 @@ async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>
 
 async fn thread_reply_q<M, C>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
     where
-        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
         C: ConfigMessages + 'static
 {
     let mut futures = FuturesUnordered::new();
@@ -440,7 +443,7 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
     let reply_q = {
         let pki = config.get_configuration_pki();
         ReplyQueue {
-            fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().to_owned(),
+            fingerprint_certificat: pki.get_enveloppe_privee().fingerprint().unwrap(),
             securite: rabbitmq.securite.clone(),
             ttl: Some(300000),
             reply_q_name: Arc::new(Mutex::new(None)),  // Permet de maj le nom de la reply_q globalement
@@ -480,7 +483,7 @@ async fn thread_consumer_replyq<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<
 }
 
 async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>)
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
 {
     let mut rx = {
         let mut guard = rabbitmq.rx_reply.lock().expect("lock");
@@ -586,7 +589,7 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
 }
 
 async fn thread_consumers_named_queues<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>)
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
 {
 
     let mut futures = FuturesUnordered::new();
@@ -714,7 +717,7 @@ impl NamedQueue {
     }
 
     fn get_futures<M>(&self, middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>) -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
-        where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+        where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
     {
         info!("Demarrage thread named queue {:?}", self.queue);
         let mut futures = FuturesUnordered::new();
@@ -796,7 +799,7 @@ async fn named_queue_traiter_messages<M>(
     queue: QueueType,
     tx_traite: Sender<TypeMessage>
 )
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages + 'static,
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
 {
     let nom_queue = match queue {
         QueueType::ExchangeQueue(config) => config.nom_queue.clone(),

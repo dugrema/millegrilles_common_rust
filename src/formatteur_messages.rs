@@ -13,9 +13,9 @@ use serde::de::{DeserializeOwned, Visitor};
 use serde_json::{json, Map, Number, Value};
 use uuid::Uuid;
 
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, ValidateurX509, VerificateurPermissions};
+use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::hachages::{hacher_bytes, hacher_message};
-use crate::middleware::{ChiffrageFactoryTrait, map_msg_to_bson};
+use crate::middleware::map_msg_to_bson;
 use crate::signatures::signer_message;
 // use crate::verificateur::{ResultatValidation, ValidationOptions};
 use crate::bson::{Document, Bson};
@@ -23,16 +23,14 @@ use std::convert::{TryFrom, TryInto};
 use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
 use millegrilles_cryptographie::heapless;
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, RoutageMessage, MessageMilleGrillesBuilderDefault};
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use multibase::Base;
 use multihash::Code;
 use openssl::sign::Verifier;
-use crate::chiffrage::{ChiffrageFactory, chiffrer_data, chiffrer_data_get_keys, CipherMgs, CleChiffrageHandler, CleSecrete, FormatChiffrage, MgsCipherKeys};
-use crate::chiffrage_cle::CleDechiffree;
-use crate::chiffrage_ed25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519};
 use crate::common_messages::{DataChiffre, DataDechiffre};
 use crate::constantes::MessageKind;
 use crate::constantes::MessageKind::ReponseChiffree;
-use crate::dechiffrage::dechiffrer_data;
+// use crate::dechiffrage::dechiffrer_data;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::mongo_dao::convertir_to_bson;
 
@@ -46,13 +44,13 @@ pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
     };
 
     let mut cle_privee_u8 = SecretKey::default();
-    match enveloppe_privee.cle_privee().raw_private_key() {
+    match enveloppe_privee.cle_privee.raw_private_key() {
         Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
         Err(e) => Err(format!("build_reponse Erreur raw_private_key {:?}", e))?
     };
     let signing_key = SigningKey::from_bytes(&cle_privee_u8);
 
-    let pem_vec = enveloppe_privee.enveloppe.get_pem_vec_extracted();
+    let pem_vec = &enveloppe_privee.chaine_pem;
 
     // Allouer un Vec et serialiser le message signe.
     let mut buffer = Vec::new();
@@ -87,13 +85,13 @@ pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messa
     let routage_message: RoutageMessage = (&routage).into();
 
     let mut cle_privee_u8 = SecretKey::default();
-    match enveloppe_privee.cle_privee().raw_private_key() {
+    match enveloppe_privee.cle_privee.raw_private_key() {
         Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
         Err(e) => Err(format!("build_message_action Erreur raw_private_key {:?}", e))?
     };
     let signing_key = SigningKey::from_bytes(&cle_privee_u8);
 
-    let pem_vec = enveloppe_privee.enveloppe.get_pem_vec_extracted();
+    let pem_vec = &enveloppe_privee.chaine_pem;
 
     let mut buffer = Vec::new();
     let message_id = {
@@ -451,7 +449,7 @@ pub trait FormatteurMessage {
 //         //     enveloppe_privee, None::<&str>, None::<&str>, None::<&str>, version, &value_ordered)?;
 //
 //         let pems: Vec<String> = {
-//             let pem_vec = enveloppe_privee.enveloppe.get_pem_vec();
+//             let pem_vec = enveloppe_privee.enveloppe.chaine_fingerprint_pem()?;
 //             let mut pem_str: Vec<String> = Vec::new();
 //             for p in pem_vec.iter().map(|c| c.pem.as_str()) {
 //                 pem_str.push(p.to_owned());
@@ -855,98 +853,98 @@ where
 //     pub header: Option<String>,
 // }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MessageInterMillegrille {
-    pub contenu: String,  // Contenu compresse/chiffre et encode en multibase
-    pub origine: String,
-    pub dechiffrage: DechiffrageInterMillegrilleOwned,
-}
-
-impl MessageInterMillegrille {
-    pub fn new<M,S>(middleware: &M, contenu: S, certificats_demandeur: Option<Vec<&EnveloppeCertificat>>)
-        -> Result<Self, Box<dyn Error>>
-        where M: FormatteurMessage + ChiffrageFactoryTrait, S: Serialize
-    {
-        let (data_chiffre, keys) = chiffrer_data_get_keys(middleware, contenu)?;
-        let idmg = middleware.get_enveloppe_signature().idmg()?;
-
-        let mut dechiffrage = keys.get_dechiffrage(None)?;
-        match certificats_demandeur {
-            Some(certificats) => {
-                let mut cles_rechiffrees = BTreeMap::new();
-                for cert in certificats {
-                    let cle_rechiffree = keys.rechiffrer(cert)?;
-                    cles_rechiffrees.insert(cert.fingerprint.clone(), cle_rechiffree);
-                }
-                // Remplacer cles rechiffrage
-                dechiffrage.cles = Some(cles_rechiffrees);
-            },
-            None => ()
-        }
-
-        Ok(Self { contenu: data_chiffre.data_chiffre, origine: idmg, dechiffrage })
-    }
-
-    pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, Box<dyn Error>>
-        where M: GenerateurMessages + CleChiffrageHandler
-    {
-        let enveloppe_privee = middleware.get_enveloppe_signature();
-        let fingerprint_local = enveloppe_privee.fingerprint().as_str();
-        let cle_secrete = match self.dechiffrage.cles.as_ref() {
-            Some(inner) => match inner.get(fingerprint_local) {
-                Some(inner) => {
-                    // Cle chiffree, on dechiffre
-                    let cle_bytes = multibase::decode(inner)?;
-                    let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes.1[..], enveloppe_privee.cle_privee())?;
-                    cle_secrete
-                },
-                None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, dechiffrage absent"))?
-            },
-            None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, dechiffrage absent"))?
-        };
-
-        self.dechiffrer_avec_cle(middleware, cle_secrete)
-    }
-
-    pub fn dechiffrer_avec_cle<M>(&self, middleware: &M, cle_secrete: CleSecrete)  -> Result<DataDechiffre, Box<dyn Error>>
-        where M: GenerateurMessages + CleChiffrageHandler
-    {
-        let header = match self.dechiffrage.header.as_ref() {
-            Some(inner) => inner.as_str(),
-            None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, header absent"))?
-        };
-
-        // Dechiffrer le contenu
-        let data_chiffre = DataChiffre {
-            ref_hachage_bytes: None,
-            data_chiffre: format!("m{}", self.contenu),
-            format: FormatChiffrage::mgs4,
-            header: Some(header.to_owned()),
-            tag: None,
-        };
-        debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Data chiffre contenu : {:?}", data_chiffre);
-
-        let cle_dechiffre = CleDechiffree {
-            cle: "m".to_string(),
-            cle_secrete,
-            domaine: "MaitreDesCles".to_string(),
-            format: "mgs4".to_string(),
-            hachage_bytes: "".to_string(),
-            identificateurs_document: None,
-            iv: None,
-            tag: None,
-            header: Some(header.to_owned()),
-            // signature_identite: "".to_string(),
-        };
-
-        debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Dechiffrer data avec cle dechiffree");
-        let data_dechiffre = dechiffrer_data(cle_dechiffre, data_chiffre)?;
-        debug!("formatteur_messages.MessageInterMillegrille.dechiffrer.MessageReponseChiffree.dechiffrerfrer_batch Data dechiffre len {}", data_dechiffre.data_dechiffre.len());
-        // debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Data dechiffre {:?}", String::from_utf8(data_dechiffre.data_dechiffre.clone()));
-
-        Ok(data_dechiffre)
-    }
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct MessageInterMillegrille {
+//     pub contenu: String,  // Contenu compresse/chiffre et encode en multibase
+//     pub origine: String,
+//     pub dechiffrage: DechiffrageInterMillegrilleOwned,
+// }
+//
+// impl MessageInterMillegrille {
+//     pub fn new<M,S>(middleware: &M, contenu: S, certificats_demandeur: Option<Vec<&EnveloppeCertificat>>)
+//         -> Result<Self, Box<dyn Error>>
+//         where M: FormatteurMessage + ChiffrageFactoryTrait, S: Serialize
+//     {
+//         let (data_chiffre, keys) = chiffrer_data_get_keys(middleware, contenu)?;
+//         let idmg = middleware.get_enveloppe_signature().enveloppe_pub.idmg()?;
+//
+//         let mut dechiffrage = keys.get_dechiffrage(None)?;
+//         match certificats_demandeur {
+//             Some(certificats) => {
+//                 let mut cles_rechiffrees = BTreeMap::new();
+//                 for cert in certificats {
+//                     let cle_rechiffree = keys.rechiffrer(cert)?;
+//                     cles_rechiffrees.insert(cert.fingerprint()?, cle_rechiffree);
+//                 }
+//                 // Remplacer cles rechiffrage
+//                 dechiffrage.cles = Some(cles_rechiffrees);
+//             },
+//             None => ()
+//         }
+//
+//         Ok(Self { contenu: data_chiffre.data_chiffre, origine: idmg, dechiffrage })
+//     }
+//
+//     pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, Box<dyn Error>>
+//         where M: GenerateurMessages + CleChiffrageHandler
+//     {
+//         let enveloppe_privee = middleware.get_enveloppe_signature();
+//         let fingerprint_local = enveloppe_privee.fingerprint()?;
+//         let cle_secrete = match self.dechiffrage.cles.as_ref() {
+//             Some(inner) => match inner.get(fingerprint_local.as_str()) {
+//                 Some(inner) => {
+//                     // Cle chiffree, on dechiffre
+//                     let cle_bytes = multibase::decode(inner)?;
+//                     let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes.1[..], &enveloppe_privee.cle_privee)?;
+//                     cle_secrete
+//                 },
+//                 None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, dechiffrage absent"))?
+//             },
+//             None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, dechiffrage absent"))?
+//         };
+//
+//         self.dechiffrer_avec_cle(middleware, cle_secrete)
+//     }
+//
+//     pub fn dechiffrer_avec_cle<M>(&self, middleware: &M, cle_secrete: CleSecrete)  -> Result<DataDechiffre, Box<dyn Error>>
+//         where M: GenerateurMessages + CleChiffrageHandler
+//     {
+//         let header = match self.dechiffrage.header.as_ref() {
+//             Some(inner) => inner.as_str(),
+//             None => Err(format!("formatteur_messages.MessageInterMillegrille.dechiffrer Erreur format message, header absent"))?
+//         };
+//
+//         // Dechiffrer le contenu
+//         let data_chiffre = DataChiffre {
+//             ref_hachage_bytes: None,
+//             data_chiffre: format!("m{}", self.contenu),
+//             format: FormatChiffrage::mgs4,
+//             header: Some(header.to_owned()),
+//             tag: None,
+//         };
+//         debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Data chiffre contenu : {:?}", data_chiffre);
+//
+//         let cle_dechiffre = CleDechiffree {
+//             cle: "m".to_string(),
+//             cle_secrete,
+//             domaine: "MaitreDesCles".to_string(),
+//             format: "mgs4".to_string(),
+//             hachage_bytes: "".to_string(),
+//             identificateurs_document: None,
+//             iv: None,
+//             tag: None,
+//             header: Some(header.to_owned()),
+//             // signature_identite: "".to_string(),
+//         };
+//
+//         debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Dechiffrer data avec cle dechiffree");
+//         let data_dechiffre = dechiffrer_data(cle_dechiffre, data_chiffre)?;
+//         debug!("formatteur_messages.MessageInterMillegrille.dechiffrer.MessageReponseChiffree.dechiffrerfrer_batch Data dechiffre len {}", data_dechiffre.data_dechiffre.len());
+//         // debug!("formatteur_messages.MessageInterMillegrille.dechiffrer Data dechiffre {:?}", String::from_utf8(data_dechiffre.data_dechiffre.clone()));
+//
+//         Ok(data_dechiffre)
+//     }
+// }
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
 // pub struct MessageReponseChiffree {

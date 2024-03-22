@@ -14,15 +14,13 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use tokio::sync::Notify;
 
 use crate::backup::BackupStarter;
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, FingerprintCertPublicKey, ValidateurX509, ValidateurX509Impl};
-use crate::chiffrage::{ChiffrageFactoryImpl, ChiffrageFactory, CleChiffrageHandler};
-use crate::chiffrage_cle::CleDechiffree;
-use crate::chiffrage_streamxchacha20poly1305::CipherMgs4;
+use crate::certificats::{ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
@@ -47,9 +45,9 @@ pub trait RedisTrait {
     fn get_redis(&self) -> Option<&RedisDao>;
 }
 
-pub trait ChiffrageFactoryTrait: CleChiffrageHandler {
-    fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl;
-}
+// pub trait ChiffrageFactoryTrait: CleChiffrageHandler {
+//     fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl;
+// }
 
 pub trait RabbitMqTrait {
     fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String>;
@@ -65,7 +63,7 @@ pub trait EmetteurNotificationsTrait: GenerateurMessages + ValidateurX509 {
         niveau: &str,
         expiration: Option<i64>,
         destinataires: Option<Vec<String>>
-    ) -> Result<(), Box<dyn Error>>;
+    ) -> Result<(), crate::error::Error>;
 
     async fn emettre_notification_usager<D,S,N>(
         &self,
@@ -74,16 +72,16 @@ pub trait EmetteurNotificationsTrait: GenerateurMessages + ValidateurX509 {
         niveau: N,
         domaine: D,
         expiration: Option<i64>,
-        cle_dechiffree: Option<CleDechiffree>
-    ) -> Result<String, Box<dyn Error>> where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send;
+        // cle_dechiffree: Option<CleDechiffree>
+    ) -> Result<String, crate::error::Error> where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send;
 }
 
 /// Super-trait pour tous les traits implementes par Middleware
 pub trait MiddlewareMessages:
     ValidateurX509 + GenerateurMessages + ConfigMessages + IsConfigurationPki +
     IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
-    // VerificateurMessage +
-    RedisTrait + ChiffrageFactoryTrait + RabbitMqTrait +
+    // VerificateurMessage + ChiffrageFactoryTrait +
+    RedisTrait + RabbitMqTrait +
     EmetteurNotificationsTrait
     // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
@@ -108,17 +106,18 @@ pub fn configurer() -> MiddlewareRessources {
     let configuration = Arc::new(Box::new(charger_configuration_avec_db().expect("charger_configuration_avec_db")));
 
     let pki = configuration.get_configuration_pki();
-    let securite = match pki.get_enveloppe_privee().get_exchanges().expect("exchanges") {
-        Some(exchanges) => {
-            if exchanges.contains(&SECURITE_4_SECURE.to_string()) { Securite::L4Secure }
-            else if exchanges.contains(&SECURITE_3_PROTEGE.to_string()) { Securite::L3Protege }
-            else if exchanges.contains(&SECURITE_2_PRIVE.to_string()) { Securite::L2Prive }
-            else if exchanges.contains(&SECURITE_1_PUBLIC.to_string()) { Securite::L1Public }
-            else {
-                panic!("Niveau de securite non-supporte")
+    let securite = match pki.get_enveloppe_privee().enveloppe_pub.get_extensions().expect("extensions certificat") {
+        Some(extensions) => {
+            match extensions.exchanges {
+                Some(exchanges) => {
+                    if exchanges.contains(&SECURITE_4_SECURE.to_string()) { Securite::L4Secure } else if exchanges.contains(&SECURITE_3_PROTEGE.to_string()) { Securite::L3Protege } else if exchanges.contains(&SECURITE_2_PRIVE.to_string()) { Securite::L2Prive } else if exchanges.contains(&SECURITE_1_PUBLIC.to_string()) { Securite::L1Public } else {
+                        panic!("Niveau de securite non-supporte")
+                    }
+                },
+                None => panic!("Certificat sans exchanges, aucun acces a MQ")
             }
         },
-        None => panic!("Certificat sans exchanges, aucun acces a MQ")
+        None => panic!("Aucunes extensions pour le certificat public")
     };
 
     // Preparer instances utils
@@ -133,14 +132,15 @@ pub fn configurer() -> MiddlewareRessources {
     ));
 
     let enveloppe_privee = pki.get_enveloppe_privee();
-    let roles = enveloppe_privee.enveloppe.get_roles().expect("get_roles");
+    let extensions = enveloppe_privee.enveloppe_pub.get_extensions().expect("extensions Ok").expect("extensions Some");
+    let roles = &extensions.roles;
     let identitie_from = match roles {
-        Some(r) => format!("{:?}", roles),
+        Some(r) => format!("{:?}", r),
         None => {
-            let subject = enveloppe_privee.subject().expect("subject");
+            let subject = enveloppe_privee.enveloppe_pub.subject().expect("subject");
             match subject.get("commonName") {
                 Some(cn) => cn.to_owned(),
-                None => enveloppe_privee.fingerprint().to_owned()
+                None => enveloppe_privee.fingerprint().expect("fingerprint Ok").to_owned()
             }
         }
     };
@@ -155,7 +155,7 @@ pub fn configurer() -> MiddlewareRessources {
 pub struct MiddlewareMessage {
     ressources: MiddlewareRessources,
     redis: Option<RedisDao>,
-    chiffrage_factory: Arc<ChiffrageFactoryImpl>,
+    // chiffrage_factory: Arc<ChiffrageFactoryImpl>,
 }
 
 impl MiddlewareMessages for MiddlewareMessage {}
@@ -165,7 +165,7 @@ impl EmetteurNotificationsTrait for MiddlewareMessage {
     async fn emettre_notification_proprietaire(
         &self, contenu: NotificationMessageInterne, niveau: &str, expiration: Option<i64>, destinataires: Option<Vec<String>>
     )
-        -> Result<(), Box<dyn Error>>
+        -> Result<(), crate::error::Error>
     {
         self.ressources.emetteur_notifications.emettre_notification_proprietaire(
             self, contenu, niveau, expiration, destinataires).await
@@ -178,12 +178,13 @@ impl EmetteurNotificationsTrait for MiddlewareMessage {
         niveau: N,
         domaine: D,
         expiration: Option<i64>,
-        cle_dechiffree: Option<CleDechiffree>
-    ) -> Result<String, Box<dyn Error>>
+        // cle_dechiffree: Option<CleDechiffree>
+    ) -> Result<String, crate::error::Error>
         where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
     {
-        self.ressources.emetteur_notifications.emettre_notification_usager(
-            self, user_id, contenu, niveau, domaine, expiration, cle_dechiffree).await
+        todo!("fix me")
+        // self.ressources.emetteur_notifications.emettre_notification_usager(
+        //     self, user_id, contenu, niveau, domaine, expiration, cle_dechiffree).await
     }
 }
 
@@ -204,7 +205,9 @@ impl RedisTrait for MiddlewareMessage {
 
 #[async_trait]
 impl ValidateurX509 for MiddlewareMessage {
-    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>) -> Result<Arc<EnveloppeCertificat>, String> {
+    async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>)
+        -> Result<Arc<EnveloppeCertificat>, crate::error::Error>
+    {
         let enveloppe = self.ressources.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await?;
 
         match self.redis.as_ref() {
@@ -221,20 +224,21 @@ impl ValidateurX509 for MiddlewareMessage {
         Ok(enveloppe)
     }
 
-    async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
-        let (enveloppe, persiste) = self.ressources.validateur.cacher(certificat).await;
+    async fn cacher(&self, certificat: EnveloppeCertificat) -> Result<(Arc<EnveloppeCertificat>, bool), crate::error::Error> {
+        let (enveloppe, persiste) = self.ressources.validateur.cacher(certificat).await?;
 
         let persiste = if ! persiste {
             match self.redis.as_ref() {
                 Some(redis) => {
                     match redis.save_certificat(enveloppe.as_ref()).await {
                         Ok(()) => {
-                            debug!("Certificat {} sauvegarde dans redis", enveloppe.fingerprint);
-                            self.ressources.validateur.set_flag_persiste(enveloppe.fingerprint.as_str());
+                            let fingerprint = enveloppe.fingerprint()?;
+                            debug!("Certificat {} sauvegarde dans redis", fingerprint);
+                            self.ressources.validateur.set_flag_persiste(fingerprint.as_str());
                             true
                         },
                         Err(e) => {
-                            warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint, e);
+                            warn!("Erreur cache certificat {} dans redis : {:?}", enveloppe.fingerprint()?, e);
                             false
                         }
                     }
@@ -246,7 +250,7 @@ impl ValidateurX509 for MiddlewareMessage {
         };
 
         /// Retourne le certificat et indicateur qu'il a ete persiste
-        (enveloppe, persiste)
+        Ok((enveloppe, persiste))
     }
 
     fn set_flag_persiste(&self, fingerprint: &str) {
@@ -315,9 +319,10 @@ impl ValidateurX509 for MiddlewareMessage {
         if let Some(redis) = self.redis.as_ref() {
             // Conserver les certificats qui n'ont pas encore ete persistes
             for certificat in self.ressources.validateur.certificats_persister().iter() {
-                debug!("entretien_validateur Persister {}", certificat.fingerprint());
+                let fingerprint = certificat.fingerprint().expect("fingerprint Ok");
+                debug!("entretien_validateur Persister {}", fingerprint);
                 match redis.save_certificat(certificat).await {
-                    Ok(()) => self.set_flag_persiste(certificat.fingerprint.as_str()),
+                    Ok(()) => self.set_flag_persiste(certificat.fingerprint().expect("fingerprint Ok").as_str()),
                     Err(e) => warn!("entretien_validateur Erreur sauvegarde certificat {:?}", e)
                 }
             }
@@ -332,15 +337,17 @@ pub fn verifier_expiration_certs(enveloppe_privee: &EnveloppePrivee, certificat_
     // Valider le certificat local
     let date_courante = Utc::now();
 
-    debug!("Verifier expiration enveloppe privee : {:?}", enveloppe_privee.enveloppe.not_valid_after());
-    if let Ok(exp_prive) = enveloppe_privee.enveloppe.not_valid_after() {
+    let enveloppe_public = &enveloppe_privee.enveloppe_pub;
+
+    debug!("Verifier expiration enveloppe privee : {:?}", enveloppe_public.not_valid_after());
+    if let Ok(exp_prive) = enveloppe_public.not_valid_after() {
         if exp_prive < date_courante {
             error!("Certificat local expire (enveloppe privee)");
             return true;
         }
     }
-    debug!("Verifier expiration enveloppe signature : {:?}", certificat_local.enveloppe.not_valid_after());
-    if let Ok(exp_sign) = certificat_local.not_valid_after() {
+    debug!("Verifier expiration enveloppe signature : {:?}", enveloppe_public.not_valid_after());
+    if let Ok(exp_sign) = enveloppe_public.not_valid_after() {
         if exp_sign < date_courante {
             error!("Certificat local expire (enveloppe signature)");
             return true;
@@ -482,9 +489,9 @@ impl IsConfigNoeud for MiddlewareMessage {
 
 #[async_trait]
 impl EmetteurCertificat for MiddlewareMessage {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String> {
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), crate::error::Error> {
         let enveloppe_privee = self.ressources.configuration.get_configuration_pki().get_enveloppe_privee();
-        let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
+        let enveloppe_certificat = enveloppe_privee.enveloppe_pub.as_ref();
         let message = formatter_message_certificat(enveloppe_certificat)?;
 
         let routage = RoutageMessageAction::builder("certificat", PKI_REQUETE_CERTIFICAT, vec![Securite::L1Public])
@@ -503,18 +510,18 @@ impl EmetteurCertificat for MiddlewareMessage {
 
         match generateur_message.emettre_evenement(routage, &message).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(format!("Erreur emettre_certificat: {:?}", e)),
+            Err(e) => Err(format!("Erreur emettre_certificat: {:?}", e))?,
         }
     }
 
-    async fn repondre_certificat<S,T>(&self, reply_q: S, correlation_id: T) -> Result<(), String>
+    async fn repondre_certificat<S,T>(&self, reply_q: S, correlation_id: T) -> Result<(), crate::error::Error>
         where S: AsRef<str> + Send, T: AsRef<str> + Send
     {
         repondre_certificat(self, reply_q, correlation_id).await
     }
 }
 
-pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_id: T) -> Result<(), String>
+pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_id: T) -> Result<(), crate::error::Error>
     where M: ConfigMessages + GenerateurMessages,
           S: AsRef<str> + Send, T: AsRef<str> + Send
 {
@@ -522,7 +529,7 @@ pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_
     let correlation_id = correlation_id.as_ref();
 
     let enveloppe_privee = middleware.get_configuration_pki().get_enveloppe_privee();
-    let enveloppe_certificat = enveloppe_privee.enveloppe.as_ref();
+    let enveloppe_certificat = enveloppe_privee.enveloppe_pub.as_ref();
     let message = formatter_message_certificat(enveloppe_certificat)?;
 
     let routage = RoutageMessageReponse::new(reply_q, correlation_id);
@@ -533,7 +540,7 @@ pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_
 
     match middleware.repondre(routage, message).await {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!("middleware.repondre_certificat Erreur emettre_certificat: {:?}", e)),
+        Err(e) => Err(format!("middleware.repondre_certificat Erreur emettre_certificat: {:?}", e))?,
     }
 }
 
@@ -548,49 +555,49 @@ pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_
 //     }
 // }
 
-impl ChiffrageFactoryTrait for MiddlewareMessage {
-    fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
-        self.chiffrage_factory.as_ref()
-    }
-}
-
-#[async_trait]
-impl CleChiffrageHandler for MiddlewareMessage {
-    fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-        self.chiffrage_factory.get_publickeys_chiffrage()
-    }
-
-    async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
-        -> Result<(), Box<dyn Error>>
-        where M: GenerateurMessages + ValidateurX509 + ConfigMessages
-    {
-        self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
-    }
-
-    async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), String>
-        where M: ValidateurX509 + ConfigMessages
-    {
-        self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
-    }
-}
-
-impl ChiffrageFactory for MiddlewareMessage {
-    fn get_chiffreur(&self) -> Result<CipherMgs4, String> {
-        self.chiffrage_factory.get_chiffreur()
-    }
-
-    // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
-    //     self.chiffrage_factory.get_chiffreur_mgs2()
-    // }
-
-    // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
-    //     self.chiffrage_factory.get_chiffreur_mgs3()
-    // }
-
-    fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, String> {
-        self.chiffrage_factory.get_chiffreur_mgs4()
-    }
-}
+// impl ChiffrageFactoryTrait for MiddlewareMessage {
+//     fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
+//         self.chiffrage_factory.as_ref()
+//     }
+// }
+//
+// #[async_trait]
+// impl CleChiffrageHandler for MiddlewareMessage {
+//     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
+//         self.chiffrage_factory.get_publickeys_chiffrage()
+//     }
+//
+//     async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
+//         -> Result<(), crate::error::Error>
+//         where M: GenerateurMessages + ValidateurX509 + ConfigMessages
+//     {
+//         self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
+//     }
+//
+//     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), crate::error::Error>
+//         where M: ValidateurX509 + ConfigMessages
+//     {
+//         self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
+//     }
+// }
+//
+// impl ChiffrageFactory for MiddlewareMessage {
+//     fn get_chiffreur(&self) -> Result<CipherMgs4, crate::error::Error> {
+//         self.chiffrage_factory.get_chiffreur()
+//     }
+//
+//     // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
+//     //     self.chiffrage_factory.get_chiffreur_mgs2()
+//     // }
+//
+//     // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
+//     //     self.chiffrage_factory.get_chiffreur_mgs3()
+//     // }
+//
+//     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, crate::error::Error> {
+//         self.chiffrage_factory.get_chiffreur_mgs4()
+//     }
+// }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReponseCertificatMaitredescles {
@@ -606,10 +613,12 @@ impl ReponseCertificatMaitredescles {
     }
 }
 
-pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection<Document>, dirty: Option<bool>) -> Result<Option<String>, String> {
-    let fingerprint = enveloppe.fingerprint();
+pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Collection<Document>, dirty: Option<bool>)
+    -> Result<Option<String>, crate::error::Error>
+{
+    let fingerprint = enveloppe.fingerprint()?;
 
-    let filtre = doc! { "fingerprint": fingerprint };
+    let filtre = doc! { "fingerprint": &fingerprint };
 
     let (idmg, est_ca) = match enveloppe.est_ca()? {
         true => {
@@ -620,7 +629,7 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
     };
 
     // Separer les fingerprint et pems de la chaine.
-    let fp_certs = enveloppe.get_pem_vec();
+    let fp_certs = enveloppe.chaine_fingerprint_pem()?;
     let mut certs = Vec::new();
     let mut chaine = Vec::new();
     for fp_cert in fp_certs {
@@ -649,25 +658,27 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
     };
 
     // Inserer extensions millegrilles
-    if let Some(exchanges) = enveloppe.get_exchanges().expect("Erreur lecture exchanges") {
-        set_on_insert.insert("exchanges", to_bson(exchanges).expect("Erreur conversion exchanges"));
+    if let Some(extensions) = enveloppe.get_extensions()? {
+        if let Some(exchanges) = &extensions.exchanges {
+            set_on_insert.insert("exchanges", to_bson(exchanges).expect("Erreur conversion exchanges"));
+        }
+        if let Some(domaines) = &extensions.domaines {
+            set_on_insert.insert("domaines", to_bson(domaines).expect("Erreur conversion domaines"));
+        }
+        if let Some(roles) = &extensions.roles {
+            set_on_insert.insert("roles", to_bson(roles).expect("Erreur conversion roles"));
+        }
+        if let Some(user_id) = &extensions.user_id {
+            set_on_insert.insert("user_id", to_bson(user_id).expect("Erreur conversion user_id"));
+        }
+        if let Some(delegation_globale) = &extensions.delegation_globale {
+            set_on_insert.insert("delegation_globale", to_bson(delegation_globale).expect("Erreur conversion delegation_globale"));
+        }
+        if let Some(delegation_domaines) = &extensions.delegation_domaines {
+            set_on_insert.insert("delegation_domaines", to_bson(delegation_domaines).expect("Erreur conversion delegation_domaines"));
+        }
     }
-    if let Some(domaines) = enveloppe.get_domaines().expect("Erreur lecture domaines") {
-        set_on_insert.insert("domaines", to_bson(domaines).expect("Erreur conversion domaines"));
-    }
-    if let Some(roles) = enveloppe.get_roles().expect("Erreur lecture roles") {
-        set_on_insert.insert("roles", to_bson(roles).expect("Erreur conversion roles"));
-    }
-    if let Some(user_id) = enveloppe.get_user_id().expect("Erreur lecture user_id") {
-        set_on_insert.insert("user_id", to_bson(user_id).expect("Erreur conversion user_id"));
-    }
-    if let Some(delegation_globale) = enveloppe.get_delegation_globale().expect("Erreur lecture delegation_globale") {
-        set_on_insert.insert("delegation_globale", to_bson(delegation_globale).expect("Erreur conversion delegation_globale"));
-    }
-    if let Some(delegation_domaines) = enveloppe.get_delegation_domaines().expect("Erreur lecture delegation_domaines") {
-        set_on_insert.insert("delegation_domaines", to_bson(delegation_domaines).expect("Erreur conversion delegation_domaines"));
-    }
-    if let Some(c) = enveloppe.get_pem_ca()? {
+    if let Some(c) = enveloppe.ca_pem()? {
         set_on_insert.insert("ca", to_bson(&c).expect("Erreur conversion certificat CA"));
     }
 
@@ -704,7 +715,7 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
             }
         },
         Err(e) => {
-            Err(format!("Erreur sauvegarde enveloppe certificat : {:?}", e))
+            Err(format!("Erreur sauvegarde enveloppe certificat : {:?}", e))?
         }
     }
 }
@@ -754,24 +765,26 @@ pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine:
 
 #[async_trait]
 pub trait EmetteurCertificat: Send + Sync {
-    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), String>;
-    async fn repondre_certificat<S,T>(&self, reply_q: S, correlation_id: T) -> Result<(), String>
+    async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), crate::error::Error>;
+    async fn repondre_certificat<S,T>(&self, reply_q: S, correlation_id: T) -> Result<(), crate::error::Error>
         where S: AsRef<str> + Send, T: AsRef<str> + Send;
 }
 
 #[async_trait]
 impl EmetteurCertificat for ValidateurX509Impl {
-    async fn emettre_certificat(&self, _: &impl GenerateurMessages) -> Result<(), String> {
+    async fn emettre_certificat(&self, _: &impl GenerateurMessages) -> Result<(), crate::error::Error> {
         todo!()
     }
 
-    async fn repondre_certificat<S, T>(&self, reply_q: S, correlation_id: T) -> Result<(), String> where S: AsRef<str> + Send, T: AsRef<str> + Send {
+    async fn repondre_certificat<S, T>(&self, reply_q: S, correlation_id: T) -> Result<(), crate::error::Error>
+        where S: AsRef<str> + Send, T: AsRef<str> + Send
+    {
         todo!()
     }
 }
 
-pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Result<ReponseEnveloppe, String> {
-    let pem_vec = enveloppe.get_pem_vec();
+pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Result<ReponseEnveloppe, crate::error::Error> {
+    let pem_vec = enveloppe.chaine_fingerprint_pem()?;
     let mut pems = Vec::new();
     for cert in pem_vec {
         pems.push(cert.pem);
@@ -779,8 +792,8 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Result<R
 
     let reponse = ReponseEnveloppe {
         chaine_pem: pems,
-        fingerprint: enveloppe.fingerprint().to_owned(),
-        ca_pem: enveloppe.get_pem_ca()?,
+        fingerprint: enveloppe.fingerprint()?.to_owned(),
+        ca_pem: enveloppe.ca_pem()?,
     };
 
     Ok(reponse)
@@ -809,7 +822,7 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
         let (message, message_id) = build_message_action(
             millegrilles_cryptographie::messages_structs::MessageKind::Transaction,
             routage.clone(), valeur, enveloppe_privee.as_ref())?;
-        let certificat = enveloppe_privee.enveloppe.clone();
+        let certificat = enveloppe_privee.enveloppe_pub.clone();
         (message, message_id, certificat)
     };
 
@@ -1052,25 +1065,26 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
     let configuration = ressources.configuration.clone();
 
     // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-    let chiffrage_factory = {
-        let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
-        let cert_local = env_privee.enveloppe.as_ref();
-        let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-
-        // Charger cle de millegrille
-        let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-        if list_fp_ca.is_empty() { panic!("Cle de millegrille absente de env_privee.enveloppe_ca"); }
-        fp_certs.extend(list_fp_ca);
-
-        let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
-        for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-            map.insert(f.fingerprint.clone(), f);
-        }
-
-        debug!("Map cles chiffrage : {:?}", map);
-
-        Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
-    };
+    // let chiffrage_factory = {
+    //     let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
+    //     let cert_local = env_privee.enveloppe_pub.as_ref();
+    //     let mut fp_certs = cert_local.chaine_fingerprint_pem().expect("public keys");
+    //
+    //     // Charger cle de millegrille
+    //     // let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
+    //     let list_fp_ca = env_privee.enveloppe_ca.chaine_fingerprint_pem().expect("chaine_fingerprint_pem OK");
+    //     if list_fp_ca.is_empty() { panic!("Cle de millegrille absente de env_privee.enveloppe_ca"); }
+    //     fp_certs.extend(list_fp_ca);
+    //
+    //     let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
+    //     for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
+    //         map.insert(f.fingerprint.clone(), f);
+    //     }
+    //
+    //     debug!("Map cles chiffrage : {:?}", map);
+    //
+    //     Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
+    // };
 
     // Charger redis (optionnel)
     let redis_dao = match configuration.get_configuration_noeud().redis_password {
@@ -1087,7 +1101,7 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
     let middleware = Arc::new(MiddlewareMessage {
         ressources,
         redis: redis_dao,
-        chiffrage_factory,
+        // chiffrage_factory,
     });
 
     // Preparer threads execution
@@ -1099,7 +1113,7 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
 }
 
 /// Requete pour obtenir un certificat a partir du domaine PKI
-pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<Option<Arc<EnveloppeCertificat>>, Box<dyn Error>>
+pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<Option<Arc<EnveloppeCertificat>>, crate::error::Error>
     where
         M: ValidateurX509 + GenerateurMessages,
         S: AsRef<str>
@@ -1127,9 +1141,9 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
         },
         TypeMessage::Certificat(m) => {
             let enveloppe = m.enveloppe_certificat;
-            let pem_ca = enveloppe.get_pem_ca()?;
-            let pems: Vec<String> = enveloppe.get_pem_vec().into_iter().map(|f| f.pem).collect();
-            ReponseEnveloppe { chaine_pem: pems, fingerprint: enveloppe.fingerprint, ca_pem: pem_ca }
+            let pem_ca = enveloppe.ca_pem()?;
+            let pems: Vec<String> = enveloppe.chaine_fingerprint_pem()?.into_iter().map(|f| f.pem).collect();
+            ReponseEnveloppe { chaine_pem: pems, fingerprint: enveloppe.fingerprint()?, ca_pem: pem_ca }
         },
         _ => Err(format!("requete_certificat Erreur requete certificat {} : mauvais type reponse", fingerprint_str))?
     };

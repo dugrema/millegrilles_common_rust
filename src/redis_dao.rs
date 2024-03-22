@@ -1,13 +1,13 @@
 use std::error::Error;
 
 use log::{debug, info};
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use redis::aio::Connection;
 use redis::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee};
 use crate::configuration::ConfigurationNoeud;
 
 const TTL_CERTIFICAT: i32 = 48 * 60 * 60;  // 48 heures en secondes
@@ -98,11 +98,11 @@ impl RedisDao {
         }
     }
 
-    pub async fn save_certificat(&self, certificat: &EnveloppeCertificat) -> Result<(), Box<dyn Error>> {
+    pub async fn save_certificat(&self, certificat: &EnveloppeCertificat) -> Result<(), crate::error::Error> {
         let mut con = self.client.get_async_connection().await?;
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
-        let cle_cert = format!("{}:{}", CLE_CERTIFICAT, certificat.fingerprint);
+        let cle_cert = format!("{}:{}", CLE_CERTIFICAT, certificat.fingerprint()?);
         debug!("Verifier presence {}, reset TTL", cle_cert);
         let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
         debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
@@ -112,8 +112,8 @@ impl RedisDao {
             debug!("Conserver certificat {} dans redis", cle_cert.as_str());
 
             // Preparer cle, pems en format json str
-            let pems: Vec<String> = certificat.get_pem_vec().into_iter().map(|c| { c.pem }).collect();
-            let ca = certificat.get_pem_ca()?;
+            let pems: Vec<String> = certificat.chaine_fingerprint_pem()?.into_iter().map(|c| { c.pem }).collect();
+            let ca = certificat.ca_pem()?;
             let certificat_redis = RediCertificatV1 {
                 pems,
                 ca
@@ -132,11 +132,13 @@ impl RedisDao {
         Ok(())
     }
 
-    pub async fn save_cle_maitredescles(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: &str, contenu: &Value, connexion: &mut Connection) -> Result<(), Box<dyn Error>> {
+    pub async fn save_cle_maitredescles(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: &str, contenu: &Value, connexion: &mut Connection)
+        -> Result<(), crate::error::Error>
+    {
         // let mut con = self.client.get_async_connection().await?;
 
-        let fingerprint = enveloppe_privee.fingerprint();
-        let expiration = enveloppe_privee.enveloppe.not_valid_after()?.timestamp();
+        let fingerprint = enveloppe_privee.fingerprint()?;
+        let expiration = enveloppe_privee.enveloppe_pub.not_valid_after()?.timestamp();
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
         let cle_label = format!("cle:{}:{}", fingerprint, hachage_bytes);
@@ -240,11 +242,12 @@ impl RedisDao {
     //     // Ok(cles)
     // }
 
-    pub async fn ajouter_cle_manquante<S>(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: S) -> Result<(), Box<dyn Error>>
+    pub async fn ajouter_cle_manquante<S>(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: S)
+        -> Result<(), crate::error::Error>
         where S: AsRef<str>
     {
-        let expiration = enveloppe_privee.enveloppe.not_valid_after()?.timestamp();
-        let fingerprint = enveloppe_privee.fingerprint().as_str();
+        let expiration = enveloppe_privee.enveloppe_pub.not_valid_after()?.timestamp();
+        let fingerprint = enveloppe_privee.fingerprint()?;
         let label_cle = format!("cle_manquante:{}", fingerprint);
 
         let mut con = self.client.get_async_connection().await?;

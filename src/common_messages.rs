@@ -2,6 +2,7 @@ use log::{debug, error};
 use std::collections::HashMap;
 use std::error::Error;
 use chrono::{DateTime, Utc};
+use millegrilles_cryptographie::chiffrage::FormatChiffrage;
 use mongodb::bson::{bson, Bson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,7 +10,6 @@ use multibase;
 
 use millegrilles_cryptographie::messages_structs::epochseconds;
 
-use crate::chiffrage::{CleSecrete, FormatChiffrage};
 use crate::hachages::verifier_multihash;
 use crate::recepteur_messages::TypeMessage;
 

@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::messages_structs::{RoutageMessage, epochseconds, optionepochseconds, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::{bson::doc, Collection, Cursor};
 use mongodb::bson as bson;
 use mongodb::bson::{Bson, Document};
@@ -18,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
-use crate::certificats::{EnveloppeCertificat, ExtensionsMilleGrille, FingerprintCert, ValidateurX509, VerificateurPermissions};
+use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
 use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
@@ -830,7 +831,7 @@ struct EvenementRegeneration {
 }
 
 pub async fn regenerer<M,D,T>(middleware: &M, nom_domaine: D, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), crate::error::Error>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
     D: AsRef<str>,
@@ -915,7 +916,7 @@ where
 
 // S'assurer d'avoir tous les certificats dans redis ou cache
 async fn regenerer_charger_certificats<'a, M>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, skip_certificats: bool)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), crate::error::Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao
 {
     //while let Some(result) = curseur.next().await {
@@ -1067,7 +1068,7 @@ pub trait TraiterTransaction {
 
 /// Retourne le user_id dans la commande si certificat est exchange 2.prive, 3.protege ou 4.secure
 /// Sinon retourne le user_id du certificat.
-pub fn get_user_effectif<'a,T,M>(transaction: &T, transaction_mappee: &'a M) -> Result<String, String>
+pub fn get_user_effectif<'a,T,M>(transaction: &T, transaction_mappee: &'a M) -> Result<String, crate::error::Error>
     where T: Transaction, M: CommandeUsager<'a>
 {
     let enveloppe = match transaction.get_enveloppe_certificat() {
@@ -1075,7 +1076,7 @@ pub fn get_user_effectif<'a,T,M>(transaction: &T, transaction_mappee: &'a M) -> 
         None => Err(format!("transaction_supprimer_video Certificat inconnu, transaction ignoree"))?
     };
 
-    if enveloppe.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure]) {
+    if enveloppe.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])? {
         if let Some(user_id) = transaction_mappee.get_user_id() {
             return Ok(user_id.to_owned());
         }

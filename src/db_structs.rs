@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::certificats::EnveloppeCertificat;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::recepteur_messages::MessageValide;
 

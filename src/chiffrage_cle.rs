@@ -3,14 +3,14 @@ use std::error::Error;
 
 use blake2::{Blake2s256, Digest};
 use log::debug;
+use millegrilles_cryptographie::chiffrage::FormatChiffrage;
+use millegrilles_cryptographie::x509::EnveloppePrivee;
 use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::bson::Document;
-use crate::certificats::{EnveloppePrivee, ordered_map};
-use crate::chiffrage::{CleSecrete, FormatChiffrage};
-use crate::chiffrage_ed25519::dechiffrer_asymmetrique_ed25519;
+use crate::certificats::ordered_map;
 use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
@@ -244,110 +244,110 @@ impl CommandeSauvegarderCle {
 //
 // }
 
-pub struct CleDechiffree {
-    pub cle: String,
-    pub cle_secrete: CleSecrete,
-    pub domaine: String,
-    pub format: String,
-    pub hachage_bytes: String,
-    pub identificateurs_document: Option<HashMap<String, String>>,
-    pub iv: Option<String>,
-    pub tag: Option<String>,
-    pub header: Option<String>,
-    // pub signature_identite: String,
-}
+// pub struct CleDechiffree {
+//     pub cle: String,
+//     pub cle_secrete: CleSecrete,
+//     pub domaine: String,
+//     pub format: String,
+//     pub hachage_bytes: String,
+//     pub identificateurs_document: Option<HashMap<String, String>>,
+//     pub iv: Option<String>,
+//     pub tag: Option<String>,
+//     pub header: Option<String>,
+//     // pub signature_identite: String,
+// }
+//
+// impl CleDechiffree {
+//     pub fn dechiffrer_information_cle(enveloppe_privee: &EnveloppePrivee, information_cle: InformationCle) -> Result<Self, Box<dyn Error>> {
+//         let (_, cle_bytes) = multibase::decode(&information_cle.cle)?;
+//         let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes[..], &enveloppe_privee.cle_privee)?;
+//
+//         Ok(Self {
+//             cle: information_cle.cle,
+//             cle_secrete,
+//             domaine: information_cle.domaine,
+//             format: information_cle.format,
+//             hachage_bytes: information_cle.hachage_bytes,
+//             identificateurs_document: information_cle.identificateurs_document,
+//             iv: information_cle.iv,
+//             tag: information_cle.tag,
+//             header: information_cle.header,
+//             // signature_identite: information_cle.signature_identite,
+//         })
+//     }
+// }
 
-impl CleDechiffree {
-    pub fn dechiffrer_information_cle(enveloppe_privee: &EnveloppePrivee, information_cle: InformationCle) -> Result<Self, Box<dyn Error>> {
-        let (_, cle_bytes) = multibase::decode(&information_cle.cle)?;
-        let cle_secrete = dechiffrer_asymmetrique_ed25519(&cle_bytes[..], enveloppe_privee.cle_privee())?;
-
-        Ok(Self {
-            cle: information_cle.cle,
-            cle_secrete,
-            domaine: information_cle.domaine,
-            format: information_cle.format,
-            hachage_bytes: information_cle.hachage_bytes,
-            identificateurs_document: information_cle.identificateurs_document,
-            iv: information_cle.iv,
-            tag: information_cle.tag,
-            header: information_cle.header,
-            // signature_identite: information_cle.signature_identite,
-        })
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use std::error::Error;
-
-    use log::debug;
-
-    use crate::test_setup::setup;
-
-    use super::*;
-
-    fn produire_commande() -> CommandeSauvegarderCle {
-        let mut identificateurs_document = HashMap::new();
-        identificateurs_document.insert("fuuid".to_string(), "fuuid_dummy".to_string());
-
-        CommandeSauvegarderCle {
-            hachage_bytes: "hachage_dummy".to_string(),
-            domaine: "DomaineDummy".to_string(),
-            identificateurs_document,
-            // signature_identite: "".to_string(),
-            cles: Default::default(),
-            format: FormatChiffrage::mgs4,
-            iv: None,
-            tag: None,
-            header: None,
-            partition: None,
-            fingerprint_partitions: None
-        }
-    }
-
-    // #[test]
-    // fn test_signature_identite() -> Result<(), Box<dyn Error>> {
-    //     setup("test_signature_identite");
-    //
-    //     let mut commande = produire_commande();
-    //     let cle_secrete = CleSecrete::generer();
-    //
-    //     // Signer
-    //     commande.signer_identite(&cle_secrete)?;
-    //
-    //     debug!("Commande signee : {:?}", commande);
-    //
-    //     // Verifier
-    //     let resultat = commande.verifier_identite(&cle_secrete)?;
-    //
-    //     assert_eq!(true, resultat);
-    //
-    //     Ok(())
-    // }
-
-    // #[test]
-    // fn test_corruption_identite() -> Result<(), Box<dyn Error>> {
-    //     setup("test_signature_identite");
-    //
-    //     let mut commande = produire_commande();
-    //     let cle_secrete = CleSecrete::generer();
-    //
-    //     // Signer
-    //     commande.signer_identite(&cle_secrete)?;
-    //
-    //     debug!("Commande signee : {:?}", commande);
-    //
-    //     // Corrompre la commande (retirer user_id)
-    //     commande.identificateurs_document.insert("corrupt".to_owned(), "true".to_owned());
-    //
-    //     // Verifier
-    //     let resultat = commande.verifier_identite(&cle_secrete)?;
-    //
-    //     assert_eq!(false, resultat);
-    //
-    //     Ok(())
-    // }
-
-}
-
+// #[cfg(test)]
+// mod test {
+//     use std::error::Error;
+//
+//     use log::debug;
+//
+//     use crate::test_setup::setup;
+//
+//     use super::*;
+//
+//     fn produire_commande() -> CommandeSauvegarderCle {
+//         let mut identificateurs_document = HashMap::new();
+//         identificateurs_document.insert("fuuid".to_string(), "fuuid_dummy".to_string());
+//
+//         CommandeSauvegarderCle {
+//             hachage_bytes: "hachage_dummy".to_string(),
+//             domaine: "DomaineDummy".to_string(),
+//             identificateurs_document,
+//             // signature_identite: "".to_string(),
+//             cles: Default::default(),
+//             format: FormatChiffrage::mgs4,
+//             iv: None,
+//             tag: None,
+//             header: None,
+//             partition: None,
+//             fingerprint_partitions: None
+//         }
+//     }
+//
+//     // #[test]
+//     // fn test_signature_identite() -> Result<(), Box<dyn Error>> {
+//     //     setup("test_signature_identite");
+//     //
+//     //     let mut commande = produire_commande();
+//     //     let cle_secrete = CleSecrete::generer();
+//     //
+//     //     // Signer
+//     //     commande.signer_identite(&cle_secrete)?;
+//     //
+//     //     debug!("Commande signee : {:?}", commande);
+//     //
+//     //     // Verifier
+//     //     let resultat = commande.verifier_identite(&cle_secrete)?;
+//     //
+//     //     assert_eq!(true, resultat);
+//     //
+//     //     Ok(())
+//     // }
+//
+//     // #[test]
+//     // fn test_corruption_identite() -> Result<(), Box<dyn Error>> {
+//     //     setup("test_signature_identite");
+//     //
+//     //     let mut commande = produire_commande();
+//     //     let cle_secrete = CleSecrete::generer();
+//     //
+//     //     // Signer
+//     //     commande.signer_identite(&cle_secrete)?;
+//     //
+//     //     debug!("Commande signee : {:?}", commande);
+//     //
+//     //     // Corrompre la commande (retirer user_id)
+//     //     commande.identificateurs_document.insert("corrupt".to_owned(), "true".to_owned());
+//     //
+//     //     // Verifier
+//     //     let resultat = commande.verifier_identite(&cle_secrete)?;
+//     //
+//     //     assert_eq!(false, resultat);
+//     //
+//     //     Ok(())
+//     // }
+//
+// }
+//

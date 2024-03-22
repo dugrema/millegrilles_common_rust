@@ -1,5 +1,7 @@
 use std::fmt;
 use openssl::error::ErrorStack;
+use redis::RedisError;
+use crate::recepteur_messages::ErreurVerification;
 
 #[derive(Debug)]
 pub enum Error {
@@ -13,6 +15,9 @@ pub enum Error {
     Chacha20poly1350(chacha20poly1305::Error),
     Dryoc(dryoc::Error),
     MillegrillesCryptographie(millegrilles_cryptographie::error::Error),
+    ErreurVerification(ErreurVerification),
+    Redis(RedisError),
+    MongDb(mongodb::error::Error)
 }
 
 impl fmt::Display for Error {
@@ -50,8 +55,32 @@ impl From<&str> for Error {
     }
 }
 
+impl From<ErreurVerification> for Error {
+    fn from(value: ErreurVerification) -> Self {
+        Self::ErreurVerification(value)
+    }
+}
+
 impl From<millegrilles_cryptographie::error::Error> for Error {
     fn from(value: millegrilles_cryptographie::error::Error) -> Self {
         Error::MillegrillesCryptographie(value)
+    }
+}
+
+impl From<RedisError> for Error {
+    fn from(value: RedisError) -> Self {
+        Self::Redis(value)
+    }
+}
+
+impl From<dryoc::Error> for Error {
+    fn from(value: dryoc::Error) -> Self {
+        Error::Dryoc(value)
+    }
+}
+
+impl From<mongodb::error::Error> for Error {
+    fn from(value: mongodb::error::Error) -> Self {
+        Self::MongDb(value)
     }
 }

@@ -9,13 +9,14 @@ use chrono::Utc;
 use lapin::message::Delivery;
 use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef};
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use TypeMessageOut as TypeMessageIn;
 
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille, MessageInfoCertificat, ValidateurX509};
+use crate::certificats::{MessageInfoCertificat, ValidateurX509};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{ChiffrageFactoryTrait, formatter_message_certificat, IsConfigurationPki};
+use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
 use crate::rabbitmq_dao::TypeMessageOut;
 
 /// Traitement d'un message Delivery. Convertit en MessageMillegrille, valide le certificat
@@ -26,7 +27,7 @@ pub async fn traiter_delivery<M,S>(
 )
     -> Result<Option<TypeMessage>, Box<dyn Error>>
     where
-        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages,
+        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages,
         S: AsRef<str>
 {
     let nom_q = nom_queue.as_ref();
@@ -135,7 +136,7 @@ pub async fn traiter_delivery<M,S>(
 }
 
 pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
-    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ChiffrageFactoryTrait + ConfigMessages
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages
 {
     // Intercepter reponses et requetes de certificat
     match &message {
@@ -144,14 +145,15 @@ pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bo
                 TypeMessageOut::Evenement(r) => {
                     match r.action.as_str() {
                         COMMANDE_CERT_MAITREDESCLES => {
-                            info!("intercepter_messageEvenement certificat maitre des cles recus");
-                            match middleware.recevoir_certificat_chiffrage(middleware, message).await {
-                                Ok(_) => true,
-                                Err(e) => {
-                                    error!("Erreur interception certificat maitre des cles : {:?}", e);
-                                    false
-                                }
-                            }
+                            error!("intercepter_messageEvenement certificat maitre des cles recus - !!disabled, FIX ME!!");
+                            false
+                            // match middleware.recevoir_certificat_chiffrage(middleware, message).await {
+                            //     Ok(_) => true,
+                            //     Err(e) => {
+                            //         error!("Erreur interception certificat maitre des cles : {:?}", e);
+                            //         false
+                            //     }
+                            // }
                         },
                         _ => false,
                     }

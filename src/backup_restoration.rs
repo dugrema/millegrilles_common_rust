@@ -5,40 +5,38 @@ use log::{debug, error};
 use serde_json::Value;
 use xz2::stream;
 
-use crate::chiffrage::DecipherMgs;
-use crate::chiffrage_streamxchacha20poly1305::{DecipherMgs4, Mgs4CipherData};
 use crate::constantes::*;
 
 pub struct TransactionReader<'a> {
     data: Box<dyn AsyncRead + Unpin + 'a>,
     xz_decoder: stream::Stream,
     // hacheur: Hacheur,
-    dechiffreur: Option<DecipherMgs4>,
+    // dechiffreur: Option<DecipherMgs4>,
 }
 
 impl<'a> TransactionReader<'a> {
 
     const BUFFER_SIZE: usize = 65535;
 
-    pub fn new(_data: Box<impl AsyncRead + Unpin + 'a>, _decipher_data: Option<&Mgs4CipherData>) -> Result<Self, Box<dyn Error>> {
-        todo!("fix me")
-        // let xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
-        //
-        // let dechiffreur = match decipher_data {
-        //     Some(cd) => {
-        //         let dechiffreur = DecipherMgs3::new(cd)?;
-        //         Some(dechiffreur)
-        //     },
-        //     None => None,
-        // };
-        //
-        // Ok(TransactionReader {
-        //     data,
-        //     xz_decoder,
-        //     // hacheur,
-        //     dechiffreur,
-        // })
-    }
+    // pub fn new(_data: Box<impl AsyncRead + Unpin + 'a>, _decipher_data: Option<&Mgs4CipherData>) -> Result<Self, Box<dyn Error>> {
+    //     todo!("fix me")
+    //     // let xz_decoder = stream::Stream::new_stream_decoder(u64::MAX, stream::TELL_NO_CHECK).expect("stream");
+    //     //
+    //     // let dechiffreur = match decipher_data {
+    //     //     Some(cd) => {
+    //     //         let dechiffreur = DecipherMgs3::new(cd)?;
+    //     //         Some(dechiffreur)
+    //     //     },
+    //     //     None => None,
+    //     // };
+    //     //
+    //     // Ok(TransactionReader {
+    //     //     data,
+    //     //     xz_decoder,
+    //     //     // hacheur,
+    //     //     dechiffreur,
+    //     // })
+    // }
 
     /// todo Les transactions sont lues en memoire avant d'etre traitees - changer pour iterator async
     pub async fn read_transactions(&mut self) -> Result<Vec<Value>, Box<dyn Error>> {
@@ -58,22 +56,22 @@ impl<'a> TransactionReader<'a> {
 
             // let traiter_bytes = &buffer[0..len];
             debug!("Lecture data chiffre {:?}", &buffer[0..len]);
-
-            let traiter_bytes = match &mut self.dechiffreur {
-                Some(d) => {
-                    d.update(&buffer, &mut dechiffrage_output).expect("update");
-                    &dechiffrage_output[0..len]
-                },
-                None => &buffer[0..len],
-            };
-
-            // output_file.write(traiter_bytes).await?;  // debug
-
-            debug!("Lu {}\n{:?}", len, traiter_bytes);
-            let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run)?;
-            debug!("Status xz : {:?}\n{:?}", status, xz_output);
-
-            output_complet.append(&mut xz_output);
+            todo!("Fix chiffrage")
+            // let traiter_bytes = match &mut self.dechiffreur {
+            //     Some(d) => {
+            //         d.update(&buffer, &mut dechiffrage_output).expect("update");
+            //         &dechiffrage_output[0..len]
+            //     },
+            //     None => &buffer[0..len],
+            // };
+            //
+            // // output_file.write(traiter_bytes).await?;  // debug
+            //
+            // debug!("Lu {}\n{:?}", len, traiter_bytes);
+            // let status = self.xz_decoder.process_vec(traiter_bytes, &mut xz_output, stream::Action::Run)?;
+            // debug!("Status xz : {:?}\n{:?}", status, xz_output);
+            //
+            // output_complet.append(&mut xz_output);
         }
 
         loop {

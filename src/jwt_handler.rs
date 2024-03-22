@@ -52,10 +52,10 @@ pub async fn verify_jwt<M,S>(middleware: &M, jwt_token: S) -> Result<FichierClai
     };
 
     // Verifier le domaine de l'enveloppe
-    if ! enveloppe.verifier_domaines(vec![DOMAINE_NOM_MESSAGERIE.to_string(), DOMAINE_NOM_GROSFICHIERS.to_string()]) {
+    if ! enveloppe.verifier_domaines(vec![DOMAINE_NOM_MESSAGERIE.to_string(), DOMAINE_NOM_GROSFICHIERS.to_string()])? {
         Err(format!("jwt_handler.verify_jwt Certificat signature n'a pas un domaine supporte {}", fingerprint))?
     }
-    if ! enveloppe.verifier_exchanges(vec![Securite::L4Secure]) {
+    if ! enveloppe.verifier_exchanges(vec![Securite::L4Secure])? {
         Err(format!("jwt_handler.verify_jwt Certificat signature n'a pas un exchange supporte (doit etre 4.secure) {}", fingerprint))?
     }
     // // TODO : Fix me - utiliser domaine (GrosFichiers, Messagerie). Pour l'instance c'est le niveau L2Prive ou L4Secure
@@ -63,8 +63,8 @@ pub async fn verify_jwt<M,S>(middleware: &M, jwt_token: S) -> Result<FichierClai
     //     Err(format!("jwt_handler.verify_jwt Certificat signature n'a pas un exchange supporte {}", fingerprint))?
     // }
 
-    let key = enveloppe.cle_publique.as_ref(); //.as_ref();
-    let key_ed25519 = Ed25519PublicKey::from_bytes(key.raw_public_key()?.as_slice())?;
+    let public_key = enveloppe.pubkey()?;  //cle_publique.as_ref(); //.as_ref();
+    let key_ed25519 = Ed25519PublicKey::from_bytes(public_key.as_slice())?;
     let claims = key_ed25519.verify_token::<ClaimsTokenFichier>(&jwt_token, None)?;
     debug!("verify_jwt Claims : {:?}", claims);
 
@@ -91,6 +91,7 @@ pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, d
         None => None
     };
 
+    let format_chiffrage_string: &str = dechiffrage.format.into();
     let info_fichier = ClaimsTokenFichier {
         user_id: Some(user_id),
         // domaine: None,
@@ -99,7 +100,7 @@ pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, d
         header: dechiffrage.header,
         // iv: None,
         tag: dechiffrage.tag,
-        format: Some(dechiffrage.format.to_str().to_string()),
+        format: Some(format_chiffrage_string.to_string()),
     };
 
     let mut claims = Claims::with_custom_claims(
@@ -109,9 +110,9 @@ pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, d
     // Recuperer cle pour signer le token
     let enveloppe = middleware.get_enveloppe_signature();
     claims.issuer = Some(DOMAINE_NOM_GROSFICHIERS.into());
-    let cle_privee = enveloppe.cle_privee().private_key_to_der()?;
+    let cle_privee = enveloppe.cle_privee.private_key_to_der()?;
     let cle_signature = Ed25519KeyPair::from_der(cle_privee.as_slice())?
-        .with_key_id(enveloppe.fingerprint().as_str());
+        .with_key_id(enveloppe.fingerprint()?.as_str());
 
     // Signer et retourner le nouveau token
     let jwt_token = cle_signature.sign(claims)?;

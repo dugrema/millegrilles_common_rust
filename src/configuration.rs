@@ -5,13 +5,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use log::{debug, info};
+use millegrilles_cryptographie::x509::EnveloppePrivee;
 use multibase;
 use openssl::pkcs12::Pkcs12;
 use openssl::stack::Stack;
 use openssl::x509::X509;
 use rand::Rng;
 
-use crate::certificats::{build_store_path, charger_enveloppe_privee, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
+use crate::certificats::{build_store_path, charger_enveloppe_privee, ValidateurX509, ValidateurX509Impl};
 use url::Url;
 
 pub trait ConfigMessages: IsConfigNoeud + Send + Sync {
@@ -278,14 +279,14 @@ impl ConfigurationPki {
         //     self.certfile.as_path(), self.keyfile.as_path(), validateur)
         //     .expect("Erreur chargement cle ou certificat");
 
-        let cle_privee = enveloppe_privee.cle_privee();
-        let certificat = enveloppe_privee.certificat();
+        let cle_privee = &enveloppe_privee.cle_privee;
+        let certificat = &enveloppe_privee.enveloppe_pub.certificat;
 
         // Preparer CA
         let ca_cert = validateur.ca_cert();
         let mut ca_stack: Stack<X509> = Stack::new().unwrap();
 
-        for c in enveloppe_privee.intermediaire() {
+        for c in &enveloppe_privee.enveloppe_pub.chaine {
             ca_stack.push(c.to_owned()).unwrap();
         }
         ca_stack.push(ca_cert.to_owned()).unwrap();
@@ -307,7 +308,7 @@ impl ConfigurationPki {
 
         // Convertir la cle privee en format RSA
         // let cle_privee: Rsa<Private> = self.enveloppe_privee.cle_privee().rsa().unwrap();
-        let cle_privee: Vec<u8> = self.enveloppe_privee.cle_privee().private_key_to_pem_pkcs8().expect("Conversion cle privee en PKCS8");
+        let cle_privee: Vec<u8> = self.enveloppe_privee.cle_privee.private_key_to_pem_pkcs8().expect("Conversion cle privee en PKCS8");
 
         let cert_pem: String = read_to_string(&self.certfile).expect("Erreur lecture cert PEM");
 

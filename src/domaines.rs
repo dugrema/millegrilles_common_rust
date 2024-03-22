@@ -42,13 +42,13 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
     /// Retourne la liste des Q a configurer pour ce domaine
     fn preparer_queues(&self) -> Vec<QueueType>;
 
-    async fn consommer_requete<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn consommer_requete<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages + 'static;
 
-    async fn consommer_commande<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn consommer_commande<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages + 'static;
 
-    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages + 'static;
 
     /// Thread d'entretien specifique a chaque gestionnaire
@@ -57,12 +57,12 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
     async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule)
-        -> Result<(), Box<dyn Error>>
+        -> Result<(), crate::error::Error>
         where M: MiddlewareMessages + 'static;
 
     /// Methode qui peut etre re-implementee dans une impl
     async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
+        -> Result<FuturesUnordered<JoinHandle<()>>, crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
         self.preparer_threads_super(middleware).await
@@ -70,7 +70,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 
     /// Initialise le domaine.
     async fn preparer_threads_super<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
+        -> Result<FuturesUnordered<JoinHandle<()>>, crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
         let mut futures = FuturesUnordered::new();
@@ -120,7 +120,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
         info!("domaines.consommer_messages : Fin thread {}", self.get_q_volatils());
     }
 
-    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValide) -> Result<(), Box<dyn Error>>
+    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValide) -> Result<(), crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
         debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
@@ -175,7 +175,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
     }
 
     async fn consommer_evenement_trait<M>(self: &'static Self, middleware: Arc<M>, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
         debug!("Consommer evenement trait : {:?}", &m.message);
@@ -195,7 +195,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 
         // Autorisation : les evenements (triggers) globaux sont de niveau 4
         // Fallback sur les evenements specifiques au domaine
-        match m.certificat.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure)) {
+        match m.certificat.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure))? {
             true => {
                 match action.as_str() {
                     EVENEMENT_CEDULE => {
@@ -207,12 +207,13 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
                     },
                     COMMANDE_CERT_MAITREDESCLES => {
                         let type_message = TypeMessage::Valide(m);
-                        match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &type_message).await {
-                            Ok(_) => (),
-                            Err(e) => {
-                                error!("Erreur interception certificat maitre des cles : {:?}", e);
-                            }
-                        };
+                        error!("domaines.GestionnaireMessages.consommer_evenement_trait Fix intercepter certificat maitre des cles");
+                        // match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &type_message).await {
+                        //     Ok(_) => (),
+                        //     Err(e) => {
+                        //         error!("Erreur interception certificat maitre des cles : {:?}", e);
+                        //     }
+                        // };
                         Ok(None)
                     },
                     _ => self.consommer_evenement(middleware.as_ref(), m).await
@@ -224,7 +225,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
     async fn consommer_commande_trait<M>(&self, middleware: Arc<M>, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
         debug!("Consommer commande trait : {:?}", &m.message);
@@ -243,9 +244,9 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 
         // Autorisation : les commandes globales sont de niveau 3 ou 4
         // Fallback sur les commandes specifiques au domaine
-        let autorise_global = match m.certificat.verifier_exchanges(vec!(Securite::L4Secure)) {
+        let autorise_global = match m.certificat.verifier_exchanges(vec!(Securite::L4Secure))? {
             true => true,
-            false => m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)
+            false => m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)?
         };
 
         match autorise_global {
@@ -298,19 +299,19 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     fn reclame_fuuids(&self) -> bool { false }
 
     /// Genere les index du domaine dans MongoDB
-    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), String>
+    async fn preparer_database<M>(&self, middleware: &M) -> Result<(), crate::error::Error>
         where M: Middleware + 'static;
 
-    async fn consommer_requete<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn consommer_requete<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static;
 
-    async fn consommer_commande<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn consommer_commande<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static;
 
-    async fn consommer_transaction<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn consommer_transaction<M>(&self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static;
 
-    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn consommer_evenement<M>(self: &'static Self, middleware: &M, message: MessageValide) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static;
 
     /// Thread d'entretien specifique a chaque gestionnaire
@@ -319,18 +320,18 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
     async fn traiter_cedule<M>(self: &'static Self, middleware: &M, trigger: &MessageCedule)
-        -> Result<(), Box<dyn Error>>
+        -> Result<(), crate::error::Error>
         where M: Middleware + 'static;
 
     async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where
             M: ValidateurX509 + GenerateurMessages + MongoDao,
             T: TryInto<TransactionValide> + Send;
 
     /// Methode qui peut etre re-implementee dans une impl
     async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
+        -> Result<FuturesUnordered<JoinHandle<()>>, crate::error::Error>
         where M: Middleware + 'static
     {
         self.preparer_threads_super(middleware).await
@@ -338,7 +339,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Initialise le domaine.
     async fn preparer_threads_super<M>(self: &'static Self, middleware: Arc<M>)
-        -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
+        -> Result<FuturesUnordered<JoinHandle<()>>, crate::error::Error>
         where M: Middleware + 'static
     {
         // Attendre pour eviter echec immedia sur connexion (note to do : ajouter event wait sur MQ)
@@ -398,7 +399,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         info!("domaines.consommer_messages : Fin thread {:?}", self.get_nom_domaine());
     }
 
-    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValide) -> Result<(), Box<dyn Error>>
+    async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValide)
+        -> Result<(), crate::error::Error>
         where M: Middleware + 'static
     {
         debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
@@ -533,7 +535,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
     }
 
-    async fn preparer_index_mongodb<M>(&self, middleware: &M) -> Result<(), String>
+    async fn preparer_index_mongodb<M>(&self, middleware: &M) -> Result<(), crate::error::Error>
         where M: Middleware + 'static
     {
         if let Some(nom_collection_transactions) = self.get_collection_transactions() {
@@ -593,7 +595,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     async fn consommer_requete_trait<M>(self: &'static Self, middleware: Arc<M>, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         debug!("Consommer requete trait : {:?}", &m.message);
@@ -610,8 +612,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             action
         };
 
-        match m.certificat.verifier_exchanges(vec!(Securite::L2Prive)) &&
-            m.certificat.verifier_roles_string(vec![ROLE_BACKUP.to_string()]) {
+        match m.certificat.verifier_exchanges(vec!(Securite::L2Prive))? &&
+            m.certificat.verifier_roles_string(vec![ROLE_BACKUP.to_string()])? {
             true => match action.as_str() {
                 REQUETE_NOMBRE_TRANSACTIONS => self.get_nombre_transactions(middleware.as_ref(), m).await,
                 _ => self.consommer_requete(middleware.as_ref(), m).await
@@ -621,7 +623,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     async fn consommer_evenement_trait<M>(self: &'static Self, middleware: Arc<M>, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         debug!("Consommer evenement trait : {:?}", &m.message);
@@ -649,7 +651,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         // Autorisation : les evenements triggers globaux sont de niveau 4,
         //                sauf pour le backup (domaine fichiers, niveau 2)
         // Fallback sur les evenements specifiques au domaine
-        match m.certificat.verifier_exchanges(vec!(Securite::L4Secure)) {
+        match m.certificat.verifier_exchanges(vec!(Securite::L4Secure))? {
             true => {
                 match action.as_str() {
                     EVENEMENT_TRANSACTION_PERSISTEE => {
@@ -666,20 +668,21 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     },
                     COMMANDE_CERT_MAITREDESCLES => {
                         let type_message = TypeMessage::Valide(m);
-                        match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &type_message).await {
-                            Ok(_) => (),
-                            Err(e) => {
-                                error!("domaines.consommer_evenement_trait Erreur interception certificat maitre des cles : {:?}", e);
-                            }
-                        };
+                        error!("domaines.GestionnaireDomaines.consommer_evenement_trait Fix intercepter certificat maitre des cles");
+                        // match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &type_message).await {
+                        //     Ok(_) => (),
+                        //     Err(e) => {
+                        //         error!("domaines.consommer_evenement_trait Erreur interception certificat maitre des cles : {:?}", e);
+                        //     }
+                        // };
                         Ok(None)
                     },
                     _ => self.consommer_evenement(middleware.as_ref(), m).await
                 }
             },
-            false => match m.certificat.verifier_exchanges(vec!(Securite::L2Prive)) {
+            false => match m.certificat.verifier_exchanges(vec!(Securite::L2Prive))? {
                 true => {
-                    match m.certificat.verifier_roles(vec![RolesCertificats::Backup]) {
+                    match m.certificat.verifier_roles(vec![RolesCertificats::Backup])? {
                         true => match action.as_str() {
                             EVENEMENT_BACKUP_DECLENCHER => self.demarrer_backup(middleware.as_ref(), m).await,
                             _ => self.consommer_evenement(middleware.as_ref(), m).await
@@ -688,7 +691,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     }
                 },
                 false => {
-                    match m.certificat.verifier_exchanges(vec!(Securite::L1Public)) {
+                    match m.certificat.verifier_exchanges(vec!(Securite::L1Public))? {
                         true => match domaine.as_str() {
                             PKI_DOCUMENT_CHAMP_CERTIFICAT => match action.as_str() {
                                 PKI_REQUETE_CERTIFICAT => {
@@ -717,7 +720,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     async fn get_nombre_transactions<M>(&self, middleware: &M, message: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         let nom_collection_transactions = match self.get_collection_transactions() {
@@ -736,7 +739,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     async fn demarrer_backup<M>(&self, middleware: &M, message: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         if middleware.get_mode_regeneration() == true {
@@ -795,7 +798,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     async fn reset_backup<M>(&self, middleware: &M)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         let nom_collection_transactions = match self.get_collection_transactions() {
@@ -808,7 +811,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     /// Sauvegarde une transaction restauree dans la collection du domaine.
     /// Si la transaction existe deja (par en-tete.uuid_transaction), aucun effet.
     async fn restaurer_transaction<M>(&self, middleware: &M, message: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         debug!("restaurer_transaction {:?}", message);
@@ -880,7 +883,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
     async fn consommer_commande_trait<M>(self: &'static Self, middleware: Arc<M>, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         debug!("Consommer commande trait : {:?}", &m.message);
@@ -904,13 +907,13 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 
         // Autorisation : les commandes globales sont de niveau 3 ou 4
         // Fallback sur les commandes specifiques au domaine
-        let autorise_global = match m.certificat.verifier_exchanges(vec!(Securite::L4Secure)) {
+        let autorise_global = match m.certificat.verifier_exchanges(vec!(Securite::L4Secure))? {
             true => true,
-            false => m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)
+            false => m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)?
         };
 
-        let est_backup_service =  m.certificat.verifier_roles_string(vec![ROLE_BACKUP.to_string()]) &&
-            m.certificat.verifier_exchanges(vec![Securite::L2Prive]);
+        let est_backup_service =  m.certificat.verifier_roles_string(vec![ROLE_BACKUP.to_string()])? &&
+            m.certificat.verifier_exchanges(vec![Securite::L2Prive])?;
 
         match autorise_global {
             true => {
@@ -933,7 +936,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                     _ => self.consommer_commande(middleware.as_ref(), m).await
                 }
             },
-            false => match m.certificat.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure)) {
+            false => match m.certificat.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure))? {
                 true => {
                     match action.as_str() {
                         COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), m).await,
@@ -953,7 +956,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
     }
 
-    async fn regenerer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    async fn regenerer_transactions<M>(&self, middleware: Arc<M>) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
         let nom_collection_transactions = match self.get_collection_transactions() {
