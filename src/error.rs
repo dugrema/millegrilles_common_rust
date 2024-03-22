@@ -1,6 +1,9 @@
 use std::fmt;
+use hex::FromHexError;
 use openssl::error::ErrorStack;
 use redis::RedisError;
+use url::ParseError;
+use crate::bson;
 use crate::recepteur_messages::ErreurVerification;
 
 #[derive(Debug)]
@@ -17,7 +20,11 @@ pub enum Error {
     MillegrillesCryptographie(millegrilles_cryptographie::error::Error),
     ErreurVerification(ErreurVerification),
     Redis(RedisError),
-    MongDb(mongodb::error::Error)
+    MongDb(mongodb::error::Error),
+    BsonValueAccessError(bson::document::ValueAccessError),
+    Reqwest(reqwest::Error),
+    HexFrom(hex::FromHexError),
+    UrlParse(url::ParseError)
 }
 
 impl fmt::Display for Error {
@@ -82,5 +89,41 @@ impl From<dryoc::Error> for Error {
 impl From<mongodb::error::Error> for Error {
     fn from(value: mongodb::error::Error) -> Self {
         Self::MongDb(value)
+    }
+}
+
+impl From<bson::document::ValueAccessError> for Error {
+    fn from(value: bson::document::ValueAccessError) -> Self {
+        Self::BsonValueAccessError(value)
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(value: reqwest::Error) -> Self {
+        Self::Reqwest(value)
+    }
+}
+
+impl From<hex::FromHexError> for Error {
+    fn from(value: FromHexError) -> Self {
+        Self::HexFrom(value)
+    }
+}
+
+impl From<url::ParseError> for Error {
+    fn from(value: ParseError) -> Self {
+        Self::UrlParse(value)
+    }
+}
+
+impl From<multibase::Error> for Error {
+    fn from(value: multibase::Error) -> Self {
+        Self::Multibase(value)
+    }
+}
+
+impl From<multihash::Error> for Error {
+    fn from(value: multihash::Error) -> Self {
+        Self::Multihash(value)
     }
 }

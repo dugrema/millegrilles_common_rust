@@ -58,7 +58,7 @@ pub fn hacher_bytes_vu8(contenu: &[u8], code: Option<Code>) -> Vec<u8> {
     digest_vec
 }
 
-pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Result<bool, Box<dyn Error>>
+pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Result<bool, crate::error::Error>
     where S: Serialize
 {
     let value = serde_json::to_value(s)?;

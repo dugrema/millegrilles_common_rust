@@ -808,7 +808,7 @@ pub struct ReponseEnveloppe {
 }
 
 pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
-    -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
         G: GestionnaireDomaine,
@@ -941,7 +941,8 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
 //     Ok(())
 // }
 
-pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_collection: &str) -> Result<(), Box<dyn Error>>
+pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_collection: &str)
+    -> Result<(), crate::error::Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
     let mut message_ref = m.message.parse()?;

@@ -178,7 +178,7 @@ pub fn convertir_bson_deserializable<D>(doc: Document) -> Result<D, serde_json::
 }
 
 pub fn convertir_to_bson<S>(valeur: S)
-    -> Result<Document, Box<dyn Error>>
+    -> Result<Document, crate::error::Error>
     where S: Serialize
 {
     let bson_doc: Document = serde_json::from_value(serde_json::to_value(valeur)?)?;

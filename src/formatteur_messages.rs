@@ -150,7 +150,7 @@ pub trait FormatteurMessage {
     //     middleware: &M,
     //     contenu: S,
     //     certificat_demandeur: &EnveloppeCertificat
-    // ) -> Result<MessageMilleGrille, Box<dyn Error>>
+    // ) -> Result<MessageMilleGrille, crate::error::Error>
     // where
     //     M: ChiffrageFactoryTrait + FormatteurMessage,
     //     S: Serialize,
@@ -280,7 +280,7 @@ pub trait FormatteurMessage {
 //     pub fn new(certificat: &EnveloppeCertificat, kind: MessageKind, contenu: &'a str,
 //                routage: Option<RoutageMessage>, pre_migration: Option<HashMap<String, Value>>,
 //                origine: Option<String>, dechiffrage: Option<DechiffrageInterMillegrille>
-//     ) -> Result<Self, Box<dyn Error>> {
+//     ) -> Result<Self, crate::error::Error> {
 //         let pubkey = certificat.publickey_bytes_encoding(Base::Base16Lower, true)?;
 //         let estampille = DateEpochSeconds::now();
 //         Ok(Self {
@@ -295,7 +295,7 @@ pub trait FormatteurMessage {
 //         })
 //     }
 //
-//     pub fn hacher(&self) -> Result<String, Box<dyn Error>> {
+//     pub fn hacher(&self) -> Result<String, crate::error::Error> {
 //
 //         let message_value = match &self.kind {
 //             0 | 4 | 6 => {
@@ -501,7 +501,7 @@ pub trait FormatteurMessage {
 //     pub fn retirer_attachments(&mut self) { self.attachements = None; }
 //
 //     /// Mapper le contenu ou un champ (1er niveau) du contenu vers un objet Deserialize
-//     pub fn map_contenu<C>(&self) -> Result<C, Box<dyn Error>>
+//     pub fn map_contenu<C>(&self) -> Result<C, crate::error::Error>
 //         where C: DeserializeOwned
 //     {
 //         let value = serde_json::from_str(self.contenu.as_str())?;
@@ -509,13 +509,13 @@ pub trait FormatteurMessage {
 //         Ok(deser)
 //     }
 //
-//     pub fn map_to_bson(&self) -> Result<Document, Box<dyn Error>> {
+//     pub fn map_to_bson(&self) -> Result<Document, crate::error::Error> {
 //         map_msg_to_bson(self)
 //     }
 //
 //     /// Verifie le hachage et la signature
 //     /// :return: True si hachage et signature valides
-//     pub fn verifier_contenu(&mut self) -> Result<(bool, bool), Box<dyn Error>> {
+//     pub fn verifier_contenu(&mut self) -> Result<(bool, bool), crate::error::Error> {
 //         if let Some(inner) = self.contenu_valide {
 //             return Ok(inner);  // Deja verifie
 //         }
@@ -556,7 +556,7 @@ pub trait FormatteurMessage {
 //         Ok((signature_valide, hachage_valide))
 //     }
 //
-//     pub fn verifier_hachage(&mut self) -> Result<bool, Box<dyn Error>> {
+//     pub fn verifier_hachage(&mut self) -> Result<bool, crate::error::Error> {
 //         Ok(self.verifier_contenu()?.1)
 //     }
 //
@@ -579,13 +579,13 @@ pub trait FormatteurMessage {
 //     }
 // }
 
-pub fn preparer_btree_recursif(contenu: Map<String, Value>) -> Result<Map<String, Value>, Box<dyn Error>> {
+pub fn preparer_btree_recursif(contenu: Map<String, Value>) -> Result<Map<String, Value>, crate::error::Error> {
     let iter: serde_json::map::IntoIter = contenu.into_iter();
     preparer_btree_recursif_into_iter(iter)
 }
 
 /// Preparer recursivement le contenu en triant les cles.
-fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Result<Map<String, Value>, Box<dyn Error>> {
+fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Result<Map<String, Value>, crate::error::Error> {
     let mut ordered: BTreeMap<String, Value> = BTreeMap::new();
 
     // Copier dans une BTreeMap (via trier les keys)
@@ -605,7 +605,7 @@ fn preparer_btree_recursif_into_iter(mut iter: serde_json::map::IntoIter) -> Res
     Ok(map_ordered)
 }
 
-pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
+pub fn map_valeur_recursif(v: Value) -> Result<Value, crate::error::Error> {
     let res = match v {
         Value::Object(o) => {
             let map = preparer_btree_recursif(o)?;
@@ -725,7 +725,7 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
 //         Ok(MessageSerialise::try_from(msg)?)
 //     }
 //
-//     pub fn from_serializable<T>(value: T) -> Result<MessageSerialise, Box<dyn Error>>
+//     pub fn from_serializable<T>(value: T) -> Result<MessageSerialise, crate::error::Error>
 //     where
 //         T: Serialize,
 //     {
@@ -762,7 +762,7 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
 //         &self.parsed
 //     }
 //
-//     pub async fn valider<V>(&mut self, validateur: &V, options: Option<&ValidationOptions<'_>>) -> Result<ResultatValidation, Box<dyn Error>>
+//     pub async fn valider<V>(&mut self, validateur: &V, options: Option<&ValidationOptions<'_>>) -> Result<ResultatValidation, crate::error::Error>
 //     where
 //         V: ValidateurX509,
 //     {
@@ -785,7 +785,7 @@ pub fn map_valeur_recursif(v: Value) -> Result<Value, Box<dyn Error>> {
 //         }
 //     }
 //
-//     async fn charger_certificat(&mut self, validateur: &dyn ValidateurX509) -> Result<Option<Arc<EnveloppeCertificat>>, Box<dyn Error>> {
+//     async fn charger_certificat(&mut self, validateur: &dyn ValidateurX509) -> Result<Option<Arc<EnveloppeCertificat>>, crate::error::Error> {
 //         let fp_certificat = self.parsed.pubkey.as_str();
 //
 //         // Charger l'enveloppe du certificat de millegrille (CA)
@@ -862,7 +862,7 @@ where
 //
 // impl MessageInterMillegrille {
 //     pub fn new<M,S>(middleware: &M, contenu: S, certificats_demandeur: Option<Vec<&EnveloppeCertificat>>)
-//         -> Result<Self, Box<dyn Error>>
+//         -> Result<Self, crate::error::Error>
 //         where M: FormatteurMessage + ChiffrageFactoryTrait, S: Serialize
 //     {
 //         let (data_chiffre, keys) = chiffrer_data_get_keys(middleware, contenu)?;
@@ -885,7 +885,7 @@ where
 //         Ok(Self { contenu: data_chiffre.data_chiffre, origine: idmg, dechiffrage })
 //     }
 //
-//     pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, Box<dyn Error>>
+//     pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, crate::error::Error>
 //         where M: GenerateurMessages + CleChiffrageHandler
 //     {
 //         let enveloppe_privee = middleware.get_enveloppe_signature();
@@ -906,7 +906,7 @@ where
 //         self.dechiffrer_avec_cle(middleware, cle_secrete)
 //     }
 //
-//     pub fn dechiffrer_avec_cle<M>(&self, middleware: &M, cle_secrete: CleSecrete)  -> Result<DataDechiffre, Box<dyn Error>>
+//     pub fn dechiffrer_avec_cle<M>(&self, middleware: &M, cle_secrete: CleSecrete)  -> Result<DataDechiffre, crate::error::Error>
 //         where M: GenerateurMessages + CleChiffrageHandler
 //     {
 //         let header = match self.dechiffrage.header.as_ref() {
@@ -969,14 +969,14 @@ where
 //
 // impl MessageReponseChiffree {
 //     pub fn new<M,S>(middleware: &M, contenu: S, certificat_demandeur: &EnveloppeCertificat)
-//         -> Result<Self, Box<dyn Error>>
+//         -> Result<Self, crate::error::Error>
 //         where M: ChiffrageFactoryTrait, S: Serialize
 //     {
 //         let (data_chiffre, dechiffrage) = chiffrer_data(middleware, contenu)?;
 //         Ok(Self { contenu: data_chiffre.data_chiffre, dechiffrage })
 //     }
 //
-//     pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, Box<dyn Error>>
+//     pub fn dechiffrer<M>(&self, middleware: &M)  -> Result<DataDechiffre, crate::error::Error>
 //         where M: GenerateurMessages + CleChiffrageHandler
 //     {
 //         let enveloppe_privee = middleware.get_enveloppe_signature();
