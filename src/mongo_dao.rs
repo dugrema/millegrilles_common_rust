@@ -249,34 +249,34 @@ impl CurseurStream for CurseurMongo {
     }
 }
 
-pub fn convertir_value_mongodate(date: Value) -> Result<DateTime<Utc>, String> {
-    match date.as_object() {
-        Some(inner) => match inner.get("$date") {
-            Some(inner) => match inner.as_object() {
-                Some(inner) => match inner.get("$numberLong") {
-                    Some(inner) => match inner.as_str() {
-                        Some(inner) => {
-                            match inner.parse::<i64>() {
-                                Ok(ms) => {
-                                    match DateTime::from_timestamp(ms/1000, 0) {
-                                        Some(inner) => Ok(inner),
-                                        None => Err(format!("convertir_value_mongodate Erreur conversion date (absente)"))
-                                    }
-                                },
-                                Err(e) => Err(format!("convertir_value_mongodate {:?}", e))
-                            }
-                        },
-                        None => Err("convertir_value_mongodate Format n'est str".to_string())
-                    },
-                    None => Err("convertir_value_mongodate $date.$numberLong absent".to_string()),
-                },
-                None => Err("convertir_value_mongodate format $date n'est pas object".to_string()),
-            },
-            None => Err("convertir_value_mongodate $date absent".to_string()),
-        },
-        None => Err("convertir_value_mongodate top level n'est pas object".to_string()),
-    }
-}
+// pub fn convertir_value_mongodate(date: Value) -> Result<DateTime<Utc>, String> {
+//     match date.as_object() {
+//         Some(inner) => match inner.get("$date") {
+//             Some(inner) => match inner.as_object() {
+//                 Some(inner) => match inner.get("$numberLong") {
+//                     Some(inner) => match inner.as_str() {
+//                         Some(inner) => {
+//                             match inner.parse::<i64>() {
+//                                 Ok(ms) => {
+//                                     match DateTime::from_timestamp(ms/1000, 0) {
+//                                         Some(inner) => Ok(inner),
+//                                         None => Err(format!("convertir_value_mongodate Erreur conversion date (absente)"))
+//                                     }
+//                                 },
+//                                 Err(e) => Err(format!("convertir_value_mongodate {:?}", e))
+//                             }
+//                         },
+//                         None => Err("convertir_value_mongodate Format n'est str".to_string())
+//                     },
+//                     None => Err("convertir_value_mongodate $date.$numberLong absent".to_string()),
+//                 },
+//                 None => Err("convertir_value_mongodate format $date n'est pas object".to_string()),
+//             },
+//             None => Err("convertir_value_mongodate $date absent".to_string()),
+//         },
+//         None => Err("convertir_value_mongodate top level n'est pas object".to_string()),
+//     }
+// }
 
 // Source : https://github.com/mongodb/bson-rust/issues/303
 pub mod opt_chrono_datetime_as_bson_datetime {

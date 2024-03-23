@@ -139,7 +139,9 @@ impl EmetteurNotifications {
         let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
         certificat.extend(pem_vec.iter().map(|s| s.as_str()));
 
-        todo!("fix me")
+        error!("notifications.emettre_notification_proprietaire **FIX ME**");
+        return Ok(())
+        //todo!("fix me")
         // let generateur = MessageMilleGrillesBuilderDefault::new(
         //     millegrilles_cryptographie::messages_structs::MessageKind::CommandeInterMillegrille,
         //     &contenu?

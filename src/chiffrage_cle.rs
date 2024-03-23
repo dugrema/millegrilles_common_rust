@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::{Debug, Formatter};
+use std::sync::{Arc, Mutex};
 
 use blake2::{Blake2s256, Digest};
-use log::debug;
+use chrono::{DateTime, Utc};
+use log::{debug, error, info};
 use millegrilles_cryptographie::chiffrage::FormatChiffrage;
-use millegrilles_cryptographie::x509::EnveloppePrivee;
+use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -15,6 +19,10 @@ use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
 use crate::signatures::{signer_identite, signer_message, verifier_message};
+
+/// Nombre maximal de certificats de maitre des cles dans le cache de chiffrage
+const CONST_MAX_CACHE_CHIFFRAGE: usize = 16;
+const CONST_EXPIRATION_CACHE_CHIFFRAGE_SECS: i64 = 900;
 
 /// Effectue une requete pour charger des cles a partir du maitre des cles
 pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>)
@@ -99,6 +107,76 @@ pub struct FingerprintCleChiffree {
     pub fingerprint: String,
     pub cle_chiffree: String,
 }
+
+/// Conserve un certificat de Maitre des cles pour rechiffrage de cle secrete.
+#[derive(Clone)]
+struct CleChiffrage {
+    certificat: Arc<EnveloppeCertificat>,
+    derniere_presence: DateTime<Utc>,
+}
+
+pub struct CleChiffrageHandlerImpl {
+    cles_chiffrage: Mutex<HashMap<String, CleChiffrage>>
+}
+
+impl CleChiffrageHandlerImpl {
+
+    pub fn new() -> Self {
+        Self {
+            cles_chiffrage: Mutex::new(HashMap::new())
+        }
+    }
+
+    /// Retire les certificats de Maitre des cles expires.
+    pub fn entretien(&self) {
+        let expiration = match chrono::Duration::new(CONST_EXPIRATION_CACHE_CHIFFRAGE_SECS, 0) {
+            Some(inner) => inner,
+            None => {
+                error!("Erreur Duration::new() pour expiration certificats");
+                return
+            }
+        };
+        let date_expiree = Utc::now() - expiration;
+        let mut guard = self.cles_chiffrage.lock().expect("lock");
+        let fingerprints_expires: Vec<String> = guard.iter()
+            .filter(|c| c.1.derniere_presence < date_expiree)
+            .map(|c| c.0.clone())
+            .collect();
+        for fingerprint in fingerprints_expires {
+            info!("CleChiffrageHandlerImpl.entretien Expirer certificat de chiffrage {}", fingerprint);
+            guard.remove(&fingerprint);
+        }
+    }
+
+    pub fn ajouter_certificat(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), crate::error::Error> {
+        let mut guard = self.cles_chiffrage.lock().expect("lock");
+        let fingerprint = certificat.fingerprint()?;
+        match guard.get_mut(fingerprint.as_str()) {
+            Some(inner) => {
+                // Le certificat est deja dans le cache. Faire un touch.
+                inner.derniere_presence = Utc::now();
+                Ok(())
+            },
+            None => {
+                if guard.len() < CONST_MAX_CACHE_CHIFFRAGE {
+                    let cle = CleChiffrage { certificat, derniere_presence: Utc::now() };
+                    guard.insert(fingerprint, cle);
+                    Ok(())
+                } else {
+                    Err(crate::error::Error::Str("Cache de certificats de chiffrage plein"))
+                }
+            }
+        }
+    }
+}
+
+impl CleChiffrageHandler for CleChiffrageHandlerImpl {
+    fn get_publickeys_chiffrage(&self) -> Vec<Arc<EnveloppeCertificat>> {
+        let guard = self.cles_chiffrage.lock().expect("lock");
+        guard.values().map(|v| v.certificat.clone()).collect()
+    }
+}
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandeSauvegarderCle {

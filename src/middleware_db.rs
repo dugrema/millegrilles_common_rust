@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::FuturesUnordered;
 use log::{debug, error, info, warn};
+use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use mongodb::Database;
@@ -17,6 +18,7 @@ use tokio::task::JoinHandle;
 
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, VerificateurPermissions};
+use crate::chiffrage_cle::CleChiffrageHandlerImpl;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::formatteur_messages::FormatteurMessage;
@@ -35,10 +37,17 @@ pub struct MiddlewareDb {
     pub redis: Option<RedisDao>,
     tx_backup: Sender<CommandeBackup>,
     // pub chiffrage_factory: Arc<ChiffrageFactoryImpl>,
+    cle_chiffrage_handler: CleChiffrageHandlerImpl,
 }
 
 impl MiddlewareMessages for MiddlewareDb {}
 impl Middleware for MiddlewareDb {}
+
+impl CleChiffrageHandler for MiddlewareDb {
+    fn get_publickeys_chiffrage(&self) -> Vec<Arc<EnveloppeCertificat>> {
+        self.cle_chiffrage_handler.get_publickeys_chiffrage()
+    }
+}
 
 #[async_trait]
 impl EmetteurNotificationsTrait for MiddlewareDb {
@@ -454,6 +463,7 @@ pub fn preparer_middleware_db() -> MiddlewareHooks {
         redis: redis_dao,
         tx_backup,
         // chiffrage_factory,
+        cle_chiffrage_handler: CleChiffrageHandlerImpl::new(),
     });
 
     // Preparer threads execution

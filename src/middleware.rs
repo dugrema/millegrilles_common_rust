@@ -13,14 +13,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
+use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
-use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, FingerprintPem};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use tokio::sync::Notify;
 
 use crate::backup::BackupStarter;
 use crate::certificats::{ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
+use crate::chiffrage_cle::CleChiffrageHandlerImpl;
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
@@ -82,7 +84,7 @@ pub trait MiddlewareMessages:
     IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
     // VerificateurMessage + ChiffrageFactoryTrait +
     RedisTrait + RabbitMqTrait +
-    EmetteurNotificationsTrait
+    EmetteurNotificationsTrait + CleChiffrageHandler
     // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
 
@@ -156,9 +158,16 @@ pub struct MiddlewareMessage {
     ressources: MiddlewareRessources,
     redis: Option<RedisDao>,
     // chiffrage_factory: Arc<ChiffrageFactoryImpl>,
+    cle_chiffrage_handler: CleChiffrageHandlerImpl,
 }
 
 impl MiddlewareMessages for MiddlewareMessage {}
+
+impl CleChiffrageHandler for MiddlewareMessage {
+    fn get_publickeys_chiffrage(&self) -> Vec<Arc<EnveloppeCertificat>> {
+        self.cle_chiffrage_handler.get_publickeys_chiffrage()
+    }
+}
 
 #[async_trait]
 impl EmetteurNotificationsTrait for MiddlewareMessage {
@@ -1103,6 +1112,7 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
         ressources,
         redis: redis_dao,
         // chiffrage_factory,
+        cle_chiffrage_handler: CleChiffrageHandlerImpl::new()
     });
 
     // Preparer threads execution

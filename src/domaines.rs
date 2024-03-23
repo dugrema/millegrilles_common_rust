@@ -145,7 +145,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
         let resultat = match &message.type_message {
             TypeMessageOut::Requete(_) => self.consommer_requete(middleware.as_ref(), message).await,
             TypeMessageOut::Commande(_) => self.consommer_commande_trait(middleware.clone(), message).await,
-            TypeMessageOut::Transaction(_) => Err(format!("domaines.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
+            TypeMessageOut::Transaction(_) => Err(String::from("domaines.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
             TypeMessageOut::Reponse(_) => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
             TypeMessageOut::Evenement(_) => self.consommer_evenement_trait(middleware.clone(), message).await,
         }?;
@@ -404,23 +404,6 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         where M: Middleware + 'static
     {
         debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
-        // let correlation_id = match &message.correlation_id {
-        //     Some(inner) => Some(inner.clone()),
-        //     None => None,
-        // };
-        // let reply_q = match &message.reply_q {
-        //     Some(inner) => Some(inner.clone()),
-        //     None => None,
-        // };
-        //
-        // let resultat = match message.type_message {
-        //     TypeMessageOut::Requete => self.consommer_requete_trait(middleware.clone(), message).await,
-        //     TypeMessageOut::Commande => self.consommer_commande_trait(middleware.clone(), message).await,
-        //     TypeMessageOut::Transaction => self.consommer_transaction(middleware.as_ref(), message).await,
-        //     TypeMessageOut::Reponse => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
-        //     TypeMessageOut::Evenement => self.consommer_evenement_trait(middleware.clone(), message).await,
-        // }?;
-
         let (correlation_id, reply_q) = match &message.type_message {
             TypeMessageOut::Requete(r) |
             TypeMessageOut::Commande(r) |
@@ -442,7 +425,6 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let resultat = match &message.type_message {
             TypeMessageOut::Requete(_) => self.consommer_requete(middleware.as_ref(), message).await,
             TypeMessageOut::Commande(_) => self.consommer_commande_trait(middleware.clone(), message).await,
-            // TypeMessageOut::Transaction(_) => Err(format!("domaines.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
             TypeMessageOut::Transaction(_) => self.consommer_transaction(middleware.as_ref(), message).await,
             TypeMessageOut::Reponse(_) => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
             TypeMessageOut::Evenement(_) => self.consommer_evenement_trait(middleware.clone(), message).await,
@@ -464,12 +446,10 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 debug!("Emettre reponse vers reply_q {} correlation_id {}", reply_q, correlation_id);
                 let routage = RoutageMessageReponse::new(reply_q, correlation_id);
                 let type_message = TypeMessageOut::Reponse(routage.into());
-                // middleware.repondre(routage, reponse).await?;
                 middleware.emettre_message(type_message, reponse).await?;
             },
             None => (),  // Aucune reponse
         }
-
         Ok(())
     }
 
@@ -919,18 +899,31 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             true => {
                 match action.as_str() {
                     // Commandes standard
-                    // COMMANDE_BACKUP_HORAIRE => self.demarrer_backup(middleware.as_ref(), m).await,
-                    // COMMANDE_RESTAURER_TRANSACTIONS => self.restaurer_transactions(middleware.clone()).await,
-                    COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.as_ref(), m).await,
-                    COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
-                    // COMMANDE_RESET_BACKUP => {
-                    //     let nom_collection_transactions = match self.get_collection_transactions() {
-                    //         Some(n) => n,
-                    //         None => Err(format!("domaines.consommer_commande_trait Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
-                    //     };
-                    //     reset_backup_flag(
-                    //         middleware.as_ref(), nom_collection_transactions.as_str()).await
-                    // },
+                    COMMANDE_BACKUP_HORAIRE => {
+                        todo!("fix me")
+                        // self.demarrer_backup(middleware.as_ref(), m).await
+                    },
+                    COMMANDE_RESTAURER_TRANSACTIONS => {
+                        todo!("fix me")
+                        // self.restaurer_transactions(middleware.clone()).await
+                    },
+                    COMMANDE_RESTAURER_TRANSACTION => {
+                        todo!("fix me")
+                        // self.restaurer_transaction(middleware.as_ref(), m).await
+                    },
+                    COMMANDE_REGENERER => {
+                        todo!("fix me")
+                        // self.regenerer_transactions(middleware.clone()).await
+                    },
+                    COMMANDE_RESET_BACKUP => {
+                        todo!("fix me")
+                        // let nom_collection_transactions = match self.get_collection_transactions() {
+                        //     Some(n) => n,
+                        //     None => Err(format!("domaines.consommer_commande_trait Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
+                        // };
+                        // reset_backup_flag(
+                        //     middleware.as_ref(), nom_collection_transactions.as_str()).await
+                    },
 
                     // Commandes specifiques au domaine
                     _ => self.consommer_commande(middleware.as_ref(), m).await
