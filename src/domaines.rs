@@ -123,7 +123,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
     async fn traiter_message_valide_action<M>(self: &'static Self, middleware: Arc<M>, message: MessageValide) -> Result<(), crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
-        debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
+        debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message.type_message);
         let (correlation_id, reply_q) = match &message.type_message {
             TypeMessageOut::Requete(r) |
             TypeMessageOut::Commande(r) |
@@ -178,7 +178,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
-        debug!("Consommer evenement trait : {:?}", &m.message);
+        debug!("Consommer evenement trait : {:?}", &m.type_message);
 
         let action = {
             let message_ref = m.message.parse()?;
@@ -228,7 +228,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
-        debug!("Consommer commande trait : {:?}", &m.message);
+        debug!("Consommer commande trait : {:?}", &m.type_message);
         let action = {
             let message_ref = m.message.parse()?;
             let routage = match &message_ref.routage {
@@ -403,7 +403,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         -> Result<(), crate::error::Error>
         where M: Middleware + 'static
     {
-        debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message);
+        debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message.type_message);
         let (correlation_id, reply_q) = match &message.type_message {
             TypeMessageOut::Requete(r) |
             TypeMessageOut::Commande(r) |
@@ -578,7 +578,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
-        debug!("Consommer requete trait : {:?}", &m.message);
+        debug!("Consommer requete trait : {:?}", &m.type_message);
         let action = {
             let message_ref = m.message.parse()?;
             let routage = match &message_ref.routage {
@@ -606,7 +606,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
-        debug!("Consommer evenement trait : {:?}", &m.message);
+        debug!("Consommer evenement trait : {:?}", &m.type_message);
         let routage_action = match &m.type_message {
             TypeMessageOut::Evenement(r) => r.clone(),
             _ => Err(String::from("consommer_evenement_trait Type de message n'est pas TypeMessage::Evenement"))?
@@ -864,7 +864,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
-        debug!("Consommer commande trait : {:?}", &m.message);
+        debug!("Consommer commande trait : {:?}", &m.type_message);
         let action = {
             let message_ref = m.message.parse()?;
             let routage = match &message_ref.routage {
