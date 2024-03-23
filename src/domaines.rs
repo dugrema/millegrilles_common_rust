@@ -615,15 +615,15 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             let message_ref = m.message.parse()?;
             let routage = match &message_ref.routage {
                 Some(inner) => inner,
-                None => Err(String::from("consommer_requete_trait Routage absent du message"))?
+                None => Err(String::from("consommer_evenement_trait Routage absent du message"))?
             };
             let domaine = match &routage.domaine {
                 Some(inner) => inner.to_string(),
-                None => Err(String::from("consommer_requete_trait Domaine absent du message"))?
+                None => Err(String::from("consommer_evenement_trait Domaine absent du message"))?
             };
             let action = match &routage.action {
                 Some(inner) => inner.to_string(),
-                None => Err(String::from("consommer_requete_trait Action absente du message"))?
+                None => Err(String::from("consommer_evenement_trait Action absente du message"))?
             };
             (domaine, action)
         };
@@ -647,14 +647,12 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                         Ok(None)
                     },
                     COMMANDE_CERT_MAITREDESCLES => {
-                        let type_message = TypeMessage::Valide(m);
-                        error!("domaines.GestionnaireDomaines.consommer_evenement_trait Fix intercepter certificat maitre des cles");
-                        // match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &type_message).await {
-                        //     Ok(_) => (),
-                        //     Err(e) => {
-                        //         error!("domaines.consommer_evenement_trait Erreur interception certificat maitre des cles : {:?}", e);
-                        //     }
-                        // };
+                        // Le certificat de maitre des cles est attache
+                        let certificat = m.certificat;
+                        debug!("consommer_evenement_trait Certificat de maitre des cles recu : {}", certificat.fingerprint()?);
+                        if let Err(e) = middleware.ajouter_certificat_chiffrage(certificat) {
+                            error!("consommer_evenement_trait Erreur reception certificat chiffrage : {:?}", e);
+                        }
                         Ok(None)
                     },
                     _ => self.consommer_evenement(middleware.as_ref(), m).await
