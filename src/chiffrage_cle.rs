@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::bson::Document;
-use crate::certificats::ordered_map;
+use crate::certificats::{ordered_map, VerificateurPermissions};
 use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
@@ -108,6 +108,11 @@ pub struct FingerprintCleChiffree {
     pub cle_chiffree: String,
 }
 
+pub trait CleChiffrageCache {
+    fn entretien_cle_chiffrage(&self);
+    fn ajouter_certificat_chiffrage(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), crate::error::Error>;
+}
+
 /// Conserve un certificat de Maitre des cles pour rechiffrage de cle secrete.
 #[derive(Clone)]
 struct CleChiffrage {
@@ -120,15 +125,17 @@ pub struct CleChiffrageHandlerImpl {
 }
 
 impl CleChiffrageHandlerImpl {
-
     pub fn new() -> Self {
         Self {
             cles_chiffrage: Mutex::new(HashMap::new())
         }
     }
+}
+
+impl CleChiffrageCache for CleChiffrageHandlerImpl {
 
     /// Retire les certificats de Maitre des cles expires.
-    pub fn entretien(&self) {
+    fn entretien_cle_chiffrage(&self) {
         let expiration = match chrono::Duration::new(CONST_EXPIRATION_CACHE_CHIFFRAGE_SECS, 0) {
             Some(inner) => inner,
             None => {
@@ -148,7 +155,15 @@ impl CleChiffrageHandlerImpl {
         }
     }
 
-    pub fn ajouter_certificat(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), crate::error::Error> {
+    fn ajouter_certificat_chiffrage(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), crate::error::Error> {
+        // Verifier que le certificat est pour le maitre des cles
+        if ! certificat.verifier_domaines(vec![DOMAINE_NOM_MAITREDESCLES.to_string()])? {
+            Err(crate::error::Error::Str("Certificat n'a pas le domaine Maitre des cles"))?
+        }
+        if ! certificat.verifier_exchanges(vec![Securite::L3Protege, Securite::L4Secure])? {
+            Err(crate::error::Error::Str("Certificat n'a pas le niveau de securite 3.protege ou 4.secure"))?
+        }
+
         let mut guard = self.cles_chiffrage.lock().expect("lock");
         let fingerprint = certificat.fingerprint()?;
         match guard.get_mut(fingerprint.as_str()) {

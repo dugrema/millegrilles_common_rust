@@ -21,8 +21,8 @@ use openssl::x509::X509;
 use tokio::sync::Notify;
 
 use crate::backup::BackupStarter;
-use crate::certificats::{ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
-use crate::chiffrage_cle::CleChiffrageHandlerImpl;
+use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
+use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
@@ -84,7 +84,7 @@ pub trait MiddlewareMessages:
     IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
     // VerificateurMessage + ChiffrageFactoryTrait +
     RedisTrait + RabbitMqTrait +
-    EmetteurNotificationsTrait + CleChiffrageHandler
+    EmetteurNotificationsTrait + CleChiffrageHandler + CleChiffrageCache
     // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
 
@@ -166,6 +166,16 @@ impl MiddlewareMessages for MiddlewareMessage {}
 impl CleChiffrageHandler for MiddlewareMessage {
     fn get_publickeys_chiffrage(&self) -> Vec<Arc<EnveloppeCertificat>> {
         self.cle_chiffrage_handler.get_publickeys_chiffrage()
+    }
+}
+
+impl CleChiffrageCache for MiddlewareMessage {
+    fn entretien_cle_chiffrage(&self) {
+        self.cle_chiffrage_handler.entretien_cle_chiffrage();
+    }
+
+    fn ajouter_certificat_chiffrage(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), CommonError> {
+        self.cle_chiffrage_handler.ajouter_certificat_chiffrage(certificat)
     }
 }
 
@@ -1165,6 +1175,33 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     };
 
     Ok(Some(middleware.charger_enveloppe(&reponse.chaine_pem, Some(reponse.fingerprint.as_str()), ca_pem).await?))
+}
+
+async fn charger_certificats_chiffrage<M>(middleware: &M)
+    -> Result<(), crate::error::Error>
+    where M: GenerateurMessages + ValidateurX509 + ConfigMessages + CleChiffrageHandler + CleChiffrageCache
+{
+    debug!("Charger les certificats de maitre des cles pour chiffrage");
+
+    if let Some(TypeMessage::Valide(message)) = emettre_commande_certificat_maitredescles(middleware).await {
+        let certificat = message.certificat;
+        if let Err(e) = middleware.ajouter_certificat_chiffrage(certificat) {
+            error!("Erreur reception certificat chiffrage : {:?}", e);
+        }
+    }
+
+    // Donner une chance aux certificats de rentrer
+    tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+
+    // Verifier si on a au moins un certificat
+    let nb_certs = middleware.get_publickeys_chiffrage().len();
+    if nb_certs == 0 {
+        Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
+    } else {
+        debug!("On a {} certificats de maitre des cles valides", nb_certs);
+    }
+
+    Ok(())
 }
 
 // #[cfg(test)]

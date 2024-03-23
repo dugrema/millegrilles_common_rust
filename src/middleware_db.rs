@@ -18,12 +18,12 @@ use tokio::task::JoinHandle;
 
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, VerificateurPermissions};
-use crate::chiffrage_cle::CleChiffrageHandlerImpl;
+use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{charger_certificat_redis, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
+use crate::middleware::{charger_certificat_redis, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::notifications::NotificationMessageInterne;
 use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
@@ -46,6 +46,16 @@ impl Middleware for MiddlewareDb {}
 impl CleChiffrageHandler for MiddlewareDb {
     fn get_publickeys_chiffrage(&self) -> Vec<Arc<EnveloppeCertificat>> {
         self.cle_chiffrage_handler.get_publickeys_chiffrage()
+    }
+}
+
+impl CleChiffrageCache for MiddlewareDb {
+    fn entretien_cle_chiffrage(&self) {
+        self.cle_chiffrage_handler.entretien_cle_chiffrage();
+    }
+
+    fn ajouter_certificat_chiffrage(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), crate::error::Error> {
+        self.cle_chiffrage_handler.ajouter_certificat_chiffrage(certificat)
     }
 }
 
