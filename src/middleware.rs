@@ -1177,7 +1177,7 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     Ok(Some(middleware.charger_enveloppe(&reponse.chaine_pem, Some(reponse.fingerprint.as_str()), ca_pem).await?))
 }
 
-async fn charger_certificats_chiffrage<M>(middleware: &M)
+pub async fn charger_certificats_chiffrage<M>(middleware: &M)
     -> Result<(), crate::error::Error>
     where M: GenerateurMessages + ValidateurX509 + ConfigMessages + CleChiffrageHandler + CleChiffrageCache
 {
