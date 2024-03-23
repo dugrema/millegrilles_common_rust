@@ -1031,7 +1031,7 @@ where
                 }
             }
         };
-        let mut transaction = TransactionValide { transaction: transaction.into(), certificat };
+        let mut transaction = TransactionValide { transaction: transaction.try_into()?, certificat };
 
         if let Some(overrides) = pre_migration {
             if let Some(id) = overrides.id {

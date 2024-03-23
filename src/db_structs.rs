@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::generateur_messages::RoutageMessageAction;
 use crate::recepteur_messages::MessageValide;
 
 /// Mapping avec references des documents d'une table de Transactions.
@@ -24,8 +23,9 @@ pub struct TransactionRef<'a> {
     /// Kind du message, correspond a enum MessageKind
     pub kind: MessageKind,
 
-    /// Contenu du message en format json-string
-    pub contenu: &'a str,
+    /// Contenu du message en format json-string escaped
+    #[serde(rename = "contenu")]
+    pub contenu_escaped: &'a str,
 
     /// Information de routage de message (optionnel, depend du kind)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,6 +65,16 @@ pub struct TransactionRef<'a> {
     #[serde(skip)]
     /// Apres verification, conserve : signature valide, hachage valide
     pub contenu_valide: Option<(bool, bool)>,
+}
+
+impl<'a> TransactionRef<'a> {
+
+    /// Parse le contenu et retourne un buffer qui peut servir a deserializer avec serde
+    pub fn contenu(&self) -> Result<String, crate::error::Error> {
+        let contenu_escaped: String = serde_json::from_str(format!("\"{}\"", self.contenu_escaped).as_str())?;
+        Ok(contenu_escaped)
+    }
+
 }
 
 // impl<'a, const C: usize> Into<TransactionRef<'a>> for MessageMilleGrillesRef<'a, C> {
@@ -107,7 +117,7 @@ impl<'a, const C: usize> From<MessageMilleGrillesRef<'a, C>> for TransactionRef<
             pubkey: value.pubkey,
             estampille: value.estampille,
             kind: value.kind.clone(),
-            contenu: value.contenu,
+            contenu_escaped: value.contenu_escaped,
             routage: value.routage,
             pre_migration: value.pre_migration,
             origine: value.origine,
@@ -183,14 +193,19 @@ pub struct TransactionOwned {
     pub contenu_valide: Option<(bool, bool)>,
 }
 
-impl<'a> Into<TransactionOwned> for TransactionRef<'a> {
-    fn into(self) -> TransactionOwned {
-        TransactionOwned {
+impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
+
+    type Error = crate::error::Error;
+
+    fn try_into(self) -> Result<TransactionOwned, Self::Error> {
+        let contenu = self.contenu()?;
+
+        Ok(TransactionOwned {
             id: self.id.into(),
             pubkey: self.pubkey.into(),
             estampille: self.estampille,
             kind: self.kind,
-            contenu: self.contenu.into(),
+            contenu,
             routage: match &self.routage { Some(inner) => Some(inner.into()), None => None },
             pre_migration: match self.pre_migration { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
             origine: match self.origine { Some(inner) => Some(inner.to_owned()), None => None },
@@ -201,7 +216,7 @@ impl<'a> Into<TransactionOwned> for TransactionRef<'a> {
             attachements: match self.attachements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
             evenements: match self.evenements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
             contenu_valide: self.contenu_valide,
-        }
+        })
     }
 }
 
@@ -212,15 +227,15 @@ pub struct TransactionValide {
 }
 
 impl TryFrom<MessageValide> for TransactionValide {
-    type Error = String;
+    type Error = crate::error::Error;
     fn try_from(value: MessageValide) -> Result<Self, Self::Error> {
         let message_ref = match value.message.parse() {
             Ok(inner) => inner,
-            Err(e) => Err(e.to_string())?
+            Err(e) => Err(crate::error::Error::String(e.to_string()))?
         };
         let transaction_ref: TransactionRef = message_ref.into();
         Ok(Self {
-            transaction: transaction_ref.into(),
+            transaction: transaction_ref.try_into()?,
             certificat: value.certificat,
         })
     }
