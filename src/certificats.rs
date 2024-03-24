@@ -803,7 +803,7 @@ pub async fn valider_certificat<'a, M, const C: usize>(
 {
     // Recuperer le certificat du message.
     let pubkey = message.pubkey;
-    let certificat_pem = message.certificat.as_ref();
+    let certificat_pem = message.certificat()?;
 
     let enveloppe = if middleware.est_cache(pubkey) || certificat_pem.is_none() {
         // Utiliser le middleware pour recuperer le certificat
@@ -847,7 +847,7 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
     where M: ValidateurX509 + ?Sized
 {
     // Recuperer la chaine de certificat du message.
-    let certificat_pem = match message.certificat.as_ref() {
+    let certificat_pem = match message.certificat()? {
         Some(inner) => inner,
         None => Err(ErreurVerification::CertificatInvalide)?
     };

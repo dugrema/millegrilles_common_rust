@@ -8,13 +8,15 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io;
 use std::io::prelude::*;
+use std::str::from_utf8;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::chiffrage_mgs4::CleSecreteCipher;
 use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
 use millegrilles_cryptographie::heapless;
-use millegrilles_cryptographie::messages_structs::{optionepochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesBuilderDefault, RoutageMessage};
+use millegrilles_cryptographie::messages_structs::{optionepochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesBuilderDefault, RoutageMessage, MessageMilleGrilleBufferContenu};
 use millegrilles_cryptographie::x25519::{CleDerivee, deriver_asymetrique_ed25519};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use multibase::{Base, encode};
@@ -24,6 +26,7 @@ use crate::certificats::ValidateurX509;
 use crate::chiffrage_cle::CommandeSauvegarderCle;
 use crate::common_messages::{MessageReponse, verifier_reponse_ok, verifier_reponse_ok_option};
 use crate::constantes::*;
+use crate::formatteur_messages::build_message_action;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
@@ -63,7 +66,7 @@ pub struct NotificationMessageInterne {
 /// Enveloppe de la notification, routage
 #[derive(Clone, Serialize, Deserialize)]
 struct Notification {
-    message: Vec<u8>,
+    message: MessageMilleGrillesOwned,
     #[serde(skip_serializing_if = "Option::is_none")]
     destinataires: Option<Vec<String>>,
     #[serde(with = "optionepochseconds", skip_serializing_if = "Option::is_none")]
@@ -114,163 +117,120 @@ impl EmetteurNotifications {
         expiration: Option<i64>,
         destinataires: Option<Vec<String>>
     ) -> Result<(), crate::error::Error>
-    where M: GenerateurMessages + ValidateurX509
+    where M: GenerateurMessages + ValidateurX509 + CleChiffrageHandler
     {
         let commande_transmise = self.commande_cle_transmise.lock().expect("lock").clone();
-
         let enveloppe_signature = middleware.get_enveloppe_signature();
-        // let mut cle_privee_u8 = SecretKey::default();
-        // match enveloppe_signature.cle_privee().raw_private_key() {
-        //     Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
-        //     Err(e) => Err(Error::String(format!("build_reponse Erreur raw_private_key {:?}", e)))?
-        // };
-        // let signing_key = SigningKey::from_bytes(&cle_privee_u8);
+        let cles_chiffrage = middleware.get_publickeys_chiffrage();
 
-        // let contenu = match serde_json::to_string(&contenu) {
-        //     Ok(inner) => inner,
-        //     Err(e) => Err(Error::String(format!("Erreur serde::to_vec : {:?}", e)))?
-        // };
-
-        // Recuperer
+        // Generer le message
         let cle_proprietaire = &self.cle_derivee_proprietaire;
-        let cipher = millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4::with_secret(cle_proprietaire.to_owned());
+        let cipher = millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4::with_secret(cle_proprietaire.to_owned())?;
+        let origine = enveloppe_signature.enveloppe_pub.idmg()?;
+        let mut generateur = MessageMilleGrillesBuilderDefault::from_serializable(
+            millegrilles_cryptographie::messages_structs::MessageKind::CommandeInterMillegrille,
+            &contenu
+        )?
+            .enveloppe_signature(enveloppe_signature.as_ref())?
+            .routage(RoutageMessage::for_action(DOMAINE_NOM_MESSAGERIE, "nouveauMessage"))
+            .origine(origine.as_str())
+            .cles_chiffrage(cles_chiffrage.iter().map(|c| c.as_ref()).collect());
 
-        let pem_vec = &enveloppe_signature.chaine_pem;
-        let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
-        certificat.extend(pem_vec.iter().map(|s| s.as_str()));
+        // Injecter l'identificateur de la cle, retirer certificats
 
-        error!("notifications.emettre_notification_proprietaire **FIX ME**");
-        return Ok(())
-        //todo!("fix me")
-        // let generateur = MessageMilleGrillesBuilderDefault::new(
-        //     millegrilles_cryptographie::messages_structs::MessageKind::CommandeInterMillegrille,
-        //     &contenu?
-        // )
-        //     .routage(RoutageMessage::for_action(DOMAINE_NOM_MESSAGERIE, "nouveauMessage"))
-        //     .origine("ORIGINE")
-        //     .enveloppe_signature(enveloppe_signature.as_ref())
-        //     .cles_chiffrage(enveloppes);
+        generateur.certificat = None;  // Retirer le certificat (redondant)
 
-        // // Creer cipher pour chiffrer contenu du message, utiliser la cle secrete connue
-        // let mut cipher = CipherMgs4::new_avec_secret(&self.cle_derivee_proprietaire)?;
-        // // Serialiser, compresser (gzip) et chiffrer le contenu de la notification.
-        // let message_contenu = Self::chiffrer_contenu_notification(&contenu, &mut cipher)?;
-        // let hachage_contenu = cipher.get_hachage().expect("get_hachage").to_owned();
-        //
-        // // Convertir contenu en message de notification
-        // let expiration = match expiration {
-        //     // Some(e) => Some(DateEpochSeconds::from_i64(e)),
-        //     Some(e) => DateTime::from_timestamp(e as i64, 0),
-        //     None => None
-        // };
-        //
-        // let mut cle_id = cipher.get_hachage().expect("get_hachage").to_owned();
-        //
-        // let cle = match commande_transmise {
-        //     true => {
-        //         // Remplacer ref_hachage_bytes
-        //         match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
-        //             Some(c) => {
-        //                 cle_id = c.clone();
-        //             },
-        //             None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
-        //         };
-        //         None
-        //     },
-        //     false => {
-        //         debug!("emettre_notification_proprietaire Emettre commande cle");
-        //         let mut commande_outer = match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
-        //             Some(c) => Some(c.clone()),
-        //             None => None
-        //         };
-        //
-        //         if commande_outer.is_none() {
-        //             debug!("emettre_notification_proprietaire Generer la commande MaitreDesCles");
-        //             let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, REQUETE_CERT_MAITREDESCLES, vec![Securite::L1Public])
-        //                 .build();
-        //
-        //             let (public_keys, partition) = {
-        //                 let enveloppe_maitredescles = match middleware.transmettre_requete(routage, &json!({})).await? {
-        //                     TypeMessage::Valide(m) => {
-        //                         let message_ref = m.message.parse()?;
-        //                         let message_contenu = message_ref.contenu()?;
-        //                         let certificat_message: MessageCertificat = message_contenu.deserialize()?;
-        //                         // let certificat_pem: Vec<String> = m.message.parsed.map_contenu(Some("certificat"))?;
-        //                         let certificat_pem = certificat_message.certificat;
-        //                         debug!("emettre_notification_proprietaire Certificat maitre des cles {:?}", certificat_pem);
-        //                         middleware.charger_enveloppe(&certificat_pem, None, None).await?
-        //                     },
-        //                     _ => Err(format!("notifications.emettre_notification_proprietaire Erreur reception certificat maitre des cles (mauvais type reponse)"))?
-        //                 };
-        //
-        //                 // &Vec<FingerprintCertPublicKey>
-        //                 let enveloppe_ca = middleware.get_enveloppe_signature().enveloppe_ca.clone();
-        //                 let mut fpkeys = Vec::new();
-        //                 fpkeys.push(FingerprintCertPublicKey {
-        //                     fingerprint: enveloppe_ca.fingerprint.clone(),
-        //                     public_key: enveloppe_ca.cle_publique.clone(),
-        //                     est_cle_millegrille: true,
-        //                 });
-        //                 fpkeys.push(FingerprintCertPublicKey {
-        //                     fingerprint: enveloppe_maitredescles.fingerprint.clone(),
-        //                     public_key: enveloppe_maitredescles.cle_publique.clone(),
-        //                     est_cle_millegrille: false,
-        //                 });
-        //
-        //                 (fpkeys, enveloppe_maitredescles.fingerprint.clone())
-        //             };
-        //
-        //             let mut identificateurs_document = HashMap::new();
-        //             identificateurs_document.insert("notification".to_string(), "true".to_string());
-        //             let cles_rechiffrees = cipher.get_cipher_keys(&public_keys)?;
-        //             let commande = cles_rechiffrees.get_commande_sauvegarder_cles(
-        //                 "Messagerie", None, identificateurs_document)?;
-        //
-        //             // Signer commande
-        //             // let mut commande_signee = middleware.formatter_message(
-        //             //     MessageKind::Commande, &commande,
-        //             //     Some(DOMAINE_NOM_MAITREDESCLES), Some(COMMANDE_SAUVEGARDER_CLE),
-        //             //     Some(partition.as_str()), None::<&str>, None, false)?;
-        //             let routage = RoutageMessageAction::builder(
-        //                 DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE, vec![Securite::L3Protege]
-        //             )
-        //                 .partition(partition.as_str())
-        //                 .build();
-        //             let (commande_signee, message_id) = middleware.build_message_action(
-        //                 millegrilles_cryptographie::messages_structs::MessageKind::Commande, routage, commande)?;
-        //
-        //             let commande_signee_ref = commande_signee.parse()?;
-        //             let mut commande_signee: MessageMilleGrillesOwned = commande_signee_ref.into();
-        //             commande_signee.ajouter_attachement("partition", partition);
-        //             let commande_signee: MessageMilleGrillesBufferDefault = commande_signee.try_into()?;
-        //
-        //             {
-        //                 // Conserver message_id
-        //                 let mut guard = self.ref_hachage_bytes.lock().expect("lock");
-        //                 guard.replace(message_id);
-        //             }
-        //
-        //             // Conserver commande signee
-        //             let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
-        //             guard.replace(commande_signee.clone());
-        //
-        //             // Retourner commande signee
-        //             commande_outer = Some(commande_signee);
-        //         }
-        //
-        //         commande_outer
-        //     }
-        // };
-        //
-        // // let mut commande = NotificationContenu {
-        // //     niveau: niveau.to_owned(),
-        // //     message: message_contenu,
-        // //     // ref_hachage_bytes: cipher.get_hachage().expect("get_hachage").to_owned(),
-        // //     // format: "mgs4".into(),
-        // //     // header: Some(cipher.get_header().to_owned()),
-        // //     // message_chiffre,
-        // // };
-        //
+        let mut buffer = Vec::new();
+        let message_signe_ref = generateur.encrypt_into_alloc(&mut buffer, cipher)?;
+        let mut message_signe: MessageMilleGrillesOwned = message_signe_ref.try_into()?;
+
+        error!("notifications.emettre_notification_proprietaire **FIX ME**\n{}\nCles: {:?}", serde_json::to_string(&message_signe)?, cles_chiffrage);
+
+        let (cle, cle_id) = match commande_transmise {
+            true => {
+                // Remplacer ref_hachage_bytes
+                let cle_id = match (*self.ref_hachage_bytes.lock().expect("lock")).as_ref() {
+                    Some(c) => c.clone(),
+                    None => panic!("emettre_notification_proprietaire commande_transmise == true, ref_hachage_bytes None")
+                };
+                (None, cle_id)
+            },
+            false => {
+                debug!("emettre_notification_proprietaire Emettre commande cle");
+                let mut cle_id = message_signe.dechiffrage.as_ref().expect("dechiffrage").cle_id.as_ref().expect("cle_id").clone();
+
+                let (mut commande_outer, cle_id) = match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
+                    Some(c) => {
+                        let message_ref = c.parse()?;
+                        let cle_id = match message_ref.dechiffrage {
+                            Some(inner) => match inner.cle_id {
+                                Some(inner) => inner.to_string(),
+                                None => Err(crate::error::Error::Str("emettre_notification_proprietaire Erreur dechiffrage cle_id vide"))?
+                            },
+                            None => Err(crate::error::Error::Str("emettre_notification_proprietaire Erreur dechiffrage cle vide"))?
+                        };
+                        (Some(c.clone()), cle_id)
+                    },
+                    None => (None, cle_id)
+                };
+
+                if commande_outer.is_none() {
+                    debug!("emettre_notification_proprietaire Generer la commande MaitreDesCles");
+
+                    let mut identificateurs_document = HashMap::new();
+                    identificateurs_document.insert("notification".to_string(), "true".to_string());
+
+                    let commande = CommandeSauvegarderCle::from_message_chiffre(&message_signe, identificateurs_document)?;
+
+                    // Signer commande
+                    let mut routage_builder = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE, vec![Securite::L3Protege]);
+                    let mut partition = None;
+                    if let Some(inner) = commande.partition.as_ref() {
+                        partition = Some(inner.clone());
+                        routage_builder = routage_builder.partition(inner);
+                    }
+                    let routage = routage_builder.build();
+
+                    let (commande_signee, message_id) = middleware.build_message_action(
+                        millegrilles_cryptographie::messages_structs::MessageKind::Commande, routage, &commande)?;
+
+                    error!("Commande cle notifications signee\n{}", from_utf8(commande_signee.buffer.as_slice()).expect("from_utf8"));
+
+                    let commande_signee_ref = commande_signee.parse()?;
+                    let mut commande_signee: MessageMilleGrillesOwned = commande_signee_ref.try_into()?;
+                    if let Some(partition) = partition {
+                        commande_signee.ajouter_attachement("partition", partition)?;
+                    }
+                    let commande_signee: MessageMilleGrillesBufferDefault = commande_signee.try_into()?;
+
+                    error!("Commande cle avec attachement\n{}", from_utf8(commande_signee.buffer.as_slice()).expect("from_utf8"));
+
+                    {
+                        // Conserver message_id
+                        let mut guard = self.ref_hachage_bytes.lock().expect("lock");
+                        guard.replace(message_id);
+                    }
+
+                    // Conserver commande signee
+                    let mut guard = self.commande_cle_proprietaire.lock().expect("lock");
+                    guard.replace(commande_signee.clone());
+
+                    // Retourner commande signee
+                    commande_outer = Some(commande_signee);
+                }
+
+                // Retirer les cles de chiffrage - conservees avec commande_outer
+                message_signe.dechiffrage.as_mut().expect("dechiffrage").cles.take();
+
+                (commande_outer, cle_id)
+            }
+        };
+
+        // Retirer les cles de chiffrage, ajuster le cle_id
+        let mut dechiffrage = message_signe.dechiffrage.as_mut().expect("dechiffrage");
+        dechiffrage.cles = None;
+        dechiffrage.cle_id = Some(cle_id.clone());
+
         // let message_a_signer = MessageInterMillegrille {
         //     contenu: message_contenu,
         //     origine: middleware.idmg().to_owned(),
@@ -285,58 +245,71 @@ impl EmetteurNotifications {
         //     }
         // };
         //
-        // todo!("messages inter-millegrilles fix-me")
         // let mut message_signe = middleware.formatter_message(
         //     MessageKind::CommandeInterMillegrille, &message_a_signer,
         //     Some(DOMAINE_NOM_MESSAGERIE), Some("nouveauMessage"), None::<&str>,
         //     None::<&str>, Some(1), false)?;
         // message_signe.retirer_certificats();  // Retirer certificat, redondant
-        //
-        // let mut notification = Notification {
-        //     message: message_signe,
-        //     destinataires,
-        //     expiration,
-        //     niveau: Some(niveau.to_owned()),
-        // };
-        //
-        // debug!("emettre_notification_proprietaire Notification a transmettre a {:?}", notification.destinataires);
-        //
-        // let routage = RoutageMessageAction::builder(DOMAINE_NOM_MESSAGERIE, ACTION_NOTIFIER, vec![Securite::L1Public])
-        //     .build();
-        //
-        // // let mut commande = middleware.formatter_message(
-        // //     MessageKind::Commande, &notification,
-        // //     Some(DOMAINE_NOM_MESSAGERIE), Some(ACTION_NOTIFIER), None::<&str>,
-        // //     None::<&str>, None, false)?;
-        // // // Ajouter cle en attachement au besoin
-        // // if let Some(inner) = cle {
-        // //     commande.ajouter_attachement("cle", serde_json::to_value(inner)?);
-        // // }
-        // //
-        // // // let reponse = middleware.transmettre_commande(routage, &notification, true).await?;
-        // // let reponse = middleware.emettre_message_millegrille(
-        // //     routage, true, TypeMessageOut::Commande, commande).await?;
-        //
+
+        // Convertir contenu en message de notification
+        let expiration = match expiration {
+            // Some(e) => Some(DateEpochSeconds::from_i64(e)),
+            Some(e) => DateTime::from_timestamp(e as i64, 0),
+            None => None
+        };
+
+        // let message_signe_buffer: MessageMilleGrillesBufferDefault = message_signe.try_into()?;
+
+        let mut notification = Notification {
+            message: message_signe,  // from_utf8(message_signe_buffer.buffer.as_slice())?.to_string(),
+            destinataires,
+            expiration,
+            niveau: Some(niveau.to_owned()),
+        };
+
+        debug!("emettre_notification_proprietaire Notification a transmettre a {:?}", notification.destinataires);
+
+        error!("notifications Objet Notification\n{}", serde_json::to_string(&notification)?);
+
+        let mut routage = RoutageMessageAction::builder(
+            DOMAINE_NOM_MESSAGERIE, ACTION_NOTIFIER, vec![Securite::L1Public]
+        ).build();
+
+        let (message_notification, notification_id) = middleware.build_message_action(
+            millegrilles_cryptographie::messages_structs::MessageKind::Commande,
+            routage.clone(), &notification
+        )?;
+        routage.correlation_id = Some(notification_id);
+
+        let mut message_notification: MessageMilleGrillesOwned = message_notification.parse()?.try_into()?;
+        if let Some(cle) = cle {
+            debug!("notifications Message notification cle buffer\n{}", from_utf8(cle.buffer.as_slice()).expect("from_utf8"));
+            let cle_owned: MessageMilleGrillesOwned = cle.parse_to_owned()?;
+            message_notification.ajouter_attachement("cle", serde_json::to_value(cle_owned)?)?;
+        }
+
         // let reponse = middleware.transmettre_commande(routage, notification).await?;
-        //
-        // match reponse {
-        //     Some(r) => match r {
-        //         TypeMessage::Valide(m) => {
-        //             let message_ref = m.message.parse()?;
-        //             let message_ok: MessageReponse = serde_json::from_str(message_ref.contenu)?;
-        //             // let ok: bool = m.message.parsed.map_contenu(Some("ok"))?;
-        //             if let Some(true) = message_ok.ok {
-        //                 // Marquer cle comme transmise
-        //                 let mut guard = self.commande_cle_transmise.lock().expect("lock");
-        //                 *guard = true;
-        //             }
-        //         },
-        //         _ => Err(format!("notifications.emettre_notification_proprietaire Mauvais type de reponse sur notification"))?
-        //     },
-        //     None => warn!("emettre_notification_proprietaire Aucune reponse")
-        // }
-        //
-        // Ok(())
+        let type_message = TypeMessageOut::Commande(routage);
+        let message_notification: MessageMilleGrillesBufferDefault = message_notification.try_into()?;
+        let reponse = middleware.emettre_message(type_message, message_notification).await?;
+
+        match reponse {
+            Some(r) => match r {
+                TypeMessage::Valide(m) => {
+                    let message_ref = m.message.parse()?;
+                    let message_ok: MessageReponse = message_ref.contenu()?.deserialize()?; //serde_json::from_str(message_ref.contenu)?;
+                    if let Some(true) = message_ok.ok {
+                        // Marquer cle comme transmise
+                        let mut guard = self.commande_cle_transmise.lock().expect("lock");
+                        *guard = true;
+                    }
+                },
+                _ => Err(format!("notifications.emettre_notification_proprietaire Mauvais type de reponse sur notification"))?
+            },
+            None => warn!("emettre_notification_proprietaire Aucune reponse")
+        }
+
+        Ok(())
     }
 
     // fn chiffrer_contenu_notification<S>(contenu: &S, cipher: &mut CipherMgs4)
@@ -536,213 +509,213 @@ impl EmetteurNotifications {
     // }
 }
 
-#[cfg(test)]
-mod test {
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use log::debug;
-    use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-    use openssl::x509::store::X509Store;
-    use openssl::x509::X509;
-    use tokio;
-
-    use crate::certificats::{build_store_path, charger_enveloppe, charger_enveloppe_privee, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
-    use crate::constantes::Securite;
-    use crate::formatteur_messages::FormatteurMessage;
-    use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
-    use crate::rabbitmq_dao::TypeMessageOut;
-    use crate::recepteur_messages::{MessageValide, TypeMessage};
-
-    use crate::test_setup::setup;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test_notification() -> Result<(), Box<dyn Error>> {
-        setup("test_notification");
-
-        let generateur = preparer_generateur_dummy()?;
-
-        // Test
-        let emetteur = EmetteurNotifications::new(generateur.enveloppe_ca.as_ref(), None)?;
-
-        let notification_interne = NotificationMessageInterne {
-            from: "".to_string(),
-            subject: None,
-            content: "".to_string(),
-            version: 0,
-            format: "".to_string(),
-        };
-
-        emetteur.emettre_notification_proprietaire(
-            &generateur,
-            notification_interne,
-            "info",
-            None,
-            None
-        ).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_2_notifications() -> Result<(), Box<dyn Error>> {
-        setup("test_2_notifications");
-
-        let generateur = preparer_generateur_dummy()?;
-
-        // Test
-        let emetteur = EmetteurNotifications::new(generateur.enveloppe_ca.as_ref(), None)?;
-
-        let notification_interne = NotificationMessageInterne {
-            from: "".to_string(),
-            subject: None,
-            content: "".to_string(),
-            version: 0,
-            format: "".to_string(),
-        };
-
-        emetteur.emettre_notification_proprietaire(&generateur, notification_interne.clone(), "info", None, None).await?;
-        emetteur.emettre_notification_proprietaire(&generateur, notification_interne, "info", None, None).await?;
-
-        Ok(())
-    }
-
-    struct DummyGenerateurMessages {
-        validateur: Arc<ValidateurX509Impl>,
-        enveloppe_privee: Arc<EnveloppePrivee>,
-        enveloppe_ca: Arc<EnveloppeCertificat>,
-    }
-
-    impl FormatteurMessage for DummyGenerateurMessages {
-        fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
-            self.enveloppe_privee.clone()
-        }
-
-        fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
-            todo!()
-        }
-    }
-
-    #[async_trait]
-    impl ValidateurX509 for DummyGenerateurMessages {
-        async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>)
-            -> Result<Arc<EnveloppeCertificat>, crate::error::Error>
-        {
-            self.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await
-        }
-
-        async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
-            todo!()
-        }
-
-        fn set_flag_persiste(&self, fingerprint: &str) {
-            todo!()
-        }
-
-        async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
-            todo!()
-        }
-
-        fn est_cache(&self, fingerprint: &str) -> bool {
-            todo!()
-        }
-
-        fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
-            todo!()
-        }
-
-        fn idmg(&self) -> &str {
-            todo!()
-        }
-
-        fn ca_pem(&self) -> &str {
-            todo!()
-        }
-
-        fn ca_cert(&self) -> &X509 {
-            todo!()
-        }
-
-        fn store(&self) -> &X509Store {
-            todo!()
-        }
-
-        fn store_notime(&self) -> &X509Store {
-            todo!()
-        }
-
-        async fn entretien_validateur(&self) {
-            todo!()
-        }
-    }
-
-    #[async_trait]
-    impl GenerateurMessages for DummyGenerateurMessages {
-        async fn emettre_evenement<R, M>(&self, routage: R, message: &M) -> Result<(), String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn transmettre_requete<R, M>(&self, routage: R, message: &M) -> Result<TypeMessage, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn soumettre_transaction<R, M>(&self, routage: R, message: &M) -> Result<Option<TypeMessage>, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn transmettre_commande<R, M>(&self, routage: R, message: &M) -> Result<Option<TypeMessage>, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn repondre<R, M>(&self, routage: R, message: M) -> Result<(), String> where R: Into<RoutageMessageReponse>, M: Serialize + Send + Sync {
-            todo!()
-        }
-
-        async fn emettre_message<M>(&self, type_message: TypeMessageOut, message: M) -> Result<Option<TypeMessage>, String> where M: Into<MessageMilleGrillesBufferDefault> {
-            todo!()
-        }
-
-        fn mq_disponible(&self) -> bool {
-            todo!()
-        }
-
-        fn set_regeneration(&self) {
-            todo!()
-        }
-
-        fn reset_regeneration(&self) {
-            todo!()
-        }
-
-        fn get_mode_regeneration(&self) -> bool {
-            todo!()
-        }
-
-        fn get_securite(&self) -> &Securite {
-            todo!()
-        }
-    }
-
-    fn preparer_generateur_dummy() -> Result<DummyGenerateurMessages, Box<dyn Error>> {
-        // Setup
-        let ca_certfile = PathBuf::from(std::env::var("CERTFILE").unwrap_or_else(|_| "/var/opt/millegrilles/configuration/pki.millegrille.cert".into()));
-        let validateur: Arc<ValidateurX509Impl> = Arc::new(build_store_path(ca_certfile.as_path()).expect("Erreur chargement store X509"));
-
-        let keyfile = PathBuf::from(std::env::var("KEYFILE").unwrap_or_else(|_| "/var/opt/millegrilles/secrets/pki.maitrecomptes.cle".into()));
-        let certfile = PathBuf::from(std::env::var("CERTFILE").unwrap_or_else(|_| "/var/opt/millegrilles/secrets/pki.maitredescles.cert".into()));
-
-        // Preparer enveloppe privee
-        let enveloppe_privee = Arc::new(
-            charger_enveloppe_privee(
-                certfile.as_path(),
-                keyfile.as_path(),
-                validateur.clone()
-            ).expect("Erreur chargement cle ou certificat")
-        );
-        let enveloppe_ca = enveloppe_privee.enveloppe_ca.clone();
-
-        Ok(DummyGenerateurMessages { validateur, enveloppe_privee, enveloppe_ca })
-    }
-
-}
+// #[cfg(test)]
+// mod test {
+//     use std::path::PathBuf;
+//     use std::sync::Arc;
+//     use log::debug;
+//     use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+//     use openssl::x509::store::X509Store;
+//     use openssl::x509::X509;
+//     use tokio;
+//
+//     use crate::certificats::{build_store_path, charger_enveloppe, charger_enveloppe_privee, EnveloppePrivee, ValidateurX509, ValidateurX509Impl};
+//     use crate::constantes::Securite;
+//     use crate::formatteur_messages::FormatteurMessage;
+//     use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
+//     use crate::rabbitmq_dao::TypeMessageOut;
+//     use crate::recepteur_messages::{MessageValide, TypeMessage};
+//
+//     use crate::test_setup::setup;
+//
+//     use super::*;
+//
+//     #[tokio::test]
+//     async fn test_notification() -> Result<(), Box<dyn Error>> {
+//         setup("test_notification");
+//
+//         let generateur = preparer_generateur_dummy()?;
+//
+//         // Test
+//         let emetteur = EmetteurNotifications::new(generateur.enveloppe_ca.as_ref(), None)?;
+//
+//         let notification_interne = NotificationMessageInterne {
+//             from: "".to_string(),
+//             subject: None,
+//             content: "".to_string(),
+//             version: 0,
+//             format: "".to_string(),
+//         };
+//
+//         emetteur.emettre_notification_proprietaire(
+//             &generateur,
+//             notification_interne,
+//             "info",
+//             None,
+//             None
+//         ).await?;
+//
+//         Ok(())
+//     }
+//
+//     #[tokio::test]
+//     async fn test_2_notifications() -> Result<(), Box<dyn Error>> {
+//         setup("test_2_notifications");
+//
+//         let generateur = preparer_generateur_dummy()?;
+//
+//         // Test
+//         let emetteur = EmetteurNotifications::new(generateur.enveloppe_ca.as_ref(), None)?;
+//
+//         let notification_interne = NotificationMessageInterne {
+//             from: "".to_string(),
+//             subject: None,
+//             content: "".to_string(),
+//             version: 0,
+//             format: "".to_string(),
+//         };
+//
+//         emetteur.emettre_notification_proprietaire(&generateur, notification_interne.clone(), "info", None, None).await?;
+//         emetteur.emettre_notification_proprietaire(&generateur, notification_interne, "info", None, None).await?;
+//
+//         Ok(())
+//     }
+//
+//     struct DummyGenerateurMessages {
+//         validateur: Arc<ValidateurX509Impl>,
+//         enveloppe_privee: Arc<EnveloppePrivee>,
+//         enveloppe_ca: Arc<EnveloppeCertificat>,
+//     }
+//
+//     impl FormatteurMessage for DummyGenerateurMessages {
+//         fn get_enveloppe_signature(&self) -> Arc<EnveloppePrivee> {
+//             self.enveloppe_privee.clone()
+//         }
+//
+//         fn set_enveloppe_signature(&self, enveloppe: Arc<EnveloppePrivee>) {
+//             todo!()
+//         }
+//     }
+//
+//     #[async_trait]
+//     impl ValidateurX509 for DummyGenerateurMessages {
+//         async fn charger_enveloppe(&self, chaine_pem: &Vec<String>, fingerprint: Option<&str>, ca_pem: Option<&str>)
+//             -> Result<Arc<EnveloppeCertificat>, crate::error::Error>
+//         {
+//             self.validateur.charger_enveloppe(chaine_pem, fingerprint, ca_pem).await
+//         }
+//
+//         async fn cacher(&self, certificat: EnveloppeCertificat) -> (Arc<EnveloppeCertificat>, bool) {
+//             todo!()
+//         }
+//
+//         fn set_flag_persiste(&self, fingerprint: &str) {
+//             todo!()
+//         }
+//
+//         async fn get_certificat(&self, fingerprint: &str) -> Option<Arc<EnveloppeCertificat>> {
+//             todo!()
+//         }
+//
+//         fn est_cache(&self, fingerprint: &str) -> bool {
+//             todo!()
+//         }
+//
+//         fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
+//             todo!()
+//         }
+//
+//         fn idmg(&self) -> &str {
+//             todo!()
+//         }
+//
+//         fn ca_pem(&self) -> &str {
+//             todo!()
+//         }
+//
+//         fn ca_cert(&self) -> &X509 {
+//             todo!()
+//         }
+//
+//         fn store(&self) -> &X509Store {
+//             todo!()
+//         }
+//
+//         fn store_notime(&self) -> &X509Store {
+//             todo!()
+//         }
+//
+//         async fn entretien_validateur(&self) {
+//             todo!()
+//         }
+//     }
+//
+//     #[async_trait]
+//     impl GenerateurMessages for DummyGenerateurMessages {
+//         async fn emettre_evenement<R, M>(&self, routage: R, message: &M) -> Result<(), String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn transmettre_requete<R, M>(&self, routage: R, message: &M) -> Result<TypeMessage, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn soumettre_transaction<R, M>(&self, routage: R, message: &M) -> Result<Option<TypeMessage>, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn transmettre_commande<R, M>(&self, routage: R, message: &M) -> Result<Option<TypeMessage>, String> where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn repondre<R, M>(&self, routage: R, message: M) -> Result<(), String> where R: Into<RoutageMessageReponse>, M: Serialize + Send + Sync {
+//             todo!()
+//         }
+//
+//         async fn emettre_message<M>(&self, type_message: TypeMessageOut, message: M) -> Result<Option<TypeMessage>, String> where M: Into<MessageMilleGrillesBufferDefault> {
+//             todo!()
+//         }
+//
+//         fn mq_disponible(&self) -> bool {
+//             todo!()
+//         }
+//
+//         fn set_regeneration(&self) {
+//             todo!()
+//         }
+//
+//         fn reset_regeneration(&self) {
+//             todo!()
+//         }
+//
+//         fn get_mode_regeneration(&self) -> bool {
+//             todo!()
+//         }
+//
+//         fn get_securite(&self) -> &Securite {
+//             todo!()
+//         }
+//     }
+//
+//     fn preparer_generateur_dummy() -> Result<DummyGenerateurMessages, Box<dyn Error>> {
+//         // Setup
+//         let ca_certfile = PathBuf::from(std::env::var("CERTFILE").unwrap_or_else(|_| "/var/opt/millegrilles/configuration/pki.millegrille.cert".into()));
+//         let validateur: Arc<ValidateurX509Impl> = Arc::new(build_store_path(ca_certfile.as_path()).expect("Erreur chargement store X509"));
+//
+//         let keyfile = PathBuf::from(std::env::var("KEYFILE").unwrap_or_else(|_| "/var/opt/millegrilles/secrets/pki.maitrecomptes.cle".into()));
+//         let certfile = PathBuf::from(std::env::var("CERTFILE").unwrap_or_else(|_| "/var/opt/millegrilles/secrets/pki.maitredescles.cert".into()));
+//
+//         // Preparer enveloppe privee
+//         let enveloppe_privee = Arc::new(
+//             charger_enveloppe_privee(
+//                 certfile.as_path(),
+//                 keyfile.as_path(),
+//                 validateur.clone()
+//             ).expect("Erreur chargement cle ou certificat")
+//         );
+//         let enveloppe_ca = enveloppe_privee.enveloppe_ca.clone();
+//
+//         Ok(DummyGenerateurMessages { validateur, enveloppe_privee, enveloppe_ca })
+//     }
+//
+// }

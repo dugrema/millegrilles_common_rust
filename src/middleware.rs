@@ -965,10 +965,10 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
     let mut message_ref = m.message.parse()?;
-    if message_ref.attachements.is_some() {
-        // On doit retirer les attachements avant de sauvegarder le message.
-        message_ref.attachements = None;
-    }
+    // if message_ref.attachements.is_some() {
+    //     // On doit retirer les attachements avant de sauvegarder le message.
+    //     message_ref.attachements = None;
+    // }
 
     // Fix deserialization contenu en utilisant une version owned
     let message_owned: MessageMilleGrillesOwned = serde_json::from_slice(m.message.buffer.as_slice())?;

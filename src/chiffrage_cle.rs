@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use blake2::{Blake2s256, Digest};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
-use millegrilles_cryptographie::chiffrage::FormatChiffrage;
+use millegrilles_cryptographie::chiffrage::{FormatChiffrage, formatchiffragestr};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesRef};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
 use crate::signatures::{signer_identite, signer_message, verifier_message};
+use crate::error::Error as CommonError;
 
 /// Nombre maximal de certificats de maitre des cles dans le cache de chiffrage
 const CONST_MAX_CACHE_CHIFFRAGE: usize = 16;
@@ -207,6 +209,7 @@ pub struct CommandeSauvegarderCle {
     pub cles: HashMap<String, String>,
 
     // Information de dechiffrage
+    #[serde(with = "formatchiffragestr")]
     pub format: FormatChiffrage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iv: Option<String>,
@@ -232,17 +235,66 @@ impl Into<Document> for CommandeSauvegarderCle {
 
 impl CommandeSauvegarderCle {
 
-    // pub fn signer_identite(&mut self, cle_secrete: &CleSecrete) -> Result<(), String> {
-    //     let identite = IdentiteCle::from(self.clone());
-    //     let signature_identite = identite.signer(cle_secrete)?;
-    //     self.signature_identite = signature_identite;
-    //     Ok(())
-    // }
+    pub fn from_message_chiffre(
+        message: &MessageMilleGrillesOwned,
+        identificateurs_document: HashMap<String, String>
+    ) -> Result<Self, CommonError> {
 
-    // pub fn verifier_identite(&self, cle_secrete: &CleSecrete) -> Result<bool, String> {
-    //     let identite = IdentiteCle::from(self.clone());
-    //     Ok(identite.verifier(cle_secrete)?)
-    // }
+        let dechiffrage = match message.dechiffrage.as_ref() {
+            Some(inner) => inner,
+            None => Err(CommonError::Str("CommandeSauvegarderCle.from_message_chiffre Message sans section dechiffrage"))?
+        };
+
+        let cles: HashMap<String, String> = match dechiffrage.cles.as_ref() {
+            Some(inner) => inner.iter().map(|(k,v)| (k.to_string(), v.to_string())).collect(),
+            None => Err(CommonError::Str("CommandeSauvegarderCle.from_message_chiffre Message sans cles de chiffrage"))?
+        };
+
+        let hachage_bytes = match dechiffrage.cle_id.as_ref() {
+            Some(inner) => inner.to_string(),
+            None => match dechiffrage.hachage.as_ref() {
+                Some(inner) => inner.to_string(),
+                None => Err(CommonError::Str("CommandeSauvegarderCle.from_message_chiffre Message sans cle_id/hachage_bytes"))?
+            }
+        };
+
+        let header = match dechiffrage.header.as_ref() {
+            Some(inner) => Some(inner.to_string()),
+            None => None
+        };
+
+        let fingerprint_partitions: Vec<String> = cles.iter().map(|(k,_)| k.to_owned()).collect();
+        // Prendre une cle au hasard pour la partition de routage du message
+        let partition = match fingerprint_partitions.get(0) {
+            Some(inner) => Some(inner.to_string()),
+            None => None
+        };
+
+        let routage = match message.routage.as_ref() {
+            Some(inner) => inner,
+            None => Err(CommonError::Str("CommandeSauvegarderCle.from_message_chiffre Message sans routage"))?
+        };
+
+        let domaine = match routage.domaine.as_ref() {
+            Some(inner) => inner.to_string(),
+            None => Err(CommonError::Str("CommandeSauvegarderCle.from_message_chiffre Message sans domaine"))?
+        };
+
+        let commande = Self {
+            hachage_bytes,
+            domaine,
+            identificateurs_document,
+            cles,
+            iv: None,
+            tag: None,
+            header,
+            format: dechiffrage.format.as_str().try_into()?,
+            partition,
+            fingerprint_partitions: Some(fingerprint_partitions),
+        };
+
+        Ok(commande)
+    }
 
 }
 

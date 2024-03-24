@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
+use millegrilles_cryptographie::error::Error;
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use serde::{Deserialize, Serialize};
@@ -23,7 +24,7 @@ pub struct TransactionRef<'a> {
     /// Kind du message, correspond a enum MessageKind
     pub kind: MessageKind,
 
-    /// Contenu du message en format json-string escaped
+    /// Contenu du message en format **json-string escaped**
     #[serde(rename = "contenu")]
     pub contenu_escaped: &'a str,
 
@@ -47,9 +48,9 @@ pub struct TransactionRef<'a> {
     #[serde(rename = "sig")]
     pub signature: &'a str,
 
-    /// Chaine de certificats en format PEM.
+    /// Chaine de certificats en format PEM (**escaped** en json).
     #[serde(rename = "certificat", skip_serializing_if = "Option::is_none")]
-    pub certificat: Option<Vec<&'a str>>,
+    pub certificat_escaped: Option<Vec<&'a str>>,
 
     /// Certificat de millegrille (root).
     #[serde(rename = "millegrille", skip_serializing_if = "Option::is_none")]
@@ -73,6 +74,20 @@ impl<'a> TransactionRef<'a> {
     pub fn contenu(&self) -> Result<String, crate::error::Error> {
         let contenu_escaped: String = serde_json::from_str(format!("\"{}\"", self.contenu_escaped).as_str())?;
         Ok(contenu_escaped)
+    }
+
+    pub fn certificat(&self) -> Result<Option<Vec<String>>, crate::error::Error> {
+        match self.certificat_escaped.as_ref() {
+            Some(inner) => {
+                let mut certificat_string = Vec::new();
+                for c in inner {
+                    let certificat: String = serde_json::from_str(format!("\"{}\"", c).as_str())?;
+                    certificat_string.push(certificat);
+                }
+                Ok(Some(certificat_string))
+            },
+            None => Ok(None)
+        }
     }
 
 }
@@ -107,7 +122,7 @@ impl<'a> TransactionRef<'a> {
 
 impl<'a, const C: usize> From<MessageMilleGrillesRef<'a, C>> for TransactionRef<'a> {
     fn from(value: MessageMilleGrillesRef<'a, C>) -> Self {
-        let certificat = match value.certificat {
+        let certificat = match value.certificat_escaped {
             Some(inner) => Some(inner.into_iter().collect()),
             None => None
         };
@@ -119,13 +134,13 @@ impl<'a, const C: usize> From<MessageMilleGrillesRef<'a, C>> for TransactionRef<
             kind: value.kind.clone(),
             contenu_escaped: value.contenu_escaped,
             routage: value.routage,
-            pre_migration: value.pre_migration,
+            pre_migration: None,
             origine: value.origine,
             dechiffrage: value.dechiffrage,
             signature: value.signature,
-            certificat,
+            certificat_escaped: certificat,
             millegrille: value.millegrille,
-            attachements: value.attachements,
+            attachements: None,
             evenements: None,
             contenu_valide: value.contenu_valide,
         }
@@ -199,6 +214,7 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
 
     fn try_into(self) -> Result<TransactionOwned, Self::Error> {
         let contenu = self.contenu()?;
+        let certificat = self.certificat()?;
 
         Ok(TransactionOwned {
             id: self.id.into(),
@@ -211,7 +227,7 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
             origine: match self.origine { Some(inner) => Some(inner.to_owned()), None => None },
             dechiffrage: match &self.dechiffrage { Some(inner) => Some(inner.into()), None => None },
             signature: self.signature.into(),
-            certificat: match self.certificat { Some(inner) => Some(inner.into_iter().map(|s| s.to_string()).collect()), None => None },
+            certificat,
             millegrille: match self.millegrille { Some(inner) => Some(inner.to_string()), None => None },
             attachements: match self.attachements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
             evenements: match self.evenements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },

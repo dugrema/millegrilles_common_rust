@@ -1,4 +1,5 @@
 use std::fmt;
+use std::str::Utf8Error;
 use hex::FromHexError;
 use openssl::error::ErrorStack;
 use redis::RedisError;
@@ -24,7 +25,8 @@ pub enum Error {
     BsonValueAccessError(bson::document::ValueAccessError),
     Reqwest(reqwest::Error),
     HexFrom(hex::FromHexError),
-    UrlParse(url::ParseError)
+    UrlParse(url::ParseError),
+    Utf8Error(Utf8Error),
 }
 
 impl fmt::Display for Error {
@@ -125,5 +127,11 @@ impl From<multibase::Error> for Error {
 impl From<multihash::Error> for Error {
     fn from(value: multihash::Error) -> Self {
         Self::Multihash(value)
+    }
+}
+
+impl From<Utf8Error> for Error {
+    fn from(value: Utf8Error) -> Self {
+        Self::Utf8Error(value)
     }
 }

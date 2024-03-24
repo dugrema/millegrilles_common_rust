@@ -482,50 +482,51 @@ async fn _traiter_transactions_catalogue_wrapper<M>(
     // Ok(messages_recus)
 }
 
-fn trouver_date_traitement_transaction(transaction: &MessageMilleGrillesRefDefault) -> Result<DateTime<Utc>, Box<dyn Error>> {
-    debug!("trouver_date_transaction Dans transaction : {:?}", transaction.id);
-    match &transaction.attachements {
-        Some(attachements) => match attachements.get("evenements") {
-            None => (),
-            Some(evenements) => {
-                debug!("trouver_date_transaction evenements : {:?}", evenements);
-                if let Some(evenements) = evenements.as_object() {
-                    if let Some(transaction_traitee) = evenements.get("transaction_traitee") {
-                        if let Some(transaction_traitee) = transaction_traitee.as_object() {
-                            if let Some(date_transaction) = transaction_traitee.get("$date") {
-                                if let Some(date_transaction) = date_transaction.as_object() {
-                                    if let Some(date_transaction) = date_transaction.get("$numberLong") {
-                                        if let Some(date_string) = date_transaction.as_str() {
-                                            debug!("trouver_date_transaction Date attachement string : {}", date_string);
-                                            match date_string.parse::<i64>() {
-                                                Ok(inner) => {
-                                                    match DateTime::from_timestamp(inner/1000, 0) {
-                                                        Some(inner) => return Ok(inner),
-                                                        None => warn!("trouver_date_transaction Erreur conversion date (absente)")
-                                                    }
-                                                    // let date_epoch = DateEpochSeconds::from_i64(inner/1000);
-                                                    // debug!("trouver_date_transaction Date attachement string : {:?}", date_epoch);
-                                                    // return Ok(date_epoch)
-                                                },
-                                                Err(e) => {
-                                                    warn!("trouver_date_transaction Erreur parse date transaction_traitee {:?}, fallback estampille", e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-        },
-        None => ()
-    }
-
-    // Fallback
-    Ok(transaction.estampille.clone())
-}
+// fn trouver_date_traitement_transaction(transaction: &MessageMilleGrillesRefDefault) -> Result<DateTime<Utc>, Box<dyn Error>> {
+//     debug!("trouver_date_transaction Dans transaction : {:?}", transaction.id);
+//     todo!("fix me")
+//     // match &transaction.attachements {
+//     //     Some(attachements) => match attachements.get("evenements") {
+//     //         None => (),
+//     //         Some(evenements) => {
+//     //             debug!("trouver_date_transaction evenements : {:?}", evenements);
+//     //             if let Some(evenements) = evenements.as_object() {
+//     //                 if let Some(transaction_traitee) = evenements.get("transaction_traitee") {
+//     //                     if let Some(transaction_traitee) = transaction_traitee.as_object() {
+//     //                         if let Some(date_transaction) = transaction_traitee.get("$date") {
+//     //                             if let Some(date_transaction) = date_transaction.as_object() {
+//     //                                 if let Some(date_transaction) = date_transaction.get("$numberLong") {
+//     //                                     if let Some(date_string) = date_transaction.as_str() {
+//     //                                         debug!("trouver_date_transaction Date attachement string : {}", date_string);
+//     //                                         match date_string.parse::<i64>() {
+//     //                                             Ok(inner) => {
+//     //                                                 match DateTime::from_timestamp(inner/1000, 0) {
+//     //                                                     Some(inner) => return Ok(inner),
+//     //                                                     None => warn!("trouver_date_transaction Erreur conversion date (absente)")
+//     //                                                 }
+//     //                                                 // let date_epoch = DateEpochSeconds::from_i64(inner/1000);
+//     //                                                 // debug!("trouver_date_transaction Date attachement string : {:?}", date_epoch);
+//     //                                                 // return Ok(date_epoch)
+//     //                                             },
+//     //                                             Err(e) => {
+//     //                                                 warn!("trouver_date_transaction Erreur parse date transaction_traitee {:?}, fallback estampille", e);
+//     //                                             }
+//     //                                         }
+//     //                                     }
+//     //                                 }
+//     //                             }
+//     //                         }
+//     //                     }
+//     //                 }
+//     //             }
+//     //         },
+//     //     },
+//     //     None => ()
+//     // }
+//     //
+//     // // Fallback
+//     // Ok(transaction.estampille.clone())
+// }
 
 async fn serialiser_catalogue<M>(
     middleware: &M, mut builder: CatalogueBackupBuilder, transactions_chiffrees: &Vec<u8>, chiffrage: FichierCompressionResult, info_backup: &BackupInformation)
