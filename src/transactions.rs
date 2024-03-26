@@ -21,7 +21,7 @@ use tokio_stream::StreamExt;
 
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
-use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
+use crate::db_structs::{EvenementsTransaction, TransactionOwned, TransactionRef, TransactionValide};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::messages_generiques::CommandeUsager;
 use crate::middleware::{map_serializable_to_bson, requete_certificat};
@@ -702,17 +702,18 @@ pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut 
             let evenements = match t.evenements.as_mut() {
                 Some(inner) => inner,
                 None => {
-                    t.evenements = Some(HashMap::new());
+                    t.evenements = Some(EvenementsTransaction::new());
                     t.evenements.as_mut().unwrap()
                 }
             };
-            match evenements.get("backup_flag") {
-                Some(Value::Bool(true)) => {
+            match evenements.backup_flag.clone() {
+                Some(true) => {
                     // Ok
                 },
                 _ => {
                     // Set flag a true
-                    evenements.insert("backup_flag".into(), Value::Bool(true));
+                    // evenements.insert("backup_flag".into(), Value::Bool(true));
+                    evenements.backup_flag = Some(true);
                 }
             }
 

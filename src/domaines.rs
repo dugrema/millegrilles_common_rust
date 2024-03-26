@@ -423,7 +423,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         };
 
         let resultat = match &message.type_message {
-            TypeMessageOut::Requete(_) => self.consommer_requete(middleware.as_ref(), message).await,
+            TypeMessageOut::Requete(_) => self.consommer_requete_trait(middleware.clone(), message).await,
             TypeMessageOut::Commande(_) => self.consommer_commande_trait(middleware.clone(), message).await,
             TypeMessageOut::Transaction(_) => self.consommer_transaction(middleware.as_ref(), message).await,
             TypeMessageOut::Reponse(_) => Err(String::from("Recu reponse sur thread consommation, drop message"))?,

@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
+use log::error;
+use millegrilles_cryptographie::ed25519::{MessageId, verifier};
+use millegrilles_cryptographie::ed25519_dalek::VerifyingKey;
 use millegrilles_cryptographie::error::Error;
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds};
+use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, optionepochseconds, HacheurMessage};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use crate::mongo_dao::opt_chrono_datetime_as_bson_datetime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use mongodb::bson;
 use crate::recepteur_messages::MessageValide;
 
 /// Mapping avec references des documents d'une table de Transactions.
@@ -61,7 +67,7 @@ pub struct TransactionRef<'a> {
     pub attachements: Option<HashMap<String, Value>>,
 
     #[serde(rename = "_evenements")]
-    pub evenements: Option<HashMap<&'a str, Value>>,
+    pub evenements: Option<EvenementsTransaction>,
 
     #[serde(skip)]
     /// Apres verification, conserve : signature valide, hachage valide
@@ -201,11 +207,57 @@ pub struct TransactionOwned {
     pub attachements: Option<HashMap<String, Value>>,
 
     #[serde(rename = "_evenements")]
-    pub evenements: Option<HashMap<String, Value>>,
+    pub evenements: Option<EvenementsTransaction>,
 
     #[serde(skip)]
     /// Apres verification, conserve : signature valide, hachage valide
     pub contenu_valide: Option<(bool, bool)>,
+}
+
+impl TransactionOwned {
+
+    pub fn verifier_signature(&mut self) -> Result<(), crate::error::Error> {
+        if let Some(inner) = self.contenu_valide {
+            if inner == (true, true) {
+                return Ok(())
+            }
+            Err(Error::Str("verifier_signature Invalide"))?
+        }
+
+        // Verifier le hachage du message
+        let contenu_escaped = serde_json::to_string(self.contenu.as_str())?;
+        let hacheur = self.get_hacheur(&contenu_escaped[1..contenu_escaped.len()-1])?;
+        let hachage_string = hacheur.hacher()?;
+        if self.id != hachage_string.as_str() {
+            self.contenu_valide = Some((false, false));
+            error!("verifier_signature hachage invalide : id: {}, calcule: {}", self.id, hachage_string);
+            Err(Error::Str("verifier_signature hachage invalide"))?
+        }
+
+        // Extraire cle publique (bytes de pubkey) pour verifier la signature
+        let mut buf_pubkey = [0u8; 32];
+        hex::decode_to_slice(&self.pubkey, &mut buf_pubkey).unwrap();
+        let verifying_key = VerifyingKey::from_bytes(&buf_pubkey).unwrap();
+
+        // Extraire la signature (bytes de sig)
+        let mut hachage_bytes = [0u8; 32] as MessageId;
+        if let Err(e) = hex::decode_to_slice(&self.id, &mut hachage_bytes) {
+            error!("verifier_signature Erreur hex {:?}", e);
+            self.contenu_valide = Some((false, true));
+            Err(Error::Str("verifier_signature:E1"))?
+        }
+
+        // Verifier la signature
+        if ! verifier(&verifying_key, &hachage_bytes, &self.signature) {
+            self.contenu_valide = Some((false, true));
+            Err(Error::Str("verifier_signature signature invalide"))?
+        }
+
+        // Marquer signature valide=true, hachage valide=true
+        self.contenu_valide = Some((true, true));
+
+        Ok(())
+    }
 }
 
 impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
@@ -230,8 +282,25 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
             certificat,
             millegrille: match self.millegrille { Some(inner) => Some(inner.to_string()), None => None },
             attachements: match self.attachements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
-            evenements: match self.evenements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
+            // evenements: match self.evenements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
+            evenements: self.evenements,
             contenu_valide: self.contenu_valide,
+        })
+    }
+}
+
+impl TransactionOwned {
+
+    fn get_hacheur<'a>(&'a self, contenu_escaped: &'a str) -> Result<HacheurMessage<'a>, crate::error::Error> {
+        Ok(HacheurMessage {
+            hacheur: HacheurBlake2s256::new(),
+            pubkey: self.pubkey.as_str(),
+            estampille: &self.estampille,
+            kind: self.kind.clone(),
+            contenu_escaped,
+            routage: match self.routage.as_ref() { Some(inner) => Some(inner.into()), None => None },
+            origine: match self.origine.as_ref() { Some(inner) => Some(inner.as_str()), None => None },
+            dechiffrage: match self.dechiffrage.as_ref() { Some(inner) => Some(inner.try_into()?), None => None },
         })
     }
 }
@@ -254,6 +323,39 @@ impl TryFrom<MessageValide> for TransactionValide {
             transaction: transaction_ref.try_into()?,
             certificat: value.certificat,
         })
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct EvenementsTransaction {
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub document_persiste: DateTime<Utc>,
+    #[serde(rename="_estampille", with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub estampille: DateTime<Utc>,
+    pub transaction_complete: Option<bool>,
+    pub backup_flag: Option<bool>,
+    #[serde(default, with = "opt_chrono_datetime_as_bson_datetime")]
+    pub signature_verifiee: Option<DateTime<Utc>>,
+    #[serde(default, with = "opt_chrono_datetime_as_bson_datetime")]
+    pub transaction_traitee: Option<DateTime<Utc>>,
+    #[serde(default, with = "opt_chrono_datetime_as_bson_datetime")]
+    pub backup_horaire: Option<DateTime<Utc>>,
+    #[serde(flatten)]
+    pub extra: Option<HashMap<String, Value>>,
+}
+
+impl EvenementsTransaction {
+    pub fn new() -> Self {
+        Self {
+            document_persiste: Default::default(),
+            estampille: Default::default(),
+            transaction_complete: None,
+            backup_flag: None,
+            signature_verifiee: None,
+            transaction_traitee: None,
+            backup_horaire: None,
+            extra: None,
+        }
     }
 }
 

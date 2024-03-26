@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::from_utf8;
 use std::sync::{Arc, mpsc, Mutex};
@@ -8,11 +9,16 @@ use async_std::fs::File;
 use async_std::prelude::FutureExt;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use futures::pin_mut;
 use log::{debug, error, info, warn};
-use millegrilles_cryptographie::messages_structs::{epochseconds, MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CipherResultVec, CleChiffrageHandler, CleChiffrageStruct};
+use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, epochseconds, MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::bson::{doc, Document};
+use mongodb::Cursor;
 use mongodb::options::{FindOptions, Hint};
 use multibase::{Base, encode};
 use multihash::Code;
@@ -34,6 +40,7 @@ use crate::certificats::{CollectionCertificatsPem, ValidateurX509};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::constantes::Securite::{L2Prive, L3Protege};
+use crate::db_structs::TransactionOwned;
 use crate::fichiers::{CompressionChiffrageProcessor, FichierCompressionChiffrage, FichierCompressionResult};
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
@@ -47,8 +54,8 @@ use crate::recepteur_messages::TypeMessage;
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
 const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 10 * 1024 * 1024;
-const TRANSACTIONS_MAX_SIZE: usize = 20 * 1024 * 1024;
-const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions par fichier
+const BACKUP_TRANSACTIONS_MAX_SIZE: usize = 1 * 1024 * 1024;
+// const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions par fichier
 
 // Epoch en ms du demarrage du backup courant
 // Utilise pour ignorer des flags de demande de backup recus durant le backup
@@ -58,7 +65,7 @@ const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage + ChiffrageFactoryTrait*/  // + Chiffreur<CipherMgs3, Mgs3CipherKeys>
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
 {
     while let Some(commande) = rx.recv().await {
         let mut abandonner_backup = false;
@@ -158,9 +165,9 @@ pub trait BackupStarter {
 
 /// Lance un backup complet de la collection en parametre.
 pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
-    -> Result<Option<MessageMilleGrillesBufferDefault>, Box<dyn Error>>
+    -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where
-        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages /*+ VerificateurMessage + ChiffrageFactoryTrait */
+        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
 {
     let nom_coll_str = commande.nom_collection_transactions.as_str();
     let nom_domaine_str = commande.nom_domaine.as_str();
@@ -168,8 +175,6 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     {
         // Indiquer au processus trigger qu'on demarre le backup
         let routage = RoutageMessageReponse::new(&commande.reply_q, &commande.correlation_id);
-        // let reponse_demarrage = middleware.formatter_reponse(json!({"ok": true, "code": 0}), None)?;
-        // middleware.repondre(routage, reponse_demarrage).await?;
         middleware.repondre(routage, json!({"ok": true, "code": 0})).await?;
     }
 
@@ -196,9 +201,6 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
 
     let curseur_transactions = requete_transactions(middleware, &info_backup).await?;
 
-    // let fichiers_backup = generer_fichiers_backup(middleware, transactions, &workdir, &info_backup).await?;
-    // emettre_backup_transactions(middleware, nom_coll_str, &fichiers_backup).await?;
-
     let (tx_keepalive, rx_keepalive) = tokio::sync::oneshot::channel();
     let handle_generer = generer_backup_wrapper(middleware, curseur_transactions, &info_backup, tx_keepalive);
     let handle_keepalive = generer_keepalive(middleware, &info_backup, rx_keepalive);
@@ -211,11 +213,13 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     Ok(None)
 }
 
-async fn generer_backup_wrapper<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation, tx_keepalive: tokio::sync::oneshot::Sender<bool>)
-    -> Result<(), String>
+async fn generer_backup_wrapper<M>(
+    middleware: &M, mut curseur: Cursor<TransactionOwned>, info_backup: &BackupInformation,
+    tx_keepalive: tokio::sync::oneshot::Sender<bool>
+)
+    -> Result<(), crate::error::Error>
     where
-        M: MongoDao + ValidateurX509 + FormatteurMessage + GenerateurMessages /*+ VerificateurMessage + ChiffrageFactoryTrait */,
-        S: CurseurStream + Send + 'static
+        M: MongoDao + ValidateurX509 + FormatteurMessage + GenerateurMessages + CleChiffrageHandler
 {
     let resultat = generer_backup(middleware, curseur, info_backup).await;
 
@@ -229,11 +233,10 @@ async fn generer_backup_wrapper<M,S>(middleware: &M, mut curseur: S, info_backup
     }
 }
 
-async fn generer_backup<M,S>(middleware: &M, mut curseur: S, info_backup: &BackupInformation)
-    -> Result<(), Box<dyn Error>>
+async fn generer_backup<M>(middleware: &M, mut curseur: Cursor<TransactionOwned>, info_backup: &BackupInformation)
+    -> Result<(), crate::error::Error>
     where
-        M: MongoDao + ValidateurX509 + FormatteurMessage + GenerateurMessages /*+ VerificateurMessage + ChiffrageFactoryTrait */,
-        S: CurseurStream + Send + 'static
+        M: MongoDao + ValidateurX509 + FormatteurMessage + GenerateurMessages + CleChiffrageHandler
 {
     let timestamp_backup = Utc::now();
     debug!("generer_fichiers_backup Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
@@ -253,105 +256,96 @@ async fn generer_backup<M,S>(middleware: &M, mut curseur: S, info_backup: &Backu
     Ok(())
 }
 
-async fn verifier_transactions<M,S>(middleware: &M, curseur: &mut S, sender: Sender<MessageMilleGrillesBufferDefault>) -> Result<bool, String>
-    where M: ValidateurX509 /*+ VerificateurMessage*/, S: CurseurStream
+async fn verifier_transactions<M>(middleware: &M, curseur: &mut Cursor<TransactionOwned>, sender: Sender<TransactionOwned>)
+    -> Result<bool, crate::error::Error>
+    where M: ValidateurX509
 {
     debug!("verifier_transactions Debut");
-    match _verifier_transactions_wrapper(middleware, curseur, sender).await {
-        Ok(inner) => Ok(inner),
-        Err(e) => Err(format!("verifier_transactions Erreur traitement : {:?}", e))?
-    }
-}
-
-async fn _verifier_transactions_wrapper<M,S>(middleware: &M, curseur: &mut S, sender: Sender<MessageMilleGrillesBufferDefault>) -> Result<bool, Box<dyn Error>>
-    where M: ValidateurX509 /*+ VerificateurMessage*/, S: CurseurStream
-{
-    debug!("verifier_transactions Debut");
-    todo!("backup - fix me")
-    // let mut compteur = 0;
+    let mut compteur = 0;
     // let mut taille_transactions = 0;  // Calcul la taille dechiffree/decompressee
-    // let options_validation = ValidationOptions::new(false, true, true);
-    //
-    // while let Some(doc_transaction) = curseur.try_next().await? {
-    //     debug!("verifier_transactions Traiter transaction {:?}", doc_transaction);
-    //     compteur = compteur + 1;
-    //
-    //     // Verifier la transaction - doit etre completement valide, certificat connu
-    //     let mut transaction = MessageSerialise::from_serializable(&doc_transaction)?;
-    //     let message_id = transaction.parsed.id.clone();
-    //
-    //     let fingerprint_certificat = transaction.parsed.pubkey.as_str();
-    //     match middleware.get_certificat(fingerprint_certificat).await {
-    //         Some(c) => transaction.set_certificat(c),
-    //         None => {
-    //             error!("verifier_transactions Certificat inconnu {}, transaction {:?} *** SKIPPED ***",
-    //                 fingerprint_certificat, transaction.parsed);
-    //             continue;
-    //         }
-    //     }
-    //
-    //     let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
-    //     debug!("verifier_transactions Resultat verification transaction : {:?}", resultat_verification);
-    //
-    //     if ! resultat_verification.valide() {
-    //         error!("verifier_transactions Transaction {:?} invalide, ** SKIP **", transaction.parsed);
-    //     }
-    //
-    //     // Inserer date de traitement de la transaction dans les attachements
-    //     match doc_transaction.get("_evenements") {
-    //         Some(d) => match d.as_document() {
-    //             Some(evenements_doc) => {
-    //                 let evenements_value: Map<String, Value> = convertir_bson_deserializable(evenements_doc.to_owned())?;
-    //                 let mut attachements = Map::new();
-    //                 attachements.insert("evenements".to_string(), Value::from(evenements_value));
-    //                 transaction.parsed.attachements = Some(attachements);
-    //             },
-    //             None => ()
-    //         },
-    //         None => ()
-    //     };
-    //
-    //     // Calculer la taille de la transaction pour appliquer la limite
-    //     {
-    //         // Retirer le certificat pour calculer la taille de la transaction
-    //         let cert = transaction.parsed.certificat.take();
-    //         match serde_json::to_string(&transaction.parsed) {
-    //             Ok(inner) => {
-    //                 taille_transactions = taille_transactions + inner.len();
-    //             },
-    //             Err(e) => {
-    //                 error!("verifier_transactions Erreur traitement transaction {:?}, taille inconnue : {:?}", doc_transaction, e);
-    //             }
-    //         }
-    //         transaction.parsed.certificat = cert;  // Remettre le certificat
-    //     }
-    //
-    //     // Transferer la transaction vers le processus d'ajout au catalogue
-    //     sender.send(transaction).await?;
-    //
-    //     if compteur >= TRANSACTIONS_MAX_NB || taille_transactions >= TRANSACTIONS_DECOMPRESSED_MAX_SIZE {
-    //         debug!("verifier_transactions Transactions pour catalogue : {}, taille initiale : {}", compteur, taille_transactions);
-    //         // Indiquer qu'on termine cette batch mais qu'il reste probablement des transactions
-    //         return Ok(false)
-    //     }
-    // }
-    //
-    // debug!("verifier_transactions Fin des transactions, dernier catalogue : {}, taille initiale : {}", compteur, taille_transactions);
-    // Ok(true)
-}
 
-async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<MessageMilleGrillesBufferDefault>, info_backup: &BackupInformation) -> Result<(), String>
-    where M: GenerateurMessages + MongoDao /* + ChiffrageFactoryTrait */
-{
-    // Traiter transactions
-    match _generer_catalogue_wrapper(middleware, receiver, info_backup).await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("generer_catalogue Erreur : {:?}", e))?
+    while let Some(doc_transaction) = curseur.next().await {
+        let mut transaction = match doc_transaction {
+            Ok(inner) => inner,
+            Err(e) => {
+                error!("Erreur conversion transaction, SKIP : {:?}", e);
+                continue
+            }
+        };
+        debug!("verifier_transactions Traiter transaction id:{}", transaction.id);
+        compteur = compteur + 1;
+
+        if let Err(e) = transaction.verifier_signature() {
+            error!("verifier_transactions Transaction {} invalide (hachage/signature) - SKIP", transaction.id);
+            continue
+        }
+
+        // // S'assurer que le certificat est connu
+        // let fingerprint_certificat = transaction.pubkey.as_str();
+        // match middleware.get_certificat(fingerprint_certificat).await {
+        //     Some(inner) => {
+        //         // Ajouter le certificat dans la transaction
+        //         transaction.certificat = Some(inner.chaine_pem()?);
+        //     },
+        //     None => {
+        //         error!("verifier_transactions Certificat inconnu {}, transaction {:?} *** SKIPPED ***",
+        //             fingerprint_certificat, transaction.id);
+        //         continue;
+        //     }
+        // }
+
+        // let resultat_verification = middleware.verifier_message(&mut transaction, Some(&options_validation))?;
+        // debug!("verifier_transactions Resultat verification transaction : {:?}", resultat_verification);
+        //
+        // if ! resultat_verification.valide() {
+        //     error!("verifier_transactions Transaction {:?} invalide, ** SKIP **", transaction.parsed);
+        // }
+
+        // // Inserer date de traitement de la transaction dans les attachements
+        // match doc_transaction.get("_evenements") {
+        //     Some(d) => match d.as_document() {
+        //         Some(evenements_doc) => {
+        //             let evenements_value: Map<String, Value> = convertir_bson_deserializable(evenements_doc.to_owned())?;
+        //             let mut attachements = Map::new();
+        //             attachements.insert("evenements".to_string(), Value::from(evenements_value));
+        //             transaction.parsed.attachements = Some(attachements);
+        //         },
+        //         None => ()
+        //     },
+        //     None => ()
+        // };
+
+        // Calculer la taille de la transaction pour appliquer la limite
+        // {
+        //     // Retirer le certificat pour calculer la taille de la transaction
+        //     let cert = transaction.parsed.certificat.take();
+        //     match serde_json::to_string(&transaction.parsed) {
+        //         Ok(inner) => {
+        //             taille_transactions = taille_transactions + inner.len();
+        //         },
+        //         Err(e) => {
+        //             error!("verifier_transactions Erreur traitement transaction {:?}, taille inconnue : {:?}", doc_transaction, e);
+        //         }
+        //     }
+        //     transaction.parsed.certificat = cert;  // Remettre le certificat
+        // }
+
+        // Transferer la transaction vers le processus d'ajout au catalogue
+        sender.send(transaction).await?;
+
+        // if compteur >= TRANSACTIONS_MAX_NB || taille_transactions >= TRANSACTIONS_DECOMPRESSED_MAX_SIZE {
+        //     debug!("verifier_transactions Transactions pour catalogue : {}, taille initiale : {}", compteur, taille_transactions);
+        //     // Indiquer qu'on termine cette batch mais qu'il reste probablement des transactions
+        //     return Ok(false)
+        // }
     }
+
+    debug!("verifier_transactions Fin des transactions, compte : {}", compteur) ; //, taille_transactions);
+    Ok(true)
 }
 
 async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, mut receiver: tokio::sync::oneshot::Receiver<bool>)
-    -> Result<(), String>
+    -> Result<(), crate::error::Error>
     where M: GenerateurMessages
 {
     debug!("generer_keepalive Debut");
@@ -378,16 +372,16 @@ async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, m
     Ok(())
 }
 
-async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<MessageMilleGrillesBufferDefault>,
-                                       info_backup: &BackupInformation) -> Result<(), Box<dyn Error>>
-    where M: GenerateurMessages + MongoDao /* + ChiffrageFactoryTrait */
+async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<TransactionOwned>, info_backup: &BackupInformation)
+    -> Result<(), crate::error::Error>
+    where M: GenerateurMessages + ValidateurX509 + MongoDao + CleChiffrageHandler
 {
-    debug!("_generer_catalogue_wrapper Debut generer catalogue");
+    debug!("generer_catalogue Debut generer catalogues");
     // let mut messages_recus = false;
-    let mut buffer_output: Vec<u8> = Vec::new();
-    buffer_output.reserve(5_000_000);
+    // let mut buffer_output: Vec<u8> = Vec::new();
+    // buffer_output.reserve(BACKUP_TRANSACTIONS_MAX_SIZE);
 
-    // Creer un builder pour le nouveau catalogue. Va cumuler l'information des transactions.
+    // Creer un builder initial. Va etre remplace sur chaque rotation de catalogue.
     let mut builder = CatalogueBackupBuilder::new(
         Utc::now(),
         info_backup.domaine.clone(),
@@ -395,12 +389,73 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
         info_backup.uuid_backup.clone()
     );
 
-    let (mut chiffreur, sender) = CompressionChiffrageProcessor::new();
+    let mut gzip_writer = GzEncoder::new(Vec::new(), Compression::best());
 
-    let sender_handler = traiter_transactions_catalogue(middleware, info_backup, &mut builder, &mut receiver, sender);
-    todo!("Fix chiffrage")
-    // let chiffreur_handler = chiffreur.run_vec(middleware.get_chiffrage_factory(), &mut buffer_output);
+    let ca = middleware.get_enveloppe_signature().enveloppe_ca.clone();
+
+    // Boucler pour toutes les transactions du domaine. Creer un nouveau catalogue chaque fois
+    // que la taille limite est atteinte (buffer_output depasse).
+    let mut taille_transactions = 0;
+    while let Some(mut transaction) = receiver.recv().await {
+        let transaction_id = transaction.id.clone();
+
+        let (transaction_bytes, certificat, date_traitement_transaction) = match traiter_transaction_catalogue(middleware, &mut builder, transaction).await {
+            Ok(inner) => inner,
+            Err(e) => {
+                error!("generer_catalogue Erreur traitement transaction {} : {:?}", transaction_id, e);
+                continue  // Skip la transaction
+            }
+        };
+
+        taille_transactions += transaction_bytes.len();
+
+        // Estimer la taille compressee courante + taille transaction courante. Si la valeur
+        // depasse la limite, on genere un nouveau catalogue.
+        // Certificats : Estimer 2kb par certificat, on doit se tenir dans une limite totale de 10mb pour le catalogue.
+        if builder.certificats.len() > 100 ||
+            gzip_writer.get_ref().len() + (transaction_bytes.len() as f64 * 0.7) as usize > BACKUP_TRANSACTIONS_MAX_SIZE
+        {
+            debug!("generer_catalogue Fermer le catalogue");
+
+            // Emettre le catalogue vers le module de backup
+            serialiser_catalogue(middleware, gzip_writer, builder, &info_backup, ca.as_ref()).await?;
+
+            // Rotation du builder
+            taille_transactions = 0;
+            gzip_writer = GzEncoder::new(Vec::new(), Compression::best());
+            builder = CatalogueBackupBuilder::new(
+                Utc::now(),
+                info_backup.domaine.clone(),
+                info_backup.partition.clone(),
+                info_backup.uuid_backup.clone()
+            );
+        }
+
+        debug!("generer_catalogue Ajouter transaction {} au backup", transaction_id);
+        builder.ajouter_certificat(certificat.as_ref());
+        builder.ajouter_transaction(transaction_id.as_str(), &date_traitement_transaction);
+        gzip_writer.write_all(transaction_bytes.as_slice())?;
+    }
+
+    // Verifier si on doit faire un dernier catalogue
+    if builder.uuid_transactions.len() > 0 {
+        debug!("generer_catalogue Generer le dernier catalogue");
+        serialiser_catalogue(middleware, gzip_writer, builder, &info_backup, ca.as_ref()).await?;
+    }
+
+    // Creer un builder pour le nouveau catalogue. Va cumuler l'information des transactions.
+    // let mut builder = CatalogueBackupBuilder::new(
+    //     Utc::now(),
+    //     info_backup.domaine.clone(),
+    //     info_backup.partition.clone(),
+    //     info_backup.uuid_backup.clone()
+    // );
     //
+    // let (mut chiffreur, sender) = CompressionChiffrageProcessor::new();
+    //
+    // let sender_handler = traiter_transactions_catalogue(middleware, info_backup, &mut builder, &mut receiver, sender);
+    // let chiffreur_handler = chiffreur.run_vec(middleware.get_chiffrage_factory(), &mut buffer_output);
+
     // let resultat = try_join!(sender_handler, chiffreur_handler)?;
     //
     // if builder.uuid_transactions.len() == 0 {
@@ -416,71 +471,130 @@ async fn _generer_catalogue_wrapper<M>(middleware: &M, mut receiver: Receiver<Me
     // serialiser_catalogue(middleware, builder, &buffer_output, chiffrage_resultat, info_backup).await?;
     // debug!("_generer_catalogue_wrapper Catalogue chiffre et signe pour domaine {}, uuid {}", info_backup.domaine, info_backup.uuid_backup);
     //
-    // debug!("_generer_catalogue_wrapper Fin generer catalogue");
-    // Ok(())
+    debug!("generer_catalogue Fin generer catalogues");
+    Ok(())
 }
 
-async fn traiter_transactions_catalogue<M>(
-    middleware: &M, info_backup: &BackupInformation, builder: &mut CatalogueBackupBuilder,
-    receiver: &mut Receiver<MessageMilleGrillesBufferDefault>, mut sender: Sender<TokioResult<Bytes>>
+async fn traiter_transaction_catalogue<M>(
+    middleware: &M, builder: &mut CatalogueBackupBuilder<32>, transaction: TransactionOwned
 )
-    -> Result<bool, String>
-    where M: GenerateurMessages
+    -> Result<(Vec<u8>, Arc<EnveloppeCertificat>, DateTime<Utc>), crate::error::Error>
+    where M: GenerateurMessages + ValidateurX509
 {
-    match _traiter_transactions_catalogue_wrapper(middleware, info_backup, builder, receiver, sender).await {
-        Ok(inner) => Ok(inner),
-        Err(e) => Err(format!("traiter_transactions_catalogue Erreur : {:?}", e))?
-    }
+    let transaction_id = transaction.id.as_str();
+    debug!("generer_catalogue Ajouter transaction {} au catalogue", transaction_id);
+
+    let date_traitement_transaction = match transaction.evenements.as_ref() {
+        Some(inner) => match inner.transaction_traitee.as_ref() {
+            Some(inner) => inner.clone(),
+            None => {
+                Err(crate::error::Error::String(format!("traiter_transactions_catalogue Transaction {} sans date de traitement (2) *** SKIPPED ***", transaction.id)))?
+            }
+        },
+        None => {
+            Err(crate::error::Error::String(format!("traiter_transactions_catalogue Transaction {} sans date de traitement (3) *** SKIPPED ***", transaction.id)))?
+        }
+    };
+
+    // S'assurer que le certificat est connu
+    let fingerprint_certificat = transaction.pubkey.as_str();
+    let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+        Some(inner) => inner,
+        None => {
+            Err(crate::error::Error::String(format!("verifier_transactions Certificat inconnu {}, transaction {:?} *** SKIPPED ***",
+                fingerprint_certificat, transaction.id)))?
+        }
+    };
+
+    // // Ajouter l'information sur la transaction
+    // builder.ajouter_certificat(certificat.as_ref());
+    // builder.ajouter_transaction(transaction_id, &date_traitement_transaction);
+
+    // Convertir value en bytes
+    let mut contenu_bytes = {
+        let contenu_str = serde_json::to_string(&transaction)?;
+        contenu_str.as_bytes().to_vec()
+    };
+
+    // Ajouter line feed (\n)
+    contenu_bytes.push(NEW_LINE_BYTE);
+
+    Ok((contenu_bytes, certificat, date_traitement_transaction))
 }
 
-async fn _traiter_transactions_catalogue_wrapper<M>(
-    middleware: &M, info_backup: &BackupInformation, builder: &mut CatalogueBackupBuilder,
-    receiver: &mut Receiver<MessageMilleGrillesBufferDefault>, mut sender: Sender<TokioResult<Bytes>>
-)
-    -> Result<bool, Box<dyn Error>>
-    where M: GenerateurMessages
-{
-    let mut messages_recus = false;
-    todo!("backup - fix me")
-
-    // let mut dernier_evenement = Utc::now();
-    // let intervalle_evenements = Duration::seconds(5);
-    //
-    // while let Some(mut transaction) = receiver.recv().await {
-    //     messages_recus = true;  // S'assurer d'avoir au moins une transaction a traiter dans le catalogue
-    //     let mut message_ref = transaction.parse()?;
-    //     let transaction_id = message_ref.id;
-    //     let fingerprint = message_ref.pubkey;
-    //     debug!("generer_catalogue Ajouter transaction {} au catalogue", transaction_id);
-    //
-    //     let date_traitement_transaction = trouver_date_traitement_transaction(&message_ref)?;
-    //     match message_ref.certificat {
-    //         Some(inner) => builder.ajouter_certificat(inner.as_ref()),
-    //         None => {
-    //             warn!("generer_catalogue Certificat {} absent pour transaction {} - on ajoute la transaction au catalogue quand meme", fingerprint, transaction_id)
-    //         }
-    //     };
-    //
-    //     builder.ajouter_transaction(transaction_id, &date_traitement_transaction);
-    //
-    //     // Retirer le certificat de la transaction - le backup les store separement
-    //     // transaction.parsed.retirer_certificats();
-    //     message_ref.certificat = None;
-    //
-    //     // Convertir value en bytes
-    //     let mut contenu_bytes = {
-    //         let contenu_str = serde_json::to_string(&message_ref)?;
-    //         contenu_str.as_bytes().to_owned()
-    //     };
-    //     // Ajouter line feed (\n)
-    //     contenu_bytes.push(NEW_LINE_BYTE);
-    //
-    //     // Write
-    //     sender.send(TokioResult::Ok(Bytes::from(contenu_bytes))).await?;
-    // }
-    //
-    // Ok(messages_recus)
-}
+// async fn traiter_transactions_catalogue<M>(
+//     middleware: &M, info_backup: &BackupInformation, builder: &mut CatalogueBackupBuilder,
+//     receiver: &mut Receiver<TransactionOwned>, mut sender: Sender<TokioResult<Bytes>>
+// )
+//     -> Result<bool, crate::error::Error>
+//     where M: GenerateurMessages + ValidateurX509
+// {
+//     let mut messages_recus = false;
+//
+//     let mut dernier_evenement = Utc::now();
+//     let intervalle_evenements = Duration::seconds(5);
+//
+//     while let Some(mut transaction) = receiver.recv().await {
+//         messages_recus = true;  // S'assurer d'avoir au moins une transaction a traiter dans le catalogue
+//         let transaction_id = transaction.id.as_str();
+//         let fingerprint = transaction.pubkey.as_str();
+//         debug!("generer_catalogue Ajouter transaction {} au catalogue", transaction_id);
+//
+//         let date_traitement_transaction = match transaction.evenements.as_ref() {
+//             Some(inner) => match inner.get("transaction_traitee") {
+//                 Some(inner) => {
+//                     let date: DateTime<Utc> = match serde_json::from_value(inner.clone()) {
+//                         Ok(inner) => inner,
+//                         Err(e) => {
+//                             error!("traiter_transactions_catalogue Transaction {} sans date de traitement (date invalide : {:?}) (1) - SKIP", transaction.id, e);
+//                             continue
+//                         }
+//                     };
+//                     date
+//                 },
+//                 None => {
+//                     error!("traiter_transactions_catalogue Transaction {} sans date de traitement (2) - SKIP", transaction.id);
+//                     continue
+//                 }
+//             },
+//             None => {
+//                 error!("traiter_transactions_catalogue Transaction {} sans date de traitement (3) - SKIP", transaction.id);
+//                 continue
+//             }
+//         };
+//         // let date_traitement_transaction = trouver_date_traitement_transaction(&message_ref)?;
+//
+//         // S'assurer que le certificat est connu
+//         let fingerprint_certificat = transaction.pubkey.as_str();
+//         match middleware.get_certificat(fingerprint_certificat).await {
+//             Some(inner) => {
+//                 // Ajouter le certificat dans le builder de catalogue
+//                 builder.ajouter_certificat(inner.as_ref())
+//             },
+//             None => {
+//                 error!("verifier_transactions Certificat inconnu {}, transaction {:?} *** SKIPPED ***",
+//                     fingerprint_certificat, transaction.id);
+//                 continue;
+//             }
+//         }
+//
+//         builder.ajouter_transaction(transaction_id, &date_traitement_transaction);
+//
+//         // Convertir value en bytes
+//         let mut contenu_bytes = {
+//             let contenu_str = serde_json::to_string(&transaction)?;
+//             contenu_str.as_bytes().to_vec()
+//         };
+//
+//         // Ajouter line feed (\n)
+//         contenu_bytes.push(NEW_LINE_BYTE);
+//
+//         // Write
+//         sender.send(TokioResult::Ok(Bytes::from(contenu_bytes))).await?;
+//     }
+//
+//     Ok(messages_recus)
+// }
 
 // fn trouver_date_traitement_transaction(transaction: &MessageMilleGrillesRefDefault) -> Result<DateTime<Utc>, Box<dyn Error>> {
 //     debug!("trouver_date_transaction Dans transaction : {:?}", transaction.id);
@@ -529,13 +643,24 @@ async fn _traiter_transactions_catalogue_wrapper<M>(
 // }
 
 async fn serialiser_catalogue<M>(
-    middleware: &M, mut builder: CatalogueBackupBuilder, transactions_chiffrees: &Vec<u8>, chiffrage: FichierCompressionResult, info_backup: &BackupInformation)
-    -> Result<(), Box<dyn Error>>
+    middleware: &M, mut gzip_writer: GzEncoder<Vec<u8>>, mut builder: CatalogueBackupBuilder<32>, info_backup: &BackupInformation, ca: &EnveloppeCertificat)
+    -> Result<(), crate::error::Error>
     where M: MongoDao + GenerateurMessages
 {
     let nom_collection_transactions = info_backup.nom_collection_transactions.as_str();
 
-    todo!("fix chiffrage")
+    // Fermer le buffer de compression
+    let buffer_compresse = gzip_writer.finish()?;
+    if buffer_compresse.len() > BACKUP_TRANSACTIONS_MAX_SIZE {
+        warn!("generer_catalogue Le catalogue en cours depasse la limite max_size : {} bytes, on va le generer quand meme", buffer_compresse.len());
+    }
+
+    // Chiffrer le contenu
+    let cipher = CipherMgs4::with_ca(ca)?;
+    let resultat_chiffrage = cipher.to_vec(buffer_compresse.as_slice())?;
+    debug!("generer_catalogue Taille catalogue backup {} bytes chiffres", resultat_chiffrage.ciphertext.len());
+    builder.charger_transactions_chiffrees(resultat_chiffrage)?;
+
     // builder.set_cles(&chiffrage.cipher_data);
     //
     // builder.charger_transactions_chiffrees(transactions_chiffrees).await?;  // Charger, hacher transactions
@@ -545,25 +670,38 @@ async fn serialiser_catalogue<M>(
     //     Err(format!("sauvegarder_catalogue Erreur creation backup - hachage transactions memoire {} et disque {} mismatch, abandon",
     //                 chiffrage.hachage, builder.data_hachage_bytes))?;
     // }
-    // let mut catalogue = builder.build();
-    //
-    // let uuid_transactions = match catalogue.uuid_transactions.take() {
-    //     Some(inner) => inner,
-    //     None => Vec::new()
-    // };
-    //
+
+    let mut catalogue = builder.build()?;
+
+    let uuid_transactions = catalogue.uuid_transactions.take().unwrap_or_else(|| Vec::new());
+
     // // let mut catalogue_signe = middleware.formatter_message(
     // //     MessageKind::Commande, &catalogue, Some(DOMAINE_BACKUP), Some("backupTransactions"),
     // //     None::<&str>, None::<&str>, None, false)?;
     //
     // // let uuid_message_backup = catalogue_signe.id.clone();
-    //
-    // debug!("sauvegarder_catalogue Catalogue serialise");
-    //
-    // let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions", vec![Securite::L2Prive])
-    //     .timeout_blocking(90_000)
-    //     .build();
-    //
+
+    debug!("serialiser_catalogue Catalogue serialise");
+
+    let routage = RoutageMessageAction::builder(DOMAINE_BACKUP, "backupTransactions", vec![Securite::L2Prive])
+        .timeout_blocking(90_000)
+        .build();
+
+    let reponse = match middleware.transmettre_commande(routage, catalogue).await {
+        Ok(inner) => match inner {
+            Some(inner) => match inner {
+                TypeMessage::Valide(inner) => inner,
+                _ => Err(crate::error::Error::String(String::from("serialiser_catalogue Erreur sauvegarde fichier backup - mauvais type reponse, ** SKIPPED **")))?
+            },
+            None => {
+                Err(crate::error::Error::String(String::from("serialiser_catalogue Erreur sauvegarder fichier backup, ** SKIPPED **")))?
+            }
+        },
+        Err(e) => {
+            Err(crate::error::Error::String(String::from("backup.serialiser_catalogue Aucune reponse, on assume que le backup a echoue, ** SKIPPED **")))?
+        }
+    };
+
     // // let reponse = middleware.emettre_message_millegrille(
     // //     routage, true, TypeMessageOut::Commande, catalogue_signe).await;
     //
@@ -585,26 +723,26 @@ async fn serialiser_catalogue<M>(
     //         Err(format!("backup.serialiser_catalogue Timeout reponse, on assume que le backup a echoue, ** SKIPPED **"))?
     //     }
     // };
-    //
-    // let message_ref = reponse.message.parse()?;
-    // debug!("Reponse backup {:?}", from_utf8(reponse.message.buffer.as_slice()));
-    // let message_contenu = message_ref.contenu()?;
-    // let reponse_mappee: ReponseBackup = message_contenu.deserialize()?;
-    //
-    // if let Some(true) = reponse_mappee.ok {
-    //     debug!("Catalogue transactions sauvegarde OK")
-    // } else {
-    //     Err(format!("backup.serialiser_catalogue Erreur sauvegarde catalogue transactions {:?} (application backup), ABORT. Erreur : {:?}",
-    //                 nom_collection_transactions, reponse_mappee.err))?;
-    // }
-    //
-    // // Marquer transactions comme etant completees
-    // marquer_transaction_backup_complete(
-    //     middleware,
-    //     nom_collection_transactions,
-    //     &uuid_transactions).await?;
-    //
-    // Ok(())
+
+    let message_ref = reponse.message.parse()?;
+    debug!("Reponse backup {:?}", from_utf8(reponse.message.buffer.as_slice()));
+    let message_contenu = message_ref.contenu()?;
+    let reponse_mappee: ReponseBackup = message_contenu.deserialize()?;
+
+    if let Some(true) = reponse_mappee.ok {
+        debug!("Catalogue transactions sauvegarde OK")
+    } else {
+        Err(format!("backup.serialiser_catalogue Erreur sauvegarde catalogue transactions {:?} (application backup), ABORT. Erreur : {:?}",
+                    nom_collection_transactions, reponse_mappee.err))?;
+    }
+
+    // Marquer transactions comme etant completees
+    marquer_transaction_backup_complete(
+        middleware,
+        nom_collection_transactions,
+        &uuid_transactions).await?;
+
+    Ok(())
 }
 
 
@@ -880,11 +1018,12 @@ async fn serialiser_catalogue<M>(
 //     Ok((builder, path_fichier))
 // }
 
-async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformation)
-    -> Result<CurseurMongo, Box<dyn Error>>
+async fn requete_transactions<M>(middleware: &M, info: &BackupInformation)
+    -> Result<Cursor<TransactionOwned>, crate::error::Error>
+    where M: MongoDao
 {
     let nom_collection = &info.nom_collection_transactions;
-    let collection = middleware.get_collection(nom_collection)?;
+    let collection = middleware.get_collection_typed::<TransactionOwned>(nom_collection)?;
 
     let filtre = doc! {
         TRANSACTION_CHAMP_BACKUP_FLAG: false,
@@ -895,24 +1034,19 @@ async fn requete_transactions(middleware: &impl MongoDao, info: &BackupInformati
     // code: 292
     // code_name: "QueryExceededMemoryLimitNoDiskUseAllowed"
     // Executor error during find command :: caused by :: Sort exceeded memory limit of 104857600 bytes, but did not opt in to external sorting.
-    //let sort = doc! {TRANSACTION_CHAMP_EVENEMENT_PERSISTE: 1};
+    // Fix -> Utiliser index backup_transactions
     let find_options = FindOptions::builder()
-        //.sort(sort)
         .hint(Hint::Name(String::from("backup_transactions")))
         .batch_size(50)
         .build();
 
     debug!("backup.requete_transactions Collection {}, filtre {:?}", nom_collection, filtre);
     let curseur = collection.find(filtre, find_options).await?;
-
-    // Wrapper dans CurseurMongo
-    let curseur = CurseurMongo { curseur };
-
     Ok(curseur)
 }
 
 async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collection_ref: S, uuid_transactions_ref: &Vec<T>)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), crate::error::Error>
     where
         M: MongoDao,
         S: AsRef<str>,
@@ -966,7 +1100,7 @@ pub struct BackupInformation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CatalogueBackup {
+pub struct CatalogueBackup<const K: usize> {
     /// Heure de la premiere transaction du backup (traitement interne initial)
     #[serde(with = "epochseconds")]
     pub date_backup: DateTime<Utc>,
@@ -994,35 +1128,16 @@ pub struct CatalogueBackup {
     pub data_transactions: String,
     pub nombre_transactions: usize,
 
-    // /// En-tete du message de catalogue. Presente uniquement lors de deserialization.
-    // #[serde(rename = "en-tete", skip_serializing)]
-    // pub entete: Option<Entete>,
-
     /// Liste des transactions - resultat intermediaire, va etre retiree du fichier final
     #[serde(skip_serializing)]
     pub uuid_transactions: Option<Vec<String>>,
 
-    /// Enchainement backup precedent
-    //backup_precedent: Option<EnteteBackupPrecedent>,
-
-    /// Cle chiffree avec la cle de MilleGrille (si backup chiffre)
-    cle: Option<String>,
-
-    /// IV du contenu chiffre
-    #[serde(skip_serializing_if = "Option::is_none")]
-    iv: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tag: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    header: Option<String>,
-
-    /// Format du chiffrage
-    format: Option<String>,
+    pub dechiffrage: DechiffrageInterMillegrilleOwned,
 }
 
-impl CatalogueBackup {
+impl<const K: usize> CatalogueBackup<K> {
 
-    pub fn builder(heure: DateTime<Utc>, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueBackupBuilder {
+    pub fn builder(heure: DateTime<Utc>, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> CatalogueBackupBuilder<K> {
         CatalogueBackupBuilder::new(heure, nom_domaine, partition, uuid_backup)
     }
 
@@ -1040,26 +1155,21 @@ impl CatalogueBackup {
     // }
 }
 
-#[derive(Clone, Debug)]
-pub struct CatalogueBackupBuilder {
+struct CatalogueBackupBuilder<const K: usize> {
     date_backup: DateTime<Utc>,      // Date de creation du backup (now)
     date_debut_backup: Option<DateTime<Utc>>,  // Date de traitement de la premiere transaction
     date_fin_backup: Option<DateTime<Utc>>,  // Date de traitement de la derniere transaction
     nom_domaine: String,
     partition: Option<String>,
     uuid_backup: String,                // Identificateur unique de ce backup
-    // chiffrer: bool,
-    // snapshot: bool,
-
     certificats: CollectionCertificatsPem,
     uuid_transactions: Vec<String>,     // Liste des transactions inclues (pas mis dans catalogue)
     data_hachage_bytes: String,         // Hachage du contenu chiffre
     data_transactions: String,          // Contenu des transactions en base64 (chiffre)
-    // cles: Option<MgsCipherKeysCurrent>,       // Cles pour dechiffrer le contenu
-    // backup_precedent: Option<EnteteBackupPrecedent>,
+    dechiffrage: Option<DechiffrageInterMillegrilleOwned>,
 }
 
-impl CatalogueBackupBuilder {
+impl<const K: usize> CatalogueBackupBuilder<K> {
 
     fn new(heure: DateTime<Utc>, nom_domaine: String, partition: Option<String>, uuid_backup: String) -> Self {
         CatalogueBackupBuilder {
@@ -1071,6 +1181,7 @@ impl CatalogueBackupBuilder {
             uuid_transactions: Vec::new(),
             data_hachage_bytes: "".to_owned(),
             data_transactions: "".to_owned(),
+            dechiffrage: None,
             // cles: None,
             // backup_precedent: None,
         }
@@ -1106,17 +1217,22 @@ impl CatalogueBackupBuilder {
     //     self.cles = Some(cles.clone());
     // }
 
-    async fn charger_transactions_chiffrees(&mut self, transactions: &Vec<u8>) -> Result<(), Box<dyn Error>> {
+    fn charger_transactions_chiffrees(&mut self, chiffrage: CipherResultVec<K>)
+        -> Result<(), crate::error::Error>
+    {
         // Hacher le contenu (pour verification)
-        self.data_hachage_bytes = hacher_bytes(transactions.as_slice(), Some(Code::Blake2b512), Some(Base::Base58Btc));
+        self.data_hachage_bytes = chiffrage.hachage_bytes;
 
         // Convertir le contenu en base64
-        self.data_transactions = encode(Base::Base64, transactions.as_slice());
+        self.data_transactions = encode(Base::Base64, chiffrage.ciphertext.as_slice());
+
+        // Conserver les cles, information de format de chiffrage
+        self.dechiffrage = Some(chiffrage.cles.into());
 
         Ok(())
     }
 
-    pub fn build(self) -> CatalogueBackup {
+    pub fn build(self) -> Result<CatalogueBackup<K>, crate::error::Error> {
 
         // let date_str = self.date_backup.format_ymdh();
         let date_str = format!("{}", self.date_backup.format("%Y%m%d%H"));
@@ -1129,43 +1245,45 @@ impl CatalogueBackupBuilder {
             None => format!("{}_{}.json.xz", &self.nom_domaine, date_str)
         };
 
-        todo!("fix chiffrage")
         // let (format, cle, header) = match self.cles {
         //     Some(cles) => {
         //         (Some(cles.get_format()), cles.get_cle_millegrille(), Some(cles.header))
         //     },
         //     None => (None, None, None)
         // };
-        //
-        // let date_transactions_debut = match self.date_debut_backup {
-        //     Some(d) => d,
-        //     None => self.date_backup.clone()
-        // };
-        // let date_transactions_fin = match self.date_fin_backup {
-        //     Some(d) => d,
-        //     None => self.date_backup.clone()
-        // };
-        //
-        // CatalogueBackup {
-        //     date_backup: self.date_backup,
-        //     date_transactions_debut,
-        //     date_transactions_fin,
-        //     domaine: self.nom_domaine,
-        //     partition: self.partition,
-        //     uuid_backup: self.uuid_backup,
-        //     catalogue_nomfichier,
-        //
-        //     certificats: self.certificats,
-        //
-        //     data_hachage_bytes: self.data_hachage_bytes,
-        //     data_transactions: self.data_transactions,
-        //     nombre_transactions: self.uuid_transactions.len(),
-        //     uuid_transactions: Some(self.uuid_transactions),
-        //
-        //     // entete: None,  // En-tete chargee lors de la deserialization
-        //
-        //     cle, iv: None, tag: None, header, format,
-        // }
+
+        let date_transactions_debut = match self.date_debut_backup {
+            Some(d) => d,
+            None => self.date_backup.clone()
+        };
+        let date_transactions_fin = match self.date_fin_backup {
+            Some(d) => d,
+            None => self.date_backup.clone()
+        };
+
+        let dechiffrage = match self.dechiffrage {
+            Some(inner) => inner,
+            None => Err(crate::error::Error::Str("Information de dechiffrage absente"))?
+        };
+
+        Ok(CatalogueBackup {
+            date_backup: self.date_backup,
+            date_transactions_debut,
+            date_transactions_fin,
+            domaine: self.nom_domaine,
+            partition: self.partition,
+            uuid_backup: self.uuid_backup,
+            catalogue_nomfichier,
+
+            certificats: self.certificats,
+
+            data_hachage_bytes: self.data_hachage_bytes,
+            data_transactions: self.data_transactions,
+            nombre_transactions: self.uuid_transactions.len(),
+            uuid_transactions: Some(self.uuid_transactions),
+
+            dechiffrage
+        })
     }
 
 }
@@ -1177,7 +1295,7 @@ impl BackupInformation {
         domaine: S,
         nom_collection_transactions: S,
         workpath: Option<PathBuf>
-    ) -> Result<BackupInformation, Box<dyn Error>>
+    ) -> Result<BackupInformation, crate::error::Error>
     where S: Into<String>
     {
         let (workpath_inner, tmp_workdir): (PathBuf, Option<TempDir>) = match workpath {
@@ -1430,7 +1548,7 @@ pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &
 }
 
 pub async fn persister_certificats<M>(middleware: &M, nom_collection_transactions: &str)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), crate::error::Error>
     where M: MongoDao + GenerateurMessages,
 {
     debug!("persister_certificats Debut");
@@ -1509,7 +1627,8 @@ struct TransactionCertRow {
 }
 
 pub async fn emettre_evenement_backup<M>(
-    middleware: &M, info_backup: &BackupInformation, evenement: &str, timestamp: &DateTime<Utc>) -> Result<(), Box<dyn Error>>
+    middleware: &M, info_backup: &BackupInformation, evenement: &str, timestamp: &DateTime<Utc>)
+    -> Result<(), crate::error::Error>
     where M: GenerateurMessages
 {
     let value = json!({

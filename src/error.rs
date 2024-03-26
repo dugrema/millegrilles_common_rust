@@ -4,6 +4,7 @@ use hex::FromHexError;
 use openssl::error::ErrorStack;
 use redis::RedisError;
 use url::ParseError;
+use tokio::sync::mpsc::error::SendError;
 use crate::bson;
 use crate::recepteur_messages::ErreurVerification;
 
@@ -27,6 +28,7 @@ pub enum Error {
     HexFrom(hex::FromHexError),
     UrlParse(url::ParseError),
     Utf8Error(Utf8Error),
+    TokioSendError(String)
 }
 
 impl fmt::Display for Error {
@@ -133,5 +135,11 @@ impl From<multihash::Error> for Error {
 impl From<Utf8Error> for Error {
     fn from(value: Utf8Error) -> Self {
         Self::Utf8Error(value)
+    }
+}
+
+impl<T> From<SendError<T>> for Error {
+    fn from(value: SendError<T>) -> Self {
+        Self::TokioSendError(format!("{:?}", value))
     }
 }
