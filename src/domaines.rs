@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::str::from_utf8;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,7 +18,7 @@ use crate::backup::reset_backup_flag;
 use crate::certificats::ValidateurX509;
 use crate::certificats::VerificateurPermissions;
 use crate::constantes::*;
-use crate::db_structs::TransactionValide;
+use crate::db_structs::{TransactionOwned, TransactionValide};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
 use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
@@ -787,27 +788,30 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     }
 
     /// Sauvegarde une transaction restauree dans la collection du domaine.
-    /// Si la transaction existe deja (par en-tete.uuid_transaction), aucun effet.
+    /// Si la transaction existe deja (par id), aucun effet.
     async fn restaurer_transaction<M>(&self, middleware: &M, message: MessageValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
-        debug!("restaurer_transaction {:?}", message);
-        todo!("fix me")
+        debug!("restaurer_transaction\n{}", from_utf8(message.message.buffer.as_slice())?);
 
-        // let nom_collection_transactions = match self.get_collection_transactions() {
-        //     Some(n) => n,
-        //     None => Err(format!("domaines.restaurer_transaction Tentative de restauration sur domaine sans collection de transactions"))?
-        // };
-        // let message_ref = message.message.parse()?;
-        // let message_restauration: MessageRestaurerTransaction = serde_json::from_str(message_ref.contenu)?;
-        // let transaction = message_restauration.transaction;
-        //
-        // if transaction.attachements.is_none() {
-        //     error!("Attachements manquants (1) : {}", transaction.id);
-        //     return Ok(None)
-        // }
-        //
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(n) => n,
+            None => Err(format!("domaines.restaurer_transaction Tentative de restauration sur domaine sans collection de transactions"))?
+        };
+        let message_ref = message.message.parse()?;
+        let message_contenu = message_ref.contenu()?;
+        let message_restauration: MessageRestaurerTransaction = message_contenu.deserialize()?;
+
+        let mut transaction = message_restauration.transaction;
+        if let Err(e) = transaction.verifier_signature() {
+            Err(format!("restaurer_transaction Erreur verification transaction {}, SKIP", transaction.id))?
+        }
+
+        if transaction.evenements.is_none() {
+            Err(format!("Evenements transaction manquants (1) : {}", transaction.id))?
+        }
+
         // // let mut message_serialise = MessageSerialise::from_parsed(transaction)?;
         // //
         // // if message_serialise.parsed.attachements.is_none() {
@@ -816,17 +820,17 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         // // }
         //
         // // let fingerprint_certificat = message_serialise.parsed.pubkey.as_str();
-        // let fingerprint_certificat = transaction.pubkey.as_str();
+        let fingerprint_certificat = transaction.pubkey.as_str();
         // // let certificat: &Vec<String> = match &message_serialise.parsed.certificat {
         // //     Some(c) => c,
         // //     None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?
         // // };
         // // debug!("Certificat message : {:?}", certificat);
         // // let enveloppe = middleware.charger_enveloppe(certificat, Some(fingerprint_certificat), None).await?;
-        // let certificat = match middleware.get_certificat(fingerprint_certificat).await {
-        //     Some(inner) => inner,
-        //     None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?
-        // };
+        let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+            Some(inner) => inner,
+            None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?
+        };
         // message_serialise.set_certificat(certificat);
         //
         // let validation_options = ValidationOptions::new(true, true, true);
@@ -845,18 +849,19 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         // //         transaction.set_evenements(map_evenements);
         // //     }
         // // }
-        //
-        // // Conserver la transaction
-        // let resultat_batch = sauvegarder_batch(middleware, nom_collection_transactions.as_str(), vec![transaction]).await?;
-        // debug!("domaines.restaurer_transaction Resultat batch sauvegarde : {:?}", resultat_batch);
-        //
-        // match message_restauration.ack {
-        //     Some(a) => match a {
-        //         true => Ok(middleware.reponse_ok()?),
-        //         false => Ok(None)
-        //     },
-        //     None => Ok(None)
-        // }
+
+        // Conserver la transaction
+        let resultat_batch = sauvegarder_batch(
+            middleware, nom_collection_transactions.as_str(), vec![&mut transaction]).await?;
+        debug!("domaines.restaurer_transaction Resultat batch sauvegarde : {:?}", resultat_batch);
+
+        match message_restauration.ack {
+            Some(a) => match a {
+                true => Ok(Some(middleware.reponse_ok(None, None)?)),
+                false => Ok(None)
+            },
+            None => Ok(None)
+        }
     }
 
     /// Traite une commande - intercepte les commandes communes a tous les domaines (e.g. backup)
@@ -975,8 +980,8 @@ struct MessageBackupTransactions {
     complet: Option<bool>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize)]
 struct MessageRestaurerTransaction {
-    transaction: TransactionValide,
+    transaction: TransactionOwned,
     ack: Option<bool>,
 }
