@@ -648,7 +648,7 @@ impl ErreurResoumission {
     }
 }
 
-pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut transactions: Vec<&mut TransactionRef<'a>>)
+pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut transactions: Vec<&mut TransactionOwned>)
     -> Result<ResultatBatchInsert, String>
     where M: MongoDao
 {
