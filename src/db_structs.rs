@@ -7,7 +7,7 @@ use millegrilles_cryptographie::ed25519::{MessageId, verifier};
 use millegrilles_cryptographie::ed25519_dalek::VerifyingKey;
 use millegrilles_cryptographie::error::Error;
 use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, optionepochseconds, HacheurMessage};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, optionepochseconds, HacheurMessage, PreMigrationOwned, PreMigration};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use crate::mongo_dao::opt_chrono_datetime_as_bson_datetime;
 use serde::{Deserialize, Serialize};
@@ -46,7 +46,7 @@ pub struct TransactionRef<'a> {
     /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
     #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
     // pub pre_migration: Option<HashMap<&'a str, Value>>,
-    pub pre_migration: Option<PreMigration>,
+    pub pre_migration: Option<PreMigration<'a>>,
 
     /// IDMG d'origine du message
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,14 +112,14 @@ impl<'a> TransactionRef<'a> {
 
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PreMigration {
-    pub id: Option<String>,
-    #[serde(default, with = "optionepochseconds")]
-    pub estampille: Option<DateTime<Utc>>,
-    pub pubkey: Option<String>,
-    pub idmg: Option<String>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct PreMigration {
+//     pub id: Option<String>,
+//     #[serde(default, with = "optionepochseconds")]
+//     pub estampille: Option<DateTime<Utc>>,
+//     pub pubkey: Option<String>,
+//     pub idmg: Option<String>,
+// }
 
 // impl<'a, const C: usize> Into<TransactionRef<'a>> for MessageMilleGrillesRef<'a, C> {
 //     fn into(self) -> TransactionRef<'a> {
@@ -204,7 +204,7 @@ pub struct TransactionOwned {
 
     /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
     #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
-    pub pre_migration: Option<PreMigration>,
+    pub pre_migration: Option<PreMigrationOwned>,
 
     /// IDMG d'origine du message
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -303,7 +303,7 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
             contenu,
             routage: match &self.routage { Some(inner) => Some(inner.into()), None => None },
             // pre_migration: match self.pre_migration { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
-            pre_migration: self.pre_migration.clone(),
+            pre_migration: match self.pre_migration.as_ref() { Some(inner) => Some(inner.into()), None => None},
             origine: match self.origine { Some(inner) => Some(inner.to_owned()), None => None },
             dechiffrage: match &self.dechiffrage { Some(inner) => Some(inner.into()), None => None },
             signature: self.signature.into(),
@@ -327,6 +327,7 @@ impl TransactionOwned {
             kind: self.kind.clone(),
             contenu_escaped,
             routage: match self.routage.as_ref() { Some(inner) => Some(inner.into()), None => None },
+            pre_migration: match self.pre_migration.as_ref() { Some(inner) => Some(inner.into()), None => None },
             origine: match self.origine.as_ref() { Some(inner) => Some(inner.as_str()), None => None },
             dechiffrage: match self.dechiffrage.as_ref() { Some(inner) => Some(inner.try_into()?), None => None },
         })

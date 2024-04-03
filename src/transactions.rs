@@ -950,8 +950,7 @@ async fn regenerer_charger_certificats<'a, M>(middleware: &M, mut curseur: Curso
         }
         if let Some(pre_migration) = transaction.pre_migration.as_ref() {
             // if let Some(pubkey) = pre_migration.get("pubkey") {
-            if let Some(pubkey) = &pre_migration.pubkey {
-                let pubkey_str = pubkey.as_str();
+            if let Some(pubkey_str) = pre_migration.pubkey {
                 if middleware.get_certificat(pubkey_str).await.is_none() {
                     if skip_certificats == false {
                         debug!("Certificat pre-migration {} inconnu, charger via PKI", pubkey_str);
@@ -1003,8 +1002,8 @@ where
                 millegrilles_cryptographie::messages_structs::MessageKind::TransactionMigree => {
                     // &KIND_TRANSACTION_MIGREE => {
                     match &pre_migration {
-                        Some(inner) => match inner.pubkey.as_ref() {
-                            Some(inner) => inner.as_str(),
+                        Some(inner) => match inner.pubkey {
+                            Some(inner) => inner,
                             None => transaction.pubkey
                         },
                         None => transaction.pubkey
@@ -1025,12 +1024,12 @@ where
         let mut transaction = TransactionValide { transaction: transaction.try_into()?, certificat };
 
         if let Some(overrides) = pre_migration {
-            if let Some(id) = &overrides.id {
+            if let Some(id) = overrides.id {
                 debug!("Override attributs pre_migration dans la transaction, nouvel id {}", id);
                 // transaction_impl.id = id;
                 transaction.transaction.id = id.to_owned();
             }
-            if let Some(pubkey) = &overrides.pubkey {
+            if let Some(pubkey) = overrides.pubkey {
                 debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
                 transaction.transaction.pubkey = pubkey.to_owned();
             }
