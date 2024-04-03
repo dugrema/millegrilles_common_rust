@@ -876,7 +876,7 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
 )
     -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
     where
-        M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
+        M: ValidateurX509 + GenerateurMessages + MongoDao,
         G: GestionnaireDomaine
 {
     let nom_collection_transactions = match gestionnaire.get_collection_transactions() {
@@ -885,9 +885,6 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
             Err(format!("middleware.sauvegarder_traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
         }
     };
-
-    // Retirer attachments - doivent etre traites dans la commande avant la sauvegarde
-    //m.message.parsed.retirer_attachments();
 
     // let doc_transaction =
     match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
@@ -901,20 +898,26 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
     //     Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur TransactionImpl::new {:?}", e))?
     // };
     // let uuid_transaction = transaction.get_uuid_transaction().to_owned();
-
-    let message_id = match &message.type_message {
-        TypeMessageOut::Commande(r) |
-        TypeMessageOut::Transaction(r) => {
-            match &r.correlation_id {
-                Some(inner) => inner.to_owned(),
-                None => Err(String::from("middleware.sauvegarder_traiter_transaction Correlation_id manquant de la transaction"))?
-            }
-        }
-        _ => Err(String::from("middleware.sauvegarder_traiter_transaction Mauvais type de message, doit etre Commande ou Transaction"))?
+    let message_id = {
+        let message_ref = message.message.parse()?;
+        message_ref.id.to_owned()
     };
+
+    // let message_id = match &message.type_message {
+    //     TypeMessageOut::Commande(r) |
+    //     TypeMessageOut::Transaction(r) => {
+    //         match &r.correlation_id {
+    //             Some(inner) => inner.to_owned(),
+    //             None => Err(String::from("middleware.sauvegarder_traiter_transaction Correlation_id manquant de la transaction"))?
+    //         }
+    //     }
+    //     _ => Err(String::from("middleware.sauvegarder_traiter_transaction Mauvais type de message, doit etre Commande ou Transaction"))?
+    // };
 
     // Traiter transaction
     let reponse = gestionnaire.aiguillage_transaction(middleware, message).await?;
+
+    debug!("middleware.sauvegarder_traiter_transaction Transaction {} traitee", message_id);
 
     marquer_transaction(
         middleware,
