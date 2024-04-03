@@ -142,7 +142,7 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&s
 
     // let cle_publique = cert.public_key().unwrap();
 
-    let cert_der = cert.to_der().expect("Erreur exporter cert format DEV");
+    let cert_der = cert.to_der()?;  //.expect("Erreur exporter cert format DEV");
     // let extensions = parse_x509(cert_der.as_slice()).expect("Erreur preparation extensions X509 MilleGrille");
 
     Ok(EnveloppeCertificat {
@@ -849,25 +849,31 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
     // Recuperer la chaine de certificat du message.
     let certificat_pem = match message.certificat()? {
         Some(inner) => inner,
-        None => Err(ErreurVerification::CertificatInvalide)?
+        None => {
+            error!("valider_certificat_regle Certificat PEM manquant");
+            Err(ErreurVerification::CertificatInvalide)?
+        }
     };
     let millegrille_pem = match message.millegrille.as_ref() {
         Some(inner) => *inner,
-        None => Err(ErreurVerification::CertificatInvalide)?
+        None => {
+            error!("valider_certificat_regle Certificat de millegrille manquant");
+            Err(ErreurVerification::CertificatInvalide)?
+        }
     };
 
     // Charger la regle de validation
     let mut regles = match charger_regles_verification(&PathBuf::from(PATH_REGLES_VALIDATION)) {
         Ok(inner) => inner,
         Err(e) => {
-            warn!("valider_certificat_regle Erreur chargement fichier idmg_validation.json : {:?}", e);
+            error!("valider_certificat_regle Erreur chargement fichier idmg_validation.json : {:?}", e);
             Err(ErreurVerification::ErreurGenerique)?
         }
     };
     let regle = match regles.regles.remove(regle) {
         Some(inner) => inner,
         None => {
-            warn!("valider_certificat_regle Regle {} absente du fichier idmg_validation.json", regle);
+            error!("valider_certificat_regle Regle {} absente du fichier idmg_validation.json", regle);
             Err(ErreurVerification::ErreurGenerique)?
         }
     };
@@ -877,14 +883,23 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
     // Charger une enveloppe avec les PEMs
     let vec_pem: Vec<String> = certificat_pem.iter().map(|s| s.to_string()).collect();
     debug!("valider_certificat_regle Charger certificat\n{:?}", vec_pem);
-    let enveloppe = match middleware.charger_enveloppe(&vec_pem, Some(pubkey_message), Some(millegrille_pem)).await {
+    let enveloppe = match charger_enveloppe(certificat_pem.join("\n").as_str(), None, Some(millegrille_pem)) {
+    //let enveloppe = match middleware.charger_enveloppe(&vec_pem, Some(pubkey_message), Some(millegrille_pem)).await {
         Ok(inner) => inner,
-        Err(_) => Err(ErreurVerification::CertificatInvalide)?
+        Err(e) => {
+            error!("valider_certificat_regle Erreur chargement enveloppe : {:?}", e);
+            Err(ErreurVerification::CertificatInvalide)?
+        }
     };
-    debug!("valider_certificat_regle Charger certificat millegrille\n{}", millegrille_pem);
-    let enveloppe_millegrille = match middleware.charger_enveloppe(&vec![millegrille_pem.to_string()], None, None).await {
+    let millegrille_pem_unescaped = millegrille_pem.replace("\\n", "\n");
+    debug!("valider_certificat_regle Charger certificat millegrille\n{:?}", millegrille_pem_unescaped);
+    let enveloppe_millegrille = match charger_enveloppe(millegrille_pem_unescaped.as_str(), None, None) {
+    // let enveloppe_millegrille = match middleware.charger_enveloppe(&vec![millegrille_pem.to_string()], None, None).await {
         Ok(inner) => inner,
-        Err(_) => Err(ErreurVerification::CertificatInvalide)?
+        Err(e) => {
+            error!("valider_certificat_regle Erreur chargement enveloppe millegrille : {:?}", e);
+            Err(ErreurVerification::CertificatInvalide)?
+        }
     };
     match enveloppe_millegrille.est_ca() {
         Ok(inner) => {
@@ -957,7 +972,7 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
 
     // Verifier date de validite du certificat par rapport au message
     let estampille = &message.estampille;
-    match valider_pour_date(enveloppe.as_ref(), estampille) {
+    match valider_pour_date(&enveloppe, estampille) {
         Ok(inner) => {
             if ! inner {
                 warn!("valider_certificat_regle Date certificat leaf invalide pour message");
@@ -970,7 +985,7 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
         }
     }
 
-    Ok(enveloppe)
+    Ok(Arc::new(enveloppe))
 }
 
 #[async_trait]
