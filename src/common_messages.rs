@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use multibase;
 
-use millegrilles_cryptographie::messages_structs::epochseconds;
+use millegrilles_cryptographie::{messages_structs::epochseconds, chiffrage::formatchiffragestr};
 
 use crate::hachages::verifier_multihash;
 use crate::recepteur_messages::TypeMessage;
@@ -179,6 +179,7 @@ pub struct DataChiffre {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ref_hachage_bytes: Option<String>,
     pub data_chiffre: String,
+    #[serde(with="formatchiffragestr")]
     pub format: FormatChiffrage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<String>,

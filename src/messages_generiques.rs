@@ -91,3 +91,10 @@ pub struct CommandeCleRechiffree {
 pub trait CommandeUsager<'a> {
     fn get_user_id(&'a self) -> Option<&'a str>;
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReponseCommande<'a> {
+    pub ok: Option<bool>,
+    pub message: Option<&'a str>,
+    pub err: Option<&'a str>,
+}

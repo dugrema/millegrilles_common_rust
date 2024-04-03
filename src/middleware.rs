@@ -974,7 +974,10 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
     // }
 
     // Fix deserialization contenu en utilisant une version owned
-    let message_owned: MessageMilleGrillesOwned = serde_json::from_slice(m.message.buffer.as_slice())?;
+    let mut message_owned: MessageMilleGrillesOwned = serde_json::from_slice(m.message.buffer.as_slice())?;
+
+    // Retirer les attachements si presents
+    message_owned.attachements = None;
 
     // Serialiser le message en serde::Value - permet de convertir en Document bson
     let mut contenu_doc = match map_msg_to_bson(message_owned) {
