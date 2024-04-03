@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
@@ -31,8 +32,12 @@ pub struct TransactionRef<'a> {
     pub kind: MessageKind,
 
     /// Contenu du message en format **json-string escaped**
+    #[serde(skip)]
+    pub contenu_escaped: Option<&'a str>,
+
     #[serde(rename = "contenu")]
-    pub contenu_escaped: &'a str,
+    /// Contenu du message
+    pub contenu: Option<&'a str>,
 
     /// Information de routage de message (optionnel, depend du kind)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,7 +45,8 @@ pub struct TransactionRef<'a> {
 
     /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
     #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
-    pub pre_migration: Option<HashMap<&'a str, Value>>,
+    // pub pre_migration: Option<HashMap<&'a str, Value>>,
+    pub pre_migration: Option<PreMigration>,
 
     /// IDMG d'origine du message
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,9 +83,17 @@ pub struct TransactionRef<'a> {
 impl<'a> TransactionRef<'a> {
 
     /// Parse le contenu et retourne un buffer qui peut servir a deserializer avec serde
-    pub fn contenu(&self) -> Result<String, crate::error::Error> {
-        let contenu_escaped: String = serde_json::from_str(format!("\"{}\"", self.contenu_escaped).as_str())?;
-        Ok(contenu_escaped)
+    pub fn contenu(&self) -> Result<Cow<str>, crate::error::Error> {
+        match self.contenu {
+            Some(inner) => Ok(Cow::Borrowed(inner)),
+            None => match self.contenu_escaped {
+                Some(inner) => {
+                    let contenu_escaped: String = serde_json::from_str(format!("\"{}\"", inner).as_str())?;
+                    Ok(Cow::Owned(contenu_escaped))
+                },
+                None => Err(Error::Str("Aucun contenu"))?
+            }
+        }
     }
 
     pub fn certificat(&self) -> Result<Option<Vec<String>>, crate::error::Error> {
@@ -96,6 +110,15 @@ impl<'a> TransactionRef<'a> {
         }
     }
 
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PreMigration {
+    pub id: Option<String>,
+    #[serde(default, with = "optionepochseconds")]
+    pub estampille: Option<DateTime<Utc>>,
+    pub pubkey: Option<String>,
+    pub idmg: Option<String>,
 }
 
 // impl<'a, const C: usize> Into<TransactionRef<'a>> for MessageMilleGrillesRef<'a, C> {
@@ -138,7 +161,8 @@ impl<'a, const C: usize> From<MessageMilleGrillesRef<'a, C>> for TransactionRef<
             pubkey: value.pubkey,
             estampille: value.estampille,
             kind: value.kind.clone(),
-            contenu_escaped: value.contenu_escaped,
+            contenu_escaped: Some(value.contenu_escaped),
+            contenu: None,
             routage: value.routage,
             pre_migration: None,
             origine: value.origine,
@@ -180,7 +204,7 @@ pub struct TransactionOwned {
 
     /// Information de migration (e.g. ancien format, MilleGrille tierce, etc).
     #[serde(rename = "pre-migration", skip_serializing_if = "Option::is_none")]
-    pub pre_migration: Option<HashMap<String, Value>>,
+    pub pre_migration: Option<PreMigration>,
 
     /// IDMG d'origine du message
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,7 +289,10 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
     type Error = crate::error::Error;
 
     fn try_into(self) -> Result<TransactionOwned, Self::Error> {
-        let contenu = self.contenu()?;
+        let contenu = match self.contenu()? {
+            Cow::Borrowed(inner) => inner.to_owned(),
+            Cow::Owned(inner) => inner
+        };
         let certificat = self.certificat()?;
 
         Ok(TransactionOwned {
@@ -275,7 +302,8 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
             kind: self.kind,
             contenu,
             routage: match &self.routage { Some(inner) => Some(inner.into()), None => None },
-            pre_migration: match self.pre_migration { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
+            // pre_migration: match self.pre_migration { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
+            pre_migration: self.pre_migration.clone(),
             origine: match self.origine { Some(inner) => Some(inner.to_owned()), None => None },
             dechiffrage: match &self.dechiffrage { Some(inner) => Some(inner.into()), None => None },
             signature: self.signature.into(),

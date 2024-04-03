@@ -949,14 +949,14 @@ async fn regenerer_charger_certificats<'a, M>(middleware: &M, mut curseur: Curso
             }
         }
         if let Some(pre_migration) = transaction.pre_migration.as_ref() {
-            if let Some(pubkey) = pre_migration.get("pubkey") {
-                if let Some(pubkey_str) = pubkey.as_str() {
-                    if middleware.get_certificat(pubkey_str).await.is_none() {
-                        if skip_certificats == false {
-                            debug!("Certificat pre-migration {} inconnu, charger via PKI", pubkey_str);
-                            if requete_certificat(middleware, pubkey_str).await?.is_none() {
-                                warn!("Certificat pre-migration Certificat {} inconnu, ** SKIP **", pubkey_str);
-                            }
+            // if let Some(pubkey) = pre_migration.get("pubkey") {
+            if let Some(pubkey) = &pre_migration.pubkey {
+                let pubkey_str = pubkey.as_str();
+                if middleware.get_certificat(pubkey_str).await.is_none() {
+                    if skip_certificats == false {
+                        debug!("Certificat pre-migration {} inconnu, charger via PKI", pubkey_str);
+                        if requete_certificat(middleware, pubkey_str).await?.is_none() {
+                            warn!("Certificat pre-migration Certificat {} inconnu, ** SKIP **", pubkey_str);
                         }
                     }
                 }
@@ -967,15 +967,6 @@ async fn regenerer_charger_certificats<'a, M>(middleware: &M, mut curseur: Curso
     Ok(())
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct PreMigration {
-    id: Option<String>,
-    #[serde(with = "optionepochseconds")]
-    estampille: Option<DateTime<Utc>>,
-    pubkey: Option<String>,
-    idmg: Option<String>,
-}
-
 async fn regenerer_transactions<'a, M, T>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
     -> Result<(), Box<dyn Error>>
 where
@@ -984,30 +975,28 @@ where
 {
     // while let Some(result) = curseur.next().await {
     while curseur.advance().await? {
-        let mut transaction = curseur.deserialize_current()?;
-        // let mut message = result?;
-
-        // //let entete = match get_entete_from_doc(&transaction) {
-        // let message_identificateurs: MessageMilleGrilleIdentificateurs = match convertir_bson_deserializable(transaction.clone()) {
-        //     Ok(t) => t,
-        //     Err(_e) => {
-        //         error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
-        //         continue  // Skip
-        //     }
-        // };
+        let mut transaction = match curseur.deserialize_current() {
+            Ok(inner) => inner,
+            Err(e) => {
+                error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
+                continue  // Skip
+            }
+        };
 
         // let uuid_transaction = message_identificateurs.id.as_str();
         let message_id = transaction.id.to_owned();
-        debug!("regenerer_transactions Traiter transaction : {:?}", message_id);
+        debug!("regenerer_transactions Traiter transaction id:{} => {:?}", message_id, transaction.routage);
 
         // Charger pubkey du certificat - en cas de migration, utiliser certificat original
-        let pre_migration = match &transaction.pre_migration {
-            Some(inner) => {
-                // Mapper pre-migration
-                Some(serde_json::from_value::<PreMigration>(serde_json::to_value(inner)?)?)
-            },
-            None => None
-        };
+        // let pre_migration = match &transaction.pre_migration {
+        //     Some(inner) => {
+        //         // Mapper pre-migration
+        //         Some(serde_json::from_value::<PreMigration>(serde_json::to_value(inner)?)?)
+        //     },
+        //     None => None
+        // };
+
+        let pre_migration = transaction.pre_migration.clone();
 
         let certificat = {
             let pubkey = match &transaction.kind {
@@ -1027,29 +1016,31 @@ where
             match middleware.get_certificat(pubkey).await {
                 Some(c) => c,
                 None => {
-                    warn!("Certificat {} inconnu, ** SKIP **", pubkey);
+                    warn!("transactions.regenerer_transactions Certificat {} inconnu, ** SKIP **", pubkey);
                     continue;
                 }
             }
         };
+        debug!("transactions.regenerer_transactions Convertir en structure TransactionValide");
         let mut transaction = TransactionValide { transaction: transaction.try_into()?, certificat };
 
         if let Some(overrides) = pre_migration {
-            if let Some(id) = overrides.id {
+            if let Some(id) = &overrides.id {
                 debug!("Override attributs pre_migration dans la transaction, nouvel id {}", id);
                 // transaction_impl.id = id;
-                transaction.transaction.id = id;
+                transaction.transaction.id = id.to_owned();
             }
-            if let Some(pubkey) = overrides.pubkey {
+            if let Some(pubkey) = &overrides.pubkey {
                 debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
-                transaction.transaction.pubkey = pubkey;
+                transaction.transaction.pubkey = pubkey.to_owned();
             }
-            if let Some(estampille) = overrides.estampille {
+            if let Some(estampille) = &overrides.estampille {
                 debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
                 transaction.transaction.estampille = estampille.clone();
             }
         }
 
+        debug!("transactions.regenerer_transactions Appliquer transaction");
         match processor.appliquer_transaction(middleware, transaction).await {
             Ok(_resultat) => (),
             Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", message_id, e)
