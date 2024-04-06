@@ -1028,14 +1028,14 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
             Ok(())
         },
         Err(e) => {
-            error!("sauvegarder_transaction Erreur sauvegarde transaction dans MongoDb : {:?}", e);
             //let kind = *e.kind.clone();
             let erreur_duplication = verifier_erreur_duplication_mongo(&*e.kind);
             if erreur_duplication {
                 // Ok, duplicate. On peut traiter la transaction (si ce n'est pas deja fait).
-                warn!("sauvegarder_transaction Transaction dupliquee (on va la traiter quand meme) : {:?}", uuid_transaction);
+                info!("sauvegarder_transaction Transaction dupliquee (on va la traiter quand meme) : {:?}", uuid_transaction);
                 Ok(())
             } else {
+                error!("sauvegarder_transaction Erreur sauvegarde transaction dans MongoDb : {:?}", e);
                 Err(format!("sauvegarder_transaction Erreur sauvegarde transaction dans MongoDb : {:?}", &e))
             }
         }
