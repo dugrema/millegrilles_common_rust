@@ -392,7 +392,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         };
 
         // Completer routage avec nouveau correlation_id
-        routage.correlation_id = Some(message_id);
+        if routage.correlation_id.is_none() {
+            routage.correlation_id = Some(message_id);
+        }
         let type_message = TypeMessageOut::Evenement(routage);
 
         self.emettre_message(type_message, message).await?;
@@ -414,7 +416,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             build_message_action(millegrilles_cryptographie::messages_structs::MessageKind::Requete,
                                  routage.clone(), message, guard_enveloppe_privee.as_ref())?
         };
-        routage.correlation_id = Some(message_id);
+        if routage.correlation_id.is_none() {
+            routage.correlation_id = Some(message_id);
+        }
         let type_message = TypeMessageOut::Requete(routage);
 
         match self.emettre_message(type_message, message).await? {
@@ -446,7 +450,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             build_message_action(millegrilles_cryptographie::messages_structs::MessageKind::Transaction,
                                  routage.clone(), message, guard_enveloppe_privee.as_ref())?
         };
-        routage.correlation_id = Some(message_id);
+        if routage.correlation_id.is_none() {
+            routage.correlation_id = Some(message_id);
+        }
         let type_message = TypeMessageOut::Transaction(routage);
 
         self.emettre_message(type_message, message).await
@@ -469,7 +475,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             build_message_action(millegrilles_cryptographie::messages_structs::MessageKind::Commande,
                                  routage.clone(), message, guard_enveloppe_privee.as_ref())?
         };
-        routage.correlation_id = Some(message_id);
+        if routage.correlation_id.is_none() {
+            routage.correlation_id = Some(message_id);
+        }
         let type_message = TypeMessageOut::Commande(routage);
 
         self.emettre_message(type_message, message).await
@@ -515,13 +523,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         let message = message.into();
 
         let (attendre, timeout_blocking, correlation_id) = match &type_message {
-            TypeMessageOut::Requete(r) => {
-                let correlation_id = match r.correlation_id.as_ref() {
-                    Some(inner) => inner.as_str(),
-                    None => Err(String::from("emettre_message Correlation_id manquant"))?,
-                };
-                (true, r.timeout_blocking.clone(), correlation_id.to_string())
-            }
+            TypeMessageOut::Requete(r) |
             TypeMessageOut::Commande(r) |
             TypeMessageOut::Transaction(r) => {
                 let correlation_id = match r.correlation_id.as_ref() {
