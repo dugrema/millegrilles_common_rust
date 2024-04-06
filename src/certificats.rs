@@ -1619,12 +1619,18 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
         .build();
 
     match middleware.transmettre_requete(routage, &requete).await {
-        Ok(reponse) => {
-            if let TypeMessage::Valide(mva) = &reponse {
-                info!("emettre_commande_certificat_maitredescles Reponse certificat maitredescles : {:?}", mva.type_message);
-                Some(reponse)
-            } else {
-                warn!("emettre_commande_certificat_maitredescles Reponse de mauvais type");
+        Ok(inner) => match inner {
+            Some(reponse) => {
+                if let TypeMessage::Valide(mva) = &reponse {
+                    info!("emettre_commande_certificat_maitredescles Reponse certificat maitredescles : {:?}", mva.type_message);
+                    Some(reponse)
+                } else {
+                    warn!("emettre_commande_certificat_maitredescles Reponse de mauvais type");
+                    None
+                }
+            },
+            None => {
+                warn!("Aucune reponse transmettre_requete maitredescles");
                 None
             }
         },

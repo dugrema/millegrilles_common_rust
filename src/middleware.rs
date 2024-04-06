@@ -437,7 +437,7 @@ impl GenerateurMessages for MiddlewareMessage {
     }
 
     async fn transmettre_requete<R,M>(&self, routage: R, message: M)
-                                      -> Result<TypeMessage, crate::error::Error>
+                                      -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.generateur_messages.transmettre_requete(routage, message).await
@@ -1155,14 +1155,17 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     let reponse_requete = middleware.transmettre_requete(routage, &requete).await?;
     debug!("requete_certificat Reponse : {:?}", reponse_requete);
     let reponse: ReponseEnveloppe = match reponse_requete {
-        TypeMessage::Valide(m) => deser_message_buffer!(m.message),
-        TypeMessage::Certificat(m) => {
-            let enveloppe = m.enveloppe_certificat;
-            let pem_ca = enveloppe.ca_pem()?;
-            let pems: Vec<String> = enveloppe.chaine_fingerprint_pem()?.into_iter().map(|f| f.pem).collect();
-            ReponseEnveloppe { chaine_pem: pems, fingerprint: enveloppe.fingerprint()?, ca_pem: pem_ca }
+        Some(inner) => match inner {
+            TypeMessage::Valide(m) => deser_message_buffer!(m.message),
+            TypeMessage::Certificat(m) => {
+                let enveloppe = m.enveloppe_certificat;
+                let pem_ca = enveloppe.ca_pem()?;
+                let pems: Vec<String> = enveloppe.chaine_fingerprint_pem()?.into_iter().map(|f| f.pem).collect();
+                ReponseEnveloppe { chaine_pem: pems, fingerprint: enveloppe.fingerprint()?, ca_pem: pem_ca }
+            },
+            _ => Err(format!("requete_certificat Erreur requete certificat {} : mauvais type reponse", fingerprint_str))?
         },
-        _ => Err(format!("requete_certificat Erreur requete certificat {} : mauvais type reponse", fingerprint_str))?
+        None => Err(format!("requete_certificat Erreur requete certificat {} : aucune reponse", fingerprint_str))?
     };
 
     let ca_pem = match &reponse.ca_pem {

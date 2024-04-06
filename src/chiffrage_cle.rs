@@ -38,22 +38,25 @@ pub async fn requete_charger_cles<M>(middleware: &M, hachage_bytes: &Vec<String>
     let requete = json!({"liste_hachage_bytes": hachage_bytes});
 
     match middleware.transmettre_requete(routage, &requete).await? {
-        TypeMessage::Valide(r) => {
-            let message_ref = r.message.parse()?;
-            let message_contenu = match message_ref.contenu() {
-                Ok(inner) => inner,
-                Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur contenu() {:?}", e))?
-            };
-            match message_contenu.deserialize() {
-                Ok(r) => Ok(r),
-                Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))?
-            }
-            // match r.message.parsed.map_contenu() {
-            //     Ok(r) => Ok(r),
-            //     Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))
-            // }
+        Some(inner) => match inner {
+            TypeMessage::Valide(r) => {
+                let message_ref = r.message.parse()?;
+                let message_contenu = match message_ref.contenu() {
+                    Ok(inner) => inner,
+                    Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur contenu() {:?}", e))?
+                };
+                match message_contenu.deserialize() {
+                    Ok(r) => Ok(r),
+                    Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))?
+                }
+                // match r.message.parsed.map_contenu() {
+                //     Ok(r) => Ok(r),
+                //     Err(e) => Err(format!("chiffrage_cle.requete_charger_cles Erreur mapping REponseDechiffrageCles: {:?}", e))
+                // }
+            },
+            _ => Err(format!("chiffrage_cles.requete_charger_cles Mauvais type de reponse pour les cles"))?
         },
-        _ => Err(format!("chiffrage_cles.requete_charger_cles Mauvais type de reponse pour les cles"))?
+        None => Err(format!("chiffrage_cles.requete_charger_cles Aucune reponse pour les cles"))?
     }
 }
 

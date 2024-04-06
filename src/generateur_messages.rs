@@ -200,7 +200,7 @@ pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync;
 
     async fn transmettre_requete<R,M>(&self, routage: R, message: M)
-        -> Result<TypeMessage, crate::error::Error>
+        -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync;
 
     async fn soumettre_transaction<R,M>(&self, routage: R, message: M)
@@ -402,14 +402,16 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         Ok(())
     }
 
-    async fn transmettre_requete<R,M>(&self, routage: R, message: M) -> Result<TypeMessage, crate::error::Error>
+    async fn transmettre_requete<R,M>(&self, routage: R, message: M) -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         if self.get_mode_regeneration() {  // Rien a faire
-            return Ok(TypeMessage::Regeneration)
+            return Ok(Some(TypeMessage::Regeneration))
         }
 
         let mut routage = routage.into();
+
+        let blocking = routage.blocking.clone().unwrap_or_else(|| true);
 
         let (message, message_id) = {
             let guard_enveloppe_privee = self.enveloppe_privee.lock().expect("lock");
@@ -422,17 +424,15 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         let type_message = TypeMessageOut::Requete(routage);
 
         match self.emettre_message(type_message, message).await? {
-            Some(inner) => Ok(inner),
-            None => Err(String::from("Aucune reponse"))?,
+            Some(inner) => Ok(Some(inner)),
+            None => {
+                if blocking {
+                    Err(String::from("Aucune reponse"))?
+                } else {
+                    Ok(None)
+                }
+            },
         }
-
-        // match self.emettre_message_serializable(routage, message, TypeMessageOut::Requete).await {
-        //     Ok(r) => match r {
-        //         Some(m) => Ok(m),
-        //         None => Err(String::from("Aucune reponse")),
-        //     },
-        //     Err(e) => Err(e),
-        // }
     }
 
     async fn soumettre_transaction<R,M>(&self, routage: R, message: M) -> Result<Option<TypeMessage>, crate::error::Error>

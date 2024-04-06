@@ -279,7 +279,7 @@ impl GenerateurMessages for MiddlewareDb {
     }
 
     async fn transmettre_requete<R,M>(&self, routage: R, message: M)
-                                      -> Result<TypeMessage, crate::error::Error>
+                                      -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         self.ressources.ressources.generateur_messages.transmettre_requete(routage, message).await
