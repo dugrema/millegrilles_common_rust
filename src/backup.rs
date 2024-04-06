@@ -54,7 +54,7 @@ use crate::recepteur_messages::TypeMessage;
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
 const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 10 * 1024 * 1024;
-const BACKUP_TRANSACTIONS_MAX_SIZE: usize = 1 * 1024 * 1024;
+const BACKUP_TRANSACTIONS_MAX_SIZE: usize = 9 * 1024 * 1024;
 // const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions par fichier
 
 // Epoch en ms du demarrage du backup courant
@@ -393,6 +393,9 @@ async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<Transaction
 
     let ca = middleware.get_enveloppe_signature().enveloppe_ca.clone();
 
+    // Calculer la taille compressee a respecter pour rester dans les limites de messages
+    let transactions_max_compresse = (0.72 * BACKUP_TRANSACTIONS_MAX_SIZE as f64) as usize;
+
     // Boucler pour toutes les transactions du domaine. Creer un nouveau catalogue chaque fois
     // que la taille limite est atteinte (buffer_output depasse).
     let mut taille_transactions = 0;
@@ -412,8 +415,10 @@ async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<Transaction
         // Estimer la taille compressee courante + taille transaction courante. Si la valeur
         // depasse la limite, on genere un nouveau catalogue.
         // Certificats : Estimer 2kb par certificat, on doit se tenir dans une limite totale de 10mb pour le catalogue.
-        if builder.certificats.len() > 100 ||
-            gzip_writer.get_ref().len() + (transaction_bytes.len() as f64 * 0.7) as usize > BACKUP_TRANSACTIONS_MAX_SIZE
+        if taille_transactions > 0 && (
+            builder.certificats.len() > 200 ||
+            gzip_writer.get_ref().len() + (transaction_bytes.len() as f64 * 0.7) as usize > transactions_max_compresse
+        )
         {
             debug!("generer_catalogue Fermer le catalogue");
 
@@ -651,9 +656,6 @@ async fn serialiser_catalogue<M>(
 
     // Fermer le buffer de compression
     let buffer_compresse = gzip_writer.finish()?;
-    if buffer_compresse.len() > BACKUP_TRANSACTIONS_MAX_SIZE {
-        warn!("generer_catalogue Le catalogue en cours depasse la limite max_size : {} bytes, on va le generer quand meme", buffer_compresse.len());
-    }
 
     // Chiffrer le contenu
     let cipher = CipherMgs4::with_ca(ca)?;
@@ -701,6 +703,10 @@ async fn serialiser_catalogue<M>(
             Err(crate::error::Error::String(String::from("backup.serialiser_catalogue Aucune reponse, on assume que le backup a echoue, ** SKIPPED **")))?
         }
     };
+
+    if reponse.message.buffer.len() > BACKUP_TRANSACTIONS_MAX_SIZE {
+        warn!("generer_catalogue Le catalogue en cours depasse la limite max_size : {} bytes, on va le generer quand meme", reponse.message.buffer.len());
+    }
 
     // // let reponse = middleware.emettre_message_millegrille(
     // //     routage, true, TypeMessageOut::Commande, catalogue_signe).await;

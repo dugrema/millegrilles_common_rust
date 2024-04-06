@@ -16,6 +16,7 @@ use futures::stream::FuturesUnordered;
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, FingerprintPem};
+use millegrilles_cryptographie::deser_message_buffer;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use tokio::sync::Notify;
@@ -1154,18 +1155,7 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     let reponse_requete = middleware.transmettre_requete(routage, &requete).await?;
     debug!("requete_certificat Reponse : {:?}", reponse_requete);
     let reponse: ReponseEnveloppe = match reponse_requete {
-        TypeMessage::Valide(m) => {
-            let message_ref = m.message.parse()?;
-            todo!("fix me")
-            //serde_json::from_str(message_ref.contenu)?
-            // match m.message.parsed.map_contenu() {
-            //     Ok(m) => m,
-            //     Err(e) => {
-            //         error!("requete_certificat Erreur requete certificat {} : mauvais type reponse ou inconnu : {:?}", fingerprint_str, e);
-            //         return Ok(None)
-            //     }
-            // }
-        },
+        TypeMessage::Valide(m) => deser_message_buffer!(m.message),
         TypeMessage::Certificat(m) => {
             let enveloppe = m.enveloppe_certificat;
             let pem_ca = enveloppe.ca_pem()?;
