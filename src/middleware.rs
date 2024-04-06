@@ -1294,7 +1294,7 @@ pub async fn charger_certificats_chiffrage<M>(middleware: &M)
 //         while let Some(message) = rx.recv().await {
 //             match &message {
 //                 TypeMessage::Valide(m) => {
-//                     debug!("traiter_messages_valides: Message valide sans routing key/action : {:?}", m.message);
+//                     debug!("traiter_messages_valides: Message valide sans routing key/action : {:?}", m.type_message);
 //                 },
 //                 TypeMessage::ValideAction(m) => {
 //                     let contenu = &m.message;

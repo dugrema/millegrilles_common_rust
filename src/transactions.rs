@@ -1059,21 +1059,17 @@ pub trait TraiterTransaction {
 
 /// Retourne le user_id dans la commande si certificat est exchange 2.prive, 3.protege ou 4.secure
 /// Sinon retourne le user_id du certificat.
-pub fn get_user_effectif<'a,T,M>(transaction: &T, transaction_mappee: &'a M) -> Result<String, crate::error::Error>
-    where T: Transaction, M: CommandeUsager<'a>
+pub fn get_user_effectif<'a,M>(transaction: &TransactionValide, transaction_mappee: &'a M)
+    -> Result<String, crate::error::Error>
+    where M: CommandeUsager<'a>
 {
-    let enveloppe = match transaction.get_enveloppe_certificat() {
-        Some(e) => e,
-        None => Err(format!("transaction_supprimer_video Certificat inconnu, transaction ignoree"))?
-    };
-
-    if enveloppe.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])? {
+    if transaction.certificat.verifier_exchanges(vec![Securite::L2Prive, Securite::L3Protege, Securite::L4Secure])? {
         if let Some(user_id) = transaction_mappee.get_user_id() {
             return Ok(user_id.to_owned());
         }
     }
 
-    match enveloppe.get_user_id()? {
+    match transaction.certificat.get_user_id()? {
         Some(inner) => Ok(inner.to_owned()),
         None => Err(format!("get_user_effectif user_id absent du certificat"))?
     }

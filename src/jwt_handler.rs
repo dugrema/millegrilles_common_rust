@@ -33,12 +33,15 @@ pub struct FichierClaims {
     pub user_id: Option<String>,
 }
 
-pub async fn verify_jwt<M,S>(middleware: &M, jwt_token: S) -> Result<FichierClaims, Box<dyn Error>>
+pub async fn verify_jwt<M,S>(middleware: &M, jwt_token: S) -> Result<FichierClaims, crate::error::Error>
     where M: ValidateurX509, S: AsRef<str>
 {
     let jwt_token = jwt_token.as_ref();
 
-    let metadata = Token::decode_metadata(&jwt_token)?;
+    let metadata = match Token::decode_metadata(&jwt_token) {
+        Ok(inner) => inner,
+        Err(e) => Err(crate::error::Error::String(format!("Erreur Token::decode_metatada : {:?}", e)))?
+    };
     let fingerprint = match metadata.key_id() {
         Some(inner) => inner,
         None => Err(format!("jwt_handler.verify_jwt fingerprint (kid) manquant du JWT"))?
@@ -64,8 +67,14 @@ pub async fn verify_jwt<M,S>(middleware: &M, jwt_token: S) -> Result<FichierClai
     // }
 
     let public_key = enveloppe.pubkey()?;  //cle_publique.as_ref(); //.as_ref();
-    let key_ed25519 = Ed25519PublicKey::from_bytes(public_key.as_slice())?;
-    let claims = key_ed25519.verify_token::<ClaimsTokenFichier>(&jwt_token, None)?;
+    let key_ed25519 = match Ed25519PublicKey::from_bytes(public_key.as_slice()) {
+        Ok(inner) => inner,
+        Err(e) => Err(crate::error::Error::String(format!("Erreur Ed25519PublicKey::from_bytes {:?}", e)))?
+    };
+    let claims = match key_ed25519.verify_token::<ClaimsTokenFichier>(&jwt_token, None) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Erreur key_ed25519.verify_token::<ClaimsTokenFichier> : {:?}",e ))?
+    };
     debug!("verify_jwt Claims : {:?}", claims);
 
     let custom = claims.custom;
@@ -77,7 +86,7 @@ pub async fn verify_jwt<M,S>(middleware: &M, jwt_token: S) -> Result<FichierClai
 }
 
 pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, dechiffrage: InformationDechiffrage)
-    -> Result<String, Box<dyn Error>>
+    -> Result<String, crate::error::Error>
     where
         M: FormatteurMessage,
         F: ToString, U: ToString, T: ToString
@@ -111,10 +120,16 @@ pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, d
     let enveloppe = middleware.get_enveloppe_signature();
     claims.issuer = Some(DOMAINE_NOM_GROSFICHIERS.into());
     let cle_privee = enveloppe.cle_privee.private_key_to_der()?;
-    let cle_signature = Ed25519KeyPair::from_der(cle_privee.as_slice())?
-        .with_key_id(enveloppe.fingerprint()?.as_str());
+    let cle_der = match Ed25519KeyPair::from_der(cle_privee.as_slice()) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Ed25519KeyPair::from_der : {:?}",e ))?
+    };
+    let cle_signature = cle_der.with_key_id(enveloppe.fingerprint()?.as_str());
 
     // Signer et retourner le nouveau token
-    let jwt_token = cle_signature.sign(claims)?;
+    let jwt_token = match cle_signature.sign(claims) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Erreur cle_signature.sign(claims) : {:?}",e ))?
+    };
     Ok(jwt_token)
 }
