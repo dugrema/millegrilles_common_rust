@@ -277,20 +277,20 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     fn get_nom_domaine(&self) -> String;
 
     /// Identificateur de partition. Optionnel, par defaut None.
-    fn get_partition(&self) -> Option<String> { None }
+    fn get_partition(&self) -> Result<Option<String>, crate::error::Error> { Ok(None) }
 
     /// Retourne le nom de la collection de transactions
     fn get_collection_transactions(&self) -> Option<String>;
 
     // Retourne la liste de collections de documents
-    fn get_collections_documents(&self) -> Vec<String>;
+    fn get_collections_documents(&self) -> Result<Vec<String>, crate::error::Error>;
 
-    fn get_q_transactions(&self) -> Option<String>;
-    fn get_q_volatils(&self) -> Option<String>;
-    fn get_q_triggers(&self) -> Option<String>;
+    fn get_q_transactions(&self) -> Result<Option<String>, crate::error::Error>;
+    fn get_q_volatils(&self) -> Result<Option<String>, crate::error::Error>;
+    fn get_q_triggers(&self) -> Result<Option<String>, crate::error::Error>;
 
     /// Retourne la liste des Q a configurer pour ce domaine
-    fn preparer_queues(&self) -> Vec<QueueType>;
+    fn preparer_queues(&self) -> Result<Vec<QueueType>, crate::error::Error>;
 
     // Retourne vrai si ce domaine doit chiffrer ses backup
     // Par defaut true.
@@ -324,11 +324,10 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         -> Result<(), crate::error::Error>
         where M: Middleware + 'static;
 
-    async fn aiguillage_transaction<M, T>(&self, middleware: &M, transaction: T)
+    async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where
-            M: ValidateurX509 + GenerateurMessages + MongoDao,
-            T: TryInto<TransactionValide> + Send;
+            M: ValidateurX509 + GenerateurMessages + MongoDao;
 
     /// Methode qui peut etre re-implementee dans une impl
     async fn preparer_threads<M>(self: &'static Self, middleware: Arc<M>)
@@ -353,7 +352,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let mut futures = FuturesUnordered::new();
 
         // Mapping par Q nommee
-        let qs = self.preparer_queues();
+        let qs = self.preparer_queues()?;
         for q in qs {
             let (tx, rx) = mpsc::channel::<TypeMessage>(1);
             let queue_name = match &q {
@@ -961,7 +960,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         };
 
         let nom_domaine = self.get_nom_domaine();
-        let noms_collections_docs = self.get_collections_documents();
+        let noms_collections_docs = self.get_collections_documents()?;
 
         regenerer_operation(
             middleware.as_ref(),

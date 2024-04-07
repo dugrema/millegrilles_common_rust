@@ -13,6 +13,8 @@ use serde::de::{DeserializeOwned, Visitor};
 use serde_json::{json, Map, Number, Value};
 use uuid::Uuid;
 
+use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
+
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::hachages::{hacher_bytes, hacher_message};
 use crate::middleware::map_msg_to_bson;
@@ -21,6 +23,8 @@ use crate::signatures::signer_message;
 use crate::bson::{Document, Bson};
 use std::convert::{TryFrom, TryInto};
 use millegrilles_cryptographie::chiffrage::FormatChiffrage;
+use millegrilles_cryptographie::chiffrage_cles::{Cipher, CleChiffrageX25519};
+use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
 use millegrilles_cryptographie::heapless;
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, RoutageMessage, MessageMilleGrillesBuilderDefault};
@@ -66,6 +70,46 @@ pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
             .certificat(certificat);
 
         let message_ref = generateur.build_into_alloc(&mut buffer)?;
+        message_ref.id.to_owned()
+    };
+
+    // Retourner le nouveau message
+    Ok((MessageMilleGrillesBufferDefault::from(buffer), message_id))
+}
+
+pub fn build_reponse_chiffree<M>(message: M, enveloppe_privee: &EnveloppePrivee, certificat_demandeur: &EnveloppeCertificat)
+    -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
+    where M: Serialize + Send + Sync
+{
+    let contenu = match serde_json::to_string(&message) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
+    };
+
+    let mut cle_privee_u8 = SecretKey::default();
+    match enveloppe_privee.cle_privee.raw_private_key() {
+        Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
+        Err(e) => Err(format!("build_reponse Erreur raw_private_key {:?}", e))?
+    };
+    let signing_key = SigningKey::from_bytes(&cle_privee_u8);
+
+    let pem_vec = &enveloppe_privee.chaine_pem;
+
+    // Allouer un Vec et serialiser le message signe.
+    let mut buffer = Vec::new();
+    let message_id = {
+        let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
+        certificat.extend(pem_vec.iter().map(|s| s.as_str()));
+
+        let generateur = MessageMilleGrillesBuilderDefault::new(
+            millegrilles_cryptographie::messages_structs::MessageKind::ReponseChiffree, contenu.as_str())
+            .signing_key(&signing_key)
+            .cles_chiffrage(vec![certificat_demandeur])
+            .certificat(certificat);
+
+        // Chiffrer le contenu et signer le message
+        let cipher = CipherMgs4::new()?;
+        let message_ref = generateur.encrypt_into_alloc(&mut buffer, cipher)?;
         message_ref.id.to_owned()
     };
 
@@ -147,6 +191,14 @@ pub trait FormatteurMessage {
         build_reponse(message, enveloppe_privee.as_ref())
     }
 
+    fn build_reponse_chiffree<M>(&self, message: M, enveloppe_privee: &EnveloppePrivee, certificat_demandeur: &EnveloppeCertificat)
+    -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
+        where M: Serialize + Send + Sync
+    {
+        let enveloppe_privee = self.get_enveloppe_signature();
+        build_reponse_chiffree(message, enveloppe_privee.as_ref(), certificat_demandeur)
+    }
+
     // fn formatter_inter_millegrille<M,S>(
     //     &self,
     //     middleware: &M,
@@ -166,7 +218,7 @@ pub trait FormatteurMessage {
     // }
 
     fn reponse_ok<O>(&self, code: O, message: Option<&str>)
-        -> Result<MessageMilleGrillesBufferDefault, String>
+        -> Result<MessageMilleGrillesBufferDefault, crate::error::Error>
         where O: Into<Option<usize>>
     {
         let code = code.into();
@@ -179,7 +231,7 @@ pub trait FormatteurMessage {
     }
 
     fn reponse_err<O>(&self, code: O, message: Option<&str>, err: Option<&str>)
-        -> Result<MessageMilleGrillesBufferDefault, String>
+        -> Result<MessageMilleGrillesBufferDefault, crate::error::Error>
         where O: Into<Option<usize>>
     {
         let code = code.into();

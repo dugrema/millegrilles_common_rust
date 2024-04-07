@@ -916,7 +916,7 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
     // };
 
     // Traiter transaction
-    let reponse = gestionnaire.aiguillage_transaction(middleware, message).await?;
+    let reponse = gestionnaire.aiguillage_transaction(middleware, message.try_into()?).await?;
 
     debug!("middleware.sauvegarder_traiter_transaction Transaction {} traitee", message_id);
 
