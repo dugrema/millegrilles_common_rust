@@ -1,5 +1,4 @@
 use std::convert::TryFrom;
-use std::error::Error;
 
 use log::debug;
 use multibase::{Base, decode, encode};
@@ -7,12 +6,13 @@ use multihash::{Code, Multihash, MultihashDigest, Sha2_256, Sha2_512, Blake2b512
 use serde::Serialize;
 use uuid::Uuid;
 use substring::Substring;
+use crate::error::Error;
 
 pub fn hacher_message(contenu: &str) -> String {
     hacher_bytes(contenu.as_bytes(), Some(Code::Sha2_256), Some(Base::Base64))
 }
 
-pub fn hacher_serializable<S>(s: &S) -> Result<String, Box<dyn Error>>
+pub fn hacher_serializable<S>(s: &S) -> Result<String, Error>
 where S: Serialize
 {
     let value = serde_json::to_value(s)?;
@@ -58,7 +58,7 @@ pub fn hacher_bytes_vu8(contenu: &[u8], code: Option<Code>) -> Vec<u8> {
     digest_vec
 }
 
-pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Result<bool, crate::error::Error>
+pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Result<bool, Error>
     where S: Serialize
 {
     let value = serde_json::to_value(s)?;
@@ -77,7 +77,7 @@ pub fn verifier_hachage_serializable<S>(hachage: &[u8], code: Code, s: &S) -> Re
     Ok(hachage_calcule == hachage)
 }
 
-pub fn verifier_multihash(hachage: &str, contenu: &[u8]) -> Result<bool, Box<dyn Error>> {
+pub fn verifier_multihash(hachage: &str, contenu: &[u8]) -> Result<bool, Error> {
     // let mb = "mEiDhIyaO8TdBnmXKWeih9o+ASND5t8VgZfqDjLan8lT7xg";
     debug!("Verifier multihash {}", hachage);
 

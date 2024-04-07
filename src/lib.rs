@@ -33,6 +33,9 @@ pub mod jwt_handler;
 pub mod db_structs;
 pub mod error;
 
+#[macro_use]
+mod macros;
+
 // Re-exports
 pub use millegrilles_cryptographie;
 pub use async_trait;

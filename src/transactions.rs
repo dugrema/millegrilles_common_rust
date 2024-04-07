@@ -1051,10 +1051,9 @@ where
 
 #[async_trait]
 pub trait TraiterTransaction {
-    async fn appliquer_transaction<M,T>(&self, middleware: &M, transaction: T) -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
-        where
-            M: ValidateurX509 + GenerateurMessages + MongoDao,
-            T: TryInto<TransactionValide> + Send;
+    async fn appliquer_transaction<M>(&self, middleware: &M, transaction: TransactionValide)
+        -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
+        where M: ValidateurX509 + GenerateurMessages + MongoDao;
 }
 
 /// Retourne le user_id dans la commande si certificat est exchange 2.prive, 3.protege ou 4.secure
