@@ -186,7 +186,7 @@ pub fn convertir_to_bson<S>(valeur: S)
 }
 
 pub fn convertir_to_bson_array<S>(valeur: S)
-    -> Result<Array, Box<dyn Error>>
+    -> Result<Array, crate::error::Error>
     where S: Serialize
 {
     let bson_array: Array = serde_json::from_value(serde_json::to_value(valeur)?)?;
