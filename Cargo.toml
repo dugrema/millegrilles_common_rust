@@ -12,15 +12,15 @@ async-std = "1.12.0"
 async-tar = { version = "0.4.2" }
 bytes = { version = "1.1.0" }
 log = { version = "0.4.14", features = ["max_level_trace", "release_max_level_info"] }
-env_logger = { version = "0.9.0" }
+env_logger = { version = "0.9" }
 num-traits = "0.2.14"
 rand = "0.8.5"
-reqwest = { version = "0.11.18", features = ["default-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream", "socks"] }
+reqwest = { version = "0.11", features = ["default-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream", "socks"] }
 tempfile = { version = "3.5.0" }
-flate2 = "1.0.26"
-xz2 = { version = "0.1.7", features = ["tokio"] }
-hex = "0.4.3"
-async-compression = { version = "0.4.0", features = ["tokio", "all-algorithms"] }
+flate2 = "1.0"
+xz2 = { version = "0.1", features = ["tokio"] }
+hex = "0.4"
+async-compression = { version = "0.4", features = ["tokio", "all-algorithms"] }
 
 # Tokio, async
 async-recursion = "*"
@@ -41,7 +41,7 @@ blake2 = "0.10.2"
 chacha20poly1305 = "0.10.1"
 dryoc = { version = "0.5.0" }
 #dryoc = { version = "0.4" }
-zeroize = { version = "1.6.0", default-features = false }
+zeroize = { version = "1.7.0", default-features = false }
 
 # JSON
 serde = { version = "1.0", features = ["derive"] }

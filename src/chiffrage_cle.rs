@@ -7,7 +7,7 @@ use blake2::{Blake2s256, Digest};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
 use millegrilles_cryptographie::chiffrage::{FormatChiffrage, formatchiffragestr};
-use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
+use millegrilles_cryptographie::chiffrage_cles::{CleChiffrageHandler, CleDechiffrageX25519Impl};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesRef};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use openssl::pkey::{Id, PKey};
@@ -77,6 +77,20 @@ pub struct InformationCle {
     pub tag: Option<String>,
     pub header: Option<String>,
     // pub signature_identite: String,
+}
+
+impl TryInto<CleDechiffrageX25519Impl> for &InformationCle {
+    type Error = CommonError;
+
+    fn try_into(self) -> Result<CleDechiffrageX25519Impl, Self::Error> {
+        Ok(CleDechiffrageX25519Impl {
+            cle_chiffree: self.cle.clone(),
+            cle_secrete: None,
+            format: self.format.as_str().try_into()?,
+            nonce: match self.header.clone() { Some(inner) => Some(inner), None => self.iv.clone() },
+            verification: match self.tag.clone() { Some(inner) => Some(inner), None => Some(self.hachage_bytes.clone()) },
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

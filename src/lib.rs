@@ -62,6 +62,7 @@ pub use serde_json;
 pub use serde_helpers;
 pub use chacha20poly1305;
 pub use url;
+pub use flate2;
 
 #[cfg(test)]
 mod test_setup {
