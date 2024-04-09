@@ -35,7 +35,7 @@ use crate::hachages::hacher_bytes;
 use crate::constantes::Securite::L1Public;
 use std::convert::TryInto;
 use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
-use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRef;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesRef, MessageValidable};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
@@ -793,16 +793,16 @@ pub fn get_csr_subject(csr: &X509ReqRef) -> Result<HashMap<String, String>, Stri
 }
 
 /// Valide le certificat de MilleGrillesRef pour le message.
-pub async fn valider_certificat<'a, M, const C: usize>(
+pub async fn valider_certificat<'a, M, V>(
     middleware: &M,
-    message: &MessageMilleGrillesRef<'a, C>,
+    message: &'a V,
     verifier_date_courante: bool
 )
     -> Result<Arc<EnveloppeCertificat>, crate::error::Error>
-    where M: ValidateurX509 + ?Sized
+    where M: ValidateurX509 + ?Sized, V: MessageValidable<'a>
 {
     // Recuperer le certificat du message.
-    let pubkey = message.pubkey;
+    let pubkey = message.pubkey();
     let certificat_pem = message.certificat()?;
 
     let enveloppe = if middleware.est_cache(pubkey) || certificat_pem.is_none() {
@@ -814,7 +814,7 @@ pub async fn valider_certificat<'a, M, const C: usize>(
     } else {
         // Charger le certificat recu avec le message
         let vec_pem: Vec<String> = certificat_pem.unwrap().iter().map(|s| s.to_string()).collect();
-        match middleware.charger_enveloppe(&vec_pem, Some(pubkey), message.millegrille).await {
+        match middleware.charger_enveloppe(&vec_pem, Some(pubkey), message.millegrille()).await {
             Ok(inner) => inner,
             Err(_) => Err(ErreurVerification::CertificatInvalide)?
         }
@@ -829,7 +829,7 @@ pub async fn valider_certificat<'a, M, const C: usize>(
         Err(e) => Err(ErreurVerification::CertificatInvalide)?
     }
 
-    match middleware.valider_pour_date(enveloppe.as_ref(), &message.estampille) {
+    match middleware.valider_pour_date(enveloppe.as_ref(), message.estampille()) {
         Ok(inner) => match inner {
             true => Ok(enveloppe),
             false => Err(ErreurVerification::CertificatInvalide)?

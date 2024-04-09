@@ -8,7 +8,7 @@ use chrono::Utc;
 
 use lapin::message::Delivery;
 use log::{debug, error, info, trace, warn};
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use TypeMessageOut as TypeMessageIn;
 
