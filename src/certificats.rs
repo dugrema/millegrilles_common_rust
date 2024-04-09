@@ -838,13 +838,13 @@ pub async fn valider_certificat<'a, M, V>(
     }
 }
 
-pub async fn valider_certificat_regle<'a, M, const C: usize>(
+pub async fn valider_certificat_regle<'a, M, V>(
     middleware: &M,
-    message: &MessageMilleGrillesRef<'a, C>,
+    message: &'a V,
     regle: &str
 )
     -> Result<Arc<EnveloppeCertificat>, crate::error::Error>
-    where M: ValidateurX509 + ?Sized
+    where M: ValidateurX509 + ?Sized, V: MessageValidable<'a>
 {
     // Recuperer la chaine de certificat du message.
     let certificat_pem = match message.certificat()? {
@@ -854,8 +854,8 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
             Err(ErreurVerification::CertificatInvalide)?
         }
     };
-    let millegrille_pem = match message.millegrille.as_ref() {
-        Some(inner) => *inner,
+    let millegrille_pem = match message.millegrille() {
+        Some(inner) => inner,
         None => {
             error!("valider_certificat_regle Certificat de millegrille manquant");
             Err(ErreurVerification::CertificatInvalide)?
@@ -878,7 +878,7 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
         }
     };
 
-    let pubkey_message = message.pubkey;
+    let pubkey_message = message.pubkey();
 
     // Charger une enveloppe avec les PEMs
     let vec_pem: Vec<String> = certificat_pem.iter().map(|s| s.to_string()).collect();
@@ -971,7 +971,7 @@ pub async fn valider_certificat_regle<'a, M, const C: usize>(
     }
 
     // Verifier date de validite du certificat par rapport au message
-    let estampille = &message.estampille;
+    let estampille = message.estampille();
     match valider_pour_date(&enveloppe, estampille) {
         Ok(inner) => {
             if ! inner {
@@ -1072,22 +1072,26 @@ pub trait ValidateurX509: Send + Sync {
 
     /// Valide le certificat en fonction de la date du message.
     /// Option : verifie aussi la validite de la chaine avec la date courante.
-    async fn valider_certificat_message<'a, const C: usize>(
+    async fn valider_certificat_message<'a, V>(
         &self,
-        message: &MessageMilleGrillesRef<'a, C>,
+        message: &'a V,
         verifier_date_courante: bool
-    ) -> Result<Arc<EnveloppeCertificat>, Error>
+    )
+        -> Result<Arc<EnveloppeCertificat>, Error>
+        where V: MessageValidable<'a>
     {
         valider_certificat(self, message, verifier_date_courante).await
     }
 
     /// Valide le certificat en fonction d'une regle dans configuration/idmg_validation.json
     /// Les champs certificat et millegrille du message doivent etre remplis.
-    async fn valider_certificat_idmg<'a, const C: usize>(
+    async fn valider_certificat_idmg<'a, V>(
         &self,
-        message: &MessageMilleGrillesRef<'a, C>,
+        message: &'a V,
         regle: &str
-    ) -> Result<Arc<EnveloppeCertificat>, Error>
+    )
+        -> Result<Arc<EnveloppeCertificat>, Error>
+        where V: MessageValidable<'a>
     {
         valider_certificat_regle(self, message, regle).await
     }
