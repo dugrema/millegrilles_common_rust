@@ -19,12 +19,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
 
-use crate::certificats::{ValidateurX509, VerificateurPermissions};
+use crate::certificats::{charger_enveloppe, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
 use crate::db_structs::{EvenementsTransaction, TransactionOwned, TransactionRef, TransactionValide};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::messages_generiques::CommandeUsager;
-use crate::middleware::{map_serializable_to_bson, requete_certificat};
+use crate::middleware::{map_serializable_to_bson, ReponseEnveloppe, requete_certificat};
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 // use crate::verificateur::VerificateurMessage;
@@ -966,6 +966,9 @@ async fn regenerer_charger_certificats<'a, M>(middleware: &M, mut curseur: Curso
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct TransactionCorePkiNouveauCertificat { pem: String }
+
 async fn regenerer_transactions<'a, M, T>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
     -> Result<(), Box<dyn Error>>
 where
@@ -1015,8 +1018,26 @@ where
             match middleware.get_certificat(pubkey).await {
                 Some(c) => c,
                 None => {
-                    warn!("transactions.regenerer_transactions Certificat {} inconnu, ** SKIP **", pubkey);
-                    continue;
+                    if skip_certificats {
+                        // Reload de CorePki, tenter de charger l'enveloppe a partir du contenu
+                        let message: TransactionCorePkiNouveauCertificat = match serde_json::from_str(transaction.contenu()?.as_ref()) {
+                            Ok(inner) => inner,
+                            Err(e) => {
+                                debug!("Erreur chargement certificat via transaction CorePki (1) : {:?}", e);
+                                continue
+                            }
+                        };
+                        match charger_enveloppe(message.pem.as_str(), None, None) {
+                            Ok(inner) => Arc::new(inner),
+                            Err(e) => {
+                                debug!("Erreur chargement certificat via transaction CorePki (2) : {:?}", e);
+                                continue
+                            }
+                        }
+                    } else {
+                        warn!("transactions.regenerer_transactions Certificat {} inconnu, ** SKIP **", pubkey);
+                        continue;
+                    }
                 }
             }
         };

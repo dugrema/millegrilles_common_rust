@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
+use std::str::from_utf8;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -820,6 +821,29 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Result<R
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReponseCertificat {
+    pub ok: Option<bool>,
+    pub chaine_pem: Option<Vec<String>>,
+    pub fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ca_pem: Option<String>,
+}
+
+impl TryInto<ReponseEnveloppe> for ReponseCertificat {
+    type Error = crate::error::Error;
+
+    fn try_into(self) -> Result<ReponseEnveloppe, Self::Error> {
+        let chaine_pem = match self.chaine_pem { Some(inner) => inner, None => Err(crate::error::Error::Str("ReponseCertificat chaine_pem manquant"))?};
+        let fingerprint = match self.fingerprint { Some(inner) => inner, None => Err(crate::error::Error::Str("ReponseCertificat fingerprint manquant"))?};
+        Ok(ReponseEnveloppe {
+            chaine_pem,
+            fingerprint,
+            ca_pem: self.ca_pem,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReponseEnveloppe {
     pub chaine_pem: Vec<String>,
     pub fingerprint: String,
@@ -1156,7 +1180,15 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
     debug!("requete_certificat Reponse : {:?}", reponse_requete);
     let reponse: ReponseEnveloppe = match reponse_requete {
         Some(inner) => match inner {
-            TypeMessage::Valide(m) => deser_message_buffer!(m.message),
+            TypeMessage::Valide(m) => {
+                debug!("requete_certificat Message certificat recu : {}", from_utf8(m.message.buffer.as_slice())?);
+                let reponse_certificat: ReponseCertificat = deser_message_buffer!(m.message);
+                if let Some(false) = reponse_certificat.ok {
+                    Err(crate::error::Error::String(format!("Certificat {} inconnu par CorePki", fingerprint_str)))?
+                } else {
+                    reponse_certificat.try_into()?
+                }
+            },
             TypeMessage::Certificat(m) => {
                 let enveloppe = m.enveloppe_certificat;
                 let pem_ca = enveloppe.ca_pem()?;
