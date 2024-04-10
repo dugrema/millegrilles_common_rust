@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use mongodb::options::{CountOptions, Hint};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use tokio::spawn;
@@ -710,7 +711,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         };
 
         let collection = middleware.get_collection(nom_collection_transactions.as_str())?;
-        let nombre_transactions = collection.count_documents(None, None).await? as i64;
+        let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
+        let nombre_transactions = collection.count_documents(None, options).await? as i64;
 
         let reponse = ReponseNombreTransactions { ok: true, domaine: self.get_nom_domaine(), nombre_transactions };
         Ok(Some(middleware.build_reponse(reponse)?.0))
