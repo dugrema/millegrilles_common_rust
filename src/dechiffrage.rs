@@ -1,11 +1,14 @@
 use std::collections::HashMap;
-use std::error::Error;
 use std::io::Read;
 use flate2::Compression;
 use flate2::read::{GzDecoder, GzEncoder};
 use futures_util::AsyncReadExt;
 use log::debug;
+use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519, CleDechiffrageX25519Impl, Decipher};
+use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
+use millegrilles_cryptographie::x25519::CleSecreteX25519;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
+
 use multibase::decode;
 use serde_json::json;
 
@@ -14,150 +17,164 @@ use crate::common_messages::{DataChiffre, DataDechiffre};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::constantes::*;
 use crate::recepteur_messages::TypeMessage;
+use crate::error::Error;
 
-// pub async fn dechiffrer_documents<M,S>(middleware: &M, liste_data_chiffre: Vec<DataChiffre>, domaine: Option<S>)
-//     -> Result<Vec<DataDechiffre>, Box<dyn Error>>
-//     where M: GenerateurMessages, S: Into<String>
-// {
-//     let mut liste_hachage_bytes = Vec::new();
-//     for d in &liste_data_chiffre {
-//         if let Some(inner) = d.ref_hachage_bytes.as_ref() {
-//             liste_hachage_bytes.push(inner.as_str())
-//         }
-//     }
-//     let mut cles_dechiffrees = get_cles_dechiffrees(middleware, liste_hachage_bytes, domaine).await?;
-//
-//     let mut data_dechiffre = Vec::new();
-//     for d in liste_data_chiffre {
-//         if let Some(hachage_bytes) = d.ref_hachage_bytes.as_ref() {
-//             if let Some(cle) = cles_dechiffrees.remove(hachage_bytes) {
-//                 let data = dechiffrer_data(cle, d)?;
-//                 data_dechiffre.push(data);
-//             }
-//         }
-//     }
-//
-//     Ok(data_dechiffre)
-// }
+pub async fn dechiffrer_documents<M,S>(middleware: &M, data_chiffre: DataChiffre, domaine: Option<S>)
+    -> Result<DataDechiffre, Error>
+    where M: GenerateurMessages, S: Into<String>
+{
+    let mut liste_hachage_bytes = Vec::new();
+    if let Some(inner) = data_chiffre.ref_hachage_bytes.as_ref() {
+        liste_hachage_bytes.push(inner.as_str())
+    }
+    let mut cles_dechiffrees = get_cles_dechiffrees(middleware, liste_hachage_bytes, domaine).await?;
 
-// pub async fn get_cles_rechiffrees<M,S,T>(
-//     middleware: &M, liste_hachage_bytes: &Vec<S>, certificat_rechiffrage_pem: Option<&EnveloppeCertificat>,
-//     domaine: Option<T>
-// )
-//     -> Result<ReponseDechiffrageCles, crate::error::Error>
-//     where M: GenerateurMessages, S: AsRef<str>, T: Into<String>
-// {
-//     let domaine_str = match domaine {
-//         Some(d) => Some(d.into()),
-//         None => None
-//     };
-//
-//     let requete_cles = match certificat_rechiffrage_pem {
-//         Some(inner) => {
-//             // Utiliser certificat du message client (requete) pour demande de rechiffrage
-//             let pem_rechiffrage = inner.chaine_pem()?;
-//
-//             json!({
-//                 MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
-//                 "certificat_rechiffrage": pem_rechiffrage,
-//                 "domaine": domaine_str,
-//             })
-//         },
-//         None => json!({
-//             MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
-//             "domaine": domaine_str,
-//         })
-//     };
-//     let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE, vec![Securite::L3Protege])
-//         .build();
-//
-//     debug!("dechiffrer_documents Requete cles config notifications : {:?}", requete_cles);
-//     let reponse_cles: ReponseDechiffrageCles = match middleware.transmettre_requete(routage, &requete_cles).await? {
-//         TypeMessage::Valide(inner) => {
-//             let message_ref = inner.message.parse()?;
-//             let message_contenu = message_ref.contenu()?;
-//             match message_contenu.deserialize() {
-//             // match inner.message.parsed.map_contenu() {
-//                 Ok(inner) => inner,
-//                 Err(e) => Err(format!("dechiffrage.get_cles_dechiffrees Erreur mapping reponse rechiffrage {:?} : {:?}", inner, e))?
-//             }
-//         },
-//         _ => Err(format!("dechiffrage.get_cles_dechiffrees Message reponse invalide"))?
-//     };
-//
-//     Ok(reponse_cles)
-// }
+    if let Some(hachage_bytes) = data_chiffre.ref_hachage_bytes.as_ref() {
+        if let Some(cle) = cles_dechiffrees.remove(hachage_bytes) {
+            return Ok(dechiffrer_data(cle, data_chiffre)?)
+        }
+    }
 
-// pub async fn get_cles_dechiffrees<M,S,T>(middleware: &M, liste_hachage_bytes: Vec<S>, domaine: Option<T>)
-//     -> Result<HashMap<String, CleDechiffree>, Box<dyn Error>>
-//     where M: GenerateurMessages, S: AsRef<str>, T: Into<String>
-// {
-//     let reponse_cles = get_cles_rechiffrees(
-//         middleware, &liste_hachage_bytes, None, domaine
-//     ).await?;
-//
-//     debug!("dechiffrer_documents Reponse cles dechiffrer config notifications : {:?}", reponse_cles);
-//     let enveloppe_privee = middleware.get_enveloppe_signature();
-//     let mut cles = HashMap::new();
-//     if let Some(inner) = reponse_cles.cles {
-//         for (hachage_bytes, information_cle) in inner {
-//             let cle_dechiffree = CleDechiffree::dechiffrer_information_cle(enveloppe_privee.as_ref(), information_cle)?;
-//             cles.insert(hachage_bytes, cle_dechiffree);
-//         }
-//     }
-//
-//     if cles.len() != liste_hachage_bytes.len() {
-//         Err(format!("Certaines cles refusees, liste recue : {:?}", cles.keys()))?;
-//     }
-//
-//     Ok(cles)
-// }
+    Err(Error::Str("dechiffrer_documents Erreur recuperation cles (ref inconnu)"))
+}
 
-// pub fn dechiffrer_data(cle: CleDechiffree, data: DataChiffre) -> Result<DataDechiffre, Box<dyn Error>> {
-//     let mut decipher_data = Mgs4CipherData::try_from(cle)?;
-//
-//     // Remplacer le header par celui du data (requis lors de reutilisation de cles)
-//     match &data.header {
-//         Some(header) => decipher_data.header = match decode(header) {
-//             Ok(inner) => inner,
-//             Err(e) => Err(format!("dechiffrer_data Erreur multibase.decode decipher_data.header {} : {:?}", header, e))?
-//         }.1,
-//         None => ()
-//     }
-//
-//     let mut decipher = DecipherMgs4::new(&decipher_data)?;
-//
-//     // Dechiffrer message
-//     let data_dechiffre = {
-//         let mut output_vec = Vec::new();
-//         let data_chiffre_vec: Vec<u8> = match decode(data.data_chiffre.as_str()) {
-//             Ok(inner) => inner,
-//             Err(e) => Err(format!("dechiffrer_data Erreur multibase.decode data.data_chiffre {} : {:?}", data.data_chiffre, e))?
-//         }.1;
-//         debug!("dechiffrer_data Dechiffrer {}", data_chiffre_vec.len());
-//         // output_vec.reserve(data_chiffre_vec.len());
-//         output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
-//         let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
-//         let out_len = decipher.finalize(&mut output_vec[len..])?;
-//         debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
-//
-//         let mut data_dechiffre = Vec::new();
-//         data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
-//
-//         data_dechiffre
-//     };
-//
-//     // Decompresser data
-//     debug!("dechiffrer_data Decompresser data dechiffre");
-//     let mut decoder = GzDecoder::new(&data_dechiffre[..]);
-//     let mut data_decompresse = Vec::new();
-//     let resultat = decoder.read_to_end(&mut data_decompresse)?;
-//
-//     Ok(DataDechiffre {
-//         ref_hachage_bytes: data.ref_hachage_bytes,
-//         data_dechiffre: data_decompresse,
-//     })
-// }
+pub async fn get_cles_rechiffrees<M,S,T>(
+    middleware: &M, liste_hachage_bytes: &Vec<S>, certificat_rechiffrage_pem: Option<&EnveloppeCertificat>,
+    domaine: Option<T>
+)
+    -> Result<ReponseDechiffrageCles, Error>
+    where M: GenerateurMessages, S: AsRef<str>, T: Into<String>
+{
+    let domaine_str = match domaine {
+        Some(d) => Some(d.into()),
+        None => None
+    };
+
+    let requete_cles = match certificat_rechiffrage_pem {
+        Some(inner) => {
+            // Utiliser certificat du message client (requete) pour demande de rechiffrage
+            let pem_rechiffrage = inner.chaine_pem()?;
+
+            json!({
+                MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
+                "certificat_rechiffrage": pem_rechiffrage,
+                "domaine": domaine_str,
+            })
+        },
+        None => json!({
+            MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: liste_hachage_bytes.iter().map(|s| s.as_ref()).collect::<Vec<&str>>(),
+            "domaine": domaine_str,
+        })
+    };
+    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE, vec![Securite::L3Protege])
+        .build();
+
+    debug!("dechiffrer_documents Requete cles config notifications : {:?}", requete_cles);
+    if let Some(TypeMessage::Valide(reponse)) = middleware.transmettre_requete(routage, &requete_cles).await? {
+        let message_ref = reponse.message.parse()?;
+        let message_contenu = message_ref.contenu()?;
+        match message_contenu.deserialize() {
+            Ok(inner) => Ok(inner),
+            Err(e) => Err(format!("dechiffrage.get_cles_dechiffrees Erreur mapping reponse rechiffrage {:?} : {:?}", reponse.type_message, e))?
+        }
+    } else {
+        Err(format!("dechiffrage.get_cles_dechiffrees Message reponse invalide"))?
+    }
+
+    // let reponse_cles: ReponseDechiffrageCles = match middleware.transmettre_requete(routage, &requete_cles).await? {
+    //     TypeMessage::Valide(inner) => {
+    //         let message_ref = inner.message.parse()?;
+    //         let message_contenu = message_ref.contenu()?;
+    //         match message_contenu.deserialize() {
+    //         // match inner.message.parsed.map_contenu() {
+    //             Ok(inner) => inner,
+    //             Err(e) => Err(format!("dechiffrage.get_cles_dechiffrees Erreur mapping reponse rechiffrage {:?} : {:?}", inner, e))?
+    //         }
+    //     },
+    //     _ => Err(format!("dechiffrage.get_cles_dechiffrees Message reponse invalide"))?
+    // };
+
+    // Ok(reponse_cles)
+}
+
+pub async fn get_cles_dechiffrees<M,S,T>(middleware: &M, liste_hachage_bytes: Vec<S>, domaine: Option<T>)
+    -> Result<HashMap<String, CleDechiffrageX25519Impl>, Error>
+    where M: GenerateurMessages, S: AsRef<str>, T: Into<String>
+{
+    let reponse_cles = get_cles_rechiffrees(
+        middleware, &liste_hachage_bytes, None, domaine
+    ).await?;
+
+    debug!("dechiffrer_documents Reponse cles dechiffrer config notifications : {:?}", reponse_cles);
+    let enveloppe_privee = middleware.get_enveloppe_signature();
+    let mut cles = HashMap::new();
+    if let Some(inner) = reponse_cles.cles {
+        for (hachage_bytes, information_cle) in inner {
+            let mut cle_dechiffree: CleDechiffrageX25519Impl = (&information_cle).try_into()?;
+            cle_dechiffree.dechiffrer_x25519(&enveloppe_privee.cle_privee)?;
+            cles.insert(hachage_bytes, cle_dechiffree);
+        }
+    }
+
+    if cles.len() != liste_hachage_bytes.len() {
+        Err(format!("Certaines cles refusees, liste recue : {:?}", cles.keys()))?;
+    }
+
+    Ok(cles)
+}
+
+pub fn dechiffrer_data(mut cle: CleDechiffrageX25519Impl, data: DataChiffre) -> Result<DataDechiffre, Error> {
+    // let mut decipher_data = data.to_cle_dechiffrage_x25519(cle);
+
+    if let Some(header) = data.header.as_ref() {
+        // Remplacer le header par celui du data (requis lors de reutilisation de cles)
+        cle.nonce = Some(header.clone())
+    }
+
+    // match &data.header {
+    //     Some(header) => {
+    //         decipher_data.nonce = match decode(header) {
+    //             Ok(inner) => inner,
+    //             Err(e) => Err(format!("dechiffrer_data Erreur multibase.decode decipher_data.header {} : {:?}", header, e))?
+    //         }.1
+    //     },
+    //     None => ()
+    // }
+
+    let mut decipher = DecipherMgs4::new(&cle)?;
+    let data_dechiffre = decipher.gz_to_vec(data.data_chiffre.as_bytes())?;
+
+    // // Dechiffrer message
+    // let data_dechiffre = {
+    //     let mut output_vec = Vec::new();
+    //     let data_chiffre_vec: Vec<u8> = match decode(data.data_chiffre.as_str()) {
+    //         Ok(inner) => inner,
+    //         Err(e) => Err(format!("dechiffrer_data Erreur multibase.decode data.data_chiffre {} : {:?}", data.data_chiffre, e))?
+    //     }.1;
+    //     debug!("dechiffrer_data Dechiffrer {}", data_chiffre_vec.len());
+    //     // output_vec.reserve(data_chiffre_vec.len());
+    //     output_vec.extend(std::iter::repeat(0).take(data_chiffre_vec.len()));
+    //     let len = decipher.update(data_chiffre_vec.as_slice(), &mut output_vec[..])?;
+    //     let out_len = decipher.finalize(&mut output_vec[len..])?;
+    //     debug!("dechiffrer_data Output len {}, finalize len {}", len, out_len);
+    //
+    //     let mut data_dechiffre = Vec::new();
+    //     data_dechiffre.extend_from_slice(&output_vec[..(len + out_len)]);
+    //
+    //     data_dechiffre
+    // };
+
+    // Decompresser data
+    debug!("dechiffrer_data Decompresser data dechiffre");
+    // let mut decoder = GzDecoder::new(&data_dechiffre[..]);
+    // let mut data_decompresse = Vec::new();
+    // let resultat = decoder.read_to_end(&mut data_dechiffra)?;
+
+    Ok(DataDechiffre {
+        ref_hachage_bytes: data.ref_hachage_bytes,
+        data_dechiffre,
+    })
+}
 
 // #[cfg(test)]
 // mod test {

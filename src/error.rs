@@ -1,5 +1,6 @@
 use std::fmt;
 use std::str::Utf8Error;
+use std::string::FromUtf8Error;
 use hex::FromHexError;
 use openssl::error::ErrorStack;
 use redis::RedisError;
@@ -28,6 +29,7 @@ pub enum Error {
     HexFrom(hex::FromHexError),
     UrlParse(url::ParseError),
     Utf8Error(Utf8Error),
+    FromUtf8Error(FromUtf8Error),
     TokioSendError(String)
 }
 
@@ -135,6 +137,12 @@ impl From<multihash::Error> for Error {
 impl From<Utf8Error> for Error {
     fn from(value: Utf8Error) -> Self {
         Self::Utf8Error(value)
+    }
+}
+
+impl From<FromUtf8Error> for Error {
+    fn from(value: FromUtf8Error) -> Self {
+        Self::FromUtf8Error(value)
     }
 }
 
