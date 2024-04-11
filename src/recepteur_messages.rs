@@ -41,8 +41,10 @@ pub async fn traiter_delivery<M,S>(
         debug!("traiter_delivery Recu message {:?}", message_ref.routage);
 
         // Verifier la signature du message. Lance une Err si le message est invalide.
-        message_ref.verifier_signature()?;
-
+        if let Err(e) = message_ref.verifier_signature() {
+            debug!("Erreur verification signature:\n{}", from_utf8(message.buffer.as_slice())?);
+            Err(e)?
+        }
         let correlation_id = match delivery.properties.correlation_id() {
             Some(inner) => inner.as_str(),
             None => message_ref.id
