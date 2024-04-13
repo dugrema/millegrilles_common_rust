@@ -1,22 +1,22 @@
 [package]
 name = "millegrilles_common_rust"
-version = "2024.2.2"
+version = "2024.3.0"
 edition = "2021"
 
 [dependencies]
 
-millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "2024.2", features = ["chiffrage"] }
+millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "2024.3", features = ["chiffrage"] }
 # millegrilles_cryptographie = { path = "/home/mathieu/RustroverProjects/millegrilles_cryptographie", features = ["chiffrage"] }
 
-async-std = "1.12.0"
-async-tar = { version = "0.4.2" }
-bytes = { version = "1.1.0" }
-log = { version = "0.4.14", features = ["max_level_trace", "release_max_level_info"] }
+async-std = "1.12"
+async-tar = { version = "0.4" }
+bytes = { version = "1.6" }
+log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 env_logger = { version = "0.9" }
-num-traits = "0.2.14"
-rand = "0.8.5"
+num-traits = "0.2"
+rand = "0.8"
 reqwest = { version = "0.11", features = ["default-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream", "socks"] }
-tempfile = { version = "3.5.0" }
+tempfile = { version = "3.5" }
 flate2 = "1.0"
 xz2 = { version = "0.1", features = ["tokio"] }
 hex = "0.4"
@@ -24,24 +24,24 @@ async-compression = { version = "0.4", features = ["tokio", "all-algorithms"] }
 
 # Tokio, async
 async-recursion = "*"
-async-trait = "0.1.68"
-tokio = { version = "1.28.2", features = ["full"] }
-tokio-stream = { version = "0.1.14" }
-tokio-util = { version = "0.7.8", features = ["codec", "io"] }
+async-trait = "0.1"
+tokio = { version = "1.37", features = ["full"] }
+tokio-stream = { version = "0.1" }
+tokio-util = { version = "0.7", features = ["codec", "io"] }
 
 # Crypto et certs
-openssl = { version = "0.10.54", features = ["vendored"] }
-x509-parser = { "version" = "0.14.0" }
-multibase = "0.9.1"
-multicodec = "0.1.0"
-multihash = "0.14.0"
-base64 = "0.21.0"
-base64-url = "2.0.0"
-blake2 = "0.10.2"
-chacha20poly1305 = "0.10.1"
-dryoc = { version = "0.5.0" }
+openssl = { version = "0.10", features = ["vendored"] }
+x509-parser = { "version" = "0.16" }
+multibase = "0.9"
+multicodec = "0.1"
+multihash = "0.15"
+base64 = "0.21"
+base64-url = "2.0"
+blake2 = "0.10"
+chacha20poly1305 = "0.10"
+dryoc = { version = "0.5" }
 #dryoc = { version = "0.4" }
-zeroize = { version = "1.7.0", default-features = false }
+zeroize = { version = "1.7", default-features = false }
 
 # JSON
 serde = { version = "1.0", features = ["derive"] }
@@ -50,22 +50,22 @@ serde-helpers = { version = "0.1", features = ["serde_json"] }
 
 # Formats
 chrono = { version = "0.4", features = ["serde"] }
-url = { version = "2.2.2", features = ["serde"] }
-uuid = { version = "1.1.2", features = ["serde", "v4"] }
-substring = { version = "1.4.5" }
+url = { version = "2.5", features = ["serde"] }
+uuid = { version = "1.8", features = ["serde", "v4"] }
+substring = { version = "1.4" }
 
 # MongoDB
 mongodb = { version = "2.8", default-features = false, features = ["tokio-runtime", "bson-chrono-0_4"] }
 
 # RabbitMQ
-lapin = { "version" = "1.10.0" }
-futures = "0.3.1"
+lapin = { "version" = "1.10" }
+futures = "0.3"
 futures-util = "0.3.16"
-tokio-amqp = { version = "1.1.0" }
+tokio-amqp = { version = "1.1" }
 
-redis = { version = "0.23.0", features = ["tokio-comp", "tokio-native-tls-comp"] }
+redis = { version = "0.23", features = ["tokio-comp", "tokio-native-tls-comp"] }
 # jwt = { version = "0.16.0", features = ["openssl"] }
-jwt-simple = "0.11.5"
+jwt-simple = "0.11"
 
 
 #[dev-dependencies]
