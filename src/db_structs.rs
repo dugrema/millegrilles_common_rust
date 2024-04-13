@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::str::from_utf8;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use log::error;
@@ -7,7 +8,7 @@ use millegrilles_cryptographie::ed25519::{MessageId, verifier};
 use millegrilles_cryptographie::ed25519_dalek::VerifyingKey;
 use millegrilles_cryptographie::error::Error;
 use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, optionepochseconds, HacheurMessage, PreMigrationOwned, PreMigration};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, optionepochseconds, HacheurMessage, PreMigrationOwned, PreMigration, MessageMilleGrillesBufferDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use crate::mongo_dao::opt_chrono_datetime_as_bson_datetime;
 use serde::{Deserialize, Serialize};
@@ -249,13 +250,13 @@ impl TransactionOwned {
         }
 
         // Verifier le hachage du message
-        let contenu_escaped = serde_json::to_string(self.contenu.as_str())?;
-        let hacheur = self.get_hacheur(&contenu_escaped[1..contenu_escaped.len()-1])?;
+        // let contenu_escaped = serde_json::to_string(self.contenu.as_str())?;
+        let hacheur = self.get_hacheur(self.contenu.as_str(), false)?;
         let hachage_string = hacheur.hacher()?;
         if self.id != hachage_string.as_str() {
             self.contenu_valide = Some((false, false));
-            error!("verifier_signature hachage invalide : id: {}, calcule: {}", self.id, hachage_string);
-            Err(Error::Str("verifier_signature hachage invalide"))?
+            error!("TransactionOwned verifier_signature hachage invalide : id: {}, calcule: {} Contenu:\n{}", self.id, hachage_string, self.contenu);
+            Err(Error::Str("TransactionOwned verifier_signature hachage invalide"))?
         }
 
         // Extraire cle publique (bytes de pubkey) pour verifier la signature
@@ -319,14 +320,14 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
 
 impl TransactionOwned {
 
-    fn get_hacheur<'a>(&'a self, contenu_escaped: &'a str) -> Result<HacheurMessage<'a>, crate::error::Error> {
+    fn get_hacheur<'a>(&'a self, contenu: &'a str, contenu_escaped: bool) -> Result<HacheurMessage<'a>, crate::error::Error> {
         Ok(HacheurMessage {
             hacheur: HacheurBlake2s256::new(),
             pubkey: self.pubkey.as_str(),
             estampille: &self.estampille,
             kind: self.kind.clone(),
-            contenu: contenu_escaped,
-            contenu_escaped: true,
+            contenu,
+            contenu_escaped,
             routage: match self.routage.as_ref() { Some(inner) => Some(inner.into()), None => None },
             pre_migration: match self.pre_migration.as_ref() { Some(inner) => Some(inner.into()), None => None },
             origine: match self.origine.as_ref() { Some(inner) => Some(inner.as_str()), None => None },
