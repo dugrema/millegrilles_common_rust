@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex};
+use async_compression::Level::Default;
 
 use blake2::{Blake2s256, Digest};
 use chrono::{DateTime, Utc};
@@ -11,6 +12,7 @@ use millegrilles_cryptographie::chiffrage_cles::{CleChiffrageHandler, CleDechiff
 use millegrilles_cryptographie::heapless;
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesOwned, MessageMilleGrillesRef};
+use millegrilles_cryptographie::x25519::{CleSecreteX25519, dechiffrer_asymmetrique_ed25519};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
@@ -321,30 +323,40 @@ impl CommandeSauvegarderCle {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandeAjouterCleDomaine {
     /// Cles chiffrees pour differents destinataires.
-    /// Peut aussi avoir de l'information de dechiffrage de contenu.
-    pub cles: DechiffrageInterMillegrilleOwned,
+    /// Key : fingerprint hex, Value: cle chiffree base64
+    pub cles: HashMap<String, String>,
 
     /// Signature du domaine. Permet de garantir que les seuls les domaines predefinis
     /// auront acces a cette cle. La commande get_cle_ref() permet aussi de recuperer un
     /// identificateur cryptographique unique pour cette cle.
     pub signature: SignatureDomaines,
-
-    /// Information nominative sur la cle. Conserver pour reference ulterieure.
-    pub identificateurs_document: HashMap<String, String>,
 }
 
 impl CommandeAjouterCleDomaine {
-    pub fn verifier_signature<S,B>(&self, fingerprint_ca: S, cle_secrete: B) -> Result<(), crate::error::Error>
-        where S: AsRef<str>, B: AsRef<[u8]>
+    pub fn verifier_signature<B>(&self, cle_secrete: B) -> Result<(), crate::error::Error>
+        where B: AsRef<[u8]>
     {
-        if self.signature.signature_ca.is_some() {
-            self.signature.verifier_ca_base64(fingerprint_ca)?;
-        }
         Ok(self.signature.verifier_derivee(cle_secrete)?)
     }
 
     pub fn get_cle_ref(&self) -> Result<heapless::String<60>, crate::error::Error> {
         Ok(self.signature.get_cle_ref()?)
+    }
+
+    pub fn get_cle_secrete(&self, enveloppe_privee: &EnveloppePrivee)
+        -> Result<CleSecreteX25519, crate::error::Error>
+    {
+        // Trouver la cle chiffree correspondant a la cle privee.
+        let fingerprint = enveloppe_privee.fingerprint()?;
+        let cle_chiffree = match self.cles.get(fingerprint.as_str()) {
+            Some(inner) => inner,
+            None => Err(crate::error::Error::String(format!("into_cle_dechiffrage Cle {} absente", fingerprint)))?
+        };
+
+        // Dechiffrer la cle
+        let cle_chiffree_bytes = multibase::decode(cle_chiffree)?.1;
+        Ok(dechiffrer_asymmetrique_ed25519(
+            cle_chiffree_bytes.as_slice(), &enveloppe_privee.cle_privee)?)
     }
 }
 
