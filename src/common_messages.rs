@@ -244,30 +244,40 @@ pub struct DataDechiffre {
     pub data_dechiffre: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TransactionRetirerSubscriptionWebpush {
-    pub endpoint: String,
-    pub user_id: Option<String>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct TransactionRetirerSubscriptionWebpush {
+//     pub endpoint: String,
+//     pub user_id: Option<String>,
+// }
 
+/// Requete de dechiffrage de cles par domaine/ids
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequeteDechiffrage {
+    /// Domaine auquel appartiennent les cles
     pub domaine: String,
-    pub liste_hachage_bytes: Vec<String>,
+    /// Obsolete : liste de hachage bytes correspondant aux cles (maintenant cle_id)
+    pub liste_hachage_bytes: Option<Vec<String>>,
+    /// Liste de cle_id a rechiffrer
+    pub cle_ids: Option<Vec<String>>,
+    /// Certificat a utiliser pour la reponse chiffree
     pub certificat_rechiffrage: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReponseDechiffrageCle {
-      pub cle: String,
-      pub cle_ref: Option<String>,
-      pub domaine: String,
-      pub format: String,
-      pub hachage_bytes: String,
-      pub header: Option<String>,
-      pub identificateurs_document: Option<HashMap<String, String>>,
-      pub iv: Option<String>,
-      pub tag: Option<String>,
+    pub cle: String,
+    pub cle_id: String,
+    pub domaine: String,
+
+    // Obsolete - entrees de dechiffrage pour le contenu
+    pub format: Option<String>,
+    pub hachage_bytes: Option<String>,
+    pub header: Option<String>,
+    pub iv: Option<String>,
+    pub tag: Option<String>,
+
+    // Obsolete
+    pub identificateurs_document: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -39,6 +39,7 @@ mod macros;
 // Re-exports
 pub use millegrilles_cryptographie;
 pub use async_trait;
+pub use base64;
 pub use base64_url;
 pub use bytes;
 pub use chrono;

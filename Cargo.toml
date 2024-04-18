@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 
-millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "2024.3", features = ["chiffrage"] }
-# millegrilles_cryptographie = { path = "/home/mathieu/RustroverProjects/millegrilles_cryptographie", features = ["chiffrage"] }
+# millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "2024.3", features = ["chiffrage"] }
+millegrilles_cryptographie = { path = "/home/mathieu/RustroverProjects/millegrilles_cryptographie", features = ["chiffrage"] }
 
 async-std = "1.12"
 async-tar = { version = "0.4" }
@@ -35,7 +35,7 @@ x509-parser = { "version" = "0.16" }
 multibase = "0.9"
 multicodec = "0.1"
 multihash = "0.15"
-base64 = "0.21"
+base64 = "0.22"
 base64-url = "2.0"
 blake2 = "0.10"
 chacha20poly1305 = "0.10"

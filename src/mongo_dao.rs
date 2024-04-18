@@ -25,9 +25,11 @@ use crate::rabbitmq_dao::emettre_certificat_compte;
 #[async_trait]
 pub trait MongoDao: Send + Sync {
     fn get_database(&self) -> Result<Database, String>;
-    fn get_collection(&self, nom_collection: &str) -> Result<Collection<Document>, String> {
+    fn get_collection<S>(&self, nom_collection: S) -> Result<Collection<Document>, String>
+        where S: AsRef<str>
+    {
         let database = self.get_database()?;
-        Ok(database.collection(nom_collection))
+        Ok(database.collection(nom_collection.as_ref()))
     }
 
     fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, String> {

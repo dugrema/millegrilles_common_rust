@@ -4,6 +4,7 @@ use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex};
 use async_compression::Level::Default;
 
+use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use blake2::{Blake2s256, Digest};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info};
@@ -326,7 +327,7 @@ pub struct CommandeAjouterCleDomaine {
     /// Key : fingerprint hex, Value: cle chiffree base64
     pub cles: HashMap<String, String>,
 
-    /// Signature du domaine. Permet de garantir que les seuls les domaines predefinis
+    /// Signature du domaine. Permet de garantir que seuls les domaines predefinis
     /// auront acces a cette cle. La commande get_cle_ref() permet aussi de recuperer un
     /// identificateur cryptographique unique pour cette cle.
     pub signature: SignatureDomaines,
@@ -339,7 +340,7 @@ impl CommandeAjouterCleDomaine {
         Ok(self.signature.verifier_derivee(cle_secrete)?)
     }
 
-    pub fn get_cle_ref(&self) -> Result<heapless::String<60>, crate::error::Error> {
+    pub fn get_cle_ref(&self) -> Result<heapless::String<96>, crate::error::Error> {
         Ok(self.signature.get_cle_ref()?)
     }
 
@@ -354,7 +355,7 @@ impl CommandeAjouterCleDomaine {
         };
 
         // Dechiffrer la cle
-        let cle_chiffree_bytes = multibase::decode(cle_chiffree)?.1;
+        let cle_chiffree_bytes = base64_nopad.decode(cle_chiffree)?;
         Ok(dechiffrer_asymmetrique_ed25519(
             cle_chiffree_bytes.as_slice(), &enveloppe_privee.cle_privee)?)
     }

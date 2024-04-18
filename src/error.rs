@@ -30,7 +30,8 @@ pub enum Error {
     UrlParse(url::ParseError),
     Utf8Error(Utf8Error),
     FromUtf8Error(FromUtf8Error),
-    TokioSendError(String)
+    TokioSendError(String),
+    Base64DecodeError(base64::DecodeError),
 }
 
 impl fmt::Display for Error {
@@ -149,5 +150,11 @@ impl From<FromUtf8Error> for Error {
 impl<T> From<SendError<T>> for Error {
     fn from(value: SendError<T>) -> Self {
         Self::TokioSendError(format!("{:?}", value))
+    }
+}
+
+impl From<base64::DecodeError> for Error {
+    fn from(value: base64::DecodeError) -> Self {
+        Self::Base64DecodeError(value)
     }
 }
