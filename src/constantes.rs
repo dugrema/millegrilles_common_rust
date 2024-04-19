@@ -358,6 +358,7 @@ pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
 pub const MAITREDESCLES_CHAMP_LISTE_HACHAGE_BYTES: &str = "liste_hachage_bytes";
 
 pub const COMMANDE_SAUVEGARDER_CLE: &str = "sauvegarderCle";
+pub const COMMANDE_AJOUTER_CLE_DOMAINES: &str = "ajouterCleDomaines";
 pub const REQUETE_CERT_MAITREDESCLES: &str = "certMaitreDesCles";
 pub const COMMANDE_CERT_MAITREDESCLES: &str = REQUETE_CERT_MAITREDESCLES;
 pub const COMMANDE_TRANSFERT_CLE: &str = "transfertCle";

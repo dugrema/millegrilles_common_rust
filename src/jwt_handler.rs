@@ -100,36 +100,37 @@ pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, d
         None => None
     };
 
-    let format_chiffrage_string: &str = dechiffrage.format.into();
-    let info_fichier = ClaimsTokenFichier {
-        user_id: Some(user_id),
-        // domaine: None,
-        mimetype: Some(mimetype),
-        ref_: ref_fuuid,
-        header: dechiffrage.header,
-        // iv: None,
-        tag: dechiffrage.tag,
-        format: Some(format_chiffrage_string.to_string()),
-    };
-
-    let mut claims = Claims::with_custom_claims(
-        info_fichier, Duration::from_secs(CONST_DUREE_TOKEN_VALIDE));
-    claims.subject = Some(fuuid);
-
-    // Recuperer cle pour signer le token
-    let enveloppe = middleware.get_enveloppe_signature();
-    claims.issuer = Some(DOMAINE_NOM_GROSFICHIERS.into());
-    let cle_privee = enveloppe.cle_privee.private_key_to_der()?;
-    let cle_der = match Ed25519KeyPair::from_der(cle_privee.as_slice()) {
-        Ok(inner) => inner,
-        Err(e) => Err(format!("Ed25519KeyPair::from_der : {:?}",e ))?
-    };
-    let cle_signature = cle_der.with_key_id(enveloppe.fingerprint()?.as_str());
-
-    // Signer et retourner le nouveau token
-    let jwt_token = match cle_signature.sign(claims) {
-        Ok(inner) => inner,
-        Err(e) => Err(format!("Erreur cle_signature.sign(claims) : {:?}",e ))?
-    };
-    Ok(jwt_token)
+    todo!("fix me")
+    // let format_chiffrage_string: &str = dechiffrage.format.into();
+    // let info_fichier = ClaimsTokenFichier {
+    //     user_id: Some(user_id),
+    //     // domaine: None,
+    //     mimetype: Some(mimetype),
+    //     ref_: ref_fuuid,
+    //     header: dechiffrage.header,
+    //     // iv: None,
+    //     tag: dechiffrage.tag,
+    //     format: Some(format_chiffrage_string.to_string()),
+    // };
+    //
+    // let mut claims = Claims::with_custom_claims(
+    //     info_fichier, Duration::from_secs(CONST_DUREE_TOKEN_VALIDE));
+    // claims.subject = Some(fuuid);
+    //
+    // // Recuperer cle pour signer le token
+    // let enveloppe = middleware.get_enveloppe_signature();
+    // claims.issuer = Some(DOMAINE_NOM_GROSFICHIERS.into());
+    // let cle_privee = enveloppe.cle_privee.private_key_to_der()?;
+    // let cle_der = match Ed25519KeyPair::from_der(cle_privee.as_slice()) {
+    //     Ok(inner) => inner,
+    //     Err(e) => Err(format!("Ed25519KeyPair::from_der : {:?}",e ))?
+    // };
+    // let cle_signature = cle_der.with_key_id(enveloppe.fingerprint()?.as_str());
+    //
+    // // Signer et retourner le nouveau token
+    // let jwt_token = match cle_signature.sign(claims) {
+    //     Ok(inner) => inner,
+    //     Err(e) => Err(format!("Erreur cle_signature.sign(claims) : {:?}",e ))?
+    // };
+    // Ok(jwt_token)
 }

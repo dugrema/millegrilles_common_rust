@@ -189,7 +189,9 @@ pub struct DataChiffre {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InformationDechiffrage {
-    pub format: FormatChiffrage,
+    pub format: Option<FormatChiffrage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cle_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ref_hachage_bytes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
