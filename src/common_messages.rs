@@ -9,6 +9,7 @@ use serde_json::Value;
 use multibase;
 
 use millegrilles_cryptographie::{messages_structs::epochseconds, chiffrage::formatchiffragestr};
+use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
 
 use crate::hachages::verifier_multihash;
 use crate::recepteur_messages::TypeMessage;
@@ -287,4 +288,12 @@ pub struct ReponseDechiffrage {
     pub acces: String,
     pub cles: HashMap<String, ReponseDechiffrageCle>,
     pub code: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ReponseRequeteDechiffrageV2 {
+    pub ok: bool,
+    pub code: usize,
+    pub cles: Option<Vec<CleSecreteSerialisee>>,
+    pub err: Option<String>,
 }
