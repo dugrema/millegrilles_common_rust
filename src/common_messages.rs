@@ -196,10 +196,26 @@ pub struct InformationDechiffrage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ref_hachage_bytes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub header: Option<String>,
+    pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
+    pub verification: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InformationDechiffrageV2 {
+    pub cle_id: String,
+    pub format: FormatChiffrage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<String>,
+
+    /// Fuuid auquel l'information fait reference. Peut etre une reference a un
+    /// fichier image, video ou audio (e.g. pour streaming) different du fuuid original.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuuid: Option<String>,
+}
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageConfirmation {

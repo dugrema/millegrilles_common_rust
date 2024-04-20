@@ -5,7 +5,7 @@ use std::error::Error;
 use jwt_simple::prelude::*;
 
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
-use crate::common_messages::InformationDechiffrage;
+use crate::common_messages::{InformationDechiffrage, InformationDechiffrageV2};
 use crate::constantes::{DOMAINE_NOM_GROSFICHIERS, DOMAINE_NOM_MESSAGERIE, RolesCertificats, Securite};
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::GenerateurMessages;
@@ -14,17 +14,23 @@ pub const CONST_DUREE_TOKEN_VALIDE: u64 = 60 * 60 * 6;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ClaimsTokenFichier {
-    #[serde(rename="userId")]
+    #[serde(rename="userId", skip_serializing_if="Option::is_none")]
     user_id: Option<String>,
     // domaine: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
     mimetype: Option<String>,
 
     // Dechiffrage
-    #[serde(rename="ref")]
+    #[serde(rename="ref", skip_serializing_if="Option::is_none")]
     ref_: Option<String>,
-    header: Option<String>,
+    // header: Option<String>,
     // iv: Option<String>,
-    tag: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    nonce: Option<String>,
+    // tag: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    verification: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
     format: Option<String>
 }
 
@@ -85,7 +91,7 @@ pub async fn verify_jwt<M,S>(middleware: &M, jwt_token: S) -> Result<FichierClai
     })
 }
 
-pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, dechiffrage: InformationDechiffrage)
+pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, dechiffrage: InformationDechiffrageV2)
     -> Result<String, crate::error::Error>
     where
         M: FormatteurMessage,
@@ -95,42 +101,39 @@ pub fn generer_jwt<M,F,U,T>(middleware: &M, user_id: U, fuuid: F, mimetype: T, d
     let fuuid = fuuid.to_string();
     let mimetype = mimetype.to_string();
 
-    let ref_fuuid = match dechiffrage.ref_hachage_bytes {
+    let ref_fuuid = match dechiffrage.fuuid {
         Some(inner) => Some(inner),
         None => None
     };
 
-    todo!("fix me")
-    // let format_chiffrage_string: &str = dechiffrage.format.into();
-    // let info_fichier = ClaimsTokenFichier {
-    //     user_id: Some(user_id),
-    //     // domaine: None,
-    //     mimetype: Some(mimetype),
-    //     ref_: ref_fuuid,
-    //     header: dechiffrage.header,
-    //     // iv: None,
-    //     tag: dechiffrage.tag,
-    //     format: Some(format_chiffrage_string.to_string()),
-    // };
-    //
-    // let mut claims = Claims::with_custom_claims(
-    //     info_fichier, Duration::from_secs(CONST_DUREE_TOKEN_VALIDE));
-    // claims.subject = Some(fuuid);
-    //
-    // // Recuperer cle pour signer le token
-    // let enveloppe = middleware.get_enveloppe_signature();
-    // claims.issuer = Some(DOMAINE_NOM_GROSFICHIERS.into());
-    // let cle_privee = enveloppe.cle_privee.private_key_to_der()?;
-    // let cle_der = match Ed25519KeyPair::from_der(cle_privee.as_slice()) {
-    //     Ok(inner) => inner,
-    //     Err(e) => Err(format!("Ed25519KeyPair::from_der : {:?}",e ))?
-    // };
-    // let cle_signature = cle_der.with_key_id(enveloppe.fingerprint()?.as_str());
-    //
-    // // Signer et retourner le nouveau token
-    // let jwt_token = match cle_signature.sign(claims) {
-    //     Ok(inner) => inner,
-    //     Err(e) => Err(format!("Erreur cle_signature.sign(claims) : {:?}",e ))?
-    // };
-    // Ok(jwt_token)
+    let format_chiffrage_string: &str = dechiffrage.format.into();
+    let info_fichier = ClaimsTokenFichier {
+        user_id: Some(user_id),
+        mimetype: Some(mimetype),
+        ref_: ref_fuuid,
+        nonce: dechiffrage.nonce,
+        format: Some(format_chiffrage_string.to_string()),
+        verification: dechiffrage.verification,
+    };
+
+    let mut claims = Claims::with_custom_claims(
+        info_fichier, Duration::from_secs(CONST_DUREE_TOKEN_VALIDE));
+    claims.subject = Some(fuuid);
+
+    // Recuperer cle pour signer le token
+    let enveloppe = middleware.get_enveloppe_signature();
+    claims.issuer = Some(DOMAINE_NOM_GROSFICHIERS.into());
+    let cle_privee = enveloppe.cle_privee.private_key_to_der()?;
+    let cle_der = match Ed25519KeyPair::from_der(cle_privee.as_slice()) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Ed25519KeyPair::from_der : {:?}",e ))?
+    };
+    let cle_signature = cle_der.with_key_id(enveloppe.fingerprint()?.as_str());
+
+    // Signer et retourner le nouveau token
+    let jwt_token = match cle_signature.sign(claims) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Erreur cle_signature.sign(claims) : {:?}",e ))?
+    };
+    Ok(jwt_token)
 }
