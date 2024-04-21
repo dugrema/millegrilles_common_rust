@@ -33,7 +33,7 @@ use multibase::Base;
 use multihash::Code;
 use openssl::sign::Verifier;
 use crate::chiffrage_cle::CommandeSauvegarderCle;
-use crate::common_messages::{DataChiffre, DataDechiffre};
+use crate::common_messages::DataDechiffre;
 use crate::constantes::MessageKind;
 use crate::constantes::MessageKind::ReponseChiffree;
 // use crate::dechiffrage::dechiffrer_data;

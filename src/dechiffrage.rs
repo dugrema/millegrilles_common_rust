@@ -3,6 +3,7 @@ use std::io::Read;
 use flate2::Compression;
 use flate2::read::{GzDecoder, GzEncoder};
 use futures_util::AsyncReadExt;
+use jwt_simple::prelude::{Deserialize, Serialize};
 use log::debug;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519, CleDechiffrageX25519Impl, Decipher};
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
@@ -13,7 +14,7 @@ use multibase::decode;
 use serde_json::json;
 
 use crate::chiffrage_cle::ReponseDechiffrageCles;
-use crate::common_messages::{DataChiffre, DataDechiffre};
+use crate::common_messages::DataDechiffre;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::constantes::*;
 use crate::recepteur_messages::TypeMessage;
@@ -174,6 +175,96 @@ pub fn dechiffrer_data(mut cle: CleDechiffrageX25519Impl, data: DataChiffre) -> 
         ref_hachage_bytes: data.ref_hachage_bytes,
         data_dechiffre,
     })
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataChiffreBorrow<'a> {
+    #[serde(borrow)]
+    pub data_chiffre: &'a str,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub cle_id: Option<&'a str>,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub format: Option<&'a str>,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub nonce: Option<&'a str>,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub verification: Option<&'a str>,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub header: Option<&'a str>,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub ref_hachage_bytes: Option<&'a str>,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub hachage_bytes: Option<&'a str>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DataChiffre {
+    /// Contenu chiffre
+    pub data_chiffre: String,
+
+    // Format du chiffrage
+    pub format: Option<String>,
+
+    /// Id de la cle de dechiffrage
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub cle_id: Option<String>,
+
+    /// Nonce / iv de dechiffrage (depend du format)
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub nonce: Option<String>,
+
+    /// Methode de verification (depend du format)
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub verification: Option<String>,
+
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub header: Option<String>,
+
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub ref_hachage_bytes: Option<String>,
+
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub hachage_bytes: Option<String>,
+}
+
+impl DataChiffre {
+
+    /// Retourne une identite de cle.
+    pub fn get_cle_id(&self) -> Result<&str, Error> {
+        match self.cle_id.as_ref() {
+            Some(inner) => Ok(inner.as_str()),
+            None => match self.ref_hachage_bytes.as_ref() {
+                Some(inner) => Ok(inner.as_str()),
+                None => match self.hachage_bytes.as_ref() {
+                    Some(inner) => Ok(inner.as_str()),
+                    None => Err(Error::Str("Aucune identite disponible"))
+                }
+            }
+        }
+    }
+
+}
+
+impl<'a> From<DataChiffreBorrow<'a>> for DataChiffre {
+    fn from(value: DataChiffreBorrow) -> Self {
+        Self {
+            data_chiffre: value.data_chiffre.to_owned(),
+            header: match value.header { Some(inner) => Some(inner.to_owned()), None => None},
+            ref_hachage_bytes: match value.ref_hachage_bytes { Some(inner) => Some(inner.to_owned()), None => None},
+            hachage_bytes: match value.hachage_bytes { Some(inner) => Some(inner.to_owned()), None => None},
+            format: match value.format { Some(inner) => Some(inner.to_owned()), None => None},
+            cle_id: match value.cle_id { Some(inner) => Some(inner.to_owned()), None => None},
+            nonce: match value.nonce { Some(inner) => Some(inner.to_owned()), None => None},
+            verification: match value.verification { Some(inner) => Some(inner.to_owned()), None => None},
+        }
+    }
 }
 
 // #[cfg(test)]

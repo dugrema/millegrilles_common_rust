@@ -10,6 +10,7 @@ use multibase;
 
 use millegrilles_cryptographie::{messages_structs::epochseconds, chiffrage::formatchiffragestr};
 use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
+use crate::dechiffrage::DataChiffre;
 
 use crate::hachages::verifier_multihash;
 use crate::recepteur_messages::TypeMessage;
@@ -175,18 +176,18 @@ pub struct ReponseInformationConsignationFichiers {
     pub ok: Option<bool>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DataChiffre {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ref_hachage_bytes: Option<String>,
-    pub data_chiffre: String,
-    #[serde(with="formatchiffragestr")]
-    pub format: FormatChiffrage,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub header: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
-}
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct DataChiffre {
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub ref_hachage_bytes: Option<String>,
+//     pub data_chiffre: String,
+//     #[serde(with="formatchiffragestr")]
+//     pub format: FormatChiffrage,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub header: Option<String>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub tag: Option<String>,
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InformationDechiffrage {
