@@ -256,7 +256,7 @@ pub trait FormatteurMessage {
         build_reponse(message, enveloppe_privee.as_ref())
     }
 
-    fn build_reponse_chiffree<M>(&self, message: M, _enveloppe_privee: &EnveloppePrivee, certificat_demandeur: &EnveloppeCertificat)
+    fn build_reponse_chiffree<M>(&self, message: M, certificat_demandeur: &EnveloppeCertificat)
     -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
         where M: Serialize + Send + Sync
     {
