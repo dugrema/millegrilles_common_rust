@@ -362,6 +362,7 @@ pub const COMMANDE_AJOUTER_CLE_DOMAINES: &str = "ajouterCleDomaines";
 pub const REQUETE_CERT_MAITREDESCLES: &str = "certMaitreDesCles";
 pub const COMMANDE_CERT_MAITREDESCLES: &str = REQUETE_CERT_MAITREDESCLES;
 pub const COMMANDE_TRANSFERT_CLE: &str = "transfertCle";
+pub const COMMANDE_TRANSFERT_CLE_CA: &str = "transfertCleCa";
 pub const EVENEMENT_CLES_RECHIFFRAGE: &str = "clesRechiffrage";
 pub const COMMANDE_ROTATION_CERTIFICAT: &str = "rotationCertificat";
 pub const COMMANDE_DECHIFFRER_CLE: &str = "dechiffrerCle";
