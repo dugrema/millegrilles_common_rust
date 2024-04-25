@@ -159,6 +159,57 @@ pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messa
     Ok((MessageMilleGrillesBufferDefault::from(buffer), message_id))
 }
 
+pub fn build_message_action_chiffre<R,M>(
+    type_message: millegrilles_cryptographie::messages_structs::MessageKind, routage: R, message: M,
+    enveloppe_privee: &EnveloppePrivee, cles_chiffrage: Vec<&EnveloppeCertificat>
+)
+    -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
+    where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync
+{
+    let routage = routage.into();
+    let contenu = match serde_json::to_string(&message) {
+        Ok(inner) => inner,
+        Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
+    };
+
+    let routage_message: RoutageMessage = (&routage).into();
+
+    let enveloppe_ca = enveloppe_privee.enveloppe_ca.as_ref();
+    let idmg = enveloppe_ca.idmg()?;
+    let cipher = CipherMgs4::with_ca(enveloppe_ca).unwrap();
+
+    let mut cle_privee_u8 = SecretKey::default();
+    match enveloppe_privee.cle_privee.raw_private_key() {
+        Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
+        Err(e) => Err(format!("build_message_action Erreur raw_private_key {:?}", e))?
+    };
+    let signing_key = SigningKey::from_bytes(&cle_privee_u8);
+
+    let pem_vec = &enveloppe_privee.chaine_pem;
+
+    let mut buffer = Vec::new();
+    let message_id = {
+        let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
+        certificat.extend(pem_vec.iter().map(|s| s.as_str()));
+
+        let generateur = MessageMilleGrillesBuilderDefault::new(
+            type_message, contenu.as_str())
+            .routage(routage_message)
+            .signing_key(&signing_key)
+            .certificat(certificat)
+            .origine(idmg.as_str())
+            .cles_chiffrage(cles_chiffrage);
+
+        // Allouer un Vec et serialiser le message signe.
+        // let message_ref = generateur.build_into_alloc(&mut buffer)?;
+        let mut message_ref = generateur.encrypt_into_alloc(&mut buffer, cipher).unwrap();
+        message_ref.id.to_owned()
+    };
+
+    // Retourner le nouveau message
+    Ok((MessageMilleGrillesBufferDefault::from(buffer), message_id))
+}
+
 #[derive(Serialize)]
 struct ReponseMessage<'a> {
     ok: bool,
@@ -184,6 +235,20 @@ pub trait FormatteurMessage {
         build_message_action(type_message, routage, message, enveloppe_privee.as_ref())
     }
 
+    fn build_message_action_chiffre<R, M, E>(
+        &self, type_message: millegrilles_cryptographie::messages_structs::MessageKind,
+        routage: R, message: M, cles_chiffrage: Vec<E>
+    )
+        -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
+        where
+            R: Into<RoutageMessageAction>, M: Serialize + Send + Sync,
+            E: AsRef<EnveloppeCertificat>
+    {
+        let cles_chiffrage_ref = cles_chiffrage.iter().map(|v| v.as_ref()).collect();
+        let enveloppe_privee = self.get_enveloppe_signature();
+        build_message_action_chiffre(type_message, routage, message, enveloppe_privee.as_ref(), cles_chiffrage_ref)
+    }
+
     fn build_reponse<M>(&self, message: M)
                         -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
         where M: Serialize + Send + Sync {
@@ -191,7 +256,7 @@ pub trait FormatteurMessage {
         build_reponse(message, enveloppe_privee.as_ref())
     }
 
-    fn build_reponse_chiffree<M>(&self, message: M, enveloppe_privee: &EnveloppePrivee, certificat_demandeur: &EnveloppeCertificat)
+    fn build_reponse_chiffree<M>(&self, message: M, _enveloppe_privee: &EnveloppePrivee, certificat_demandeur: &EnveloppeCertificat)
     -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
         where M: Serialize + Send + Sync
     {
