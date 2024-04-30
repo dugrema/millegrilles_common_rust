@@ -65,7 +65,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     let pki = configuration.get_configuration_pki();
     let mq = configuration.get_configuration_mq();
 
-    let tls_config = get_tls_config(pki, mq);
+    // let tls_config = get_tls_config(pki, mq);
     let idmg = pki.get_validateur().idmg().to_owned();
     let addr = format!("amqps://{}:{}/{}?auth_mechanism=external", mq.host, mq.port, idmg);
 
@@ -73,7 +73,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
         let resultat = Connection::connect_with_config(
             &addr,
             ConnectionProperties::default().with_tokio(),
-            tls_config.as_ref(),
+            get_tls_config(pki, mq),
         ).await;
 
         if let Ok(c) = resultat {
@@ -131,7 +131,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     Connection::connect_with_config(
         &addr,
         ConnectionProperties::default().with_tokio(),
-        tls_config.as_ref(),
+        get_tls_config(pki, mq),
     ).await
 }
 
@@ -1097,16 +1097,16 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
     while let Some(delivery) = consumer.next().await {
         debug!("ecouter_consumer({}): Reception nouveau message {}", &nom_queue, &nom_queue);
 
-        let (channel, delivery) = match delivery {
+        let delivery = match delivery {
             Ok(r) => r,
             Err(e) => Err(format!("Erreur delivery message : {:?}", e))?
         };
-        if ! channel.status().connected() {
-            warn!("ecouter_consumer Channel closed, on ferme la connexion");
-            break
-        }
+        // if ! channel.status().connected() {
+        //     warn!("ecouter_consumer Channel closed, on ferme la connexion");
+        //     break
+        // }
 
-        let acker = delivery.acker.clone();
+        // let acker = &delivery.acker;
 
         let message_interne = match &queue_type {
             QueueType::ExchangeQueue(q) => {
@@ -1124,28 +1124,34 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
             QueueType::Triggers(_q, _s) => MessageInterne::Trigger(delivery, nom_queue.to_owned()),
         };
 
-        // Ajouter message sur Q interne
-        match tx.send(message_interne).await {
-            Ok(()) => {
-                // Emettre le Ack
-                match acker.ack(BasicAckOptions::default()).await {
+        // Emettre le Ack
+        match &message_interne {
+            MessageInterne::Delivery(d, _) |
+            MessageInterne::Trigger(d, _) => {
+                match d.acker.ack(BasicAckOptions::default()).await {
                     Ok(_d) => (),
                     Err(e) => {
                         warn!("Erreur ACK message, on ferme le consumer : {:?}", e);
                         break
                     }
                 }
-            },
+            }
+            _ => ()
+        }
+
+        // Ajouter message sur Q interne
+        match tx.send(message_interne).await {
+            Ok(()) => (),
             Err(e) => {
                 // Erreur de queuing interne, emettre un nack (remet message sur la Q)
-                debug!("Erreur Q interne, NACK : {:?}", e);
-                match acker.nack(BasicNackOptions::default()).await {
-                    Ok(_d) => (),
-                    Err(e) => {
-                        warn!("Erreur NACK message, on ferme le consumer : {:?}", e);
-                        break
-                    }
-                }
+                debug!("Erreur Q interne : {:?}", e);
+                // match acker.nack(BasicNackOptions::default()).await {
+                //     Ok(_d) => (),
+                //     Err(e) => {
+                //         warn!("Erreur ACK message, on ferme le consumer : {:?}", e);
+                //         break
+                //     }
+                // }
             }
         }
     }
@@ -1317,7 +1323,7 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                     "",
                     reply_to,
                     options,
-                    payload.to_vec(),
+                    payload.to_vec().as_slice(),
                     properties
                 ).await;
                 if resultat.is_err() {
@@ -1334,7 +1340,7 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                                 exchange.get_str(),
                                 &routing_key,
                                 options,
-                                payload.clone(),
+                                payload.clone().as_slice(),
                                 properties.clone()
                             ).await;
                             match resultat {
