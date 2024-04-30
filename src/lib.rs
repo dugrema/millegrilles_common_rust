@@ -35,6 +35,9 @@ pub mod error;
 
 #[macro_use]
 mod macros;
+pub mod domaines_v2;
+pub mod domaines_traits;
+pub mod middleware_db_v2;
 
 // Re-exports
 pub use millegrilles_cryptographie;
@@ -54,6 +57,7 @@ pub use openssl;
 pub use rand;
 pub use redis;
 pub use reqwest;
+pub use static_cell;
 pub use tokio;
 pub use tokio_stream;
 pub use tokio_util;

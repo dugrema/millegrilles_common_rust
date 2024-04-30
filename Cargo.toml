@@ -28,6 +28,7 @@ async-trait = "0.1"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
+static_cell = "2.1"
 
 # Crypto et certs
 openssl = { version = "0.10", features = ["vendored"] }

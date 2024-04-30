@@ -64,8 +64,8 @@ static mut DERNIER_BACKUP_COMPLET_FIN_DOMAINES: Option<HashMap<String, i64>> = N
 const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
-pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
+pub async fn thread_backup<M>(middleware: &M, mut rx: Receiver<CommandeBackup>)
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
 {
     while let Some(commande) = rx.recv().await {
         let mut abandonner_backup = false;
@@ -113,7 +113,7 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
 
         debug!("thread_backup Debut commande backup {:?}", commande);
         info!("Debut backup {}", commande.nom_domaine);
-        match backup(middleware.as_ref(), &commande).await {
+        match backup(middleware, &commande).await {
             Ok(_) => info!("Backup {} OK", commande.nom_domaine),
             Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", commande.nom_domaine, e)
         };

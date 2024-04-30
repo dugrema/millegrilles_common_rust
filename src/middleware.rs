@@ -6,21 +6,21 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use log::{debug, error, info, warn};
-use mongodb::{bson::{Bson, Document, doc, to_bson}, Collection};
-use mongodb::bson as bson;
-use mongodb::options::UpdateOptions;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tokio::task::JoinHandle;
 use futures::stream::FuturesUnordered;
+use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
+use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, FingerprintPem};
-use millegrilles_cryptographie::deser_message_buffer;
+use mongodb::{bson::{Bson, doc, Document, to_bson}, Collection};
+use mongodb::bson as bson;
+use mongodb::options::UpdateOptions;
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::Notify;
+use tokio::task::JoinHandle;
 
 use crate::backup::BackupStarter;
 use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
@@ -28,16 +28,15 @@ use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
-use crate::formatteur_messages::{FormatteurMessage, build_message_action, build_reponse};
+use crate::error::Error as CommonError;
+use crate::formatteur_messages::{build_message_action, build_reponse, FormatteurMessage};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{MongoDao, verifier_erreur_duplication_mongo};
 use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
 use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
+use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance};
-// use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage};
-use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::error::Error as CommonError;
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
@@ -48,10 +47,6 @@ pub struct MiddlewareHooks {
 pub trait RedisTrait {
     fn get_redis(&self) -> Option<&RedisDao>;
 }
-
-// pub trait ChiffrageFactoryTrait: CleChiffrageHandler {
-//     fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl;
-// }
 
 pub trait RabbitMqTrait {
     fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String>;
@@ -554,71 +549,12 @@ pub async fn repondre_certificat<M,S,T>(middleware: &M, reply_q: S, correlation_
     let message = formatter_message_certificat(enveloppe_certificat)?;
 
     let routage = RoutageMessageReponse::new(reply_q, correlation_id);
-    // let message_formatte = match middleware.formatter_reponse(message, None) {
-    //     Ok(inner) => inner,
-    //     Err(e) => Err(format!("middleware.repondre_certificat Erreur formatter reponse : {:?}", e))?
-    // };
 
     match middleware.repondre(routage, message).await {
         Ok(_) => Ok(()),
         Err(e) => Err(format!("middleware.repondre_certificat Erreur emettre_certificat: {:?}", e))?,
     }
 }
-
-// impl VerificateurMessage for MiddlewareMessage {
-//     fn verifier_message(
-//         &self,
-//         message: &mut MessageMilleGrillesRefDefault,
-//         options: Option<&ValidationOptions>
-//     ) -> Result<ResultatValidation, Box<dyn Error>>
-//     {
-//         verifier_message(message, self, options)
-//     }
-// }
-
-// impl ChiffrageFactoryTrait for MiddlewareMessage {
-//     fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl {
-//         self.chiffrage_factory.as_ref()
-//     }
-// }
-//
-// #[async_trait]
-// impl CleChiffrageHandler for MiddlewareMessage {
-//     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-//         self.chiffrage_factory.get_publickeys_chiffrage()
-//     }
-//
-//     async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
-//         -> Result<(), crate::error::Error>
-//         where M: GenerateurMessages + ValidateurX509 + ConfigMessages
-//     {
-//         self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
-//     }
-//
-//     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), crate::error::Error>
-//         where M: ValidateurX509 + ConfigMessages
-//     {
-//         self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
-//     }
-// }
-//
-// impl ChiffrageFactory for MiddlewareMessage {
-//     fn get_chiffreur(&self) -> Result<CipherMgs4, crate::error::Error> {
-//         self.chiffrage_factory.get_chiffreur()
-//     }
-//
-//     // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
-//     //     self.chiffrage_factory.get_chiffreur_mgs2()
-//     // }
-//
-//     // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
-//     //     self.chiffrage_factory.get_chiffreur_mgs3()
-//     // }
-//
-//     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, crate::error::Error> {
-//         self.chiffrage_factory.get_chiffreur_mgs4()
-//     }
-// }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct ReponseCertificatMaitredescles {
@@ -780,8 +716,6 @@ pub async fn thread_emettre_presence_domaine<M>(middleware: Arc<M>, nom_domaine:
         };
         tokio::time::sleep(tokio::time::Duration::new(120, 0)).await;
     }
-
-    // info!("middleware.thread_emettre_presence_domaine : Fin thread");
 }
 
 #[async_trait]
@@ -876,23 +810,6 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
     let message_valide = MessageValide { message, type_message: type_message_out, certificat };
 
     Ok(sauvegarder_traiter_transaction(middleware, message_valide, gestionnaire).await?)
-
-    // let mut transaction = middleware.formatter_message(
-    //     MessageKind::Transaction,
-    //     valeur,
-    //     Some(domaine),
-    //     Some(action),
-    //     None::<&str>,
-    //     None::<&str>,
-    //     None,
-    //     false
-    // )?;
-    //
-    // // Sauvegarder la transation
-    // let msg = MessageSerialise::from_parsed(transaction)?;
-    // let msg_action = MessageValideAction::new(msg, "", "", domaine, action, TypeMessageOut::Transaction);
-    //
-    // Ok(sauvegarder_traiter_transaction(middleware, msg_action, gestionnaire).await?)
 }
 
 /// Sauvegarde une nouvelle transaction et de la traite immediatement
@@ -917,27 +834,10 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
         Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur sauvegarde transaction : {:?}", e))
     }?;
 
-    // // Convertir message en format transaction
-    // let transaction = match TransactionImpl::new(doc_transaction, message.certificat) {
-    //     Ok(inner) => inner,
-    //     Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur TransactionImpl::new {:?}", e))?
-    // };
-    // let uuid_transaction = transaction.get_uuid_transaction().to_owned();
     let message_id = {
         let message_ref = message.message.parse()?;
         message_ref.id.to_owned()
     };
-
-    // let message_id = match &message.type_message {
-    //     TypeMessageOut::Commande(r) |
-    //     TypeMessageOut::Transaction(r) => {
-    //         match &r.correlation_id {
-    //             Some(inner) => inner.to_owned(),
-    //             None => Err(String::from("middleware.sauvegarder_traiter_transaction Correlation_id manquant de la transaction"))?
-    //         }
-    //     }
-    //     _ => Err(String::from("middleware.sauvegarder_traiter_transaction Mauvais type de message, doit etre Commande ou Transaction"))?
-    // };
 
     // Traiter transaction
     let reponse = gestionnaire.aiguillage_transaction(middleware, message.try_into()?).await?;
@@ -954,49 +854,11 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
     Ok(reponse)
 }
 
-// pub async fn sauvegarder_transaction_recue<M, C>(middleware: &M, m: MessageValideAction, nom_collection: C) -> Result<(), String>
-//     where
-//         M: ValidateurX509 + GenerateurMessages + MongoDao,
-//         C: AsRef<str>
-// {
-//     let entete = m.message.get_entete();
-//
-//     match sauvegarder_transaction(middleware, &m, nom_collection.as_ref()).await {
-//         Ok(_) => (),
-//         Err(e) => Err(format!("Erreur sauvegarde transaction : {:?}", e))?
-//     }
-//
-//     if let Some(domaine) = entete.domaine.as_ref() {
-//         if let Some(action) = entete.action.as_ref() {
-//
-//             if let Some(c) = m.correlation_id.as_ref() {
-//                 debug!("Transaction recue, trigger qui va repondre vers : {:?}/{:?}", m.reply_q.as_ref(), c);
-//             }
-//
-//             transmettre_evenement_persistance(
-//                 middleware,
-//                 entete.uuid_transaction.as_str(),
-//                 domaine.as_str(),
-//                 action.as_str(),
-//                 entete.partition.as_ref(),
-//                 m.reply_q.as_ref(),
-//                 m.correlation_id.as_ref()
-//             ).await?;
-//         }
-//     }
-//
-//     Ok(())
-// }
-
 pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_collection: &str)
     -> Result<(), crate::error::Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
     let mut message_ref = m.message.parse()?;
-    // if message_ref.attachements.is_some() {
-    //     // On doit retirer les attachements avant de sauvegarder le message.
-    //     message_ref.attachements = None;
-    // }
 
     // Fix deserialization contenu en utilisant une version owned
     let mut message_owned: MessageMilleGrillesOwned = serde_json::from_slice(m.message.buffer.as_slice())?;
@@ -1037,12 +899,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
     };
 
     debug!("sauvegarder_transaction evenements tags : {:?}", params_evenements);
-
-    // let mut contenu_doc_mut = contenu_doc.as_document_mut().expect("mut");
     contenu_doc.insert("_evenements", params_evenements);
-
-    // contenu_doc.remove("_certificat");
-
     debug!("sauvegarder_transaction Inserer nouvelle transaction\n:{:?}", contenu_doc);
 
     let collection = middleware.get_collection(nom_collection)?;
@@ -1115,28 +972,6 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
 
     let configuration = ressources.configuration.clone();
 
-    // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-    // let chiffrage_factory = {
-    //     let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
-    //     let cert_local = env_privee.enveloppe_pub.as_ref();
-    //     let mut fp_certs = cert_local.chaine_fingerprint_pem().expect("public keys");
-    //
-    //     // Charger cle de millegrille
-    //     // let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-    //     let list_fp_ca = env_privee.enveloppe_ca.chaine_fingerprint_pem().expect("chaine_fingerprint_pem OK");
-    //     if list_fp_ca.is_empty() { panic!("Cle de millegrille absente de env_privee.enveloppe_ca"); }
-    //     fp_certs.extend(list_fp_ca);
-    //
-    //     let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
-    //     for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-    //         map.insert(f.fingerprint.clone(), f);
-    //     }
-    //
-    //     debug!("Map cles chiffrage : {:?}", map);
-    //
-    //     Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
-    // };
-
     // Charger redis (optionnel)
     let redis_dao = match configuration.get_configuration_noeud().redis_password {
         Some(_) => {
@@ -1152,7 +987,6 @@ pub fn preparer_middleware_message() -> MiddlewareHooks {
     let middleware = Arc::new(MiddlewareMessage {
         ressources,
         redis: redis_dao,
-        // chiffrage_factory,
         cle_chiffrage_handler: CleChiffrageHandlerImpl::new()
     });
 
@@ -1234,245 +1068,3 @@ pub async fn charger_certificats_chiffrage<M>(middleware: &M)
 
     Ok(())
 }
-
-// #[cfg(test)]
-// pub mod serialization_tests {
-//     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
-//     use crate::test_setup::setup;
-//     use futures::stream::FuturesUnordered;
-//     use tokio::{sync::{mpsc, mpsc::{Receiver, Sender}}, time::{Duration as DurationTokio, timeout}};
-//     use crate::recepteur_messages::TypeMessage;
-//     use tokio::task::JoinHandle;
-//     use tokio_stream::StreamExt;
-//     use crate::middleware_db::{MiddlewareDb, preparer_middleware_db};
-//
-//     use super::*;
-//
-//     pub async fn build() -> (Arc<MiddlewareDb>, FuturesUnordered<JoinHandle<()>>, Sender<TypeMessage>, Sender<TypeMessage>) {
-//         // Preparer configuration
-//         let queues = Vec::new();
-//
-//         let (tx, rx) = mpsc::channel(1);
-//
-//         let listeners = {
-//             let mut callbacks: Callback<EventMq> = Callback::new();
-//             callbacks.register(Box::new(move |event| {
-//                 debug!("Ceci est un test de callback sur connexion, event : {:?}", event);
-//                 // tx.blocking_send(event).expect("Event connexion MQ");
-//                 let tx_ref = tx.clone();
-//                 let _ = tokio::spawn(async move{
-//                     match tx_ref.send(event).await {
-//                         Ok(_) => (),
-//                         Err(e) => error!("Erreur queuing via callback : {:?}", e)
-//                     }
-//                 });
-//             }));
-//
-//             Some(Mutex::new(callbacks))
-//         };
-//
-//         let (
-//             middleware,
-//             rx_messages_verifies,
-//             rx_triggers,
-//             rx_messages_verif_reply,
-//             future_recevoir_messages,
-//         ) = preparer_middleware_db(queues, listeners);
-//
-//         // Demarrer threads
-//         let mut futures : FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-//
-//         // Thread consommation
-//         let (tx_messages, rx_messages) = mpsc::channel::<TypeMessage>(1);
-//         let (tx_triggers, rx_pki_triggers) = mpsc::channel::<TypeMessage>(1);
-//
-//         let mut map_senders: HashMap<String, Sender<TypeMessage>> = HashMap::new();
-//         // map_senders.insert(String::from("Core"), tx_pki_messages.clone());
-//         // map_senders.insert(String::from("certificat"), tx_pki_messages.clone());
-//         // map_senders.insert(String::from("Core/triggers"), tx_pki_triggers.clone());
-//         futures.push(tokio::spawn(consommer( middleware.clone(), rx_messages_verifies, map_senders.clone())));
-//         futures.push(tokio::spawn(consommer( middleware.clone(), rx_triggers, map_senders.clone())));
-//
-//         // Thread d'entretien
-//         //futures.push(tokio::spawn(entretien(middleware.clone(), rx)));
-//
-//         // Thread ecoute et validation des messages
-//         for f in future_recevoir_messages {
-//             futures.push(f);
-//         }
-//
-//         futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_messages)));
-//         futures.push(tokio::spawn(consommer_messages(middleware.clone(), rx_pki_triggers)));
-//
-//         // debug!("domaines_middleware: Demarrage traitement domaines middleware");
-//         // let arret = futures.next().await;
-//         // debug!("domaines_middleware: Fermeture du contexte, task daemon terminee : {:?}", arret);
-//
-//         (middleware, futures, tx_messages, tx_triggers)
-//     }
-//
-//     async fn consommer(
-//         _middleware: Arc<impl ValidateurX509 + GenerateurMessages + MongoDao>,
-//         mut rx: Receiver<TypeMessage>,
-//         map_senders: HashMap<String, Sender<TypeMessage>>
-//     ) {
-//         while let Some(message) = rx.recv().await {
-//             match &message {
-//                 TypeMessage::Valide(m) => {
-//                     debug!("traiter_messages_valides: Message valide sans routing key/action : {:?}", m.type_message);
-//                 },
-//                 TypeMessage::ValideAction(m) => {
-//                     let contenu = &m.message;
-//                     let rk = &m.routing_key;
-//                     let action = &m.action;
-//                     debug!("domaines_middleware.consommer: Traiter message valide (action: {}, rk: {}): {:?}", action, rk, contenu);
-//
-//                     // match map_senders.get(m.domaine.as_str()) {
-//                     //     Some(sender) => {sender.send(message).await.expect("send message vers sous-domaine")},
-//                     //     None => error!("Message de domaine inconnu {}, on le drop", m.domaine),
-//                     // }
-//                 },
-//                 TypeMessage::Certificat(_) => (),  // Rien a faire
-//                 TypeMessage::Regeneration => (),   // Rien a faire
-//             }
-//         }
-//
-//         debug!("Fin consommer");
-//     }
-//
-//     pub async fn consommer_messages(middleware: Arc<MiddlewareDb>, mut rx: Receiver<TypeMessage>) {
-//         while let Some(message) = rx.recv().await {
-//             debug!("Message PKI recu : {:?}", message);
-//
-//             match message {
-//                 TypeMessage::ValideAction(inner) => {debug!("Message ValideAction recu : {:?}", inner)},
-//                 TypeMessage::Valide(_inner) => {warn!("Recu MessageValide sur thread consommation"); todo!()},
-//                 TypeMessage::Certificat(_inner) => {warn!("Recu MessageCertificat sur thread consommation"); todo!()},
-//                 TypeMessage::Regeneration => {continue}, // Rien a faire, on boucle
-//             };
-//
-//         }
-//
-//         debug!("Fin consommer_messages");
-//     }
-//
-//     // #[tokio::test]
-//     // async fn connecter_middleware_pki() {
-//     //     setup("connecter_middleware_pki");
-//     //
-//     //     // Connecter mongo
-//     //     //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
-//     //     let (
-//     //         middleware,
-//     //         mut futures,
-//     //         mut tx_messages,
-//     //         mut tx_triggers
-//     //     ) = build().await;
-//     //     futures.push(tokio::spawn(async move {
-//     //         debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
-//     //
-//     //         debug!("Sleeping");
-//     //         tokio::time::sleep(tokio::time::Duration::new(3, 0)).await;
-//     //         debug!("Fin sleep");
-//     //
-//     //         middleware.charger_certificats_chiffrage().await;
-//     //
-//     //         debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
-//     //         let cles = middleware.cles_chiffrage.lock().expect("lock");
-//     //         assert_eq!(true, cles.len() > 1);
-//     //
-//     //     }));
-//     //     // Execution async du test
-//     //     futures.next().await.expect("resultat").expect("ok");
-//     // }
-//     //
-//     // /// Test d'acces au MaitreDesCles. Doit creer une cle secrete, la chiffrer avec les certificats
-//     // /// recus, emettre la cle puis recuperer une version dechiffrable localement.
-//     // #[tokio::test]
-//     // async fn roundtrip_cle_secrete() {
-//     //     setup("connecter_middleware_pki");
-//     //
-//     //     // Connecter mongo
-//     //     //let (middleware, _, _, mut futures) = preparer_middleware_pki(Vec::new(), None);
-//     //     let (
-//     //         middleware,
-//     //         mut futures,
-//     //         mut tx_messages,
-//     //         mut tx_triggers
-//     //     ) = build().await;
-//     //     futures.push(tokio::spawn(async move {
-//     //         debug!("Cles chiffrage initial (millegrille uniquement) : {:?}", middleware.cles_chiffrage);
-//     //
-//     //         debug!("Sleeping");
-//     //         tokio::time::sleep(tokio::time::Duration::new(4, 0)).await;
-//     //         debug!("Fin sleep");
-//     //         middleware.charger_certificats_chiffrage().await;
-//     //
-//     //         debug!("Cles chiffrage : {:?}", middleware.cles_chiffrage);
-//     //
-//     //         const VALEUR_TEST: &[u8] = b"Du data a chiffrer";
-//     //
-//     //         let (vec_output, cipher_keys) = {
-//     //             let mut vec_output: Vec<u8> = Vec::new();
-//     //             let mut cipher = middleware.get_cipher().expect("cipher");
-//     //             let mut output = [0u8; 40];
-//     //             let len_output = cipher.update(b"Du data a chiffrer", &mut output).expect("update");
-//     //             vec_output.extend_from_slice(&output[..len_output]);
-//     //             let len_output = cipher.finalize(&mut output).expect("finalize");
-//     //             debug!("Finalize cipher : {:?}", &output[..len_output]);
-//     //             vec_output.extend_from_slice(&output[..len_output]);
-//     //
-//     //             (vec_output, cipher.get_cipher_keys().expect("cipher keys"))
-//     //         };
-//     //
-//     //         debug!("Data chiffre : {:?}\nCipher keys : {:?}", vec_output, cipher_keys);
-//     //
-//     //         let mut id_docs = HashMap::new();
-//     //         id_docs.insert(String::from("test"), String::from("dummy"));
-//     //         let commande = cipher_keys.get_commande_sauvegarder_cles("Test", None, id_docs);
-//     //         let hachage_bytes = commande.hachage_bytes.clone();
-//     //         debug!("Commande sauvegarder cles : {:?}", commande);
-//     //
-//     //         let routage_sauvegarde = RoutageMessageAction::new("MaitreDesCles", "sauvegarderCle");
-//     //         let reponse_sauvegarde = middleware.transmettre_commande(routage_sauvegarde, &commande, true)
-//     //             .await.expect("reponse");
-//     //
-//     //         debug!("Reponse sauvegarde cle : {:?}", reponse_sauvegarde);
-//     //
-//     //         let requete = {
-//     //             let mut liste_hachage_bytes = Vec::new();
-//     //             liste_hachage_bytes.push(hachage_bytes.clone());
-//     //             json!({
-//     //                 "liste_hachage_bytes": liste_hachage_bytes,
-//     //             })
-//     //         };
-//     //         let routage_rechiffrer = RoutageMessageAction::new("MaitreDesCles", "dechiffrage");
-//     //         let reponse_cle_rechiffree = middleware.transmettre_requete(routage_rechiffrer, &requete).await
-//     //             .expect("requete cle");
-//     //         debug!("Reponse cle rechiffree : {:?}", reponse_cle_rechiffree);
-//     //
-//     //         let mut decipher = middleware.get_decipher(&hachage_bytes).await.expect("decipher");
-//     //         let mut vec_buffer = {
-//     //             let mut buffer_output = [0u8; 40];
-//     //             let len_dechiffre = decipher.update(vec_output.as_slice(), &mut buffer_output).expect("update");
-//     //             let mut vec_buffer = Vec::new();
-//     //             vec_buffer.extend(&buffer_output[..len_dechiffre]);
-//     //
-//     //             vec_buffer
-//     //         };
-//     //
-//     //         assert_eq!(VALEUR_TEST, vec_buffer.as_slice());
-//     //
-//     //         let message_dechiffre = String::from_utf8(vec_buffer).expect("utf-8");
-//     //         debug!("Data dechiffre : {}", message_dechiffre);
-//     //         {
-//     //             let mut buffer_output = [0u8; 0];
-//     //             let output = decipher.finalize(&mut buffer_output).expect("finalize dechiffrer");
-//     //             assert_eq!(0, output);
-//     //         }
-//     //
-//     //     }));
-//     //     // Execution async du test
-//     //     futures.next().await.expect("resultat").expect("ok");
-//     // }
-// }

@@ -29,15 +29,13 @@ use crate::notifications::NotificationMessageInterne;
 use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 use crate::redis_dao::RedisDao;
-// use crate::verificateur::{ResultatValidation, ValidationOptions, VerificateurMessage, verifier_message};
 
 // Middleware avec MongoDB
 pub struct MiddlewareDb {
     pub ressources: MiddlewareDbRessources,
     pub redis: Option<RedisDao>,
-    tx_backup: Sender<CommandeBackup>,
-    // pub chiffrage_factory: Arc<ChiffrageFactoryImpl>,
-    cle_chiffrage_handler: CleChiffrageHandlerImpl,
+    pub tx_backup: Sender<CommandeBackup>,
+    pub cle_chiffrage_handler: CleChiffrageHandlerImpl,
 }
 
 impl MiddlewareMessages for MiddlewareDb {}
@@ -132,16 +130,6 @@ impl MongoDao for MiddlewareDb {
 impl BackupStarter for MiddlewareDb {
     fn get_tx_backup(&self) -> Sender<CommandeBackup> { self.tx_backup.clone() }
 }
-
-// impl VerificateurMessage for MiddlewareDb {
-//     fn verifier_message(
-//         &self,
-//         message: &mut MessageMilleGrillesRefDefault,
-//         options: Option<&ValidationOptions>
-//     ) -> Result<ResultatValidation, Box<dyn Error>> {
-//         verifier_message(message, self, options)
-//     }
-// }
 
 #[async_trait]
 impl ValidateurX509 for MiddlewareDb {
@@ -322,29 +310,6 @@ impl GenerateurMessages for MiddlewareDb {
     fn get_securite(&self) -> &Securite { self.ressources.ressources.generateur_messages.get_securite() }
 }
 
-// #[async_trait]
-// impl CleChiffrageHandler for MiddlewareDb {
-//
-//     fn get_publickeys_chiffrage(&self) -> Vec<FingerprintCertPublicKey> {
-//         self.chiffrage_factory.get_publickeys_chiffrage()
-//     }
-//
-//     async fn charger_certificats_chiffrage<M>(&self, middleware: &M)
-//         -> Result<(), crate::error::Error>
-//         where M: GenerateurMessages + ValidateurX509 + ConfigMessages
-//     {
-//         debug!("Charger les certificats de maitre des cles pour chiffrage");
-//         self.chiffrage_factory.charger_certificats_chiffrage(middleware).await
-//     }
-//
-//     async fn recevoir_certificat_chiffrage<M>(&self, middleware: &M, message: &TypeMessage) -> Result<(), crate::error::Error>
-//         where M: ValidateurX509 + ConfigMessages
-//     {
-//         self.chiffrage_factory.recevoir_certificat_chiffrage(middleware, message).await
-//     }
-//
-// }
-
 #[async_trait]
 impl EmetteurCertificat for MiddlewareDb {
     async fn emettre_certificat(&self, generateur_message: &impl GenerateurMessages) -> Result<(), crate::error::Error> {
@@ -383,28 +348,6 @@ impl EmetteurCertificat for MiddlewareDb {
     }
 }
 
-// impl ChiffrageFactoryTrait for MiddlewareDb {
-//     fn get_chiffrage_factory(&self) -> &ChiffrageFactoryImpl { self.chiffrage_factory.as_ref() }
-// }
-
-// impl ChiffrageFactory for MiddlewareDb {
-//     fn get_chiffreur(&self) -> Result<CipherMgs4, crate::error::Error> {
-//         self.chiffrage_factory.get_chiffreur()
-//     }
-//
-//     // fn get_chiffreur_mgs2(&self) -> Result<CipherMgs2, String> {
-//     //     self.chiffrage_factory.get_chiffreur_mgs2()
-//     // }
-//
-//     // fn get_chiffreur_mgs3(&self) -> Result<CipherMgs3, String> {
-//     //     self.chiffrage_factory.get_chiffreur_mgs3()
-//     // }
-//
-//     fn get_chiffreur_mgs4(&self) -> Result<CipherMgs4, crate::error::Error> {
-//         self.chiffrage_factory.get_chiffreur_mgs4()
-//     }
-// }
-
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
     pub middleware: Arc<MiddlewareDb>,
@@ -412,8 +355,8 @@ pub struct MiddlewareHooks {
 }
 
 pub struct MiddlewareDbRessources {
-    ressources: MiddlewareRessources,
-    mongo: Arc<MongoDaoImpl>,
+    pub ressources: MiddlewareRessources,
+    pub mongo: Arc<MongoDaoImpl>,
 }
 
 pub fn configurer() -> MiddlewareDbRessources
@@ -433,27 +376,6 @@ pub fn preparer_middleware_db() -> MiddlewareHooks {
 
     let configuration = ressources.ressources.configuration.clone();
 
-    // Extraire le cert millegrille comme base pour chiffrer les cles secretes
-    // let chiffrage_factory = {
-    //     let env_privee = configuration.get_configuration_pki().get_enveloppe_privee();
-    //     let cert_local = env_privee.enveloppe_pub.as_ref();
-    //     let mut fp_certs = cert_local.fingerprint_cert_publickeys().expect("public keys");
-    //
-    //     // Charger cle de millegrille
-    //     let list_fp_ca = env_privee.enveloppe_ca.fingerprint_cert_publickeys().expect("public keys CA");
-    //     if list_fp_ca.is_empty() { panic!("Cle de millegrille absente de env_privee.enveloppe_ca"); }
-    //     fp_certs.extend(list_fp_ca);
-    //
-    //     let mut map: HashMap<String, FingerprintCertPublicKey> = HashMap::new();
-    //     for f in fp_certs.iter().filter(|c| c.est_cle_millegrille).map(|c| c.to_owned()) {
-    //         map.insert(f.fingerprint.clone(), f);
-    //     }
-    //
-    //     debug!("Map cles chiffrage : {:?}", map);
-    //
-    //     Arc::new(ChiffrageFactoryImpl::new(map, env_privee))
-    // };
-
     // Charger redis (optionnel)
     let redis_dao = match configuration.get_configuration_noeud().redis_password {
         Some(_) => {
@@ -472,14 +394,13 @@ pub fn preparer_middleware_db() -> MiddlewareHooks {
         ressources,
         redis: redis_dao,
         tx_backup,
-        // chiffrage_factory,
         cle_chiffrage_handler: CleChiffrageHandlerImpl::new(),
     });
 
     // Preparer threads execution
     let rabbitmq = middleware.ressources.ressources.rabbitmq.clone();
     let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-    futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
+    // futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
     futures.push(tokio::spawn(run_rabbitmq(middleware.clone(), rabbitmq, configuration)));
 
     MiddlewareHooks { middleware, futures }

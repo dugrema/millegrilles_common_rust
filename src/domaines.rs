@@ -265,10 +265,10 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
 }
 
 #[derive(Serialize)]
-struct ReponseNombreTransactions {
-    ok: bool,
-    domaine: String,
-    nombre_transactions: i64,
+pub struct ReponseNombreTransactions {
+    pub ok: bool,
+    pub domaine: String,
+    pub nombre_transactions: i64,
 }
 
 #[async_trait]
@@ -977,12 +977,12 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct MessageBackupTransactions {
-    complet: Option<bool>,
+pub struct MessageBackupTransactions {
+    pub complet: Option<bool>,
 }
 
 #[derive(Clone, Deserialize)]
-struct MessageRestaurerTransaction {
-    transaction: TransactionOwned,
-    ack: Option<bool>,
+pub struct MessageRestaurerTransaction {
+    pub transaction: TransactionOwned,
+    pub ack: Option<bool>,
 }

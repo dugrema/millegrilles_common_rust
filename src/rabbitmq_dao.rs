@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use url::Url;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -17,6 +16,7 @@ use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as Sen
 use tokio::task::JoinHandle;
 use tokio_amqp::*;
 use tokio_stream::StreamExt;
+use url::Url;
 
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
@@ -369,6 +369,21 @@ pub async fn run_rabbitmq<C,M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecuto
     futures.next().await.expect("futures next").expect("futures result");
 }
 
+pub async fn run_rabbitmq_v2<C,M>(middleware: &'static M, rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
+    where
+        C: ConfigMessages + 'static,
+        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages
+{
+    let mut futures = FuturesUnordered::new();
+    futures.push(task::spawn(thread_connexion(rabbitmq.clone(), config.clone())));
+    futures.push(task::spawn(thread_reply_q_v2(middleware, rabbitmq.clone(), config.clone())));
+    futures.push(task::spawn(task_emettre_messages(rabbitmq.clone())));
+    futures.push(task::spawn(thread_consumers_named_queues_v2(middleware, rabbitmq.clone())));
+
+    // Run, quit sur premier echec/thread complete
+    futures.next().await.expect("futures next").expect("futures result");
+}
+
 /// Thread qui run une connexion MQ, reconnecte au besoin
 async fn thread_connexion<C>(rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
     where C: ConfigMessages
@@ -411,6 +426,20 @@ async fn thread_reply_q<M, C>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor
     let mut futures = FuturesUnordered::new();
     futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
     futures.push(task::spawn(thread_traiter_reply_q(middleware.clone(), rabbitmq.clone())));
+    futures.push(task::spawn(thread_entretien_attente(rabbitmq.clone())));
+
+    // Run, quit sur premier echec/thread complete
+    futures.next().await.expect("thread_reply_q futures next").expect("thread_reply_q futures result");
+}
+
+async fn thread_reply_q_v2<M, C>(middleware: &'static M, rabbitmq: Arc<RabbitMqExecutor>, config: Arc<Box<C>>)
+    where
+        M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages,
+        C: ConfigMessages + 'static
+{
+    let mut futures = FuturesUnordered::new();
+    futures.push(task::spawn(thread_consumer_replyq(rabbitmq.clone(), config.clone())));
+    futures.push(task::spawn(thread_traiter_reply_q_v2(middleware, rabbitmq.clone())));
     futures.push(task::spawn(thread_entretien_attente(rabbitmq.clone())));
 
     // Run, quit sur premier echec/thread complete
@@ -588,6 +617,112 @@ async fn thread_traiter_reply_q<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExe
     info!("thread_consumer_reply_queue Fin thread");
 }
 
+async fn thread_traiter_reply_q_v2<M>(middleware: &M, rabbitmq: Arc<RabbitMqExecutor>)
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
+{
+    let mut rx = {
+        let mut guard = rabbitmq.rx_reply.lock().expect("lock");
+        match guard.take() {
+            Some(rx) => rx,
+            None => panic!("thread_traiter_reply_q rx reply non disponible")
+        }
+    };
+
+    while let Some(message) = rx.recv().await {
+        let resultat = match message {
+            MessageInterne::Delivery(delivery, _routing) => {
+                debug!("Message reply q : {:?}", delivery.routing_key);
+                let nom_queue = match rabbitmq.reply_q.lock().expect("lock").clone() {
+                    Some(q) => q,
+                    None => "_reply".into()
+                };
+                match traiter_delivery(
+                    middleware,
+                    nom_queue.as_str(),
+                    delivery
+                ).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("thread_traiter_reply_q Erreur traitement message : {:?}", e);
+                        None
+                    }
+                }
+            },
+            _ => {
+                debug!("thread_traiter_reply_q Type de message non-supporte, on l'ignore");
+                None
+            }
+        };
+
+        if let Some(message_traite) = resultat {
+            let attente_reponse = match &message_traite {
+                TypeMessage::Valide(message) => {
+                    match &message.type_message {
+                        TypeMessageOut::Reponse(r) => {
+                            // Reponse valide, retransmettre sur la correlation appropriee
+                            let correlation_id = r.correlation_id.as_str();
+                            let mut guard = rabbitmq.map_attente.lock().expect("lock");
+                            if let Some(attente_reponse) = guard.remove(correlation_id) {
+                                debug!("thread_traiter_reply_q Reponse pour correlation_id {} recue, traiter", correlation_id);
+                                Some(attente_reponse)
+                            } else {
+                                info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
+                                None
+                            }
+                        },
+                        _ => None
+                    }
+                    // if let Some(correlation_id) = message.type_message.as_ref() {
+                    //     let mut guard = rabbitmq.map_attente.lock().expect("lock");
+                    //     if let Some(attente_reponse) = guard.remove(correlation_id) {
+                    //         Some(attente_reponse)
+                    //     } else {
+                    //         info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
+                    //         None
+                    //     }
+                    // } else {
+                    //     None
+                    // }
+                },
+                // TypeMessage::ValideAction(message) => {
+                //     if message.action.as_str() == PKI_REQUETE_CERTIFICAT {
+                //         if let Some(cert) = message.message.certificat.as_ref() {
+                //             debug!("Certificat recu - {}", cert.fingerprint)
+                //         }
+                //     } else {
+                //         warn!("thread_traiter_reply_q Recu message ValideAction, ignorer : {:?}", message);
+                //     }
+                //     None
+                // },
+                TypeMessage::Certificat(certificat) => {
+                    warn!("thread_traiter_reply_q Recu MessageCertificat (deja traite) sur thread consommation, skip : {:?}", certificat);
+                    None
+                },
+                TypeMessage::Regeneration => None  // Ignorer
+            };
+
+            match attente_reponse {
+                Some(a) => {
+                    // On a une correlation, rediriger le message en attente
+                    debug!("thread_traiter_reply_q Traiter reponse correlation_id: {}", a.correlation);
+                    if let Err(e) = a.sender.send(message_traite) {
+                        error!("thread_traiter_reply_q Erreur transmission reponse attente correlation {} : {:?}", a.correlation, e);
+                    }
+                },
+                None => {
+                    // Aucune correlation (message non sollicite). Voir si on intercepte le message
+                    // pour le passer a une chaine de traitement differente.
+                    if intercepter_message(middleware, &message_traite).await == false {
+                        info!("Message sur reply_q sans attente et non intercepte, on skip");
+                    }
+                }
+            }
+        }
+    }
+
+    info!("thread_consumer_reply_queue Fin thread");
+}
+
 async fn thread_consumers_named_queues<M>(middleware: Arc<M>, rabbitmq: Arc<RabbitMqExecutor>)
     where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static,
 {
@@ -600,6 +735,38 @@ async fn thread_consumers_named_queues<M>(middleware: Arc<M>, rabbitmq: Arc<Rabb
                 if ! named_queue.is_running() {
                     // Creer nouvelle thread
                     let futures_nq = named_queue.get_futures(middleware.clone(), rabbitmq.clone()).expect("futures named_queues");
+                    futures.extend(futures_nq);
+                }
+            }
+        }
+
+        // Ajout task wait notify
+        futures.push(task::spawn(notify_wait_thread(rabbitmq.clone())));
+
+        match futures.next().await {
+            Some(result) => match result {
+                Ok(()) => info!("thread_consumers_named_queues Interruption pour changer named queues"),
+                Err(e) => panic!("thread_consumers_named_queues Erreur dans Q, abort : {:?}", e)
+            },
+            None => panic!("thread_consumers_named_queues Erreur dans Q (aucun resultat execution), abort")
+        };
+
+    }
+}
+
+async fn thread_consumers_named_queues_v2<M>(middleware: &'static M, rabbitmq: Arc<RabbitMqExecutor>)
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages
+{
+
+    let mut futures = FuturesUnordered::new();
+    loop {
+        {
+            let named_queues = rabbitmq.as_ref().named_queues.lock().expect("lock");
+            for (_, named_queue) in named_queues.iter() {
+                if ! named_queue.is_running() {
+                    // Creer nouvelle thread
+                    let futures_nq = named_queue.spawns_tasks(middleware, rabbitmq.clone())
+                            .expect("futures named_queues");
                     futures.extend(futures_nq);
                 }
             }
@@ -749,6 +916,40 @@ impl NamedQueue {
         // futures.next().await.expect("run await").expect("run await resultat");
         Ok(futures)
     }
+
+    fn spawns_tasks<M>(&self, middleware: &'static M, rabbitmq: Arc<RabbitMqExecutor>) -> Result<FuturesUnordered<JoinHandle<()>>, Box<dyn Error>>
+        where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages
+    {
+        info!("Demarrage thread named queue {:?}", self.queue);
+        let mut futures = FuturesUnordered::new();
+
+        // Extraire le receiver
+        let rx = {
+            let mut guard = self.rx.lock().expect("lock");
+            let rx = match guard.take() {
+                Some(rx) => rx,
+                None => Err(format!("NamedQueue rx n'est pas disponible, abort"))?
+            };
+            rx
+        };
+
+        // Ajouter consumers si presents
+        {
+            let mut guard = self.support_threads.lock().expect("lock");
+            let consumers_option = guard.take();
+            if let Some(consumers) = consumers_option {
+                futures.extend(consumers)
+            }
+        }
+
+        let tx_traitement = self.tx_traite.clone();
+
+        futures.push(task::spawn(named_queue_consume(rabbitmq.clone(), self.tx.clone(), self.queue.clone())));
+        futures.push(task::spawn(named_queue_traiter_messages_v2(middleware, rx, self.queue.clone(), tx_traitement)));
+
+        // futures.next().await.expect("run await").expect("run await resultat");
+        Ok(futures)
+    }
 }
 
 pub async fn named_queue_consume(rabbitmq: Arc<RabbitMqExecutor>, tx: Sender<MessageInterne>, queue: QueueType) {
@@ -830,6 +1031,69 @@ async fn named_queue_traiter_messages<M>(
                 debug!("NamedQueue.run Trigger recu : {:?}", delivery.routing_key);
                 match traiter_delivery(
                     middleware.as_ref(),
+                    nom_queue.as_str(),
+                    delivery
+                ).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("named_queue_traiter_messages Erreur traitement trigger : {:?}", e);
+                        None
+                    }
+                }
+            },
+            _ => {
+                debug!("named_queue_traiter_messages Type de message non-supporte, on l'ignore");
+                None
+            }
+        };
+
+        if let Some(message_traite) = resultat {
+            if let Err(e) = tx_traite.send(message_traite).await {
+                error!("named_queue_traiter_messages Erreur send message interne : {:?}", e);
+            }
+        }
+    }
+
+    info!("named_queue_traiter_messages Fermeture queue {:?}", nom_queue);
+}
+
+async fn named_queue_traiter_messages_v2<M>(
+    middleware: &M,
+    mut rx: Receiver<MessageInterne>,
+    queue: QueueType,
+    tx_traite: Sender<TypeMessage>
+)
+    where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages + 'static
+{
+    let nom_queue = match queue {
+        QueueType::ExchangeQueue(config) => config.nom_queue.clone(),
+        QueueType::Triggers(nom, _securite) => nom,
+        _ => panic!("named_queue_traiter_messages Type de queue non supporte")
+    };
+    debug!("named_queue_traiter_messages Demarrage queue {}", nom_queue);
+
+    // Demarrer ecoute de messages
+    while let Some(message) = rx.recv().await {
+        // debug!("NamedQueue.run Message recu : {:?}", message);
+        let resultat = match message {
+            MessageInterne::Delivery(delivery, _routing) => {
+                debug!("NamedQueue.run Message recu : {:?}", delivery.routing_key);
+                match traiter_delivery(
+                    middleware,
+                    nom_queue.as_str(),
+                    delivery
+                ).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("named_queue_traiter_messages Erreur traitement message : {:?}", e);
+                        None
+                    }
+                }
+            },
+            MessageInterne::Trigger(delivery, nom_queue) => {
+                debug!("NamedQueue.run Trigger recu : {:?}", delivery.routing_key);
+                match traiter_delivery(
+                    middleware,
                     nom_queue.as_str(),
                     delivery
                 ).await {
