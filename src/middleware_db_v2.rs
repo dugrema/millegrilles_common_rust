@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use static_cell::StaticCell;
 
-use crate::backup::{CommandeBackup, thread_backup};
+use crate::backup::{CommandeBackup, thread_backup, thread_backup_v2};
 use crate::chiffrage_cle::CleChiffrageHandlerImpl;
 use crate::configuration::IsConfigNoeud;
 use crate::error::Error;
@@ -46,7 +46,7 @@ pub fn preparer() -> Result<&'static MiddlewareDb, Error> {
 
     // Preparer threads execution
 
-    tokio::spawn(thread_backup(middleware, rx_backup));
+    tokio::spawn(thread_backup_v2(middleware, rx_backup));
 
     let rabbitmq = middleware.ressources.ressources.rabbitmq.clone();
     tokio::spawn(run_rabbitmq_v2(middleware, rabbitmq, configuration));

@@ -64,7 +64,71 @@ static mut DERNIER_BACKUP_COMPLET_FIN_DOMAINES: Option<HashMap<String, i64>> = N
 const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
-pub async fn thread_backup<M>(middleware: &M, mut rx: Receiver<CommandeBackup>)
+pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
+{
+    while let Some(commande) = rx.recv().await {
+        let mut abandonner_backup = false;
+        if commande.complet {
+            // Protection de backup complet a repetition (reset toutes les transactions)
+            let now = Utc::now().timestamp_millis();
+            unsafe {
+                let dernier_backup_complet = match DERNIER_BACKUP_COMPLET_FIN_DOMAINES.as_ref() {
+                    Some(inner) => {
+                        match inner.get(commande.nom_domaine.as_str()) {
+                            Some(inner) => inner.to_owned(),
+                            None => 0
+                        }
+                    },
+                    None => {
+                        DERNIER_BACKUP_COMPLET_FIN_DOMAINES = Some(HashMap::new());
+                        0
+                    }
+                };
+                if dernier_backup_complet > 0 && now - PERIODE_PROTECTION_FIN_COMPLET < dernier_backup_complet {
+                    info!("thread_backup Backup complet deja termine recemment ({}:{}) - SKIP", commande.nom_domaine, dernier_backup_complet);
+                    abandonner_backup = true;
+                }
+            }
+        }
+
+        if abandonner_backup {
+            let routage = RoutageMessageReponse::new(commande.reply_q, commande.correlation_id);
+            // let reponse = match middleware.formatter_reponse(json!({"ok": false, "code": 2}), None) {
+            //     Ok(inner) => inner,
+            //     Err(e) => {
+            //         error!("backup.thread_backup Erreur reponse backup refuse (1.) domaine {} : {:?}", commande.nom_domaine, e);
+            //         continue
+            //     }
+            // };
+
+            // Emettre le message
+            if let Err(e) = middleware.repondre(routage, json!({"ok": false, "code": 2})).await {
+                error!("backup.thread_backup Erreur reponse backup refuse (2.) domaine {} : {:?}", commande.nom_domaine, e);
+            }
+
+            // Skip le backup
+            continue
+        }
+
+        debug!("thread_backup Debut commande backup {:?}", commande);
+        info!("Debut backup {}", commande.nom_domaine);
+        match backup(middleware.as_ref(), &commande).await {
+            Ok(_) => info!("Backup {} OK", commande.nom_domaine),
+            Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", commande.nom_domaine, e)
+        };
+        if commande.complet {
+            unsafe {
+                DERNIER_BACKUP_COMPLET_FIN_DOMAINES
+                    .as_mut()
+                    .expect("DERNIER_BACKUP_COMPLET_FIN_DOMAINES")
+                    .insert(commande.nom_domaine.clone(), Utc::now().timestamp_millis());
+            }  // Set flag fin complet
+        }
+    }
+}
+
+pub async fn thread_backup_v2<M>(middleware: &M, mut rx: Receiver<CommandeBackup>)
     where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
 {
     while let Some(commande) = rx.recv().await {
