@@ -10,6 +10,7 @@ use multibase;
 
 use millegrilles_cryptographie::{messages_structs::epochseconds, chiffrage::formatchiffragestr};
 use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
+use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use crate::dechiffrage::DataChiffre;
 
 use crate::hachages::verifier_multihash;
@@ -281,6 +282,13 @@ pub struct RequeteDechiffrage {
     pub cle_ids: Option<Vec<String>>,
     /// Certificat a utiliser pour la reponse chiffree
     pub certificat_rechiffrage: Option<Vec<String>>,
+}
+
+/// Requete de dechiffrage avec cles fournies
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RequeteDechiffrageMessage {
+    pub signature: SignatureDomaines,
+    pub cles: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

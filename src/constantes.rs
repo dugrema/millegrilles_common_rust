@@ -352,6 +352,7 @@ pub const DOMAINE_NOM_MAITREDESCLES: &str = "MaitreDesCles";
 pub const MAITREDESCLES_COMMANDE_NOUVELLE_CLE: &str = "nouvelleCle";
 pub const MAITREDESCLES_REQUETE_DECHIFFRAGE: &str = "dechiffrage";
 pub const MAITREDESCLES_REQUETE_DECHIFFRAGE_V2: &str = "dechiffrageV2";
+pub const MAITREDESCLES_REQUETE_DECHIFFRAGE_MESSAGE: &str = "dechiffrageMessage";
 
 pub const MAITREDESCLES_CHAMP_HACHAGE_BYTES: &str = "hachage_bytes";
 pub const MAITREDESCLES_CHAMP_CLES: &str = "cles";
