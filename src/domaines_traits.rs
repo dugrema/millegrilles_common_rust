@@ -38,10 +38,6 @@ pub trait GestionnaireBusMillegrilles: Sized + Send + Sync {
 #[async_trait]
 pub trait ConsommateurMessagesBus {
 
-    /// Consomme les messages a partir de MQ.
-    async fn consommer_messages<M>(&self, middleware: &M, rx: Receiver<TypeMessage>)
-        where M: MiddlewareMessages;
-
     async fn consommer_requete<M>(&self, middleware: &M, message: MessageValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: MiddlewareMessages;
@@ -58,7 +54,7 @@ pub trait ConsommateurMessagesBus {
 
 /// Gestionnaire de domaine. Utilise une base de donnees pour traiter les transactions du domaine.
 // #[async_trait]
-pub trait GestionnaireDomaineV2: TraiterTransaction + GestionnaireBusMillegrilles + ConsommateurMessagesBus {
+pub trait GestionnaireDomaineV2: GestionnaireBusMillegrilles + ConsommateurMessagesBus {
 
     /// Retourne le nom de la collection de transactions
     fn get_collection_transactions(&self) -> Option<String>;
