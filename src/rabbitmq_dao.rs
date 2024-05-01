@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::str::from_utf8;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -9,7 +10,8 @@ use futures::stream::FuturesUnordered;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, Queue, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
-use log::{debug, error, info, warn};
+use log::{debug, error, info, log_enabled, trace, warn};
+use log::Level::{Debug, Trace};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use tokio::{sync, task};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
@@ -1011,7 +1013,6 @@ async fn named_queue_traiter_messages<M>(
 
     // Demarrer ecoute de messages
     while let Some(message) = rx.recv().await {
-        // debug!("NamedQueue.run Message recu : {:?}", message);
         let resultat = match message {
             MessageInterne::Delivery(delivery, _routing) => {
                 debug!("NamedQueue.run Message recu : {:?}", delivery.routing_key);
@@ -1077,7 +1078,13 @@ async fn named_queue_traiter_messages_v2<M>(
         // debug!("NamedQueue.run Message recu : {:?}", message);
         let resultat = match message {
             MessageInterne::Delivery(delivery, _routing) => {
-                debug!("NamedQueue.run Message recu : {:?}", delivery.routing_key);
+                if log_enabled!(Trace) {
+                    if let Ok(data_str) = from_utf8(&delivery.data) {
+                        trace!("NamedQueue.run Delivery Message recu : {}\n{}", delivery.routing_key, data_str);
+                    } else {
+                        trace!("NamedQueue.run Delivery Message non string recu : {}", delivery.routing_key);
+                    }
+                }
                 match traiter_delivery(
                     middleware,
                     nom_queue.as_str(),
@@ -1091,7 +1098,13 @@ async fn named_queue_traiter_messages_v2<M>(
                 }
             },
             MessageInterne::Trigger(delivery, nom_queue) => {
-                debug!("NamedQueue.run Trigger recu : {:?}", delivery.routing_key);
+                if log_enabled!(Trace) {
+                    if let Ok(data_str) = from_utf8(&delivery.data) {
+                        trace!("NamedQueue.run Trigger Message recu : {}\n{}", delivery.routing_key, data_str);
+                    } else {
+                        trace!("NamedQueue.run Trigger Message non string recu : {}", delivery.routing_key);
+                    }
+                }
                 match traiter_delivery(
                     middleware,
                     nom_queue.as_str(),
