@@ -119,6 +119,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
 
         match resultat {
             Some(reponse) => {
+                // On a une reponse a transmettre
                 let reply_q = match reply_q {
                     Some(reply_q) => reply_q,
                     None => {
@@ -132,10 +133,12 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
                 }?;
                 debug!("traiter_message_valide_action Emettre reponse vers reply_q {} correlation_id {}", reply_q, correlation_id);
                 let routage = RoutageMessageReponse::new(reply_q, correlation_id);
-                let message_ref = reponse.parse()?;
-                middleware.repondre(routage, message_ref).await?;
+                let type_message_out = TypeMessageOut::Reponse(routage.into());
+                if let Err(e) = middleware.emettre_message(type_message_out, reponse).await {
+                    error!("traiter_message_valide_action Erreur emettre reponse : {:?}", e);
+                }
             },
-            None => (),  // Aucune reponse
+            None => (),  // Aucune reponse a transmettre
         }
 
         Ok(())
