@@ -1,12 +1,11 @@
 use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 
-use crate::middleware::MiddlewareMessages;
+use crate::middleware::Middleware;
 use crate::rabbitmq_dao::QueueType;
 use crate::recepteur_messages::MessageValide;
 
 /// Gestionnaire de connexion au bus MilleGrilles (mq)
-// #[async_trait]
 pub trait GestionnaireBusMillegrilles: Sized + Send + Sync {
 
     /// Retourne le nom du domaine
@@ -23,13 +22,6 @@ pub trait GestionnaireBusMillegrilles: Sized + Send + Sync {
 
     /// Retourne la liste des Q a configurer pour ce domaine
     fn preparer_queues(&self) -> Vec<QueueType>;
-
-    // /// Thread d'entretien, faire un spawn pour la laisser executer en background.
-    // async fn entretien<M>(&self, middleware: &'static M) where M: MiddlewareMessages;
-    //
-    // /// Consomme les messages a partir de MQ.
-    // async fn consommer_messages<M>(&self, middleware: &'static M, rx: Receiver<TypeMessage>)
-    //     where M: MiddlewareMessages;
 }
 
 #[async_trait]
@@ -37,15 +29,15 @@ pub trait ConsommateurMessagesBus {
 
     async fn consommer_requete<M>(&self, middleware: &M, message: MessageValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
-        where M: MiddlewareMessages;
+        where M: Middleware;
 
     async fn consommer_commande<M>(&self, middleware: &M, message: MessageValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
-        where M: MiddlewareMessages;
+        where M: Middleware;
 
     async fn consommer_evenement<M>(&self, middleware: &M, message: MessageValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
-        where M: MiddlewareMessages;
+        where M: Middleware;
 
 }
 

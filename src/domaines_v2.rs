@@ -1,5 +1,4 @@
 use std::str::from_utf8;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::stream::FuturesUnordered;
@@ -16,7 +15,7 @@ use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
 use crate::constantes::{BACKUP_CHAMP_BACKUP_TRANSACTIONS, COMMANDE_CERT_MAITREDESCLES, DELEGATION_GLOBALE_PROPRIETAIRE, EVENEMENT_BACKUP_DECLENCHER, EVENEMENT_CEDULE, EVENEMENT_TRANSACTION_PERSISTEE, PKI_DOCUMENT_CHAMP_CERTIFICAT, PKI_REQUETE_CERTIFICAT, REQUETE_NOMBRE_TRANSACTIONS, ROLE_BACKUP, RolesCertificats, Securite, TRANSACTION_CHAMP_BACKUP_FLAG, TRANSACTION_CHAMP_COMPLETE, TRANSACTION_CHAMP_EVENEMENT_COMPLETE, TRANSACTION_CHAMP_ID, TRANSACTION_CHAMP_TRANSACTION_TRAITEE};
 use crate::db_structs::TransactionValide;
-use crate::domaines::{GestionnaireMessages, MessageBackupTransactions, MessageRestaurerTransaction, ReponseNombreTransactions};
+use crate::domaines::{MessageBackupTransactions, MessageRestaurerTransaction, ReponseNombreTransactions};
 use crate::domaines_traits::GestionnaireDomaineV2;
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
@@ -44,7 +43,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
         -> Result<FuturesUnordered<JoinHandle<()>>, Error>
         where M: Middleware
     {
-        let mut futures = FuturesUnordered::new();
+        let futures = FuturesUnordered::new();
 
         // Mapping par Q nommee
         let qs = self.preparer_queues();
@@ -52,7 +51,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
             let (tx, rx) = mpsc::channel::<TypeMessage>(1);
             let queue_name = match &q {
                 QueueType::ExchangeQueue(q) => q.nom_queue.clone(),
-                QueueType::ReplyQueue(q) => { continue; }  // Skip
+                QueueType::ReplyQueue(_) => { continue; }  // Skip
                 QueueType::Triggers(d, s) => format!("{}.{:?}", d, s)
             };
             let named_queue = NamedQueue::new(q, tx, Some(1), None);
@@ -66,7 +65,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
     async fn consommer_messages<M>(&self, middleware: &M, mut rx: Receiver<TypeMessage>)
         where M: Middleware
     {
-        info!("domaines.consommer_messages : Debut thread {}", self.get_q_volatils());
+        info!("consommer_messages : Debut thread {}", self.get_q_volatils());
         while let Some(message) = rx.recv().await {
             trace!("Message {} recu : {:?}", self.get_nom_domaine(), message);
 
@@ -84,7 +83,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
             };
 
         }
-        info!("domaines.consommer_messages : Fin thread {}", self.get_q_volatils());
+        info!("consommer_messages : Fin thread {}", self.get_q_volatils());
     }
 
     async fn traiter_message_valide_action<M>(&self, middleware: &M, message: MessageValide)
@@ -114,8 +113,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
             TypeMessageOut::Requete(_) => self.consommer_requete_trait(middleware, message).await,
             TypeMessageOut::Commande(_) => self.consommer_commande_trait(middleware, message).await,
             TypeMessageOut::Evenement(_) => self.consommer_evenement_trait(middleware, message).await,
-            TypeMessageOut::Transaction(_) => Err(String::from("domaines_v2.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
-            TypeMessageOut::Reponse(_) => Err(String::from("Recu reponse sur thread consommation, drop message"))?,
+            TypeMessageOut::Transaction(_) => Err(Error::Str("domaines_v2.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
+            TypeMessageOut::Reponse(_) => Err(Error::Str("domaines_v2.MiddlewareMessages.traiter_message_valide_action Recu reponse sur thread consommation, drop message"))?,
         }?;
 
         match resultat {
@@ -123,15 +122,15 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
                 let reply_q = match reply_q {
                     Some(reply_q) => reply_q,
                     None => {
-                        debug!("Reply Q manquante pour reponse a {:?}", correlation_id);
+                        debug!("traiter_message_valide_action Reply Q manquante pour reponse a {:?}", correlation_id);
                         return Ok(())
                     },
                 };
                 let correlation_id = match correlation_id {
                     Some(correlation_id) => Ok(correlation_id),
-                    None => Err("Correlation id manquant pour reponse"),
+                    None => Err("domaines_v2.MiddlewareMessages.traiter_message_valide_action Correlation id manquant pour reponse"),
                 }?;
-                debug!("Emettre reponse vers reply_q {} correlation_id {}", reply_q, correlation_id);
+                debug!("traiter_message_valide_action Emettre reponse vers reply_q {} correlation_id {}", reply_q, correlation_id);
                 let routage = RoutageMessageReponse::new(reply_q, correlation_id);
                 let message_ref = reponse.parse()?;
                 middleware.repondre(routage, message_ref).await?;
@@ -216,11 +215,11 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
             let message_ref = m.message.parse()?;
             let routage = match &message_ref.routage {
                 Some(inner) => inner,
-                None => Err(String::from("consommer_evenement_trait Routage absent du message"))?
+                None => Err(String::from("domaines_v2.consommer_commande_trait Routage absent du message"))?
             };
             let action = match &routage.action {
                 Some(inner) => inner.to_string(),
-                None => Err(String::from("consommer_evenement_trait Action absente du message"))?
+                None => Err(String::from("domaines_v2.consommer_commande_trait Action absente du message"))?
             };
             action
         };
@@ -257,36 +256,36 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
     {
         let message_ref = match m.message.parse() {
             Ok(inner) => inner,
-            Err(e) => Err(format!("traiter_transaction Erreur parse message {}", e))?
+            Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur parse message {}", e))?
         };
         let message_contenu = match message_ref.contenu() {
             Ok(inner) => inner,
-            Err(e) => Err(format!("Erreur conversion message contenu {:?} : {:?}", m, e))?
+            Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur conversion message contenu {:?} : {:?}", m, e))?
         };
         let trigger: TriggerTransaction = match message_contenu.deserialize() {
             Ok(inner) => inner,
-            Err(e) => Err(format!("Erreur conversion message vers Trigger {:?} : {:?}", m, e))?
+            Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur conversion message vers Trigger {:?} : {:?}", m, e))?
         };
 
         let nom_collection_transactions = match self.get_collection_transactions() {
             Some(n) => n,
             None => {
-                Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
+                Err(Error::Str("domaines_v2.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
             }
         };
 
         let transaction = charger_transaction(middleware, nom_collection_transactions.as_str(), &trigger).await?;
-        debug!("Traitement transaction, chargee : {:?}", transaction.transaction.id);
+        debug!("traiter_transaction Traitement transaction, chargee : {:?}", transaction.transaction.id);
 
         let uuid_transaction = transaction.transaction.id.clone();
         match self.aiguillage_transaction(middleware, transaction).await {
             Ok(r) => {
                 // Marquer transaction completee
-                debug!("Transaction traitee {}, marquer comme completee", uuid_transaction);
+                debug!("traiter_transaction Transaction traitee {}, marquer comme completee", uuid_transaction);
                 let nom_collection_transactions = match self.get_collection_transactions() {
                     Some(n) => n,
                     None => {
-                        Err(format!("domaines.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
+                        Err(Error::Str("domaines_v2.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
                     }
                 };
                 marquer_transaction(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete).await?;
@@ -294,10 +293,10 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
                 // Repondre en fonction du contenu du trigger
                 if let Some(reponse) = r {
                     if let Some(routage_reponse) = trigger.reply_info() {
-                        debug!("Emettre reponse vers {:?} = {:?}", routage_reponse, reponse);
+                        debug!("traiter_transaction Emettre reponse vers {:?} = {:?}", routage_reponse, reponse);
                         let message_ref = reponse.parse()?;
                         if let Err(e) = middleware.repondre(routage_reponse, message_ref).await {
-                            error!("domaines.traiter_transaction: Erreur emission reponse pour une transaction : {:?}", e);
+                            error!("traiter_transaction domaines.traiter_transaction: Erreur emission reponse pour une transaction : {:?}", e);
                         }
                     }
                 }
@@ -404,7 +403,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
         let message_restauration: MessageRestaurerTransaction = message_contenu.deserialize()?;
 
         let mut transaction = message_restauration.transaction;
-        if let Err(e) = transaction.verifier_signature() {
+        if let Err(_) = transaction.verifier_signature() {
             Err(format!("restaurer_transaction Erreur verification transaction {}, SKIP", transaction.id))?
         }
 
