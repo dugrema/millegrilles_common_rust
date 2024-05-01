@@ -1,12 +1,9 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use tokio::sync::mpsc::Receiver;
 
-use crate::middleware::{Middleware, MiddlewareMessages};
+use crate::middleware::MiddlewareMessages;
 use crate::rabbitmq_dao::QueueType;
-use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::TraiterTransaction;
+use crate::recepteur_messages::MessageValide;
 
 /// Gestionnaire de connexion au bus MilleGrilles (mq)
 // #[async_trait]
