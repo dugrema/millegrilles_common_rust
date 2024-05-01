@@ -356,16 +356,6 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
             }
         };
 
-        // let correlation_id = match correlation_id {
-        //     Some(inner) => inner,
-        //     None => Err(format!("GestionnaireDomaine.demarrer_backup Erreur trigger sans correlation_id"))?
-        // };
-        //
-        // let reply_q = match reply_q {
-        //     Some(inner) => inner,
-        //     None => Err(format!("GestionnaireDomaine.demarrer_backup Erreur trigger sans reply_q"))?
-        // };
-
         let message_ref = message.message.parse()?;
 
         debug!("GestionnaireDomaine.demarrer_backup {} : {}", self.get_nom_domaine(), message_ref.id);
