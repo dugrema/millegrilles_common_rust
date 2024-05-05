@@ -16,7 +16,7 @@ use crate::configuration::ConfigMessages;
 use crate::constantes::{BACKUP_CHAMP_BACKUP_TRANSACTIONS, COMMANDE_CERT_MAITREDESCLES, DELEGATION_GLOBALE_PROPRIETAIRE, EVENEMENT_BACKUP_DECLENCHER, EVENEMENT_CEDULE, EVENEMENT_TRANSACTION_PERSISTEE, PKI_DOCUMENT_CHAMP_CERTIFICAT, PKI_REQUETE_CERTIFICAT, REQUETE_NOMBRE_TRANSACTIONS, ROLE_BACKUP, RolesCertificats, Securite, TRANSACTION_CHAMP_BACKUP_FLAG, TRANSACTION_CHAMP_COMPLETE, TRANSACTION_CHAMP_EVENEMENT_COMPLETE, TRANSACTION_CHAMP_ID, TRANSACTION_CHAMP_TRANSACTION_TRAITEE};
 use crate::db_structs::TransactionValide;
 use crate::domaines::{MessageBackupTransactions, MessageRestaurerTransaction, ReponseNombreTransactions};
-use crate::domaines_traits::GestionnaireDomaineV2;
+use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
@@ -27,7 +27,7 @@ use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction};
 
 #[async_trait]
-pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
+pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransactions {
 
     async fn initialiser<M>(self: &'static Self, middleware: &'static M)
         -> Result<FuturesUnordered<JoinHandle<()>>, Error>
@@ -310,9 +310,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 {
         }
     }
 
-    async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: ValidateurX509 + GenerateurMessages + MongoDao;
+    // async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide)
+    //     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    //     where M: ValidateurX509 + GenerateurMessages + MongoDao;
 
     async fn get_nombre_transactions<M>(&self, middleware: &M)
         -> Result<Option<MessageMilleGrillesBufferDefault>, Error>

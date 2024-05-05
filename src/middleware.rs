@@ -28,6 +28,7 @@ use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
 use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
+use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error as CommonError;
 use crate::formatteur_messages::{build_message_action, build_reponse, FormatteurMessage};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
@@ -853,6 +854,76 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
 
     Ok(reponse)
 }
+
+pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
+                                                                 -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
+        G: GestionnaireDomaineV2 + AiguillageTransactions,
+        S: Serialize + Send + Sync
+{
+    let mut routage = RoutageMessageAction::builder(domaine, action, vec![Securite::L3Protege]).build();
+
+    // Batir message
+    let (message, message_id, certificat) = {
+        let enveloppe_privee = middleware.get_enveloppe_signature();
+        let (message, message_id) = build_message_action(
+            millegrilles_cryptographie::messages_structs::MessageKind::Transaction,
+            routage.clone(), valeur, enveloppe_privee.as_ref())?;
+        let certificat = enveloppe_privee.enveloppe_pub.clone();
+        (message, message_id, certificat)
+    };
+
+    // Completer routage avec nouveau correlation_id
+    routage.correlation_id = Some(message_id);
+    let type_message_out = TypeMessageOut::Transaction(routage);
+    let message_valide = MessageValide { message, type_message: type_message_out, certificat };
+
+    Ok(sauvegarder_traiter_transaction_v2(middleware, message_valide, gestionnaire).await?)
+}
+
+/// Sauvegarde une nouvelle transaction et de la traite immediatement
+pub async fn sauvegarder_traiter_transaction_v2<M, G>(
+    middleware: &M, message: MessageValide, gestionnaire: &G
+)
+    -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao,
+        G: GestionnaireDomaineV2 + AiguillageTransactions
+{
+    let nom_collection_transactions = match gestionnaire.get_collection_transactions() {
+        Some(n) => n,
+        None => {
+            Err(format!("middleware.sauvegarder_traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
+        }
+    };
+
+    // let doc_transaction =
+    match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
+        Ok(d) => Ok(d),
+        Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur sauvegarde transaction : {:?}", e))
+    }?;
+
+    let message_id = {
+        let message_ref = message.message.parse()?;
+        message_ref.id.to_owned()
+    };
+
+    // Traiter transaction
+    let reponse = gestionnaire.aiguillage_transaction(middleware, message.try_into()?).await?;
+
+    debug!("middleware.sauvegarder_traiter_transaction Transaction {} traitee", message_id);
+
+    marquer_transaction(
+        middleware,
+        &nom_collection_transactions,
+        message_id,
+        EtatTransaction::Complete
+    ).await?;
+
+    Ok(reponse)
+}
+
 
 pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_collection: &str)
     -> Result<(), crate::error::Error>
