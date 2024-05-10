@@ -400,7 +400,7 @@ pub fn preparer_middleware_db() -> MiddlewareHooks {
     // Preparer threads execution
     let rabbitmq = middleware.ressources.ressources.rabbitmq.clone();
     let futures: FuturesUnordered<JoinHandle<()>> = FuturesUnordered::new();
-    // futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
+    futures.push(tokio::spawn(thread_backup(middleware.clone(), rx_backup)));
     futures.push(tokio::spawn(run_rabbitmq(middleware.clone(), rabbitmq, configuration)));
 
     MiddlewareHooks { middleware, futures }
