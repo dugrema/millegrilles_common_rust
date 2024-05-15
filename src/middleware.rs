@@ -855,8 +855,10 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
     Ok(reponse)
 }
 
+/// Serialize et conserve une nouvelle transaction.
+/// Retourne la reponse (Option) et le message_id (String).
 pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
-                                                                 -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
+                                                                 -> Result<(Option<MessageMilleGrillesBufferDefault>, String), crate::error::Error>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
         G: GestionnaireDomaineV2 + AiguillageTransactions,
@@ -875,11 +877,11 @@ pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(middleware: 
     };
 
     // Completer routage avec nouveau correlation_id
-    routage.correlation_id = Some(message_id);
+    routage.correlation_id = Some(message_id.clone());
     let type_message_out = TypeMessageOut::Transaction(routage);
     let message_valide = MessageValide { message, type_message: type_message_out, certificat };
 
-    Ok(sauvegarder_traiter_transaction_v2(middleware, message_valide, gestionnaire).await?)
+    Ok((sauvegarder_traiter_transaction_v2(middleware, message_valide, gestionnaire).await?, message_id))
 }
 
 /// Sauvegarde une nouvelle transaction et de la traite immediatement
