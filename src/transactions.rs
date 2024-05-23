@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::error::Error;
@@ -22,6 +23,7 @@ use tokio_stream::StreamExt;
 use crate::certificats::{charger_enveloppe, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
 use crate::db_structs::{EvenementsTransaction, TransactionOwned, TransactionRef, TransactionValide};
+use crate::domaines_traits::AiguillageTransactions;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::messages_generiques::CommandeUsager;
 use crate::middleware::{map_serializable_to_bson, ReponseEnveloppe, requete_certificat};
@@ -908,6 +910,83 @@ where
     Ok(())
 }
 
+pub async fn regenerer_v2<M,D,T>(middleware: &M, nom_domaine: D, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
+    -> Result<(), crate::error::Error>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
+        D: AsRef<str>,
+        T: AiguillageTransactions,
+{
+    let nom_domaine = nom_domaine.as_ref();
+    debug!("transactions.regenerer Regenerer {}", nom_domaine);
+
+    // Skip la validation des transactions si on charge CorePki (les certificats)
+    let skip_certificats = nom_collection_transactions == DOMAINE_PKI;
+
+    // Supprimer contenu des collections
+    for nom_collection in noms_collections_docs {
+        let collection = middleware.get_collection(nom_collection.as_str())?;
+        let resultat_delete = collection.delete_many(doc! {}, None).await?;
+        debug!("Delete collection {} documents : {:?}", nom_collection, resultat_delete);
+    }
+
+    // Creer curseur sur les transactions en ordre de traitement
+    let resultat_transactions = {
+        let filtre = doc! {
+            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
+        };
+        let sort = doc! {
+            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: 1,
+        };
+
+        let options = FindOptions::builder()
+            .sort(sort)
+            .hint(Hint::Name(String::from("backup_transactions")))
+            .build();
+
+        let collection_transactions = middleware.get_collection_typed::<TransactionRef>(nom_collection_transactions)?;
+        if skip_certificats == false {
+            let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
+            regenerer_charger_certificats(middleware, curseur_certs, skip_certificats).await?;
+        } else {
+            info!("Regeneration CorePki - skip chargement certificats pour validation");
+        }
+
+        collection_transactions.find(filtre, options).await
+    }?;
+
+    {
+        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
+            .build();
+        let message = EvenementRegeneration { ok: true, termine: false, domaine: nom_domaine.into(), position: Some(0), err: None };
+        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
+            warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
+        }
+    }
+
+    middleware.set_regeneration(); // Desactiver emission de messages
+
+    // Executer toutes les transactions du curseur en ordre
+    if let Err(e) = regenerer_transactions_v2(middleware, resultat_transactions, processor, skip_certificats).await {
+        error!("regenerer Erreur regeneration domaine {} : {:?}", nom_domaine, e);
+    } else {
+        info!("transactions.regenerer Resultat regenerer {:?}", nom_collection_transactions);
+    }
+
+    middleware.reset_regeneration(); // Reactiver emission de messages
+
+    {
+        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
+            .build();
+        let message = EvenementRegeneration { ok: true, termine: true, domaine: nom_domaine.into(), position: None, err: None };
+        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
+            warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
+        }
+    }
+
+    Ok(())
+}
+
 // fn get_entete_from_doc(doc: &Document) -> Result<Entete, Box<dyn Error>> {
 //     let entete_bson = doc.get_document("en-tete")?;
 //     let entete_value = serde_json::to_value(entete_bson)?;
@@ -1062,6 +1141,122 @@ where
 
         debug!("transactions.regenerer_transactions Appliquer transaction");
         match processor.appliquer_transaction(middleware, transaction).await {
+            Ok(_resultat) => (),
+            Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", message_id, e)
+        }
+    }
+
+    Ok(())
+}
+
+async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
+    -> Result<(), Box<dyn Error>>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
+        T: AiguillageTransactions,
+{
+    // while let Some(result) = curseur.next().await {
+    while curseur.advance().await? {
+        let mut transaction = match curseur.deserialize_current() {
+            Ok(inner) => inner,
+            Err(e) => {
+                error!("transactions.regenerer_transactions Erreur transaction deserialize_current - ** SKIP **");
+                continue  // Skip
+            }
+        };
+
+        // let uuid_transaction = message_identificateurs.id.as_str();
+        let message_id = transaction.id.to_owned();
+        debug!("regenerer_transactions Traiter transaction id:{} => {:?}", message_id, transaction.routage);
+
+        // Charger pubkey du certificat - en cas de migration, utiliser certificat original
+        let pre_migration = transaction.pre_migration.clone();
+
+        let certificat = {
+            let pubkey = match &transaction.kind {
+                millegrilles_cryptographie::messages_structs::MessageKind::TransactionMigree => {
+                    // &KIND_TRANSACTION_MIGREE => {
+                    match &pre_migration {
+                        Some(inner) => match inner.pubkey {
+                            Some(inner) => inner,
+                            None => transaction.pubkey
+                        },
+                        None => transaction.pubkey
+                    }
+                },
+                _ => transaction.pubkey
+            };
+
+            match middleware.get_certificat(pubkey).await {
+                Some(c) => c,
+                None => {
+                    if skip_certificats {
+                        // Reload de CorePki, tenter de charger l'enveloppe a partir du contenu
+                        let message: TransactionCorePkiNouveauCertificat = match serde_json::from_str(transaction.contenu()?.as_ref()) {
+                            Ok(inner) => inner,
+                            Err(e) => {
+                                debug!("Erreur chargement certificat via transaction CorePki (1) : {:?}", e);
+                                continue
+                            }
+                        };
+                        match charger_enveloppe(message.pem.as_str(), None, None) {
+                            Ok(inner) => Arc::new(inner),
+                            Err(e) => {
+                                debug!("Erreur chargement certificat via transaction CorePki (2) : {:?}", e);
+                                continue
+                            }
+                        }
+                    } else {
+                        warn!("transactions.regenerer_transactions Certificat {} inconnu, ** SKIP **", pubkey);
+                        continue;
+                    }
+                }
+            }
+        };
+
+        #[cfg(debug_assertions)]
+        {
+            let contenu_str = match transaction.contenu() {
+                Ok(inner) => match inner {
+                    Cow::Borrowed(inner) => inner.to_string(),
+                    Cow::Owned(inner) => inner
+                },
+                Err(e) => {
+                    error!("Erreur conversion contenu {:?}", e);
+                    "**erreur**".to_string()
+                }
+            };
+            debug!("transactions.regenerer_transactions Convertir en structure TransactionValide\n{}", contenu_str);
+        }
+        let mut transaction = TransactionValide {
+            transaction: match transaction.try_into() {
+                Ok(inner) => inner,
+                Err(e) => {
+                    warn!("transactions.regenerer_transactions Erreur transaction.try_into : {:?}, ** SKIP **", e);
+                    continue
+                }
+            },
+            certificat
+        };
+
+        if let Some(overrides) = pre_migration {
+            if let Some(id) = overrides.id {
+                debug!("Override attributs pre_migration dans la transaction, nouvel id {}", id);
+                // transaction_impl.id = id;
+                transaction.transaction.id = id.to_owned();
+            }
+            if let Some(pubkey) = overrides.pubkey {
+                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
+                transaction.transaction.pubkey = pubkey.to_owned();
+            }
+            if let Some(estampille) = &overrides.estampille {
+                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
+                transaction.transaction.estampille = estampille.clone();
+            }
+        }
+
+        debug!("transactions.regenerer_transactions Appliquer transaction");
+        match processor.aiguillage_transaction(middleware, transaction).await {
             Ok(_resultat) => (),
             Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", message_id, e)
         }

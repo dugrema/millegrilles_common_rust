@@ -1,4 +1,5 @@
 use std::str::from_utf8;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::stream::FuturesUnordered;
@@ -13,7 +14,7 @@ use tokio::task::JoinHandle;
 use crate::backup::reset_backup_flag;
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
-use crate::constantes::{BACKUP_CHAMP_BACKUP_TRANSACTIONS, COMMANDE_CERT_MAITREDESCLES, DELEGATION_GLOBALE_PROPRIETAIRE, EVENEMENT_BACKUP_DECLENCHER, EVENEMENT_CEDULE, EVENEMENT_TRANSACTION_PERSISTEE, PKI_DOCUMENT_CHAMP_CERTIFICAT, PKI_REQUETE_CERTIFICAT, REQUETE_NOMBRE_TRANSACTIONS, ROLE_BACKUP, RolesCertificats, Securite, TRANSACTION_CHAMP_BACKUP_FLAG, TRANSACTION_CHAMP_COMPLETE, TRANSACTION_CHAMP_EVENEMENT_COMPLETE, TRANSACTION_CHAMP_ID, TRANSACTION_CHAMP_TRANSACTION_TRAITEE};
+use crate::constantes::{BACKUP_CHAMP_BACKUP_TRANSACTIONS, COMMANDE_CERT_MAITREDESCLES, COMMANDE_REGENERER, DELEGATION_GLOBALE_PROPRIETAIRE, EVENEMENT_BACKUP_DECLENCHER, EVENEMENT_CEDULE, EVENEMENT_TRANSACTION_PERSISTEE, PKI_DOCUMENT_CHAMP_CERTIFICAT, PKI_REQUETE_CERTIFICAT, REQUETE_NOMBRE_TRANSACTIONS, ROLE_BACKUP, RolesCertificats, Securite, TRANSACTION_CHAMP_BACKUP_FLAG, TRANSACTION_CHAMP_COMPLETE, TRANSACTION_CHAMP_EVENEMENT_COMPLETE, TRANSACTION_CHAMP_ID, TRANSACTION_CHAMP_TRANSACTION_TRAITEE};
 use crate::db_structs::TransactionValide;
 use crate::domaines::{MessageBackupTransactions, MessageRestaurerTransaction, ReponseNombreTransactions};
 use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
@@ -24,7 +25,7 @@ use crate::middleware::{Middleware, MiddlewareMessages};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction};
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction, regenerer_v2};
 
 #[async_trait]
 pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransactions {
@@ -229,7 +230,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
         // Autorisation : les commandes globales sont de niveau 3 ou 4
         // Fallback sur les commandes specifiques au domaine
-        let autorise_global = match m.certificat.verifier_exchanges(vec!(Securite::L4Secure))? {
+        let autorise_global = match m.certificat.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure))? {
             true => true,
             false => m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)?
         };
@@ -238,6 +239,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             true => {
                 match action.as_str() {
                     // Commandes specifiques au domaine
+                    COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
                     _ => self.consommer_commande(middleware, m).await
                 }
             },
@@ -431,6 +433,28 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             },
             None => Ok(None)
         }
+    }
+
+    async fn regenerer_transactions<M>(&self, middleware: &M) -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+        where M: Middleware
+    {
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(n) => n,
+            None => Err(format!("domaines_v2.regenerer_transactions Tentative de regeneration sur domaine sans collection de transactions"))?
+        };
+
+        let nom_domaine = self.get_nom_domaine();
+        let noms_collections_docs = self.get_collections_volatiles()?;
+
+        regenerer_v2(
+            middleware,
+            nom_domaine,
+            nom_collection_transactions.as_str(),
+            &noms_collections_docs,
+            self
+        ).await?;
+
+        Ok(None)
     }
 }
 

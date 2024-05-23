@@ -89,7 +89,12 @@ impl<'a> TransactionRef<'a> {
             Some(inner) => Ok(Cow::Borrowed(inner)),
             None => match self.contenu_escaped {
                 Some(inner) => {
-                    let contenu_escaped: String = serde_json::from_str(format!("\"{}\"", inner).as_str())?;
+                    let contenu_escaped: String = match serde_json::from_str(format!("\"{}\"", inner).as_str()) {
+                        Ok(inner) => inner,
+                        Err(e) => {
+                            Err(Error::String(format!("db_structs TransactionRef.contenu Erreur escape String avec format! : {:?}", e)))?
+                        }
+                    };
                     Ok(Cow::Owned(contenu_escaped))
                 },
                 None => Err(Error::Str("Aucun contenu"))?
@@ -102,7 +107,14 @@ impl<'a> TransactionRef<'a> {
             Some(inner) => {
                 let mut certificat_string = Vec::new();
                 for c in inner {
-                    let certificat: String = serde_json::from_str(format!("\"{}\"", c).as_str())?;
+                    let certificat: String = match serde_json::from_str(format!("\"{}\"", c).as_str()) {
+                        Ok(inner) => inner,
+                        Err(_) => {
+                            // Assumer que le certificat n'etait pas escaped
+                            c.to_string()
+                            // Err(Error::String(format!("db_structs TransactionRef.certificat Erreur escape certificat String : {:?}\n{}", e, *c)))?
+                        }
+                    };
                     certificat_string.push(certificat);
                 }
                 Ok(Some(certificat_string))
