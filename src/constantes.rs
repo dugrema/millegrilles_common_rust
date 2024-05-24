@@ -277,10 +277,12 @@ pub const COMMANDE_GLOBAL_RESET_BACKUP: &str = "commande.global.resetBackup";
 pub const COMMANDE_GLOBAL_REGENERER: &str = "commande.global.regenerer";
 // pub const COMMANDE_BACKUP_ROTATION: &str = "rotationBackupTransactions";
 pub const COMMANDE_SAUVEGARDER_CERTIFICAT: &str = "certificat";
+pub const COMMANDE_ACTIVITE_FUUIDS: &str = "confirmerActiviteFuuids";
 
 // Evenements
 pub const EVENEMENT_TRANSACTION_PERSISTEE: &str = "transaction_persistee";
 pub const EVENEMENT_CEDULE: &str = "cedule";
+pub const EVENEMENT_CEDULEUR_PING: &str = "ping";
 pub const EVENEMENT_BACKUP_DECLENCHER: &str = "declencherBackup";
 pub const EVENEMENT_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
 pub const EVENEMENT_REGENERATION_MAJ: &str = "regenerationMaj";

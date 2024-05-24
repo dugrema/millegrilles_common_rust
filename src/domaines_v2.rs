@@ -2,6 +2,7 @@ use std::str::from_utf8;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Timelike, Utc};
 use futures_util::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
@@ -14,14 +15,14 @@ use tokio::task::JoinHandle;
 use crate::backup::reset_backup_flag;
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
-use crate::constantes::{BACKUP_CHAMP_BACKUP_TRANSACTIONS, COMMANDE_CERT_MAITREDESCLES, COMMANDE_REGENERER, DELEGATION_GLOBALE_PROPRIETAIRE, EVENEMENT_BACKUP_DECLENCHER, EVENEMENT_CEDULE, EVENEMENT_TRANSACTION_PERSISTEE, PKI_DOCUMENT_CHAMP_CERTIFICAT, PKI_REQUETE_CERTIFICAT, REQUETE_NOMBRE_TRANSACTIONS, ROLE_BACKUP, RolesCertificats, Securite, TRANSACTION_CHAMP_BACKUP_FLAG, TRANSACTION_CHAMP_COMPLETE, TRANSACTION_CHAMP_EVENEMENT_COMPLETE, TRANSACTION_CHAMP_ID, TRANSACTION_CHAMP_TRANSACTION_TRAITEE};
+use crate::constantes::{BACKUP_CHAMP_BACKUP_TRANSACTIONS, COMMANDE_CERT_MAITREDESCLES, COMMANDE_REGENERER, DELEGATION_GLOBALE_PROPRIETAIRE, EVENEMENT_BACKUP_DECLENCHER, EVENEMENT_CEDULE, EVENEMENT_TRANSACTION_PERSISTEE, PKI_DOCUMENT_CHAMP_CERTIFICAT, PKI_REQUETE_CERTIFICAT, REQUETE_NOMBRE_TRANSACTIONS, ROLE_BACKUP, RolesCertificats, Securite, TRANSACTION_CHAMP_BACKUP_FLAG, TRANSACTION_CHAMP_COMPLETE, TRANSACTION_CHAMP_EVENEMENT_COMPLETE, TRANSACTION_CHAMP_ID, TRANSACTION_CHAMP_TRANSACTION_TRAITEE, EVENEMENT_CEDULEUR_PING};
 use crate::db_structs::TransactionValide;
 use crate::domaines::{MessageBackupTransactions, MessageRestaurerTransaction, ReponseNombreTransactions};
 use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
-use crate::middleware::{Middleware, MiddlewareMessages};
+use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
@@ -324,10 +325,21 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
-    async fn traiter_cedule<M>(&self, _middleware: &M, _trigger: &MessageCedule)
+    async fn traiter_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
         -> Result<(), Error>
         where M: MiddlewareMessages
     {
+        let dt = trigger.get_date();
+
+        if dt.minute() % 2 == 0 {
+            // Emettre message presence domaine
+            let nom_domaine = self.get_nom_domaine();
+            let reclame_fuuids = self.reclame_fuuids();
+            if let Err(e) = emettre_presence_domaine(middleware, nom_domaine.as_str(), reclame_fuuids).await {
+                warn!("Erreur emission presence du domaine : {}", e);
+            }
+        }
+
         Ok(())
     }
 
@@ -522,14 +534,6 @@ async fn consommer_evenement_trait<G,M>(gestionnaire: &G, middleware: &M, m: Mes
                     let reponse = gestionnaire.traiter_transaction(middleware, m).await?;
                     Ok(reponse)
                 },
-                EVENEMENT_CEDULE => {
-                    let message_ref = m.message.parse()?;
-                    let message_contenu = message_ref.contenu()?;
-                    let trigger: MessageCedule = message_contenu.deserialize()?;
-                    // self.verifier_backup_cedule(middleware.as_ref(), &trigger).await?;
-                    gestionnaire.traiter_cedule(middleware, &trigger).await?;
-                    Ok(None)
-                },
                 COMMANDE_CERT_MAITREDESCLES => {
                     // Le certificat de maitre des cles est attache
                     let certificat = m.certificat;
@@ -572,7 +576,16 @@ async fn consommer_evenement_trait<G,M>(gestionnaire: &G, middleware: &M, m: Mes
                             },
                             _ => gestionnaire.consommer_evenement(middleware, m).await
                         },
-                        _ => gestionnaire.consommer_evenement(middleware, m).await
+                        _ => match action.as_str() {
+                            EVENEMENT_CEDULEUR_PING => {
+                                let message_ref = m.message.parse()?;
+                                let message_contenu = message_ref.contenu()?;
+                                let trigger: MessageCedule = message_contenu.deserialize()?;
+                                gestionnaire.traiter_cedule(middleware, &trigger).await?;
+                                Ok(None)
+                            },
+                            _ => gestionnaire.consommer_evenement(middleware, m).await
+                        }
                     },
                     false => gestionnaire.consommer_evenement(middleware, m).await
                 }
