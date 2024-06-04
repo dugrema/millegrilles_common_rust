@@ -68,6 +68,7 @@ pub use serde_helpers;
 pub use chacha20poly1305;
 pub use url;
 pub use flate2;
+pub use jwt_simple;
 
 #[cfg(test)]
 mod test_setup {
