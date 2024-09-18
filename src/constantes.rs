@@ -196,6 +196,7 @@ pub const ROLE_STREAM: &str = "stream";
 pub const ROLE_POSTMASTER: &str = "postmaster";
 pub const ROLE_SOLR_RELAI: &str = "solrrelai";
 pub const ROLE_BACKUP: &str = "backup";
+pub const ROLE_OLLAMA_RELAI: &str = "ollama_relai";
 
 pub enum RolesCertificats {
     NoeudProtege,
@@ -216,6 +217,7 @@ pub enum RolesCertificats {
     Postmaster,
     SolrRelai,
     Backup,
+    OllamaRelai,
 }
 impl Into<&str> for RolesCertificats {
     fn into(self) -> &'static str {
@@ -238,6 +240,7 @@ impl Into<&str> for RolesCertificats {
             RolesCertificats::Postmaster => ROLE_POSTMASTER,
             RolesCertificats::SolrRelai => ROLE_SOLR_RELAI,
             RolesCertificats::Backup => ROLE_BACKUP,
+            RolesCertificats::OllamaRelai => ROLE_OLLAMA_RELAI,
         }
     }
 }
