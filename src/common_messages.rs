@@ -2,15 +2,16 @@ use log::{debug, error};
 use std::collections::HashMap;
 use std::error::Error;
 use chrono::{DateTime, Utc};
-use millegrilles_cryptographie::chiffrage::FormatChiffrage;
+use millegrilles_cryptographie::chiffrage::{FormatChiffrage, optionformatchiffragestr};
 use mongodb::bson::{bson, Bson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use multibase;
 
-use millegrilles_cryptographie::{messages_structs::epochseconds, chiffrage::formatchiffragestr};
+use millegrilles_cryptographie::{messages_structs::epochseconds, chiffrage::formatchiffragestr, heapless};
 use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
+
 use crate::dechiffrage::DataChiffre;
 
 use crate::hachages::verifier_multihash;
@@ -230,6 +231,8 @@ pub struct RequeteDechiffrage {
     pub cle_ids: Option<Vec<String>>,
     /// Certificat a utiliser pour la reponse chiffree
     pub certificat_rechiffrage: Option<Vec<String>>,
+    /// Si true, la reponse ajoute l'element signature avec cle_id et
+    pub inclure_signature: Option<bool>,
 }
 
 /// Requete de dechiffrage avec cles fournies
@@ -263,10 +266,34 @@ pub struct ReponseDechiffrage {
     pub code: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResponseRequestDechiffrageV2Cle {
+    pub cle_secrete_base64: String,
+    pub cle_id: Option<String>,
+    #[serde(default, with="optionformatchiffragestr")]
+    pub format: Option<FormatChiffrage>,
+    pub nonce: Option<String>,
+    pub verification: Option<String>,
+    pub signature: Option<SignatureDomaines>,
+}
+
+impl From<CleSecreteSerialisee> for ResponseRequestDechiffrageV2Cle {
+    fn from(value: CleSecreteSerialisee) -> Self {
+        Self {
+            cle_secrete_base64: value.cle_secrete_base64.to_string(),
+            cle_id: match &value.cle_id {Some(inner) => Some(inner.to_string()), None => None},
+            format: value.format.clone(),
+            nonce: match &value.nonce {Some(inner) => Some(inner.to_string()), None => None},
+            verification: match &value.verification {Some(inner) => Some(inner.to_string()), None => None},
+            signature: None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ReponseRequeteDechiffrageV2 {
     pub ok: bool,
     pub code: usize,
-    pub cles: Option<Vec<CleSecreteSerialisee>>,
+    pub cles: Option<Vec<ResponseRequestDechiffrageV2Cle>>,
     pub err: Option<String>,
 }
