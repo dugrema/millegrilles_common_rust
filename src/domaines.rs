@@ -904,29 +904,19 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 match action.as_str() {
                     // Commandes standard
                     COMMANDE_BACKUP_HORAIRE => {
-                        todo!("fix me")
-                        // self.demarrer_backup(middleware.as_ref(), m).await
+                        self.demarrer_backup(middleware.as_ref(), m).await
                     },
                     COMMANDE_RESTAURER_TRANSACTIONS => {
-                        todo!("fix me")
-                        // self.restaurer_transactions(middleware.clone()).await
+                        self.restaurer_transaction(middleware.as_ref(), m).await
                     },
                     COMMANDE_RESTAURER_TRANSACTION => {
-                        todo!("fix me")
-                        // self.restaurer_transaction(middleware.as_ref(), m).await
+                        self.restaurer_transaction(middleware.as_ref(), m).await
                     },
                     COMMANDE_REGENERER => {
-                        todo!("fix me")
-                        // self.regenerer_transactions(middleware.clone()).await
+                        self.regenerer_transactions(middleware.clone()).await
                     },
                     COMMANDE_RESET_BACKUP => {
-                        todo!("fix me")
-                        // let nom_collection_transactions = match self.get_collection_transactions() {
-                        //     Some(n) => n,
-                        //     None => Err(format!("domaines.consommer_commande_trait Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
-                        // };
-                        // reset_backup_flag(
-                        //     middleware.as_ref(), nom_collection_transactions.as_str()).await
+                        self.reset_backup(middleware.as_ref()).await
                     },
 
                     // Commandes specifiques au domaine
