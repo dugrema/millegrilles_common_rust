@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 use crate::backup::reset_backup_flag;
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
-use crate::constantes::{BACKUP_CHAMP_BACKUP_TRANSACTIONS, COMMANDE_CERT_MAITREDESCLES, COMMANDE_REGENERER, DELEGATION_GLOBALE_PROPRIETAIRE, EVENEMENT_BACKUP_DECLENCHER, EVENEMENT_CEDULE, EVENEMENT_TRANSACTION_PERSISTEE, PKI_DOCUMENT_CHAMP_CERTIFICAT, PKI_REQUETE_CERTIFICAT, REQUETE_NOMBRE_TRANSACTIONS, ROLE_BACKUP, RolesCertificats, Securite, TRANSACTION_CHAMP_BACKUP_FLAG, TRANSACTION_CHAMP_COMPLETE, TRANSACTION_CHAMP_EVENEMENT_COMPLETE, TRANSACTION_CHAMP_ID, TRANSACTION_CHAMP_TRANSACTION_TRAITEE, EVENEMENT_CEDULEUR_PING};
+use crate::constantes::*;
 use crate::db_structs::TransactionValide;
 use crate::domaines::{MessageBackupTransactions, MessageRestaurerTransaction, ReponseNombreTransactions};
 use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
@@ -231,16 +231,23 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
         // Autorisation : les commandes globales sont de niveau 3 ou 4
         // Fallback sur les commandes specifiques au domaine
-        let autorise_global = match m.certificat.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure))? {
+        let autorise_backup = match m.certificat.verifier_exchanges(vec!(Securite::L3Protege, Securite::L4Secure))? {
             true => true,
-            false => m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)?
+            false => match m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)? {
+                true => true,
+                false => m.certificat.verifier_roles(vec![RolesCertificats::Backup])?
+            }
         };
 
-        match autorise_global {
+        match autorise_backup {
             true => {
+                // Commandes specifiques au domaine
+                debug!("domaines_v2.consommer_commande_trait Autorise global, verifier commande {}", action);
                 match action.as_str() {
-                    // Commandes specifiques au domaine
+                    COMMANDE_DECLENCHER_BACKUP => self.demarrer_backup(middleware.clone(), m).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
+                    COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.clone(), m).await,
+                    COMMANDE_RESET_BACKUP => self.reset_backup(middleware).await,
                     _ => self.consommer_commande(middleware, m).await
                 }
             },

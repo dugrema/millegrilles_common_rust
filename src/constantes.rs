@@ -394,6 +394,7 @@ pub const COMMANDE_BACKUP_HORAIRE: &str = "declencherBackupHoraire";
 // pub const COMMANDE_BACKUP_QUOTIDIEN: &str = "declencherBackupQuotidien";
 pub const COMMANDE_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
 pub const COMMANDE_RESTAURER_TRANSACTIONS: &str = "restaurerTransactions";
+pub const COMMANDE_DECLENCHER_BACKUP: &str = EVENEMENT_BACKUP_DECLENCHER;
 pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";
 pub const COMMANDE_REGENERER: &str = "regenerer";
 
