@@ -204,27 +204,11 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
             // Index transaction id unique
             let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from("index_champ_id")),
+                nom_index: Some(String::from("index_champ_bid")),
                 unique: true
             };
             let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1}
-            );
-
-            middleware.create_index(
-                middleware,
-                table_transactions_traitees.as_str(),
-                champs_index_transactions,
-                Some(options_unique_transactions)
-            ).await?;
-
-            // Index transaction id unique
-            let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from("index_champ_id")),
-                unique: true
-            };
-            let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1}
+                ChampIndex {nom_champ: String::from("bid_truncated"), direction: 1}
             );
             middleware.create_index(
                 middleware,

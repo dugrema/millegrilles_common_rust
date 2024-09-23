@@ -15,10 +15,12 @@ use mongodb::bson as bson;
 use mongodb::bson::{Bson, Document};
 use mongodb::error::{BulkWriteError, ErrorKind};
 use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
+use multibase::{encode, Base};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::StreamExt;
+use base64::{Engine as _, engine::general_purpose};
 
 use crate::certificats::{charger_enveloppe, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
@@ -1290,6 +1292,10 @@ pub fn get_user_effectif<'a,M>(transaction: &TransactionValide, transaction_mapp
     }
 }
 
+pub struct TransactionTraitee {
+
+}
+
 pub async fn marquer_transaction_v2<'a, M, S, T>(middleware: &M, nom_collection: S, uuid_transaction: T, etat: EtatTransaction, ok: Option<bool>)
     -> Result<(), CommonError>
     where
@@ -1300,10 +1306,15 @@ pub async fn marquer_transaction_v2<'a, M, S, T>(middleware: &M, nom_collection:
 
     let date_now = Utc::now();
     let mut set = doc! {};
-    let mut current_date = doc! {};
     let uuid_transaction_str = uuid_transaction.as_ref();
 
-    debug!("marquer_transaction_v2 Marquer id {} complete", uuid_transaction_str);
+    let bid_complete = hex::decode(uuid_transaction_str)?;
+    let bid_truncated = &bid_complete[0..16];
+    let bid_truncated_base64 = general_purpose::STANDARD.encode(bid_truncated);
+
+    debug!("marquer_transaction_v2 Marquer id {} (bid: {:?}) complete", uuid_transaction_str, bid_truncated_base64);
+    let bid_truncated_bson = Bson::Binary(bson::Binary::from_base64(bid_truncated_base64, None)
+        .expect("bid_truncated_bson base64"));
 
     match etat {
         EtatTransaction::Complete => {
@@ -1315,14 +1326,20 @@ pub async fn marquer_transaction_v2<'a, M, S, T>(middleware: &M, nom_collection:
     // Table transactions avec ancienne methode
     let ops = doc! {
         "$set": set,
-        // "$currentDate": current_date,
     };
     let filtre = doc! {
         TRANSACTION_CHAMP_ID: uuid_transaction_str,
     };
 
     // Nouvelle table transactions_traitees
+    let filtre_transactions_traitees = doc! {
+        "bid_truncated": &bid_truncated_bson,
+    };
+
     let ops_transactions_traitees = doc!{
+        "$setOnInsert": {
+            TRANSACTION_CHAMP_ID: uuid_transaction_str,
+        },
         "$set": {
             "ok": ok,
             "date_traitement": &date_now,
@@ -1334,8 +1351,7 @@ pub async fn marquer_transaction_v2<'a, M, S, T>(middleware: &M, nom_collection:
     let collection_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()))?;
 
     // Executer les deux operations
-
-    match collection.update_one(filtre.clone(), ops, None).await {
+    match collection.update_one(filtre, ops, None).await {
         Ok(update_result) => {
             if update_result.matched_count == 1 {
                 ()
@@ -1345,7 +1361,8 @@ pub async fn marquer_transaction_v2<'a, M, S, T>(middleware: &M, nom_collection:
         },
         Err(e) => Err(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction_str, e))?,
     };
-    collection_traitees.update_one(filtre, ops_transactions_traitees, options).await?;
+
+    collection_traitees.update_one(filtre_transactions_traitees, ops_transactions_traitees, options).await?;
 
     Ok(())
 }

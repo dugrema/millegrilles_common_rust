@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+use base64::{Engine as _, engine::general_purpose};
 
 use crate::backup::BackupStarter;
 use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
@@ -893,12 +894,32 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
         M: ValidateurX509 + GenerateurMessages + MongoDao,
         G: GestionnaireDomaineV2 + AiguillageTransactions
 {
+    let message_id = {
+        let message_ref = message.message.parse()?;
+        message_ref.id.to_owned()
+    };
+    let bid_complete = hex::decode(message_id.as_str())?;
+    let bid_truncated = &bid_complete[0..16];
+    let bid_truncated_base64 = general_purpose::STANDARD.encode(bid_truncated);
+    let bid_truncated_bson = Bson::Binary(bson::Binary::from_base64(bid_truncated_base64, None)
+        .expect("bid_truncated_bson base64"));
+
     let nom_collection_transactions = match gestionnaire.get_collection_transactions() {
         Some(n) => n,
         None => {
             Err(format!("middleware.sauvegarder_traiter_transaction_v2 Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
         }
     };
+
+    // Detecter duplication via index unique sur bid_truncated
+    let doc_transaction_traitee = doc!{
+        "bid_truncated": bid_truncated_bson,
+        TRANSACTION_CHAMP_ID: &message_id,
+        "date_traitement": None::<&str>,
+        "ok": None::<bool>,
+    };
+    let collection_transactions_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection_transactions))?;
+    collection_transactions_traitees.insert_one(doc_transaction_traitee, None).await?;
 
     // let doc_transaction =
     match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
