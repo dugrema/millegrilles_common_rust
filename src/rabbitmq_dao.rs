@@ -1289,15 +1289,16 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
         }
     }
 
-    // RK au meme niveau de securite que le module
-    let routing_keys_secure = vec!(
+    // RK sur commun (1.public)
+    let routing_keys_public = vec!(
         // Ecouter les evenements internes pour le domaine
-        String::from(EVENEMENT_GLOBAL_CEDULE),
+        // String::from(EVENEMENT_GLOBAL_CEDULE),
+        format!("evenement.ceduleur.{}", EVENEMENT_CEDULEUR_PING),
     );
-    for rk in routing_keys_secure {
+    for rk in routing_keys_public {
         let _ = channel.queue_bind(
             nom_queue,
-            securite.get_str(),
+            Securite::L1Public.get_str(),
             &rk,
             QueueBindOptions::default(),
             FieldTable::default()

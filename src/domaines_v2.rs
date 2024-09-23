@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
-use crate::backup::reset_backup_flag;
+use crate::backup::{reset_backup_flag, BackupStarter};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
@@ -384,10 +384,11 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
-    async fn traiter_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
-        -> Result<(), Error>
-        where M: MiddlewareMessages
+    async fn traiter_cedule_base<M>(&self, middleware: &M, trigger: &MessageCedule)
+                                    -> Result<(), Error>
+        where M: MiddlewareMessages + BackupStarter
     {
+        warn!("traiter_cedule!");
         let dt = trigger.get_date();
 
         if dt.minute() % 2 == 0 {
@@ -399,6 +400,29 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             }
         }
 
+        // if dt.minute() % 20 == 0 {  // TODO : remettre aux 20 minutes
+        {
+            // Demarrer backup incremental des transactions
+            if let Some(nom_collection_transactions) = self.get_collection_transactions() {
+                middleware.demarrer_backup(
+                    self.get_nom_domaine().as_str(),
+                    nom_collection_transactions.as_str(),
+                    false,
+                    "",
+                    ""
+                ).await?;
+            }
+        }
+
+        self.traiter_cedule(middleware, trigger).await?;
+
+        Ok(())
+    }
+
+    /// Methode a re-implementer dans le trait.
+    async fn traiter_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
+                               -> Result<(), Error>
+    where M: MiddlewareMessages + BackupStarter {
         Ok(())
     }
 
@@ -602,6 +626,17 @@ async fn consommer_evenement_trait<G,M>(gestionnaire: &G, middleware: &M, m: Mes
                     }
                     Ok(None)
                 },
+                EVENEMENT_CEDULEUR_PING => {
+                    if m.certificat.verifier_roles_string(vec![String::from("ceduleur")])? {
+                        let message_ref = m.message.parse()?;
+                        let message_contenu = message_ref.contenu()?;
+                        let trigger: MessageCedule = message_contenu.deserialize()?;
+                        gestionnaire.traiter_cedule_base(middleware, &trigger).await?;
+                        Ok(None)
+                    } else {
+                        gestionnaire.consommer_evenement(middleware, m).await
+                    }
+                },
                 _ => gestionnaire.consommer_evenement(middleware, m).await
             }
         },
@@ -635,16 +670,7 @@ async fn consommer_evenement_trait<G,M>(gestionnaire: &G, middleware: &M, m: Mes
                             },
                             _ => gestionnaire.consommer_evenement(middleware, m).await
                         },
-                        _ => match action.as_str() {
-                            EVENEMENT_CEDULEUR_PING => {
-                                let message_ref = m.message.parse()?;
-                                let message_contenu = message_ref.contenu()?;
-                                let trigger: MessageCedule = message_contenu.deserialize()?;
-                                gestionnaire.traiter_cedule(middleware, &trigger).await?;
-                                Ok(None)
-                            },
-                            _ => gestionnaire.consommer_evenement(middleware, m).await
-                        }
+                        _ => gestionnaire.consommer_evenement(middleware, m).await
                     },
                     false => gestionnaire.consommer_evenement(middleware, m).await
                 }
