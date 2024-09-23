@@ -294,6 +294,7 @@ pub const EVENEMENT_REGENERATION_MAJ: &str = "regenerationMaj";
 pub const REQUETE_NOMBRE_TRANSACTIONS: &str = "getNombreTransactions";
 
 // Transactions
+pub const COLLECTION_TRANSACTION_TRAITEES: &str = "transactions_traitees";
 pub const TRANSACTION_CHAMP_ID: &str = "id";
 pub const TRANSACTION_CHAMP_PUBKEY: &str = "pubkey";
 // pub const TRANSACTION_CHAMP_ENTETE: &str = "en-tete";

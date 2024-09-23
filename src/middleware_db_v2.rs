@@ -6,7 +6,8 @@ use static_cell::StaticCell;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::backup::{CommandeBackup, thread_backup, thread_backup_v2};
+use crate::backup::{CommandeBackup, thread_backup};
+use crate::backup_v2::thread_backup_v2;
 use crate::chiffrage_cle::CleChiffrageHandlerImpl;
 use crate::configuration::IsConfigNoeud;
 use crate::error::Error;

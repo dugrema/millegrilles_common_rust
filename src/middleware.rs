@@ -37,7 +37,7 @@ use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
 use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::redis_dao::RedisDao;
-use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance};
+use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance, marquer_transaction_v2};
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
@@ -896,14 +896,14 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
     let nom_collection_transactions = match gestionnaire.get_collection_transactions() {
         Some(n) => n,
         None => {
-            Err(format!("middleware.sauvegarder_traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
+            Err(format!("middleware.sauvegarder_traiter_transaction_v2 Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
         }
     };
 
     // let doc_transaction =
     match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
         Ok(d) => Ok(d),
-        Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur sauvegarde transaction : {:?}", e))
+        Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction_v2 Erreur sauvegarde transaction : {:?}", e))
     }?;
 
     let message_id = {
@@ -914,13 +914,14 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
     // Traiter transaction
     let reponse = gestionnaire.aiguillage_transaction(middleware, message.try_into()?).await?;
 
-    debug!("middleware.sauvegarder_traiter_transaction Transaction {} traitee", message_id);
+    debug!("middleware.sauvegarder_traiter_transaction_v2 Transaction {} traitee", message_id);
 
-    marquer_transaction(
+    marquer_transaction_v2(
         middleware,
         &nom_collection_transactions,
         message_id,
-        EtatTransaction::Complete
+        EtatTransaction::Complete,
+        Some(true)
     ).await?;
 
     Ok(reponse)

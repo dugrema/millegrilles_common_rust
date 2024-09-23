@@ -26,7 +26,7 @@ use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction, regenerer_v2};
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction, regenerer_v2, marquer_transaction_v2};
 
 #[async_trait]
 pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransactions {
@@ -199,6 +199,55 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 Some(options_unique_transactions)
             ).await?;
 
+            // Tables transactions_traitees
+            let table_transactions_traitees = format!("{}/{}", nom_collection_transactions, COLLECTION_TRANSACTION_TRAITEES);
+
+            // Index transaction id unique
+            let options_unique_transactions = IndexOptions {
+                nom_index: Some(String::from("index_champ_id")),
+                unique: true
+            };
+            let champs_index_transactions = vec!(
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1}
+            );
+
+            middleware.create_index(
+                middleware,
+                table_transactions_traitees.as_str(),
+                champs_index_transactions,
+                Some(options_unique_transactions)
+            ).await?;
+
+            // Index transaction id unique
+            let options_unique_transactions = IndexOptions {
+                nom_index: Some(String::from("index_champ_id")),
+                unique: true
+            };
+            let champs_index_transactions = vec!(
+                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1}
+            );
+            middleware.create_index(
+                middleware,
+                table_transactions_traitees.as_str(),
+                champs_index_transactions,
+                Some(options_unique_transactions)
+            ).await?;
+
+            // Index
+            let options_unique_transactions = IndexOptions {
+                nom_index: Some(String::from("index_date_traitement")),
+                unique: false
+            };
+            let champs_index_transactions = vec!(
+                ChampIndex {nom_champ: String::from("date_traitement"), direction: 1}
+            );
+            middleware.create_index(
+                middleware,
+                table_transactions_traitees.as_str(),
+                champs_index_transactions,
+                Some(options_unique_transactions)
+            ).await?;
+
         }
 
         Ok(())
@@ -301,7 +350,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                         Err(Error::Str("domaines_v2.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
                     }
                 };
-                marquer_transaction(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete).await?;
+                // marquer_transaction(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete).await?;
+                marquer_transaction_v2(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete, Some(true)).await?;
 
                 // Repondre en fonction du contenu du trigger
                 if let Some(reponse) = r {
@@ -316,7 +366,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
                 Ok(None)
             },
-            Err(e) => Err(e)?
+            Err(e) => {
+                Err(e)?
+            }
         }
     }
 

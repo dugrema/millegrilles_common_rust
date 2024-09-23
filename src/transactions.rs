@@ -14,7 +14,7 @@ use mongodb::{bson::doc, Collection, Cursor};
 use mongodb::bson as bson;
 use mongodb::bson::{Bson, Document};
 use mongodb::error::{BulkWriteError, ErrorKind};
-use mongodb::options::{FindOptions, Hint, InsertManyOptions};
+use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -1288,4 +1288,64 @@ pub fn get_user_effectif<'a,M>(transaction: &TransactionValide, transaction_mapp
         Some(inner) => Ok(inner.to_owned()),
         None => Err(format!("get_user_effectif user_id absent du certificat"))?
     }
+}
+
+pub async fn marquer_transaction_v2<'a, M, S, T>(middleware: &M, nom_collection: S, uuid_transaction: T, etat: EtatTransaction, ok: Option<bool>)
+    -> Result<(), CommonError>
+    where
+        M: MongoDao,
+        S: AsRef<str>,
+        T: AsRef<str>,
+{
+
+    let date_now = Utc::now();
+    let mut set = doc! {};
+    let mut current_date = doc! {};
+    let uuid_transaction_str = uuid_transaction.as_ref();
+
+    debug!("marquer_transaction_v2 Marquer id {} complete", uuid_transaction_str);
+
+    match etat {
+        EtatTransaction::Complete => {
+            set.insert("_evenements.transaction_complete", Bson::Boolean(true));
+            set.insert("_evenements.transaction_traitee", Bson::DateTime(date_now.clone().into()));
+        },
+    };
+
+    // Table transactions avec ancienne methode
+    let ops = doc! {
+        "$set": set,
+        // "$currentDate": current_date,
+    };
+    let filtre = doc! {
+        TRANSACTION_CHAMP_ID: uuid_transaction_str,
+    };
+
+    // Nouvelle table transactions_traitees
+    let ops_transactions_traitees = doc!{
+        "$set": {
+            "ok": ok,
+            "date_traitement": &date_now,
+        },
+    };
+    let options = UpdateOptions::builder().upsert(true).build();
+
+    let collection = middleware.get_collection(nom_collection.as_ref())?;
+    let collection_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()))?;
+
+    // Executer les deux operations
+
+    match collection.update_one(filtre.clone(), ops, None).await {
+        Ok(update_result) => {
+            if update_result.matched_count == 1 {
+                ()
+            } else {
+                Err(format!("Erreur update transaction {}, aucun match", uuid_transaction_str))?
+            }
+        },
+        Err(e) => Err(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction_str, e))?,
+    };
+    collection_traitees.update_one(filtre, ops_transactions_traitees, options).await?;
+
+    Ok(())
 }

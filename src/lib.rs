@@ -38,6 +38,7 @@ mod macros;
 pub mod domaines_v2;
 pub mod domaines_traits;
 pub mod middleware_db_v2;
+mod backup_v2;
 
 // Re-exports
 pub use millegrilles_cryptographie;
