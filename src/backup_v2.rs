@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
 use fs2::FileExt;
-use chrono::Utc;
+use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct};
 use millegrilles_cryptographie::deser_message_buffer;
@@ -19,10 +19,13 @@ use tokio::sync::mpsc::{Sender, Receiver};
 
 use millegrilles_cryptographie::chiffrage::CleSecrete;
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
+use millegrilles_cryptographie::hachages::HacheurBlake2b512;
 use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::bson::doc;
 use mongodb::options::{FindOneOptions, FindOptions, Hint};
+use multibase::Base;
+use multihash::Code;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, Result as TokioResult};
 use tokio::join;
 use tokio_stream::wrappers::ReceiverStream;
@@ -38,6 +41,7 @@ use crate::constantes::*;
 use crate::db_structs::TransactionOwned;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::error::Error as CommonError;
+use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::ReponseCommande;
 use crate::recepteur_messages::TypeMessage;
 
@@ -333,6 +337,7 @@ struct HeaderFichierArchive {
     compression: Option<String>,
 }
 
+#[derive(Clone)]
 struct InfoTransactions {
     date_premiere_transaction: u64,
     date_derniere_transaction: u64,
@@ -345,7 +350,7 @@ async fn preparer_fichier_chiffrage(
     path_backup: &Path, rx: Receiver<TokioResult<Bytes>>, mut rx_info_transactions: Receiver<InfoTransactions>, cle_backup_domaine: &CleBackupDomaine,
     domaine: &str, idmg: &str
 )
-    -> Result<PathBuf, CommonError>
+    -> Result<(PathBuf, CipherResult<32>), CommonError>
 {
 
     let mut path_backup_file = path_backup.to_owned();
@@ -407,9 +412,9 @@ async fn preparer_fichier_chiffrage(
     header.debut_backup = info_transactions.date_premiere_transaction;
     header.fin_backup = info_transactions.date_derniere_transaction;
     header.nombre_transactions = info_transactions.nombre_transactions;
-    match cipher_result.cles.nonce {
+    match cipher_result.cles.nonce.as_ref() {
         Some(inner) => {
-            header.nonce = inner;
+            header.nonce = inner.clone();
         },
         None => Err("Nonce absent du resultat de chiffrage")?
     }
@@ -420,9 +425,9 @@ async fn preparer_fichier_chiffrage(
         Err("Header mis a jour est plus grand que l'espace reserve")?;
     }
 
-    // Fix file header with missing information, keey same version (bytes 0-1)
-    backup_file.seek(SeekFrom::Start(2)).await?;
-    backup_file.write(&header_updated_size.to_le_bytes()).await?;
+    // Fix file header with missing information, keep same version and header size info (bytes 0-3)
+    // The unused header portion will be padded with 0s.
+    backup_file.seek(SeekFrom::Start(4)).await?;
     backup_file.write_all(header_str.as_bytes()).await?;
     // Truncate by filling in 0s over the remaining original header
     for _ in header_updated_size..header_size {
@@ -430,7 +435,7 @@ async fn preparer_fichier_chiffrage(
     }
     backup_file.flush().await?;
 
-    Ok(path_backup_file)
+    Ok((path_backup_file, cipher_result))
 }
 
 async fn start_filewriter_thread(mut rx: Receiver<TokioResult<Bytes>>, backup_file: &mut tokio::io::BufWriter<tokio::fs::File>)
@@ -486,6 +491,23 @@ async fn start_deflate_thread(mut rx: Receiver<TokioResult<Bytes>>, tx: Sender<T
     Ok(())
 }
 
+async fn digest_file(file_path: &Path) -> Result<String, CommonError> {
+    let mut backup_file = tokio::io::BufReader::new(tokio::fs::File::open(&file_path).await?);
+
+    let mut digester = HacheurBuilder::new().digester(Code::Blake2b512).base(Base::Base58Btc).build();
+
+    let mut buffer = [0u8; 64*1024];
+    loop {
+        let len = backup_file.read(&mut buffer).await?;
+        if len == 0 {
+            break;
+        }
+        digester.update(&buffer[..len]);
+    }
+
+    Ok(digester.finalize())
+}
+
 /// Fait le backup des nouvelles transactions dans un fichier de backup incremental.
 async fn traiter_transactions_incremental<M>(
     middleware: &M, path_backup: &Path, commande_backup: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine,
@@ -495,6 +517,7 @@ async fn traiter_transactions_incremental<M>(
     where M: MongoDao
 {
     debug!("traiter_transactions_incremental Debut");
+    let debut_traitement = Utc::now();
 
     // Creer channels de communcation entre threads
     let (tx_transactions, rx_transactions) = mpsc::channel(2);
@@ -508,16 +531,45 @@ async fn traiter_transactions_incremental<M>(
     let transaction_process = traiter_transactions_incrementales(
         middleware, commande_backup, tx_transactions, tx_info_transactions);
 
-    let result = join![pipe, transaction_process];
-    debug!("Resultat process: {:?}", result);
+    let (pipe_result, transaction_result) = join![pipe, transaction_process];
 
-    debug!("traiter_transactions_incremental Fin");
+    // Rename work file
+    let info_transactions = transaction_result?;
+    let (temp_file, cipher_result) = pipe_result?;
+    let date_premiere_transaction = Utc.timestamp_millis_opt(info_transactions.date_premiere_transaction as i64).unwrap();
+    let date_derniere_transaction = Utc.timestamp_millis_opt(info_transactions.date_derniere_transaction as i64).unwrap();
+    let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
+    // let date_str = date_premiere_transaction.to_rfc3339_opts(SecondsFormat::Millis, true);
+
+    // TODO : Incorrect, il faut utiliser le hachage du fichier complet, pas juste la partie chiffree.
+    // let digest_str = cipher_result.hachage_bytes;
+    let digest_str = digest_file(temp_file.as_ref()).await?;
+
+    // Exemple de nom de fichier : AiLanguage_2024-09-24T21:43:07.162Z_I_KozFJz4vLFe7.mgbak
+    let backup_file_name = format!("{}_{}_{}_{}.mgbak", domaine, date_str, "I", &digest_str[digest_str.len()-12..digest_str.len()]);
+    debug!("Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
+    let mut backup_file_path = path_backup.to_owned();
+    backup_file_path.push(backup_file_name);
+    fs::rename(temp_file, backup_file_path)?;
+
+    // Supprimer les transactions traitees. On utilise la date de la plus recente transaction archivee
+    // pour s'assurer de ne pas effacer de nouvelles transactions non traitees.
+    let collection = middleware.get_collection(commande_backup.nom_collection_transactions.as_str())?;
+    let filtre = doc! {
+        TRANSACTION_CHAMP_BACKUP_FLAG: false,
+        TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
+        TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$lte": date_derniere_transaction},
+    };
+    collection.delete_many(filtre, None).await?;
+
+    let fin_traitement = Utc::now();
+    debug!("traiter_transactions_incremental Fin, duree: {}", fin_traitement - debut_traitement);
     Ok(())
 }
 
 async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: &CommandeBackup,
                                                tx: Sender<TokioResult<Bytes>>, tx_info_transactions: Sender<InfoTransactions>)
-    -> Result<(), CommonError>
+    -> Result<InfoTransactions, CommonError>
     where M: MongoDao
 {
     let nom_collection_transactions = commande_backup.nom_collection_transactions.as_str();
@@ -548,13 +600,23 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
     while curseur.advance().await? {
         let transaction = curseur.deserialize_current()?;
 
+        let date_transaction_traitee = match transaction.evenements.as_ref() {
+            Some(inner) => {
+                match inner.transaction_traitee.as_ref() {
+                    Some(inner) => inner,
+                    None => continue // Transaction non traitee, skip
+                }
+            },
+            None => continue // Transaction non traitee, skip
+        };
+
         // Compteurs et dates
         nombre_transactions += 1;
-        let estampille = transaction.estampille.timestamp() as u64;
+        let date_traiee = date_transaction_traitee.timestamp_millis() as u64;
         if date_premiere == 0 {
-            date_premiere = estampille;
+            date_premiere = date_traiee;
         }
-        date_derniere = estampille;
+        date_derniere = date_traiee;
 
         let mut contenu_bytes = {
             let contenu_str = serde_json::to_string(&transaction)?;
@@ -570,14 +632,15 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
         date_derniere_transaction: date_derniere,
         nombre_transactions,
     };
-    tx_info_transactions.send(info_transactions).await?;
+    tx_info_transactions.send(info_transactions.clone()).await?;
 
-    Ok(())
+    Ok(info_transactions)
 }
 
 /// Upload le fichier de backup vers la consignation.
 async fn uploader_consignation() -> Result<(), CommonError> {
-    todo!()
+    error!("TODO Uploader consignation");
+    Ok(())
 }
 
 /// Fait un backup incremental en transferant les transactions completees avec succes dans un fichier.
