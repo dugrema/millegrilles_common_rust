@@ -10,22 +10,25 @@ use chrono::{DateTime, Utc};
 use log::{debug, error, info};
 use millegrilles_cryptographie::chiffrage::{FormatChiffrage, formatchiffragestr};
 use millegrilles_cryptographie::chiffrage_cles::{CleChiffrageHandler, CleDechiffrageX25519Impl};
-use millegrilles_cryptographie::heapless;
-use millegrilles_cryptographie::maitredescles::SignatureDomaines;
+use millegrilles_cryptographie::{deser_message_buffer, heapless};
+use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesOwned, MessageMilleGrillesRef};
-use millegrilles_cryptographie::x25519::{CleSecreteX25519, dechiffrer_asymmetrique_ed25519};
+use millegrilles_cryptographie::x25519::{CleSecreteX25519, dechiffrer_asymmetrique_ed25519, CleDerivee};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use openssl::pkey::{Id, PKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-
+use x509_parser::num_bigint::Sign;
 use crate::bson::Document;
 use crate::certificats::{ordered_map, VerificateurPermissions};
+use crate::common_messages::{ReponseRequeteDechiffrageV2, RequeteDechiffrage, ResponseRequestDechiffrageV2Cle};
 use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::recepteur_messages::TypeMessage;
 use crate::signatures::{signer_identite, signer_message, verifier_message};
 use crate::error::Error as CommonError;
+use crate::formatteur_messages::FormatteurMessage;
+use crate::messages_generiques::ReponseCommande;
 
 /// Nombre maximal de certificats de maitre des cles dans le cache de chiffrage
 const CONST_MAX_CACHE_CHIFFRAGE: usize = 16;
@@ -361,6 +364,88 @@ impl CommandeAjouterCleDomaine {
     }
 }
 
+/// Genere une nouvelle cle de chiffrage en utilisant le CA et les certificats du maitre des cles.
+/// Retourne information pour le dechiffrage asymmetrique (X25519).
+pub fn generer_cle_v2<M,D>(middleware: &M, domaines_backup: Vec<D>) -> Result<(DechiffrageInterMillegrilleOwned, CleDerivee), CommonError>
+    where M: CleChiffrageHandler + FormatteurMessage, D: AsRef<str>
+{
+    let ca = middleware.get_enveloppe_signature();
+    let enveloppes_chiffrage = middleware.get_publickeys_chiffrage();
+    if enveloppes_chiffrage.len() == 0 {
+        Err("chiffrage_cle.generer_cle_v2 Auncuns certificats de chiffrage recus")?
+    }
+    let enveloppes_ref: Vec<&EnveloppeCertificat> = enveloppes_chiffrage.iter().map(|item| item.as_ref()).collect();
+
+    // Generer la cle et chiffrer pour les certificats
+    Ok(generer_cle_avec_ca(domaines_backup, ca.enveloppe_ca.as_ref(), enveloppes_ref)?)
+}
+
+pub async fn ajouter_cles_domaine<M>(middleware: &M, domain_signature: SignatureDomaines, decryption_keys: HashMap<String, String>, timeout: Option<u64>)
+    -> Result<(), CommonError>
+    where M: GenerateurMessages
+{
+    let timeout = timeout.unwrap_or_else(|| 15_000);
+
+    let add_key_command = CommandeAjouterCleDomaine { cles: decryption_keys, signature: domain_signature };
+    let routing = RoutageMessageAction::builder(
+        DOMAINE_NOM_MAITREDESCLES, COMMANDE_AJOUTER_CLE_DOMAINES, vec![Securite::L1Public])
+        .timeout_blocking(timeout)
+        .build();
+
+    match middleware.transmettre_commande(routing, add_key_command).await {
+        Ok(inner) => match inner {
+            Some(TypeMessage::Valide(inner)) => {
+                let parsed_response = inner.message.parse()?;
+                let parsed_buffer = parsed_response.contenu()?;
+                let response: ReponseCommande = parsed_buffer.deserialize()?;
+                if Some(true) != response.ok {
+                    Err(format!("chiffrage_cle.ajouter_cles_domaine Error saving conversation key: {:?}", response.err))?;
+                }
+            },
+            _ => Err("chiffrage_cle.ajouter_cles_domaine Error saving conversation key: wrong response type")?
+        },
+        Err(e) => Err(format!("chiffrage_cle.ajouter_cles_domaine Error saving conversation key: {:?}", e))?
+    };
+
+    Ok(())
+}
+
+pub async fn get_cles_rechiffrees_v2<M,D,C>(middleware: &M, domaine: D, cle_ids: Vec<C>)
+    -> Result<Vec<ResponseRequestDechiffrageV2Cle>, CommonError>
+    where M: GenerateurMessages, D: ToString, C: ToString
+{
+    let domaine = domaine.to_string();
+    let cle_ids: Vec<String> = cle_ids.into_iter().map(|c| c.to_string()).collect();
+
+    let requete = RequeteDechiffrage {
+        domaine,
+        liste_hachage_bytes: None,
+        cle_ids: Some(cle_ids),
+        certificat_rechiffrage: None,
+        inclure_signature: None,
+    };
+
+    let routage = RoutageMessageAction::builder(
+        DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, vec![Securite::L3Protege])
+        .build();
+
+    match middleware.transmettre_requete(routage, &requete).await? {
+        Some(TypeMessage::Valide(reponse)) => {
+            // Dechiffrer la reponse
+            let message_ref = reponse.message.parse()?;
+            let enveloppe_signature = middleware.get_enveloppe_signature();
+            let reponse: ReponseRequeteDechiffrageV2 = message_ref.dechiffrer(enveloppe_signature.as_ref())?;
+            // let reponse: ReponseRequeteDechiffrageV2 = deser_message_buffer!(reponse.message);
+            if reponse.ok && reponse.cles.is_some() {
+                Ok(reponse.cles.expect("cles"))
+            } else {
+                Err(format!("chiffrage_cle.get_cles_rechiffrees_v2 Erreur reponse dechiffrage cles code: {}, err: {:?}", reponse.code, reponse.err))?
+            }
+        },
+        _ => Err("chiffrage_cle.get_cles_rechiffrees_v2 Mauvais type de reponse")?
+    }
+
+}
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
 // pub struct IdentiteCle {
