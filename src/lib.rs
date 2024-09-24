@@ -1,4 +1,5 @@
 extern crate core;
+extern crate fs2;
 
 pub mod certificats;
 pub mod configuration;

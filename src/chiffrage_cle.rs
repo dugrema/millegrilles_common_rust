@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex};
-use async_compression::Level::Default;
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use blake2::{Blake2s256, Digest};
@@ -410,7 +409,7 @@ pub async fn ajouter_cles_domaine<M>(middleware: &M, domain_signature: Signature
     Ok(())
 }
 
-pub async fn get_cles_rechiffrees_v2<M,D,C>(middleware: &M, domaine: D, cle_ids: Vec<C>)
+pub async fn get_cles_rechiffrees_v2<M,D,C>(middleware: &M, domaine: D, cle_ids: Vec<C>, inclure_signature: Option<bool>)
     -> Result<Vec<ResponseRequestDechiffrageV2Cle>, CommonError>
     where M: GenerateurMessages, D: ToString, C: ToString
 {
@@ -422,7 +421,7 @@ pub async fn get_cles_rechiffrees_v2<M,D,C>(middleware: &M, domaine: D, cle_ids:
         liste_hachage_bytes: None,
         cle_ids: Some(cle_ids),
         certificat_rechiffrage: None,
-        inclure_signature: None,
+        inclure_signature,
     };
 
     let routage = RoutageMessageAction::builder(

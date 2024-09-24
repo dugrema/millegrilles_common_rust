@@ -1,6 +1,6 @@
 [package]
 name = "millegrilles_common_rust"
-version = "2024.7.1"
+version = "2024.7.2"
 edition = "2021"
 
 [dependencies]
@@ -22,6 +22,7 @@ flate2 = "1.0"
 xz2 = { version = "0.1", features = ["tokio"] }
 hex = "0.4"
 async-compression = { version = "0.4", features = ["tokio", "all-algorithms"] }
+fs2 = "0.4.3"
 
 # Tokio, async
 async-recursion = "1.1"
