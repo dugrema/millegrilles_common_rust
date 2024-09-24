@@ -52,7 +52,7 @@ serde_json = "1.0"
 serde-helpers = { version = "0.1", features = ["serde_json"] }
 
 # Formats
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde", "alloc"] }
 url = { version = "2.5", features = ["serde"] }
 uuid = { version = "1.8", features = ["serde", "v4"] }
 substring = { version = "1.4" }
