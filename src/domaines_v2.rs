@@ -26,7 +26,8 @@ use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction, regenerer_v2, marquer_transaction_v2};
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction, marquer_transaction_v2};
+use crate::transactions_v2::regenerer_v2;
 
 #[async_trait]
 pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransactions {

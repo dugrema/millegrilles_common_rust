@@ -50,7 +50,7 @@ use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
 use crate::recepteur_messages::TypeMessage;
 
-const PATH_FICHIERS_BACKUP: &str = "/var/opt/millegrilles/backup";
+pub const PATH_FICHIERS_BACKUP: &str = "/var/opt/millegrilles/backup";
 
 #[derive(Clone)]
 enum TypeArchive {
@@ -235,10 +235,10 @@ struct CommandeEnregistrerCleidBackup {
     reset: Option<bool>
 }
 
-struct CleBackupDomaine {
-    cle: CleSecrete<32>,
-    cle_id: String,
-    signature_cle: SignatureDomaines,
+pub struct CleBackupDomaine {
+    pub cle: CleSecrete<32>,
+    pub cle_id: String,
+    pub signature_cle: SignatureDomaines,
 }
 
 /// Recupere la cle de backup de transactions.
@@ -352,10 +352,10 @@ struct HeaderFichierArchive {
 }
 
 #[derive(Clone)]
-struct InfoTransactions {
-    date_premiere_transaction: u64,
-    date_derniere_transaction: u64,
-    nombre_transactions: u64
+pub struct InfoTransactions {
+    pub date_premiere_transaction: u64,
+    pub date_derniere_transaction: u64,
+    pub nombre_transactions: u64
 }
 
 /// Prepare un nouveau fichier avec stream de compression et cipher. Ajouter l'espace necessaire
@@ -761,7 +761,7 @@ async fn run_backup_complet<M>(middleware: &M, commande: &CommandeBackup, cle_ba
         }
     }
 
-    let cles_backup = charger_cles_backup(&fichiers, cle_backup_domaine).await?;
+    let cles_backup = charger_cles_backup(middleware, domaine, &fichiers, Some(cle_backup_domaine)).await?;
     let (path_archive, info_transactions) = generer_archive_concatenee(
         middleware, path_backup, commande, cle_backup_domaine, &fichiers, &cles_backup).await?;
 
@@ -817,14 +817,14 @@ async fn sauvegarder_certificats<M>(middleware: &M, certificats: &HashMap<String
 }
 
 #[derive(Debug)]
-struct FichierArchiveBackup {
-    path_fichier: PathBuf,
-    header: HeaderFichierArchive,
-    position_data: usize,
+pub struct FichierArchiveBackup {
+    pub path_fichier: PathBuf,
+    pub header: HeaderFichierArchive,
+    pub position_data: usize,
 }
 
 /// Fait la liste des fichiers de backup sur disque, lit le header et les trie.
-async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) -> Result<Vec<FichierArchiveBackup>, CommonError> {
+pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) -> Result<Vec<FichierArchiveBackup>, CommonError> {
     let mut paths = read_dir(backup_path).await?;
 
     let mgback_ext: OsString = "mgbak".into();
@@ -882,19 +882,47 @@ async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) -> R
     Ok(fichiers)
 }
 
-async fn charger_cles_backup(fichiers: &Vec<FichierArchiveBackup>, cle_backup_domaine: &CleBackupDomaine)
+pub async fn charger_cles_backup<M>(middleware: &M, domaine: &str, fichiers: &Vec<FichierArchiveBackup>, cle_backup_domaine: Option<&CleBackupDomaine>)
     -> Result<HashMap<String, CleSecrete<32>>, CommonError>
+    where M: GenerateurMessages
 {
     let cle_ids: Vec<&str> = fichiers.iter().map(|f|f.header.cle_id.as_str()).collect();
+
+    // Dedupe
     let mut cle_ids_set = HashSet::new();
     cle_ids_set.extend(cle_ids.into_iter());
-    cle_ids_set.remove(cle_backup_domaine.cle_id.as_str());
-    if cle_ids_set.len() > 0 {
-        todo!("Charger cles manquantes");
+    if let Some(cle_domaine) = cle_backup_domaine {
+        cle_ids_set.remove(cle_domaine.cle_id.as_str());
+    }
+    let vec_cle_ids: Vec<&str> = cle_ids_set.into_iter().collect();
+    let nombre_cles_a_charger = vec_cle_ids.len();
+
+    // Recuperer cles a partir du maitre des cles
+    let mut cles = HashMap::new();
+    if nombre_cles_a_charger > 0 {
+        let reponse_cles = get_cles_rechiffrees_v2(
+            middleware, domaine, vec_cle_ids, Some(false)).await?;
+        if reponse_cles.len() != 1 {
+            Err(format!("backup_v2.recuperer_cle_backup Mauvais nombre de cles recus: {:?}", reponse_cles.len()))?;
+        }
+        for cle in reponse_cles {
+            let cle_id = match cle.cle_id {
+                Some(inner) => inner,
+                None => Err("Reponse cle sans cle_id")?
+            };
+            let mut cle_secrete = CleSecreteX25519 { 0: [0u8; 32] };
+            cle_secrete.0.copy_from_slice(base64_nopad.decode(&cle.cle_secrete_base64)?.as_slice());
+            cles.insert(cle_id, cle_secrete);
+        }
+
+        if cles.len() != nombre_cles_a_charger {
+            Err(format!("backup_v2.recuperer_cle_backup Certaines cles de backup n'ont pas ete trouvees, il en manque {}/{}", cles.len() - nombre_cles_a_charger, nombre_cles_a_charger))?
+        }
     }
 
-    let mut cles = HashMap::new();
-    cles.insert(cle_backup_domaine.cle_id.clone(), cle_backup_domaine.cle.clone());
+    if let Some(cle_domaine) = cle_backup_domaine {
+        cles.insert(cle_domaine.cle_id.clone(), cle_domaine.cle.clone());
+    }
 
     Ok(cles)
 }
@@ -910,7 +938,6 @@ async fn generer_archive_concatenee<M>(
     let idmg = middleware.get_enveloppe_signature().enveloppe_pub.idmg()?;
     let domaine = commande_backup.nom_domaine.as_str();
 
-    // let (tx_decrypt, rx_decrypt) = mpsc::channel(10);
     let (tx_deflate, rx_deflate) = mpsc::channel(5);
     let (tx_transactions, rx_transactions) = mpsc::channel(5);
     let (tx_info_transactions, rx_info_transactions) = mpsc::channel(1);
@@ -1083,6 +1110,85 @@ async fn process_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Tokio
         nombre_transactions: compteur_transactions,
     };
     tx_info_transactions.send(info_transactions.clone()).await?;
+
+    debug!("process_transactions Fin thread");
+
+    Ok(info_transactions)
+}
+
+pub struct RegenerationBackup {
+    pub domaine: String,
+    pub fichiers: Vec<FichierArchiveBackup>,
+    pub cles: HashMap<String, CleSecrete<32>>,
+}
+
+/// Lit toutes les transactions dans l'ordre, emet via Sender.
+pub async fn lire_transactions_fichiers(info_regeneration: RegenerationBackup, tx: Sender<TransactionOwned>)
+    -> Result<InfoTransactions, CommonError>
+{
+    let (tx_deflate, rx_deflate) = mpsc::channel(5);
+
+    let thread_lecture = lire_archives_thread(
+        &info_regeneration.fichiers, &info_regeneration.cles, tx_deflate);
+    let thread_transaction_reader = pipe_transactions(rx_deflate, tx);
+
+    let (result_lecture, result_transactions) = join![thread_lecture, thread_transaction_reader];
+    result_lecture?;
+    let info_transactions = result_transactions?;
+
+    Ok(info_transactions)
+}
+
+async fn pipe_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<TransactionOwned>)
+    -> Result<InfoTransactions, CommonError>
+{
+    let stream = ReceiverStream::new(rx);
+    let mut reader = StreamReader::new(stream);
+
+    let mut line = String::new();
+    let mut compteur_transactions = 0;
+    let mut date_premiere = 0;
+    let mut date_derniere = 0;
+
+    loop {
+        let output_len = reader.read_line(&mut line).await?;
+
+        if output_len == 0 {
+            break;  // Done
+        }
+
+        let transaction_str = line.substring(0, output_len);
+        // debug!("process_transactions Transaction lue: \n*/{}\\*", transaction_str);
+
+        // Parse transaction pour garantir structure
+        let transaction: TransactionOwned = serde_json::from_str(transaction_str)?;
+        let date_traitement = match transaction.evenements.as_ref() {
+            Some(evenements) => match evenements.transaction_traitee.as_ref() {
+                Some(inner) => inner,
+                None => Err("process_transactions transaction sans date de traitement")?
+            },
+            None => Err("process_transactions transaction sans elements pour evenements")?
+        };
+
+        // Mettre a jour compteur et marqueurs de date pour l'archive
+        compteur_transactions += 1;
+        let date_traitement_u64 = date_traitement.timestamp_millis() as u64;
+        if date_premiere == 0 { date_premiere = date_traitement_u64; }
+        date_derniere = date_traitement_u64;
+
+        if let Err(e) = tx.send(transaction).await {
+            error!("process_transactions Error sending data: {:?}", e);
+            Err(e)?;
+        }
+
+        line.clear();  // Reset buffer
+    }
+
+    let info_transactions = InfoTransactions {
+        date_premiere_transaction: date_premiere,
+        date_derniere_transaction: date_derniere,
+        nombre_transactions: compteur_transactions,
+    };
 
     debug!("process_transactions Fin thread");
 

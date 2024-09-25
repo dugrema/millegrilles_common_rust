@@ -104,3 +104,12 @@ pub struct CommandeSauvegarderCertificat {
     pub chaine_pem: Vec<String>,
     pub ca: Option<String>
 }
+
+#[derive(Serialize)]
+pub struct EvenementRegeneration {
+    pub ok: bool,
+    pub termine: bool,
+    pub domaine: String,
+    pub position: Option<i64>,
+    pub err: Option<String>,
+}
