@@ -66,7 +66,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
     fs::create_dir_all(PATH_FICHIERS_BACKUP).unwrap();
 
     while let Some(commande) = rx.recv().await {
-        debug!("thread_backup Debut commande backup {:?}", commande);
+        debug!("thread_backup_v2 Debut commande backup {:?}", commande);
 
         let backup_complet = commande.complet;
 
@@ -82,7 +82,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
                     if ErrorKind::NotFound == e.kind() {
                         File::create(&path_lockfile).expect("new lockfile")
                     } else {
-                        warn!("Error opening lockfile {:?} - SKIP backup", e);
+                        warn!("thread_backup_v2 Error opening lockfile {:?} - SKIP backup", e);
                         continue;
                     }
                 }
@@ -90,7 +90,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
             match file.try_lock_exclusive() {
                 Ok(()) => (file, path_lockfile),
                 Err(_) => {
-                    info!("Backup file already locked, SKIP backup");
+                    info!("thread_backup_v2 Backup file already locked, SKIP backup");
                     continue;
                 }
             }
@@ -100,9 +100,9 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         let cle_backup_domaine = match recuperer_cle_backup(middleware, commande.nom_domaine.as_str()).await {
             Ok(inner) => inner,
             Err(e) => {
-                error!("Erreur chargement de la cle de backup, SKIP: {:?}", e);
+                error!("thread_backup_v2 Erreur chargement de la cle de backup, SKIP: {:?}", e);
                 if let Err(e) = lock_file.unlock() {
-                    info!("Error unlocking backup file: {:?}", e);
+                    info!("thread_backup_v2 Error unlocking backup file: {:?}", e);
                 }
                 continue;
             }
@@ -112,9 +112,9 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         let serveur_consignation = match get_serveur_consignation(middleware).await {
             Ok(inner) => inner,
             Err(e) => {
-                error!("Erreur chargement de l'information de consignation, SKIP: {:?}", e);
+                error!("thread_backup_v2 Erreur chargement de l'information de consignation, SKIP: {:?}", e);
                 if let Err(e) = lock_file.unlock() {
-                    info!("Error unlocking backup file: {:?}", e);
+                    info!("thread_backup_v2 Error unlocking backup file: {:?}", e);
                 }
                 continue;
             }
@@ -122,23 +122,28 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
 
         // Toujours commencer par un backup incremental pour vider
         // les nouvelles transactions de la base de donnees.
-        if let Err(e) = backup_incremental(middleware, &commande, &cle_backup_domaine, &serveur_consignation, path_backup.as_ref()).await {
-            error!("Erreur durant backup incremental: {:?}", e);
+        if let Err(e) = backup_incremental(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
+            error!("thread_backup_v2 Erreur durant backup incremental: {:?}", e);
         }
 
         if backup_complet == true  {
             // Generer un nouveau fichier concatene, potentiellement des nouveaux fichiers finaux.
             if let Err(e) = run_backup_complet(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
-                error!("Erreur durant backup complet: {:?}", e);
+                error!("thread_backup_v2 Erreur durant backup complet: {:?}", e);
             }
+        }
+
+        // Synchroniser les archives avec le serveur de consignation
+        if let Err(e) = uploader_consignation(middleware, path_backup.as_path(), &serveur_consignation).await {
+            error!("thread_backup_v2 Erreur durant upload des fichiers de backup: {:?}", e);
         }
 
         // Retirer le lock de backup
         if let Err(e) = lock_file.unlock() {
-            info!("Error unlocking backup file: {:?}", e);
+            info!("thread_backup_v2 Error unlocking backup file: {:?}", e);
         }
         if let Err(e) = fs::remove_file(path_lock_file) {
-            info!("Error deleting lock file: {:?}", e);
+            info!("thread_backup_v2 Error deleting lock file: {:?}", e);
         };
     }
 }
@@ -181,12 +186,9 @@ async fn get_serveur_consignation<M>(middleware: &M) -> Result<ReponseInformatio
 /// Fait un backup incremental en transferant les transactions completees avec succes dans un fichier.
 /// Retire les transactions de la base de donnees.
 /// S'assure que tous les certificats sont sauvegardés dans CorePki.
-async fn backup_incremental<M>(
-    middleware: &M, commande: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine,
-    serveur_consignation: &ReponseInformationConsignationFichiers,
-    path_backup: &Path,
-) -> Result<(), CommonError>
-where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
+async fn backup_incremental<M>(middleware: &M, commande: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine, path_backup: &Path)
+    -> Result<(), CommonError>
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
 {
     let domaine_backup = commande.nom_domaine.as_str();
     info!("Debut backup incremental sur {}", domaine_backup);
@@ -206,7 +208,6 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         traiter_transactions_incremental(
             middleware, path_backup, commande,
             cle_backup_domaine, domaine_backup, idmg.as_str()).await?;
-        uploader_consignation().await?;
     } else {
         info!("backup_incremental Aucunes transactions a ajouter au backup incremental de {}, skip cette etape.", domaine_backup);
     }
@@ -595,25 +596,7 @@ async fn traiter_transactions_incremental<M>(
     let (temp_file, _) = pipe_result?;
     rename_work_file(&type_archive, &info_transactions, domaine, path_backup, temp_file.as_ref()).await?;
 
-    // let date_premiere_transaction = Utc.timestamp_millis_opt(info_transactions.date_premiere_transaction as i64).unwrap();
     let date_derniere_transaction = Utc.timestamp_millis_opt(info_transactions.date_derniere_transaction as i64).unwrap();
-    // let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
-
-    // Calculer le digest du fichier (apres modification du header).
-    // let digest_str = digest_file(temp_file.as_ref()).await?;
-
-    // Exemple de nom de fichier : AiLanguage_2024-09-24T21:43:07.162Z_I_KozFJz4vLFe7.mgbak
-    // let backup_file_name = format!(
-    //     "{}_{}_{}_{}.mgbak",
-    //     domaine,
-    //     date_str,
-    //     "I",
-    //     &digest_str[digest_str.len()-12..digest_str.len()]  // Garder les 12 derniers chars du digest
-    // );
-    // debug!("Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
-    // let mut backup_file_path = path_backup.to_owned();
-    // backup_file_path.push(backup_file_name);
-    // fs::rename(temp_file, backup_file_path)?;
 
     // Supprimer les transactions traitees. On utilise la date de la plus recente transaction archivee
     // pour s'assurer de ne pas effacer de nouvelles transactions non traitees.
@@ -734,8 +717,53 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
 }
 
 /// Upload le fichier de backup vers la consignation.
-async fn uploader_consignation() -> Result<(), CommonError> {
-    error!("TODO Uploader consignation");
+async fn uploader_consignation<M>(middleware: &M, path_backup: &Path, serveur_consignation: &ReponseInformationConsignationFichiers)
+    -> Result<(), CommonError>
+    where M: GenerateurMessages
+{
+
+    let enveloppe_privee = middleware.get_enveloppe_signature();
+    let cert_ca = enveloppe_privee.enveloppe_ca.chaine_pem()?;
+    let ca_cert_pem = match cert_ca.last() { Some(cert) => cert.as_str(), None => Err(format!("Certificat CA manquant"))? };
+    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+
+    let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
+    let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
+    cert_pem_list.insert(0, cle_privee_pem.to_string());
+    let pem_keycert = cert_pem_list.join("\n");
+
+    let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
+    let client = reqwest::Client::builder()
+        .add_root_certificate(root_ca)
+        .identity(identity)
+        .https_only(true)
+        // .http1_only()
+        .use_rustls_tls()
+        // .http2_adaptive_window(true)
+        .build()?;
+
+    let url_consignation = match &serveur_consignation.consignation_url {
+        Some(url) => url.to_owned(),
+        None => match &serveur_consignation.hostnames {
+            Some(hostnames) => {
+                match hostnames.get(0) {
+                    Some(hostname) => {
+                        format!("https://{}:444", hostname)
+                    },
+                    None => Err("uploader_consignation Pas de url/hostnames disponibles pour consignation (1)")?
+                }
+
+            },
+            None => Err("uploader_consignation Pas de url/hostnames disponibles pour consignation (2)")?
+        }
+    };
+
+    warn!("uploader_consignation - TODO - uploader archives de transactions vers consignation");
+
+    // let resultat = client.get(format!("{}/fichiers_transfert/backup_v2/a/b", url_consignation)).send().await?;
+    //
+    // debug!("Resultat get https: {:?}", resultat);
+
     Ok(())
 }
 
