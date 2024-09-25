@@ -50,7 +50,7 @@ use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
 use crate::recepteur_messages::TypeMessage;
 
-pub const PATH_FICHIERS_BACKUP: &str = "/var/opt/millegrilles/backup";
+pub const PATH_FICHIERS_ARCHIVES: &str = "/var/opt/millegrilles/archives";
 
 #[derive(Clone)]
 enum TypeArchive {
@@ -63,14 +63,14 @@ pub async fn thread_backup_v2<M>(middleware: &M, mut rx: Receiver<CommandeBackup
 where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
 {
     // Verifier que le path de backup est disponible
-    fs::create_dir_all(PATH_FICHIERS_BACKUP).unwrap();
+    fs::create_dir_all(PATH_FICHIERS_ARCHIVES).unwrap();
 
     while let Some(commande) = rx.recv().await {
         debug!("thread_backup_v2 Debut commande backup {:?}", commande);
 
         let backup_complet = commande.complet;
 
-        let path_backup = preparer_path_backup(PATH_FICHIERS_BACKUP, commande.nom_domaine.as_str());
+        let path_backup = preparer_path_backup(PATH_FICHIERS_ARCHIVES, commande.nom_domaine.as_str());
 
         // Lock pour empecher autre process de backup
         let (lock_file, path_lock_file) = {
