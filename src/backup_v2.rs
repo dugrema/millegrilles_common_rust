@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::fs;
 use std::fs::File;
@@ -42,7 +43,7 @@ use crate::db_structs::TransactionOwned;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::error::Error as CommonError;
 use crate::hachages::HacheurBuilder;
-use crate::messages_generiques::ReponseCommande;
+use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
 use crate::recepteur_messages::TypeMessage;
 
 const PATH_FICHIERS_BACKUP: &str = "/var/opt/millegrilles/backup";
@@ -514,7 +515,7 @@ async fn traiter_transactions_incremental<M>(
     domaine: &str, idmg: &str
 )
     -> Result<(), CommonError>
-    where M: MongoDao
+    where M: MongoDao + ValidateurX509 + GenerateurMessages
 {
     debug!("traiter_transactions_incremental Debut");
     let debut_traitement = Utc::now();
@@ -570,7 +571,7 @@ async fn traiter_transactions_incremental<M>(
 async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: &CommandeBackup,
                                                tx: Sender<TokioResult<Bytes>>, tx_info_transactions: Sender<InfoTransactions>)
     -> Result<InfoTransactions, CommonError>
-    where M: MongoDao
+    where M: MongoDao + ValidateurX509 + GenerateurMessages
 {
     let nom_collection_transactions = commande_backup.nom_collection_transactions.as_str();
 
@@ -597,8 +598,36 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
     let mut date_premiere = 0u64;
     let mut date_derniere = 0u64;
 
+    let mut certificats_traites = HashSet::new();
+    let mut certificats_pending = HashMap::new();
+
     while curseur.advance().await? {
         let transaction = curseur.deserialize_current()?;
+
+        // Sauvegarder les certificats
+        let fingerprint = &transaction.pubkey;
+        if ! certificats_traites.contains(fingerprint) {
+            if ! certificats_pending.contains_key(fingerprint) {
+                if let Some(certificat) = transaction.certificat.clone() {
+                    certificats_pending.insert(fingerprint.to_owned(), certificat);
+                } else {
+                    warn!("Certificat de transaction {} absent de la table transactions", fingerprint);
+                }
+
+                // Sauvegarder batch au besoin
+                if certificats_pending.len() > 20 {
+                    match sauvegarder_certificats(middleware, &certificats_pending).await {
+                        Ok(()) => {
+                            // Conserver liste des certificats sauvegardes, reset (drain) liste de certificats
+                            certificats_traites.extend(certificats_pending.drain().map(|(key,_)| key));
+                        },
+                        Err(e) => {
+                            warn!("Erreur sauvegarde de certificats, continuer le backup pour reessayer plus tard: {:?}", e);
+                        }
+                    }
+                }
+            }
+        }  // Fin sauvegarder certificats
 
         let date_transaction_traitee = match transaction.evenements.as_ref() {
             Some(inner) => {
@@ -627,6 +656,11 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
         tx.send(Ok(Bytes::from(contenu_bytes))).await?;
     }
 
+    // Sauvegarder la derniere batch de certificats
+    if certificats_pending.len() > 0 {
+        sauvegarder_certificats(middleware, &certificats_pending).await?;
+    }
+
     let info_transactions = InfoTransactions {
         date_premiere_transaction: date_premiere,
         date_derniere_transaction: date_derniere,
@@ -651,6 +685,35 @@ async fn run_backup_complet<M>(middleware: &M, commande: &CommandeBackup, cle_ba
     info!("Debut backup complet sur {}", commande.nom_domaine);
 
     todo!();
+
+    Ok(())
+}
+
+async fn sauvegarder_certificats<M>(middleware: &M, certificats: &HashMap<String, Vec<String>>)
+    -> Result<(), CommonError>
+    where M: GenerateurMessages
+{
+    let routage = RoutageMessageAction::builder(
+        DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege]).build();
+
+    debug!("Sauvegarder {} certificats", certificats.len());
+
+    for certificat in certificats.values() {
+        let commande = CommandeSauvegarderCertificat {
+            chaine_pem: certificat.to_owned(),
+            ca: None,
+        };
+        let reponse = middleware.transmettre_commande(routage.clone(), &commande).await?;
+        if let Some(TypeMessage::Valide(reponse)) = reponse {
+            let reponse_owned = reponse.message.parse_to_owned()?;
+            let reponse_commande: ReponseCommande = reponse_owned.deserialize()?;
+            if reponse_commande.ok != Some(true) {
+                Err(format!("backup_v2.sauvegarder_certificats Reponse de type erreur durant la sauvegarde de certificat : {:?}", reponse_commande.err))?
+            }
+        } else {
+            Err("backup_v2.sauvegarder_certificats Mauvais type de reponse pour la sauvegarde de certificat")?
+        }
+    }
 
     Ok(())
 }

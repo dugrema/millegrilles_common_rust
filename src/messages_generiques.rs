@@ -98,3 +98,9 @@ pub struct ReponseCommande<'a> {
     pub message: Option<&'a str>,
     pub err: Option<&'a str>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandeSauvegarderCertificat {
+    pub chaine_pem: Vec<String>,
+    pub ca: Option<String>
+}
