@@ -127,7 +127,6 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         }
 
         if backup_complet == true  {
-        // {  // TODO : Remettre backup complet sur trigger
             // Generer un nouveau fichier concatene, potentiellement des nouveaux fichiers finaux.
             if let Err(e) = run_backup_complet(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
                 error!("Erreur durant backup complet: {:?}", e);
@@ -866,6 +865,9 @@ pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) 
         }
         let header: HeaderFichierArchive = serde_json::from_slice(&header_vec[0..header_len_effective])?;
 
+        // Verification d'integrite entre les fichiers. On s'assure que le fichier courant
+        // n'as pas de transactions plus anciennes que la derniere transaction du fichier precedent.
+
         let position_data = (4 + taille_header) as usize;  // 4 bytes (version u16, taille header u16) + header
         if inclure_final || header.format != "F".to_string() {
             fichiers.push(FichierArchiveBackup { path_fichier: file_path, header, position_data });
@@ -876,6 +878,15 @@ pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) 
     fichiers.sort_by(|a, b| {
         a.header.debut_backup.partial_cmp(&b.header.debut_backup).expect("header partial_cmp")
     });
+
+    // Verifier l'ordre des fichiers, pas d'overlap de transactions
+    let mut date_transaction_precedente = 0u64;
+    for fichier in &fichiers {
+        if fichier.header.debut_backup < date_transaction_precedente {
+            Err(format!("backup_v2.organiser_fichiers_backup Fichiers de transactions dans le mauvais ordre, transaction plus ancienne trouvee dans {:?}", fichier.path_fichier))?
+        }
+        date_transaction_precedente = fichier.header.fin_backup;
+    }
 
     debug!("organiser_fichiers_backup Liste fichiers tries\n{:?}", fichiers);
 
@@ -1093,6 +1104,9 @@ async fn process_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Tokio
         // Mettre a jour compteur et marqueurs de date pour l'archive
         compteur_transactions += 1;
         let date_traitement_u64 = date_traitement.timestamp_millis() as u64;
+        if date_traitement_u64 < date_derniere {
+            Err(format!("backup_v2.process_transactions Erreur transaction compteur:{} id:{} plus ancienne que les transactions precedentes", compteur_transactions, transaction.id))?
+        }
         if date_premiere == 0 { date_premiere = date_traitement_u64; }
         date_derniere = date_traitement_u64;
 
@@ -1174,6 +1188,11 @@ async fn pipe_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Transact
         compteur_transactions += 1;
         let date_traitement_u64 = date_traitement.timestamp_millis() as u64;
         if date_premiere == 0 { date_premiere = date_traitement_u64; }
+
+        if date_traitement_u64 < date_derniere {
+            Err(format!("backup_v2.pipe_transactions Erreur transaction compteur:{} id:{} plus ancienne que les transactions precedentes",
+                        compteur_transactions, transaction.id))?
+        }
         date_derniere = date_traitement_u64;
 
         if let Err(e) = tx.send(transaction).await {

@@ -2,7 +2,7 @@ use std::str::from_utf8;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Datelike, Timelike, Utc, Weekday};
 use futures_util::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
@@ -385,10 +385,11 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             }
         }
 
-        // if dt.minute() % 20 == 0 {  // TODO : remettre aux 20 minutes
-        if dt.minute() % 5 == 0
+        if dt.minute() % 30 == 4  // 2 fois par heure, minutes 4 et 34.
         {
-            let complet = dt.minute() % 20 == 0;
+            // TODO - Configurer backup complet via CoreTopologie/Coupdoeil
+            // Concatenation de backup le dimanche a 7:09UTC.
+            let complet = dt.minute() == 9 && dt.hour() == 7 && dt.weekday() == Weekday::Sun;
 
             // Demarrer backup incremental des transactions
             if let Some(nom_collection_transactions) = self.get_collection_transactions() {
