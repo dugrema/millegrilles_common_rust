@@ -385,13 +385,16 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         }
 
         // if dt.minute() % 20 == 0 {  // TODO : remettre aux 20 minutes
+        if dt.minute() % 5 == 0
         {
+            let complet = dt.minute() % 20 == 0;
+
             // Demarrer backup incremental des transactions
             if let Some(nom_collection_transactions) = self.get_collection_transactions() {
                 middleware.demarrer_backup(
                     self.get_nom_domaine().as_str(),
                     nom_collection_transactions.as_str(),
-                    false,
+                    complet,
                     "",
                     ""
                 ).await?;

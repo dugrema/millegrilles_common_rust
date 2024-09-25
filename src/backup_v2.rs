@@ -1,25 +1,27 @@
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::sync::Arc;
 use std::fs;
-use std::fs::File;
+use std::fs::{File, FileType};
 use std::io::{ErrorKind, SeekFrom};
+use std::ops::Index;
 use std::path::{Path, PathBuf};
 use fs2::FileExt;
 use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems};
 use log::{debug, error, info, warn};
-use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct};
+use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::x25519::{chiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, CleSecreteX25519};
 use serde::{Deserialize, Serialize};
 use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
-use async_compression::tokio::bufread::{DeflateEncoder, GzipEncoder};
+use async_compression::tokio::bufread::{DeflateEncoder, GzipEncoder, DeflateDecoder};
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender, Receiver};
 
-use millegrilles_cryptographie::chiffrage::CleSecrete;
-use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
+use millegrilles_cryptographie::chiffrage::{CleSecrete, FormatChiffrage};
+use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher, DecipherMgs4};
 use millegrilles_cryptographie::hachages::HacheurBlake2b512;
 use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
@@ -27,7 +29,9 @@ use mongodb::bson::doc;
 use mongodb::options::{FindOneOptions, FindOptions, Hint};
 use multibase::Base;
 use multihash::Code;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, Result as TokioResult};
+use substring::Substring;
+use tokio::fs::read_dir;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, Result as TokioResult};
 use tokio::join;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}};
@@ -47,6 +51,13 @@ use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande}
 use crate::recepteur_messages::TypeMessage;
 
 const PATH_FICHIERS_BACKUP: &str = "/var/opt/millegrilles/backup";
+
+#[derive(Clone)]
+enum TypeArchive {
+    Incremental,
+    Concatene,
+    Final
+}
 
 pub async fn thread_backup_v2<M>(middleware: &M, mut rx: Receiver<CommandeBackup>)
 where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
@@ -116,8 +127,9 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         }
 
         if backup_complet == true  {
+        // {  // TODO : Remettre backup complet sur trigger
             // Generer un nouveau fichier concatene, potentiellement des nouveaux fichiers finaux.
-            if let Err(e) = run_backup_complet(middleware, &commande, &cle_backup_domaine).await {
+            if let Err(e) = run_backup_complet(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
                 error!("Erreur durant backup complet: {:?}", e);
             }
         }
@@ -169,6 +181,7 @@ async fn get_serveur_consignation<M>(middleware: &M) -> Result<ReponseInformatio
 
 /// Fait un backup incremental en transferant les transactions completees avec succes dans un fichier.
 /// Retire les transactions de la base de donnees.
+/// S'assure que tous les certificats sont sauvegardés dans CorePki.
 async fn backup_incremental<M>(
     middleware: &M, commande: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine,
     serveur_consignation: &ReponseInformationConsignationFichiers,
@@ -319,7 +332,7 @@ async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result
     Ok(cle_backup_domaine)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct HeaderFichierArchive {
     idmg: String,
     domaine: String,
@@ -348,14 +361,22 @@ struct InfoTransactions {
 /// Prepare un nouveau fichier avec stream de compression et cipher. Ajouter l'espace necessaire
 /// pour le header du fichier.
 async fn preparer_fichier_chiffrage(
-    path_backup: &Path, rx: Receiver<TokioResult<Bytes>>, mut rx_info_transactions: Receiver<InfoTransactions>, cle_backup_domaine: &CleBackupDomaine,
+    path_backup: &Path, type_fichier: TypeArchive, rx: Receiver<TokioResult<Bytes>>,
+    mut rx_info_transactions: Receiver<InfoTransactions>, cle_backup_domaine: &CleBackupDomaine,
     domaine: &str, idmg: &str
 )
     -> Result<(PathBuf, CipherResult<32>), CommonError>
 {
 
     let mut path_backup_file = path_backup.to_owned();
-    path_backup_file.push("incremental.mgbak.work");
+
+    let (marqueur_type_archive, prefixe_nom_work) = match type_fichier {
+        TypeArchive::Incremental => ("I", "incremental"),
+        TypeArchive::Concatene => ("C", "concatene)"),
+        _ => Err("Non supporte")?
+    };
+
+    path_backup_file.push(format!("{}.mgbak.work", prefixe_nom_work));
     if let Err(e) = fs::remove_file(&path_backup_file) {
         debug!("preparer_fichier_chiffrage Delete file result: {:?}", e);
     }
@@ -366,7 +387,7 @@ async fn preparer_fichier_chiffrage(
     let mut header = HeaderFichierArchive {
         idmg: idmg.to_string(),
         domaine: domaine.to_string(),
-        type_archive: "I".to_string(),
+        type_archive: marqueur_type_archive.to_string(),
         debut_backup: u64::MAX,
         fin_backup: u64::MAX,
         nombre_transactions: u64::MAX,
@@ -378,7 +399,7 @@ async fn preparer_fichier_chiffrage(
     };
     let header_str = serde_json::to_string(&header)?;
     let header_size = header_str.len() as u16;
-    debug!("Header taille initiale {}", header_size);
+    debug!("preparer_fichier_chiffrage Header taille initiale {}", header_size);
 
     backup_file.write(&FILE_VERSION.to_le_bytes()).await?;
     backup_file.write(&header_size.to_le_bytes()).await?;
@@ -391,9 +412,9 @@ async fn preparer_fichier_chiffrage(
         let (tx_encrypt, rx_encrypt) = mpsc::channel(10);
 
         // Receive cleartext bytes, deflate, encrypt, output to file.
-        let deflate_thread = start_deflate_thread(rx, tx_deflate);
-        let encryption_thread = start_encryption_thread(&cle_backup_domaine.cle, rx_deflate, tx_encrypt);
-        let filewriter_thread = start_filewriter_thread(rx_encrypt, &mut backup_file);
+        let deflate_thread = deflate_pipe_thread(rx, tx_deflate);
+        let encryption_thread = encryption_pipe_thread(&cle_backup_domaine.cle, rx_deflate, tx_encrypt);
+        let filewriter_thread = filewriter_pipe_thread(rx_encrypt, &mut backup_file);
 
         let (deflate_result, cipher_result, filewriter_result) = join![deflate_thread, encryption_thread, filewriter_thread];
         deflate_result?;
@@ -408,7 +429,7 @@ async fn preparer_fichier_chiffrage(
     // Update header
     let info_transactions = match rx_info_transactions.recv().await {
         Some(inner) => inner,
-        None => Err("Le channel d'information de transactions est ferme, aucune information recue")?
+        None => Err("backup_v2.preparer_fichier_chiffrage Le channel d'information de transactions est ferme, aucune information recue")?
     };
     header.debut_backup = info_transactions.date_premiere_transaction;
     header.fin_backup = info_transactions.date_derniere_transaction;
@@ -417,13 +438,13 @@ async fn preparer_fichier_chiffrage(
         Some(inner) => {
             header.nonce = inner.clone();
         },
-        None => Err("Nonce absent du resultat de chiffrage")?
+        None => Err("backup_v2.preparer_fichier_chiffrage Nonce absent du resultat de chiffrage")?
     }
     let header_str = serde_json::to_string(&header)?;
     let header_updated_size = header_str.len() as u16;
-    debug!("Header taille mise a jour {}, valeur: {}", header_updated_size, header_str);
+    debug!("preparer_fichier_chiffrage Header taille mise a jour {}, valeur: {}", header_updated_size, header_str);
     if header_size < header_updated_size {
-        Err("Header mis a jour est plus grand que l'espace reserve")?;
+        Err("backup_v2.preparer_fichier_chiffrage Header mis a jour est plus grand que l'espace reserve")?;
     }
 
     // Fix file header with missing information, keep same version and header size info (bytes 0-3)
@@ -439,8 +460,8 @@ async fn preparer_fichier_chiffrage(
     Ok((path_backup_file, cipher_result))
 }
 
-async fn start_filewriter_thread(mut rx: Receiver<TokioResult<Bytes>>, backup_file: &mut tokio::io::BufWriter<tokio::fs::File>)
-    -> Result<(), CommonError>
+async fn filewriter_pipe_thread(mut rx: Receiver<TokioResult<Bytes>>, backup_file: &mut tokio::io::BufWriter<tokio::fs::File>)
+                                -> Result<(), CommonError>
 {
     while let Some(result) = rx.recv().await {
         let data = result?;
@@ -449,8 +470,8 @@ async fn start_filewriter_thread(mut rx: Receiver<TokioResult<Bytes>>, backup_fi
     Ok(())
 }
 
-async fn start_encryption_thread(cle_secrete: &CleSecrete<32>, mut rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>)
-    -> Result<CipherResult<32>, CommonError>
+async fn encryption_pipe_thread(cle_secrete: &CleSecrete<32>, mut rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>)
+                                -> Result<CipherResult<32>, CommonError>
 {
     let cle_secrete_cipher = CleSecreteCipher::CleSecrete(cle_secrete.to_owned());
 
@@ -478,7 +499,7 @@ async fn start_encryption_thread(cle_secrete: &CleSecrete<32>, mut rx: Receiver<
     Ok(result)
 }
 
-async fn start_deflate_thread(mut rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>) -> Result<(), CommonError> {
+async fn deflate_pipe_thread(mut rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>) -> Result<(), CommonError> {
     let stream = ReceiverStream::new(rx);
     let reader = StreamReader::new(stream);
     let encoder = DeflateEncoder::new(BufReader::new(reader));
@@ -492,6 +513,7 @@ async fn start_deflate_thread(mut rx: Receiver<TokioResult<Bytes>>, tx: Sender<T
     Ok(())
 }
 
+/// Execute le digest black2b-512 sur le fichier, retourne le resultat en base58btc.
 async fn digest_file(file_path: &Path) -> Result<String, CommonError> {
     let mut backup_file = tokio::io::BufReader::new(tokio::fs::File::open(&file_path).await?);
 
@@ -507,6 +529,40 @@ async fn digest_file(file_path: &Path) -> Result<String, CommonError> {
     }
 
     Ok(digester.finalize())
+}
+
+async fn rename_work_file(type_archive: &TypeArchive, info_transactions: &InfoTransactions,
+                          domaine: &str, path_backup: &Path, path_fichier_work: &Path)
+    -> Result<PathBuf, CommonError>
+{
+    // Rename work file
+    let date_premiere_transaction = Utc.timestamp_millis_opt(info_transactions.date_premiere_transaction as i64).unwrap();
+    let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
+
+    // Calculer le digest du fichier (apres modification du header).
+    let digest_str = digest_file(path_fichier_work).await?;
+
+    let marqueur_type_archive = match type_archive {
+        TypeArchive::Incremental => "I",
+        TypeArchive::Concatene => "C",
+        TypeArchive::Final => "F",
+    };
+
+    // Exemple de nom de fichier : AiLanguage_2024-09-24T21:43:07.162Z_I_KozFJz4vLFe7.mgbak
+    let backup_file_name = format!(
+        "{}_{}_{}_{}.mgbak",
+        domaine,
+        date_str,
+        marqueur_type_archive,
+        &digest_str[digest_str.len()-12..digest_str.len()]  // Garder les 12 derniers chars du digest
+    );
+
+    debug!("rename_work_file Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
+    let mut backup_file_path = path_backup.to_owned();
+    backup_file_path.push(backup_file_name);
+    fs::rename(path_fichier_work, &backup_file_path)?;
+
+    Ok(backup_file_path)
 }
 
 /// Fait le backup des nouvelles transactions dans un fichier de backup incremental.
@@ -525,8 +581,9 @@ async fn traiter_transactions_incremental<M>(
     let (tx_info_transactions, rx_info_transactions) = mpsc::channel(2);
 
     // Preparer une thread de traitement du fichier
+    let type_archive = TypeArchive::Incremental;
     let pipe = preparer_fichier_chiffrage(
-        path_backup, rx_transactions, rx_info_transactions, cle_backup_domaine, domaine, idmg);
+        path_backup, type_archive.clone(), rx_transactions, rx_info_transactions, cle_backup_domaine, domaine, idmg);
 
     // Traiter les transactions en ordre sequentiel.
     let transaction_process = traiter_transactions_incrementales(
@@ -536,22 +593,28 @@ async fn traiter_transactions_incremental<M>(
 
     // Rename work file
     let info_transactions = transaction_result?;
-    let (temp_file, cipher_result) = pipe_result?;
-    let date_premiere_transaction = Utc.timestamp_millis_opt(info_transactions.date_premiere_transaction as i64).unwrap();
-    let date_derniere_transaction = Utc.timestamp_millis_opt(info_transactions.date_derniere_transaction as i64).unwrap();
-    let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
-    // let date_str = date_premiere_transaction.to_rfc3339_opts(SecondsFormat::Millis, true);
+    let (temp_file, _) = pipe_result?;
+    rename_work_file(&type_archive, &info_transactions, domaine, path_backup, temp_file.as_ref()).await?;
 
-    // TODO : Incorrect, il faut utiliser le hachage du fichier complet, pas juste la partie chiffree.
-    // let digest_str = cipher_result.hachage_bytes;
-    let digest_str = digest_file(temp_file.as_ref()).await?;
+    // let date_premiere_transaction = Utc.timestamp_millis_opt(info_transactions.date_premiere_transaction as i64).unwrap();
+    let date_derniere_transaction = Utc.timestamp_millis_opt(info_transactions.date_derniere_transaction as i64).unwrap();
+    // let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
+
+    // Calculer le digest du fichier (apres modification du header).
+    // let digest_str = digest_file(temp_file.as_ref()).await?;
 
     // Exemple de nom de fichier : AiLanguage_2024-09-24T21:43:07.162Z_I_KozFJz4vLFe7.mgbak
-    let backup_file_name = format!("{}_{}_{}_{}.mgbak", domaine, date_str, "I", &digest_str[digest_str.len()-12..digest_str.len()]);
-    debug!("Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
-    let mut backup_file_path = path_backup.to_owned();
-    backup_file_path.push(backup_file_name);
-    fs::rename(temp_file, backup_file_path)?;
+    // let backup_file_name = format!(
+    //     "{}_{}_{}_{}.mgbak",
+    //     domaine,
+    //     date_str,
+    //     "I",
+    //     &digest_str[digest_str.len()-12..digest_str.len()]  // Garder les 12 derniers chars du digest
+    // );
+    // debug!("Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
+    // let mut backup_file_path = path_backup.to_owned();
+    // backup_file_path.push(backup_file_name);
+    // fs::rename(temp_file, backup_file_path)?;
 
     // Supprimer les transactions traitees. On utilise la date de la plus recente transaction archivee
     // pour s'assurer de ne pas effacer de nouvelles transactions non traitees.
@@ -679,12 +742,47 @@ async fn uploader_consignation() -> Result<(), CommonError> {
 
 /// Fait un backup incremental en transferant les transactions completees avec succes dans un fichier.
 /// Retire les transactions de la base de donnees.
-async fn run_backup_complet<M>(middleware: &M, commande: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine) -> Result<(), CommonError>
+async fn run_backup_complet<M>(middleware: &M, commande: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine, path_backup: &Path)
+    -> Result<(), CommonError>
     where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
 {
     info!("Debut backup complet sur {}", commande.nom_domaine);
 
-    todo!();
+    let domaine = commande.nom_domaine.as_str();
+    let fichiers = organiser_fichiers_backup(path_backup, false).await?;
+
+    {
+        // Verifier si on a au moins un fichier incremental
+        let marqueur_incremental = "I".to_string();
+        let fichiers_incrementaux = fichiers.iter().filter(|f| f.header.type_archive == marqueur_incremental).count();
+        if fichiers_incrementaux == 0 {
+            info!("Aucuns fichiers incrementaux, skip backup complet");
+            return Ok(());
+        }
+    }
+
+    let cles_backup = charger_cles_backup(&fichiers, cle_backup_domaine).await?;
+    let (path_archive, info_transactions) = generer_archive_concatenee(
+        middleware, path_backup, commande, cle_backup_domaine, &fichiers, &cles_backup).await?;
+
+    // Renommer vieilles archives concatenee et incrementales a .old
+    for file in &fichiers {
+        let mut new_name = file.path_fichier.clone();
+        new_name.set_extension(".mgbak.old");
+        tokio::fs::rename(&file.path_fichier, new_name).await?;
+    }
+
+    // Renommer nouvelle archive concatenee
+    rename_work_file(&TypeArchive::Concatene, &info_transactions, domaine, path_backup, path_archive.as_ref()).await?;
+
+    // Uploader nouvelle archive concatenee
+
+    // Supprimer vieilles archives obsoletes (.old)
+    for file in &fichiers {
+        let mut new_name = file.path_fichier.clone();
+        new_name.set_extension(".mgbak.old");
+        tokio::fs::remove_file(new_name).await?;
+    }
 
     Ok(())
 }
@@ -716,4 +814,277 @@ async fn sauvegarder_certificats<M>(middleware: &M, certificats: &HashMap<String
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct FichierArchiveBackup {
+    path_fichier: PathBuf,
+    header: HeaderFichierArchive,
+    position_data: usize,
+}
+
+/// Fait la liste des fichiers de backup sur disque, lit le header et les trie.
+async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) -> Result<Vec<FichierArchiveBackup>, CommonError> {
+    let mut paths = read_dir(backup_path).await?;
+
+    let mgback_ext: OsString = "mgbak".into();
+
+    debug!("organiser_fichiers_backup Parcourir {:?} pour fichiers d'archive .mgbak", backup_path);
+
+    let mut fichiers = Vec::new();
+    loop {
+        let file_path = match paths.next_entry().await? {
+            Some(inner) => {
+                if inner.file_type().await?.is_file() {
+                    let file_path = inner.path();
+                    if file_path.extension() != Some(mgback_ext.as_os_str()) {
+                        continue;  // Wrong extension
+                    }
+                    file_path
+                } else {
+                    continue;  // Directory, skip
+                }
+            },
+            None => break  // Done
+        };
+
+        let mut fp = tokio::fs::File::open(&file_path).await?;
+        let version = fp.read_i16_le().await?;
+        if version != 1 {
+            Err(format!("Unsupported archive version {}", version))?
+        }
+        let taille_header = fp.read_i16_le().await?;
+        let mut header_vec: Vec<u8> = Vec::new();
+        header_vec.resize(taille_header as usize, 0u8);
+        let mut buffer = header_vec.as_mut_slice();
+        fp.read(&mut buffer).await?;
+
+        // Trouver la fin du header json (premier trailing 0x0)
+        let mut header_len_effective = taille_header as usize;
+        if let Some(v) = header_vec.iter().position(|&x| x == 0u8) {
+            header_len_effective = v;
+        }
+        let header: HeaderFichierArchive = serde_json::from_slice(&header_vec[0..header_len_effective])?;
+
+        let position_data = (4 + taille_header) as usize;  // 4 bytes (version u16, taille header u16) + header
+        if inclure_final || header.format != "F".to_string() {
+            fichiers.push(FichierArchiveBackup { path_fichier: file_path, header, position_data });
+        }
+    }
+
+    // Trier les fichiers par date de transactions
+    fichiers.sort_by(|a, b| {
+        a.header.debut_backup.partial_cmp(&b.header.debut_backup).expect("header partial_cmp")
+    });
+
+    debug!("organiser_fichiers_backup Liste fichiers tries\n{:?}", fichiers);
+
+    Ok(fichiers)
+}
+
+async fn charger_cles_backup(fichiers: &Vec<FichierArchiveBackup>, cle_backup_domaine: &CleBackupDomaine)
+    -> Result<HashMap<String, CleSecrete<32>>, CommonError>
+{
+    let cle_ids: Vec<&str> = fichiers.iter().map(|f|f.header.cle_id.as_str()).collect();
+    let mut cle_ids_set = HashSet::new();
+    cle_ids_set.extend(cle_ids.into_iter());
+    cle_ids_set.remove(cle_backup_domaine.cle_id.as_str());
+    if cle_ids_set.len() > 0 {
+        todo!("Charger cles manquantes");
+    }
+
+    let mut cles = HashMap::new();
+    cles.insert(cle_backup_domaine.cle_id.clone(), cle_backup_domaine.cle.clone());
+
+    Ok(cles)
+}
+
+/// Genere une nouvelle archive concatenee a partir de tous les fichiers concatenes et incrementaux existants
+async fn generer_archive_concatenee<M>(
+    middleware: &M, path_backup: &Path, commande_backup: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine,
+    fichiers: &Vec<FichierArchiveBackup>, cles: &HashMap<String, CleSecrete<32>>
+)
+    -> Result<(PathBuf, InfoTransactions), CommonError>
+    where M: GenerateurMessages
+{
+    let idmg = middleware.get_enveloppe_signature().enveloppe_pub.idmg()?;
+    let domaine = commande_backup.nom_domaine.as_str();
+
+    // let (tx_decrypt, rx_decrypt) = mpsc::channel(10);
+    let (tx_deflate, rx_deflate) = mpsc::channel(5);
+    let (tx_transactions, rx_transactions) = mpsc::channel(5);
+    let (tx_info_transactions, rx_info_transactions) = mpsc::channel(1);
+
+    let thread_lecture = lire_archives_thread(fichiers, cles, tx_deflate);
+    let thread_transaction_reader = process_transactions(rx_deflate, tx_transactions, tx_info_transactions);
+    let thread_fichier_concatene = preparer_fichier_chiffrage(
+        path_backup, TypeArchive::Concatene, rx_transactions, rx_info_transactions, cle_backup_domaine, domaine, idmg.as_str());
+
+    // Effectuer le traitement
+    let (lecture_result, result_transactions, result_fichier_concatene) = join![
+        thread_lecture, thread_transaction_reader, thread_fichier_concatene];
+
+    // Consommer resultats
+    lecture_result?;
+    let info_transactions = result_transactions?;
+    let (temp_file, _) = result_fichier_concatene?;
+
+    // Rename work file
+    // rename_work_file(&TypeArchive::Concatene, &info_transactions, domaine, path_backup, temp_file.as_ref()).await?;
+
+    Ok((temp_file, info_transactions))
+}
+
+async fn lire_archives_thread(
+    fichiers: &Vec<FichierArchiveBackup>, cles: &HashMap<String, CleSecrete<32>>,
+    mut tx: Sender<TokioResult<Bytes>>
+)
+    -> Result<(), CommonError>
+{
+    for fichier in fichiers {
+        let cle = match cles.get(&fichier.header.cle_id) {
+            Some(inner) => inner,
+            None => Err(format!("Cle_id {} manquant pour archive {:?}", fichier.header.cle_id, fichier.path_fichier))?
+        };
+
+        let (tx_decrypt, rx_decrypt) = mpsc::channel(10);
+        let thread_dechiffrer = dechiffrer_archive(fichier, cle, tx_decrypt);
+        let thread_deflate_decoder = deflate_decoder_pipe_thread(rx_decrypt, tx.clone());
+
+        let (result_dechiffrer, result_deflate) = join![thread_dechiffrer, thread_deflate_decoder];
+        // Consommer resultats
+        result_dechiffrer?;
+        result_deflate?;
+    }
+
+    debug!("lire_archives_thread Thread terminee");
+
+    Ok(())
+}
+
+async fn dechiffrer_archive(
+    fichier_archive: &FichierArchiveBackup, cle_dechiffrage: &CleSecrete<32>,
+    tx: Sender<TokioResult<Bytes>>
+)
+    -> Result<(), CommonError>
+{
+    debug!("dechiffrer_archive {:?}", fichier_archive.path_fichier);
+
+    let cle_dechiffrage_struct = CleDechiffrageStruct {
+        cle_chiffree: "NA".to_string(),
+        cle_secrete: Some(cle_dechiffrage.to_owned()),
+        format: fichier_archive.header.format.as_str().try_into()?,
+        nonce: Some(fichier_archive.header.nonce.clone()),
+        verification: None,
+    };
+    let mut decipher = DecipherMgs4::new(&cle_dechiffrage_struct)?;
+
+    let mut backup_file = tokio::io::BufReader::new(tokio::fs::File::open(&fichier_archive.path_fichier).await?);
+
+    // Skip header, aller directement au data
+    backup_file.seek(SeekFrom::Start(fichier_archive.position_data as u64)).await?;
+
+    let mut buffer_in = [0u8; 64*1024];
+    let mut buffer_out = [0u8; 64*1024];  // Avec MGS4, decipher output toujours plus petit que input
+    loop {
+        let len = backup_file.read(&mut buffer_in).await?;
+        if len == 0 { break; }
+        let output_len = decipher.update(&buffer_in[..len], &mut buffer_out)?;
+        if output_len > 0 {
+            if let Err(e) = tx.send(Ok(Bytes::from(buffer_out[0..output_len].to_vec()))).await {
+                Err(format!("dechiffrer_archive {:?} Error sending data (update): {:?}", fichier_archive.path_fichier, e))?
+            }
+        }
+    }
+
+    // Decrypt final block, authenticate
+    let output_len = decipher.finalize(&mut buffer_out)?;
+
+    // Pipe out
+    if output_len > 0 {
+        // debug!("dechiffrer_archive Sending last {} bytes", output_len);
+        if let Err(e) = tx.send(Ok(Bytes::from(buffer_out[0..output_len].to_vec()))).await {
+            Err(format!("dechiffrer_archive {:?} Error sending data (final): {:?}", fichier_archive.path_fichier, e))?
+        }
+    }
+
+    // debug!("dechiffrer_archive Archive {:?} dechiffree correctement", fichier_archive.path_fichier);
+
+    Ok(())
+}
+
+async fn deflate_decoder_pipe_thread(rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>) -> Result<(), CommonError> {
+    let stream = ReceiverStream::new(rx);
+    let reader = StreamReader::new(stream);
+    let encoder = DeflateDecoder::new(BufReader::new(reader));
+    let mut encoder_stream = ReaderStream::new(encoder);
+
+    while let Some(result) = encoder_stream.next().await {
+        let data = result?;
+        if let Err(e) = tx.send(Ok(data)).await {
+            error!("deflate_decoder_pipe_thread Error sending data: {:?}", e);
+            Err(e)?;
+        }
+    }
+
+    debug!("deflate_decoder_pipe_thread Thread terminee");
+
+    Ok(())
+}
+
+async fn process_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>, tx_info_transactions: Sender<InfoTransactions>)
+    -> Result<InfoTransactions, CommonError>
+{
+    let stream = ReceiverStream::new(rx);
+    let mut reader = StreamReader::new(stream);
+
+    let mut line = String::new();
+    let mut compteur_transactions = 0;
+    let mut date_premiere = 0;
+    let mut date_derniere = 0;
+
+    loop {
+        let output_len = reader.read_line(&mut line).await?;
+
+        if output_len == 0 {
+            break;  // Done
+        }
+
+        let transaction_str = line.substring(0, output_len);
+        // debug!("process_transactions Transaction lue: \n*/{}\\*", transaction_str);
+
+        // Parse transaction pour garantir structure
+        let transaction: TransactionOwned = serde_json::from_str(transaction_str)?;
+        let date_traitement = match transaction.evenements.as_ref() {
+            Some(evenements) => match evenements.transaction_traitee.as_ref() {
+                Some(inner) => inner,
+                None => Err("process_transactions transaction sans date de traitement")?
+            },
+            None => Err("process_transactions transaction sans elements pour evenements")?
+        };
+
+        // Mettre a jour compteur et marqueurs de date pour l'archive
+        compteur_transactions += 1;
+        let date_traitement_u64 = date_traitement.timestamp_millis() as u64;
+        if date_premiere == 0 { date_premiere = date_traitement_u64; }
+        date_derniere = date_traitement_u64;
+
+        if let Err(e) = tx.send(Ok(Bytes::from(transaction_str.to_string()))).await {
+            error!("process_transactions Error sending data: {:?}", e);
+            Err(e)?;
+        }
+
+        line.clear();  // Reset buffer
+    }
+
+    let info_transactions = InfoTransactions {
+        date_premiere_transaction: date_premiere,
+        date_derniere_transaction: date_derniere,
+        nombre_transactions: compteur_transactions,
+    };
+    tx_info_transactions.send(info_transactions.clone()).await?;
+
+    debug!("process_transactions Fin thread");
+
+    Ok(info_transactions)
 }
