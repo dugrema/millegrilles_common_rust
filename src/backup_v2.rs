@@ -196,7 +196,7 @@ async fn backup_incremental<M>(middleware: &M, commande: &CommandeBackup, cle_ba
     // Verifier si on a au moins une transaction à mettre dans le backup
     let nom_collection = commande.nom_collection_transactions.as_str();
     let collection = middleware.get_collection_typed::<TransactionOwned>(nom_collection)?;
-    let filtre = doc! { TRANSACTION_CHAMP_BACKUP_FLAG: false, TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true };
+    let filtre = doc! { TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true}, TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true };
     let find_options = FindOneOptions::builder()
         .hint(Hint::Name(String::from("backup_transactions")))
         .build();
