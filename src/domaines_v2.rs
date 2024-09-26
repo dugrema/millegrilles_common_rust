@@ -373,7 +373,6 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                                     -> Result<(), Error>
         where M: MiddlewareMessages + BackupStarter
     {
-        warn!("traiter_cedule!");
         let dt = trigger.get_date();
 
         if dt.minute() % 2 == 0 {
