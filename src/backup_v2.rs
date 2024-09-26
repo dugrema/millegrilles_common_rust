@@ -372,7 +372,7 @@ async fn preparer_fichier_chiffrage(
 
     let (marqueur_type_archive, prefixe_nom_work) = match type_fichier {
         TypeArchive::Incremental => ("I", "incremental"),
-        TypeArchive::Concatene => ("C", "concatene)"),
+        TypeArchive::Concatene => ("C", "concatene"),
         _ => Err("Non supporte")?
     };
 
@@ -792,24 +792,18 @@ async fn run_backup_complet<M>(middleware: &M, commande: &CommandeBackup, cle_ba
     let (path_archive, info_transactions) = generer_archive_concatenee(
         middleware, path_backup, commande, cle_backup_domaine, &fichiers, &cles_backup).await?;
 
-    // Renommer vieilles archives concatenee et incrementales a .old
-    for file in &fichiers {
-        let mut new_name = file.path_fichier.clone();
-        new_name.set_extension(".mgbak.old");
-        tokio::fs::rename(&file.path_fichier, new_name).await?;
-    }
+    // Deplacer vieilles archives concatenee et incrementales a /backup.1
+    rotation_repertoires_backup(path_backup, &fichiers).await?;
 
     // Renommer nouvelle archive concatenee
     rename_work_file(&TypeArchive::Concatene, &info_transactions, domaine, path_backup, path_archive.as_ref()).await?;
 
-    // Uploader nouvelle archive concatenee
-
     // Supprimer vieilles archives obsoletes (.old)
-    for file in &fichiers {
-        let mut new_name = file.path_fichier.clone();
-        new_name.set_extension(".mgbak.old");
-        tokio::fs::remove_file(new_name).await?;
-    }
+    // for file in &fichiers {
+    //     let mut new_name = file.path_fichier.clone();
+    //     new_name.set_extension(".mgbak.old");
+    //     tokio::fs::remove_file(new_name).await?;
+    // }
 
     Ok(())
 }
@@ -1240,4 +1234,50 @@ async fn pipe_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Transact
     debug!("process_transactions Fin thread");
 
     Ok(info_transactions)
+}
+
+async fn rotation_repertoires_backup(path_archives: &Path, fichiers: &Vec<FichierArchiveBackup>)
+    -> Result<(), CommonError>
+{
+    if fichiers.len() == 0 {
+        // Aucuns fichiers a conserver dans un nouveau repertoire de backup
+        return Ok(());
+    }
+
+    // Rotation des anciens repertoires de backup au besoin
+    let mut path_first_old = path_archives.to_path_buf();
+    path_first_old.push("backup.1");
+
+    if tokio::fs::try_exists(&path_first_old).await? {
+        // Rotate all backup folders up 1.
+        const MAX_BACKUP_HISTORY: i8 = 4;
+        for i in (1..MAX_BACKUP_HISTORY+1).rev() {
+            let mut path_old = path_archives.to_path_buf();
+            path_old.push(format!("backup.{}", i));
+            if tokio::fs::try_exists(&path_old).await? {
+                if i == MAX_BACKUP_HISTORY {
+                    // Remove, this is the last possible folder
+                    tokio::fs::remove_dir_all(path_old).await?;
+                } else {
+                    let mut path_moved = path_archives.to_path_buf();
+                    path_moved.push(format!("backup.{}", i + 1));
+                    tokio::fs::rename(path_old, path_moved).await?;
+                }
+            }
+        }
+    }
+
+    // Transferer les fichiers vers le repertoire backup.1
+    tokio::fs::create_dir(&path_first_old).await?;
+    for file in fichiers {
+        let filename = file.path_fichier.file_name().expect("filename");
+
+        // Sous-repertoire /backup.1/nomfichier
+        let mut new_name = path_first_old.clone();
+        new_name.push(filename);
+
+        tokio::fs::rename(&file.path_fichier, new_name).await?;
+    }
+
+    Ok(())
 }
