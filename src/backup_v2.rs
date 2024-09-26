@@ -26,7 +26,7 @@ use millegrilles_cryptographie::hachages::HacheurBlake2b512;
 use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::bson::doc;
-use mongodb::options::{FindOneOptions, FindOptions, Hint};
+use mongodb::options::{DeleteOptions, FindOneOptions, FindOptions, Hint};
 use multibase::Base;
 use multihash::Code;
 use substring::Substring;
@@ -602,11 +602,11 @@ async fn traiter_transactions_incremental<M>(
     // pour s'assurer de ne pas effacer de nouvelles transactions non traitees.
     let collection = middleware.get_collection(commande_backup.nom_collection_transactions.as_str())?;
     let filtre = doc! {
-        TRANSACTION_CHAMP_BACKUP_FLAG: false,
-        TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
         TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$lte": date_derniere_transaction},
+        TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
     };
-    collection.delete_many(filtre, None).await?;
+    let options = DeleteOptions::builder().hint(Hint::Name(String::from("backup_transactions"))).build();
+    collection.delete_many(filtre, options).await?;
 
     let fin_traitement = Utc::now();
     debug!("traiter_transactions_incremental Fin, duree: {}", fin_traitement - debut_traitement);
@@ -621,7 +621,7 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
     let nom_collection_transactions = commande_backup.nom_collection_transactions.as_str();
 
     let filtre = doc! {
-        TRANSACTION_CHAMP_BACKUP_FLAG: false,
+        TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
         TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
     };
 
