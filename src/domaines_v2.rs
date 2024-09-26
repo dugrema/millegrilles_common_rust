@@ -371,7 +371,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
     async fn traiter_cedule_base<M>(&self, middleware: &M, trigger: &MessageCedule)
                                     -> Result<(), Error>
-        where M: MiddlewareMessages + BackupStarter
+        where M: MiddlewareMessages + BackupStarter + MongoDao
     {
         let dt = trigger.get_date();
 
@@ -409,9 +409,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     /// Methode a re-implementer dans le trait.
-    async fn traiter_cedule<M>(&self, middleware: &M, trigger: &MessageCedule)
+    async fn traiter_cedule<M>(&self, _middleware: &M, _trigger: &MessageCedule)
                                -> Result<(), Error>
-    where M: MiddlewareMessages + BackupStarter {
+    where M: MiddlewareMessages + BackupStarter + MongoDao {
         Ok(())
     }
 
