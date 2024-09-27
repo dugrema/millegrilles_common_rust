@@ -384,7 +384,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             }
         }
 
-        // if dt.minute() % 30 == 4  // 2 fois par heure, minutes 4 et 34.
+        if dt.minute() % 30 == 4  // 2 fois par heure, minutes 4 et 34.
         {
             // TODO - Configurer backup complet via CoreTopologie/Coupdoeil
             // Concatenation de backup le dimanche a 7:09UTC.
