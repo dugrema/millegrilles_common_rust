@@ -1263,13 +1263,24 @@ async fn synchroniser_consignation<M>(
     debug!("Listes de synchronisation: {:?}", listes);
 
     // Uploader les fichiers manquants du serveur de consignation, en ordre : Final, Concatene, Incremental
-    uploader_fichiers_consignation(domaine, version_effective, listes, &client, url_consignation.as_str()).await?;
+    uploader_fichiers_consignation(domaine, version_effective, &listes, &client, url_consignation.as_str()).await?;
 
     // Downloader les fichiers manquants localement
-    {
+    let mut nouveaux_fichiers_downloades = false;
+    if ! listes.download_final.is_empty() {
+        nouveaux_fichiers_downloades = true;
+        download_backup_files(path_backup, &listes.download_final, domaine, version_effective, &client, &url_consignation).await?;
+    }
 
-        // Declencher regeneration si tous les fichiers manquants ont ete recus
+    if ! listes.download_archives.is_empty() {
+        nouveaux_fichiers_downloades = true;
+        debug!("Download {} archives manquantes", listes.download_archives.len());
+        download_backup_files(path_backup, &listes.download_archives, domaine, version_effective, &client, &url_consignation).await?;
+    }
 
+    if nouveaux_fichiers_downloades {
+        // TODO : Declencher regeneration
+        warn!("De nouveaux fichiers d'archives on ete downloades a partir du serveur de consignation.");
     }
 
     Ok(())
@@ -1469,14 +1480,14 @@ async fn parse_stream_liste_fichiers(fichiers_locaux: &mut HashMap<&str, &Fichie
 }
 
 async fn uploader_fichiers_consignation<'a>(
-    domaine: &str, version: &str, mut information_sync: InformationSynchronisation<'a>, client: &reqwest::Client, url_consignation: &str
+    domaine: &str, version: &str, information_sync: &InformationSynchronisation<'a>, client: &reqwest::Client, url_consignation: &str
 )
     -> Result<(), CommonError>
 {
-    for fichier in information_sync.upload_final {
+    for fichier in &information_sync.upload_final {
         if fichier.header.type_archive.as_str() == "F" {
             debug!("uploader_fichiers_consignation Uploader fichier final {:?}", fichier.path_fichier.file_name());
-            put_backup_file(domaine, version, client, url_consignation, fichier).await?;
+            put_backup_file(domaine, version, client, url_consignation, *fichier).await?;
         } else {
             Err(format!("Fichier {:?} mis dans la liste des fichiers finaux, le header corrompu", fichier.path_fichier))?
         }
@@ -1492,7 +1503,7 @@ async fn uploader_fichiers_consignation<'a>(
             if fichier_concatene.is_some() {
                 Err("backup_v2.uploader_fichiers_consignation Plusieurs fichiers concatene a uploader")?
             }
-            fichier_concatene = Some(*f);
+            fichier_concatene = Some(f);
         }
     }
 
@@ -1501,10 +1512,10 @@ async fn uploader_fichiers_consignation<'a>(
         put_backup_file(domaine, version, client, url_consignation, fichier).await?;
     }
 
-    for fichier in information_sync.upload_archives {
+    for fichier in &information_sync.upload_archives {
         if fichier.header.type_archive.as_str() == "I" {
             debug!("uploader_fichiers_consignation Uploader fichier incremental {:?}", fichier.path_fichier.file_name());
-            put_backup_file(domaine, version, client, url_consignation, fichier).await?;
+            put_backup_file(domaine, version, client, url_consignation, *fichier).await?;
         }
     }
 
@@ -1543,6 +1554,66 @@ async fn put_backup_file(domaine: &str, version: &str, client: &Client, url_cons
 
     if resultat_upload.status() != 200 {
         Err(format!("backup_v2.put_backup_file Erreur upload fichier {:?}, status : {}", fichier.path_fichier, resultat_upload.status()))?
+    }
+
+    Ok(())
+}
+
+async fn download_backup_files(path_backup: &Path, liste: &Vec<String>, domaine: &str, version: &str, client: &Client, url_consignation: &str)
+    -> Result<(), CommonError>
+{
+
+    for nom_fichier in liste {
+        let mut split: Vec<&str> = nom_fichier.split("_").collect();
+        let file_end = split.pop().expect("version").to_string();
+        let digest_suffix = file_end.split(".").next().expect("split suffix");
+
+        let mut path_backup_file = path_backup.to_owned();
+        path_backup_file.push(nom_fichier);
+        let mut path_work_file = path_backup.to_owned();
+        path_work_file.push(format!("{}.work", nom_fichier));
+
+        let url_download = match nom_fichier.contains("_F_") {
+            true => {
+                format!("{}/fichiers_transfert/backup_v2/{}/final/{}", url_consignation, domaine, nom_fichier)
+            },
+            false => {
+                format!("{}/fichiers_transfert/backup_v2/{}/archives/{}/{}", url_consignation, domaine, version, nom_fichier)
+            }
+        };
+
+        let response = client.get(url_download.as_str())
+            .send().await?;
+
+        if response.status() != 200 {
+            Err(format!("download_backup_files Download {} status erreur: {}", url_download, response.status()))?
+        }
+
+        let mut backup_work_file = tokio::io::BufWriter::new(tokio::fs::File::create(path_work_file.as_path()).await?);
+
+        let byte_stream = response.bytes_stream();
+        let mut reader_response = StreamReader::new(byte_stream.map_err(convert_reader_err));
+
+        let mut digester = HacheurBuilder::new().digester(Code::Blake2b512).base(Base::Base58Btc).build();
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let output_len = reader_response.read(&mut buffer).await?;
+            if output_len == 0 { break; }
+            backup_work_file.write_all(buffer[0..output_len].as_ref()).await?;
+            digester.update(buffer[0..output_len].as_ref());
+        }
+        backup_work_file.shutdown().await?;
+
+        let digest = digester.finalize();
+        debug!("Digest {} (suffix: {}) pour fichier {}", digest, digest_suffix, nom_fichier);
+        if ! digest.as_str().ends_with(digest_suffix) {
+            // Supprimer fichier (invalide)
+            tokio::fs::remove_file(path_work_file.as_path()).await?;
+            Err("backup_v2.download_backup_files Erreur download fichier, digest mismatch")?
+        }
+
+        // Rename work file
+        tokio::fs::rename(path_work_file.as_path(), path_backup_file.as_path()).await?;
     }
 
     Ok(())
