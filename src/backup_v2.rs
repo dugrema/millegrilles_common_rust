@@ -8,6 +8,8 @@ use std::io::{ErrorKind, SeekFrom};
 use std::ops::Index;
 use std::path::{Path, PathBuf};
 use fs2::FileExt;
+use futures_util::{StreamExt, TryStreamExt};
+
 use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct, CleDechiffrageStruct, Decipher};
@@ -16,7 +18,6 @@ use millegrilles_cryptographie::x25519::{chiffrer_asymmetrique_ed25519, deriver_
 use serde::{Deserialize, Serialize};
 use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use async_compression::tokio::bufread::{DeflateEncoder, GzipEncoder, DeflateDecoder};
-use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender, Receiver};
 
@@ -29,6 +30,7 @@ use mongodb::bson::doc;
 use mongodb::options::{DeleteOptions, FindOneOptions, FindOptions, Hint};
 use multibase::Base;
 use multihash::Code;
+use reqwest::{Body, Client, Response};
 use substring::Substring;
 use tokio::fs::read_dir;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, Result as TokioResult};
@@ -45,7 +47,7 @@ use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::db_structs::TransactionOwned;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::error::Error as CommonError;
+use crate::error::{Error as CommonError, Error};
 use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
 use crate::recepteur_messages::TypeMessage;
@@ -134,7 +136,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         }
 
         // Synchroniser les archives avec le serveur de consignation
-        if let Err(e) = uploader_consignation(middleware, path_backup.as_path(), &serveur_consignation).await {
+        if let Err(e) = synchroniser_consignation(middleware, &commande, path_backup.as_path(), &serveur_consignation).await {
             error!("thread_backup_v2 Erreur durant upload des fichiers de backup: {:?}", e);
         }
 
@@ -716,57 +718,6 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
     Ok(info_transactions)
 }
 
-/// Upload le fichier de backup vers la consignation.
-async fn uploader_consignation<M>(middleware: &M, path_backup: &Path, serveur_consignation: &ReponseInformationConsignationFichiers)
-    -> Result<(), CommonError>
-    where M: GenerateurMessages
-{
-
-    let enveloppe_privee = middleware.get_enveloppe_signature();
-    let cert_ca = enveloppe_privee.enveloppe_ca.chaine_pem()?;
-    let ca_cert_pem = match cert_ca.last() { Some(cert) => cert.as_str(), None => Err(format!("Certificat CA manquant"))? };
-    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
-
-    let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
-    let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
-    cert_pem_list.insert(0, cle_privee_pem.to_string());
-    let pem_keycert = cert_pem_list.join("\n");
-
-    let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
-    let client = reqwest::Client::builder()
-        .add_root_certificate(root_ca)
-        .identity(identity)
-        .https_only(true)
-        // .http1_only()
-        .use_rustls_tls()
-        // .http2_adaptive_window(true)
-        .build()?;
-
-    let url_consignation = match &serveur_consignation.consignation_url {
-        Some(url) => url.to_owned(),
-        None => match &serveur_consignation.hostnames {
-            Some(hostnames) => {
-                match hostnames.get(0) {
-                    Some(hostname) => {
-                        format!("https://{}:444", hostname)
-                    },
-                    None => Err("uploader_consignation Pas de url/hostnames disponibles pour consignation (1)")?
-                }
-
-            },
-            None => Err("uploader_consignation Pas de url/hostnames disponibles pour consignation (2)")?
-        }
-    };
-
-    warn!("uploader_consignation - TODO - uploader archives de transactions vers consignation");
-
-    // let resultat = client.get(format!("{}/fichiers_transfert/backup_v2/a/b", url_consignation)).send().await?;
-    //
-    // debug!("Resultat get https: {:?}", resultat);
-
-    Ok(())
-}
-
 /// Fait un backup incremental en transferant les transactions completees avec succes dans un fichier.
 /// Retire les transactions de la base de donnees.
 async fn run_backup_complet<M>(middleware: &M, commande: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine, path_backup: &Path)
@@ -842,6 +793,7 @@ pub struct FichierArchiveBackup {
     pub path_fichier: PathBuf,
     pub header: HeaderFichierArchive,
     pub position_data: usize,
+    pub digest_suffix: String,
 }
 
 /// Fait la liste des fichiers de backup sur disque, lit le header et les trie.
@@ -887,12 +839,17 @@ pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) 
         }
         let header: HeaderFichierArchive = serde_json::from_slice(&header_vec[0..header_len_effective])?;
 
+        // Extrait le digest partiel du nom du fichier
+        let nom_fichier = file_path.file_stem().expect("file stem").to_str().expect("nom_fichier to_str");
+        let mut split: Vec<&str> = nom_fichier.split("_").collect();
+        let digest_suffix = split.pop().expect("version").to_string();
+
         // Verification d'integrite entre les fichiers. On s'assure que le fichier courant
         // n'as pas de transactions plus anciennes que la derniere transaction du fichier precedent.
 
         let position_data = (4 + taille_header) as usize;  // 4 bytes (version u16, taille header u16) + header
         if inclure_final || header.format != "F".to_string() {
-            fichiers.push(FichierArchiveBackup { path_fichier: file_path, header, position_data });
+            fichiers.push(FichierArchiveBackup { path_fichier: file_path, header, position_data, digest_suffix });
         }
     }
 
@@ -1277,6 +1234,315 @@ async fn rotation_repertoires_backup(path_archives: &Path, fichiers: &Vec<Fichie
         new_name.push(filename);
 
         tokio::fs::rename(&file.path_fichier, new_name).await?;
+    }
+
+    Ok(())
+}
+
+/// Upload le fichier de backup vers la consignation.
+async fn synchroniser_consignation<M>(
+    middleware: &M, commande_backup: &CommandeBackup, path_backup: &Path, serveur_consignation: &ReponseInformationConsignationFichiers
+)
+    -> Result<(), CommonError>
+    where M: GenerateurMessages
+{
+    let domaine = commande_backup.nom_domaine.as_str();
+
+    let (client, url_consignation) = preparer_client_consignation(middleware, &serveur_consignation)?;
+
+    // Determiner version de backup
+    let (fichiers_locaux, version) = trouver_version_backup(
+        domaine, path_backup, &client, url_consignation.as_str()).await?;
+    let version_effective = match version.as_ref() {
+        Some(version) => version.as_str(),
+        None => "NEW"
+    };
+
+    // Downloader les listes de fichier (fichiers finaux et version courante)
+    let listes = download_liste_fichiers_backup(domaine, version_effective, &fichiers_locaux, &client, url_consignation.as_str()).await?;
+    debug!("Listes de synchronisation: {:?}", listes);
+
+    // Uploader les fichiers manquants du serveur de consignation, en ordre : Final, Concatene, Incremental
+    uploader_fichiers_consignation(domaine, version_effective, listes, &client, url_consignation.as_str()).await?;
+
+    // Downloader les fichiers manquants localement
+    {
+
+        // Declencher regeneration si tous les fichiers manquants ont ete recus
+
+    }
+
+    Ok(())
+}
+
+fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &&ReponseInformationConsignationFichiers)
+                                   -> Result<(reqwest::Client, String), CommonError>
+where M: GenerateurMessages
+{
+    let enveloppe_privee = middleware.get_enveloppe_signature();
+    let cert_ca = enveloppe_privee.enveloppe_ca.chaine_pem()?;
+    let ca_cert_pem = match cert_ca.last() {
+        Some(cert) => cert.as_str(),
+        None => Err(format!("Certificat CA manquant"))?
+    };
+    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+
+    let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
+    let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
+    cert_pem_list.insert(0, cle_privee_pem.to_string());
+    let pem_keycert = cert_pem_list.join("\n");
+
+    let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
+    let client = reqwest::Client::builder()
+        .add_root_certificate(root_ca)
+        .identity(identity)
+        .https_only(true)
+        .use_rustls_tls()
+        .http2_adaptive_window(true)
+        .build()?;
+
+    let url_consignation = match &serveur_consignation.consignation_url {
+        Some(url) => url.to_owned(),
+        None => match &serveur_consignation.hostnames {
+            Some(hostnames) => {
+                match hostnames.get(0) {
+                    Some(hostname) => {
+                        format!("https://{}:444", hostname)
+                    },
+                    None => Err("uploader_consignation Pas de url/hostnames disponibles pour consignation (1)")?
+                }
+            },
+            None => Err("backup_v2.uploader_consignation Pas de url/hostnames disponibles pour consignation (2)")?
+        }
+    };
+    Ok((client, url_consignation))
+}
+
+#[derive(Debug, Deserialize)]
+struct VersionBackup {
+    date: u64,
+    version: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReponseVersionsBackup {
+    version_courante: Option<VersionBackup>,
+    versions: Option<Vec<VersionBackup>>,
+}
+
+async fn trouver_version_backup(domaine: &str, path_backup: &Path, client: &reqwest::Client, url_consignation: &str)
+    -> Result<(Vec<FichierArchiveBackup>, Option<String>), CommonError>
+{
+    // Recuperer les fichiers presents localement
+    let fichiers = organiser_fichiers_backup(path_backup, false).await?;
+    let mut version_courante_locale = None;
+    for f in &fichiers {
+        if f.header.type_archive.as_str() == "C" {
+            if version_courante_locale.is_some() {
+                Err("backup_v2.trouver_version_backup Plus d'un fichier concatene present")?
+            } else {
+                version_courante_locale = Some(f.digest_suffix.clone());
+            }
+        }
+    }
+
+    debug!("Version courante du backup: {:?}", version_courante_locale);
+
+    // Interroger le serveur de consignation
+    let mut version_remote: Option<String> = None;
+    let resultat = client.get(format!("{}/fichiers_transfert/backup_v2/{}/archives", url_consignation, domaine)).send().await?;
+    debug!("trouver_version_backup Resultat get https: {:?}", resultat);
+    if resultat.status() != 200 {
+        Err(format!("backup_v2.trouver_version_backup Erreur lors de la recuperation des versions de backup sur consignation, HTTP: {}",
+                    resultat.status()))?
+    } else {
+        let versions: ReponseVersionsBackup = resultat.json().await?;
+        debug!("Versions backup recu: {:?}", versions);
+        if let Some(version) = versions.version_courante.as_ref() {
+            version_remote = Some(version.version.clone());
+        }
+    }
+
+    let version = match version_courante_locale {
+        // Privilegier la version locale. Permet d'uploader une nouvelle archive concatene lorsque presente
+        Some(version_locale) => Some(version_locale),
+        None => match version_remote {
+            // Lorsqu'on n'a pas de version locale, utiliser la version remote si presente.
+            Some(version_remote) => Some(version_remote),
+            // Nouveau domaine, aucuns fichier concatene present
+            None => None
+        }
+    };
+
+    Ok((fichiers, version))
+}
+
+#[derive(Debug)]
+struct InformationSynchronisation<'a> {
+    upload_final: Vec<&'a FichierArchiveBackup>,
+    download_final: Vec<String>,
+    upload_archives: Vec<&'a FichierArchiveBackup>,
+    download_archives: Vec<String>,
+}
+
+async fn download_liste_fichiers_backup<'a>(
+    domaine: &str, version: &str, fichiers: &'a Vec<FichierArchiveBackup>, client: &reqwest::Client, url_consignation: &str
+)
+    -> Result<InformationSynchronisation<'a>, CommonError>
+{
+    let mut info_sync = InformationSynchronisation {
+        upload_final: vec![],
+        download_final: vec![],
+        upload_archives: vec![],
+        download_archives: vec![],
+    };
+
+    let mut set_final_local = HashMap::new();
+    let mut set_archives_local = HashMap::new();
+    for f in fichiers {
+        let file_name = f.path_fichier.file_name().expect("f.path_fichier file name")
+            .to_str().expect("f.path_fichier to str");
+        if f.header.type_archive.as_str() == "F" {
+            set_final_local.insert(file_name, f);
+        } else {
+            set_archives_local.insert(file_name, f);
+        }
+    }
+
+    let resultat_fichiers_finaux = client.get(
+        format!("{}/fichiers_transfert/backup_v2/{}/final", url_consignation, domaine)).send().await?;
+    debug!("Resultat fichiers finaux: {:?}", resultat_fichiers_finaux);
+    if resultat_fichiers_finaux.status() != 200 {
+        Err(format!("backup_v2.download_liste_fichiers_backup Erreur reponse serveur sur GET final, status: {}", resultat_fichiers_finaux.status()))?
+    }
+
+    // Retirer fichiers connus partout de set_final_local. Recuperer liste de fichiers manquants localement a downloader.
+    info_sync.download_final = parse_stream_liste_fichiers(&mut set_final_local, resultat_fichiers_finaux).await?;
+    // Les fichiers restants dans le set doivent etre uploades.
+    info_sync.upload_final.extend(set_final_local.into_iter().map(|(_,v)| v));
+
+    let resultat_fichiers_archives = client.get(
+        format!("{}/fichiers_transfert/backup_v2/{}/archives/{}", url_consignation, domaine, version)).send().await?;
+    debug!("Resultat fichiers archives: {:?}", resultat_fichiers_archives);
+    if resultat_fichiers_archives.status() != 200 {
+        Err(format!("backup_v2.download_liste_fichiers_backup Erreur reponse serveur sur GET final, status: {}", resultat_fichiers_archives.status()))?
+    }
+
+    // Retirer fichiers connus partout de set_final_local. Recuperer liste de fichiers manquants localement a downloader.
+    info_sync.download_archives = parse_stream_liste_fichiers(&mut set_archives_local, resultat_fichiers_archives).await?;
+    // Les fichiers restants dans le set doivent etre uploades.
+    info_sync.upload_archives.extend(set_archives_local.into_iter().map(|(_,v)| v));
+
+    Ok(info_sync)
+}
+
+fn convert_reader_err(err: reqwest::Error) -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Other, format!("parse_stream_liste_fichiers Error {:?}", err))
+}
+
+async fn parse_stream_liste_fichiers(fichiers_locaux: &mut HashMap<&str, &FichierArchiveBackup>, response: Response)
+    -> Result<Vec<String>, CommonError>
+{
+    let byte_stream = response.bytes_stream();
+    let mut reader_response = StreamReader::new(byte_stream.map_err(convert_reader_err));
+
+    debug!("Fichiers locaux: {:?}", fichiers_locaux.keys());
+
+    // Liste de fichiers manquants du set de fichiers locaux
+    let mut fichiers_manquants = Vec::new();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let output_len = reader_response.read_line(&mut line).await?;
+        if output_len == 0 { break; }
+        let nom_fichier = &line[..output_len].trim();
+        debug!("parse_stream_liste_fichiers Fichier: *{}*", nom_fichier);
+        let removed = fichiers_locaux.remove(*nom_fichier);
+        if removed.is_none() {
+            // Fichier manquant localement
+            debug!("Fichier manquant localement trouve: {}", nom_fichier);
+            fichiers_manquants.push(nom_fichier.to_string());
+        }
+    }
+
+    Ok(fichiers_manquants)
+}
+
+async fn uploader_fichiers_consignation<'a>(
+    domaine: &str, version: &str, mut information_sync: InformationSynchronisation<'a>, client: &reqwest::Client, url_consignation: &str
+)
+    -> Result<(), CommonError>
+{
+    for fichier in information_sync.upload_final {
+        if fichier.header.type_archive.as_str() == "F" {
+            debug!("uploader_fichiers_consignation Uploader fichier final {:?}", fichier.path_fichier.file_name());
+            put_backup_file(domaine, version, client, url_consignation, fichier).await?;
+        } else {
+            Err(format!("Fichier {:?} mis dans la liste des fichiers finaux, le header corrompu", fichier.path_fichier))?
+        }
+    }
+
+    // Verifier si on doit uploader un fichier concatene. Ceci change la version sur la consignation.
+    let mut fichier_concatene: Option<&FichierArchiveBackup> = None;
+    for f in &information_sync.upload_archives {
+        if f.header.type_archive.as_str() == "C" {
+            if f.digest_suffix.as_str() != version {
+                Err("backup_v2.uploader_fichiers_consignation Fichier concatene : mismatch de version")?
+            }
+            if fichier_concatene.is_some() {
+                Err("backup_v2.uploader_fichiers_consignation Plusieurs fichiers concatene a uploader")?
+            }
+            fichier_concatene = Some(*f);
+        }
+    }
+
+    if let Some(fichier) = fichier_concatene {
+        debug!("uploader_fichiers_consignation Uploader le fichier concatene {:?}", fichier.path_fichier.file_name());
+        put_backup_file(domaine, version, client, url_consignation, fichier).await?;
+    }
+
+    for fichier in information_sync.upload_archives {
+        if fichier.header.type_archive.as_str() == "I" {
+            debug!("uploader_fichiers_consignation Uploader fichier incremental {:?}", fichier.path_fichier.file_name());
+            put_backup_file(domaine, version, client, url_consignation, fichier).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn put_backup_file(domaine: &str, version: &str, client: &Client, url_consignation: &str, fichier: &FichierArchiveBackup)
+    -> Result<(), Error>
+{
+    // Verifier l'integrite du fichier avant l'upload
+    let digest = digest_file(fichier.path_fichier.as_path()).await?;
+    if !digest.ends_with(fichier.digest_suffix.as_str()) {
+        Err(format!("backup_v2.put_backup_file Fichier corrompu, digest mismatch sur {:?}", fichier.path_fichier))?
+    }
+
+    let nom_fichier = fichier.path_fichier.file_name().expect("file name").to_str().expect("file name to_str");
+
+    let url_upload = match fichier.header.type_archive.as_str() {
+        "C" => {
+            format!("{}/fichiers_transfert/backup_v2/{}/concatene/{}/{}", url_consignation, domaine, version, nom_fichier)
+        },
+        "I" => {
+            format!("{}/fichiers_transfert/backup_v2/{}/incremental/{}/{}", url_consignation, domaine, version, nom_fichier)
+        },
+        "F" => {
+            format!("{}/fichiers_transfert/backup_v2/{}/final/{}", url_consignation, domaine, nom_fichier)
+        },
+        _ => Err(format!("backup_v2.put_backup_file Mauvais type d'archive, doit etre C, I ou F : {}", fichier.header.type_archive))?
+    };
+
+    let file_reader = tokio::io::BufReader::new(tokio::fs::File::open(fichier.path_fichier.as_path()).await?);
+    let file_stream = ReaderStream::new(file_reader);
+    let resultat_upload = client.put(url_upload)
+        .body(Body::wrap_stream(file_stream))
+        .send().await?;
+
+    if resultat_upload.status() != 200 {
+        Err(format!("backup_v2.put_backup_file Erreur upload fichier {:?}, status : {}", fichier.path_fichier, resultat_upload.status()))?
     }
 
     Ok(())
