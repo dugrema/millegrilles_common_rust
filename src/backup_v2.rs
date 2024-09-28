@@ -1306,12 +1306,19 @@ where M: GenerateurMessages
     cert_pem_list.insert(0, cle_privee_pem.to_string());
     let pem_keycert = cert_pem_list.join("\n");
 
-    let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
+    // let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
+
+    let cert = pem_keycert.as_bytes();
+    let key = cle_privee_pem.as_bytes();
+    let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
+
     let client = reqwest::Client::builder()
         .add_root_certificate(root_ca)
-        .identity(identity)
+        //.identity(identity)
+        .identity(pkcs8)
         .https_only(true)
-        .use_rustls_tls()
+        .use_native_tls()
+        // .use_rustls_tls()
         .connect_timeout(core::time::Duration::new(20, 0))
         .http2_adaptive_window(true)
         .build()?;
