@@ -13,6 +13,7 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures::pin_mut;
 use log::{debug, error, info, warn};
+
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CipherResultVec, CleChiffrageHandler, CleChiffrageStruct};
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, epochseconds, MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
@@ -50,6 +51,7 @@ use crate::middleware_db::MiddlewareDb;
 use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
+use crate::error::Error as CommonError;
 
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
@@ -1101,7 +1103,7 @@ pub struct BackupInformation {
     /// Path de travail pour conserver les fichiers temporaires de chiffrage
     workpath: PathBuf,
     /// Identificateur unique du backup (collateur)
-    uuid_backup: String,
+    pub uuid_backup: String,
     /// Repertoire temporaire qui est supprime automatiquement apres le backup.
     tmp_workdir: Option<TempDir>,
 }
@@ -1652,7 +1654,7 @@ pub async fn emettre_evenement_backup<M>(
 }
 
 pub async fn emettre_evenement_backup_catalogue<M>(
-    middleware: &M, info_backup: &BackupInformation, transactions_traitees: i64) -> Result<(), Box<dyn Error>>
+    middleware: &M, info_backup: &BackupInformation, transactions_traitees: i64) -> Result<(), CommonError>
     where M: GenerateurMessages
 {
     let value = json!({

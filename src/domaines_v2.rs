@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
-use crate::backup::{emettre_evenement_backup, reset_backup_flag, BackupInformation, BackupStarter};
+use crate::backup::{emettre_evenement_backup, emettre_evenement_backup_catalogue, reset_backup_flag, BackupInformation, BackupStarter};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
@@ -417,14 +417,42 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         Ok(())
     }
 
-    async fn repondre_backup_obsolete<M>(&self, middleware: &M, _message: MessageValide)
-                                          -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where M: Middleware
+    /// Repondre au gestionnaire de backup. Note : c'est une reponse qui ne represente pas l'etat
+    /// du backup_v2.
+    async fn repondre_backup_obsolete<M>(&self, middleware: &M, message: MessageValide)
+        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+        where M: Middleware
     {
         let domaine = self.get_nom_domaine();
-        let info_backup =  BackupInformation::new(domaine, self.get_collection_transactions().unwrap(), None)?;
+        let (reply_to, correlation_id) = match &message.type_message {
+            TypeMessageOut::Commande(message) => {
+                let reply_to = match message.reply_to.as_ref() {Some(inner)=>inner, None=>Err("domaines_v2.repondre_backup_obsolete Reply_to manquant")?};
+                let correlation_id = match message.correlation_id.as_ref() {Some(inner)=>inner, None=>Err("domaines_v2.repondre_backup_obsolete Reply_to manquant")?};
+                (reply_to, correlation_id)
+            },
+            _ => Err("repondre_backup_obsolete Mauvais type de message")?
+        };
+        // Indiquer au processus trigger qu'on demarre le backup
+        let routage = RoutageMessageReponse::new(reply_to, correlation_id);
+        middleware.repondre(routage, json!({"ok": true, "code": 2, "err": "Backup V1 obsolete"})).await?;
+
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(inner) => inner,
+            None => Err("domaines_v2.repondre_backup_obsolete Nom de collection manquant du gestionnaire")?
+        };
+        let collection_transactions_traitees = format!("{}/transactions_traitees", nom_collection_transactions);
+        let collection = middleware.get_collection(collection_transactions_traitees.as_str())?;
+        let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
+        let nombre_transactions = collection.count_documents(None, options).await? as i64;
+
+        let mut info_backup =  BackupInformation::new(domaine, self.get_collection_transactions().unwrap(), None)?;
+        info_backup.uuid_backup = correlation_id.to_string();
+        emettre_evenement_backup(middleware, &info_backup, "backupDemarre", &Utc::now()).await?;
+        debug!("repondre_backup_obsolete Repondre {} transactions traitees", nombre_transactions);
+        emettre_evenement_backup_catalogue(middleware, &info_backup, nombre_transactions).await?;
         emettre_evenement_backup(middleware, &info_backup, "backupTermine", &Utc::now()).await?;
-        Ok(Some(middleware.reponse_err(Some(2), None, Some("Obsolete"))?))
+
+        Ok(None)
     }
 
     async fn demarrer_backup<M>(&self, middleware: &M, message: MessageValide)
@@ -637,7 +665,8 @@ async fn get_nombre_transactions<M,G>(gestionnaire: &G, middleware: &M)
         }
     };
 
-    let collection = middleware.get_collection(nom_collection_transactions.as_str())?;
+    let collection_transactions_traitees = format!("{}/transactions_traitees", nom_collection_transactions);
+    let collection = middleware.get_collection(collection_transactions_traitees.as_str())?;
     let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
     let nombre_transactions = collection.count_documents(None, options).await? as i64;
 
