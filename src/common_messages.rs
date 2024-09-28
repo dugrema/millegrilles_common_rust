@@ -14,6 +14,7 @@ use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 
 use crate::dechiffrage::DataChiffre;
 
+use crate::error::Error as CommonError;
 use crate::hachages::verifier_multihash;
 use crate::recepteur_messages::TypeMessage;
 
@@ -287,6 +288,29 @@ impl From<CleSecreteSerialisee> for ResponseRequestDechiffrageV2Cle {
             verification: match &value.verification {Some(inner) => Some(inner.to_string()), None => None},
             signature: None,
         }
+    }
+}
+
+impl TryInto<CleSecreteSerialisee> for ResponseRequestDechiffrageV2Cle {
+    type Error = CommonError;
+
+    fn try_into(self) -> Result<CleSecreteSerialisee, CommonError> {
+        Ok(CleSecreteSerialisee {
+            cle_secrete_base64: heapless::String::try_from(self.cle_secrete_base64.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee>  cle_secrete_base64"))?,
+            cle_id: match &self.cle_id {Some(inner) => {
+                let value = heapless::String::try_from(inner.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee> cle_id"))?;
+                Some(value)
+            }, None => None},
+            format: self.format.clone(),
+            nonce: match &self.nonce {Some(inner) => {
+                let value = heapless::String::try_from(inner.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee> nonce"))?;
+                Some(value)
+            }, None => None},
+            verification: match &self.verification {Some(inner) => {
+                let value = heapless::String::try_from(inner.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee> verification"))?;
+                Some(value)
+            }, None => None},
+        })
     }
 }
 
