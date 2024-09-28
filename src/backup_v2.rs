@@ -1308,6 +1308,7 @@ where M: GenerateurMessages
         .add_root_certificate(root_ca)
         .identity(identity)
         .https_only(true)
+        .http1_only()
         .use_rustls_tls()
         .connect_timeout(core::time::Duration::new(20, 0))
         // .http2_adaptive_window(true)
