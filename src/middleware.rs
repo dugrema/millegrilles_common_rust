@@ -38,7 +38,8 @@ use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
 use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::redis_dao::RedisDao;
-use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance, marquer_transaction_v2};
+use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance};
+use crate::transactions_v2::marquer_transaction_v2;
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
