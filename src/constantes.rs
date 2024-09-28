@@ -399,6 +399,8 @@ pub const COMMANDE_DECLENCHER_BACKUP: &str = EVENEMENT_BACKUP_DECLENCHER;
 pub const COMMANDE_RESET_BACKUP: &str = "resetBackup";
 pub const COMMANDE_REGENERER: &str = "regenerer";
 
+pub const COMMANDE_DECLENCHER_BACKUP_V2: &str = "declencherBackupV2";
+
 // Commande RelaiWeb
 pub const COMMANDE_RELAIWEB_GET: &str = "get";
 pub const COMMANDE_RELAIWEB_POST: &str = "post";

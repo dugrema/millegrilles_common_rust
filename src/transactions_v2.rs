@@ -2,13 +2,16 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
+use base64::{Engine as _, engine::general_purpose};
+use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
-use mongodb::bson::doc;
-use mongodb::Cursor;
-use mongodb::options::{FindOptions, Hint};
+use mongodb::bson::{doc, Bson};
+use mongodb::{bson, Cursor};
+use mongodb::options::{FindOptions, Hint, UpdateOptions};
 use tokio::join;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
+
 use crate::backup_v2::{charger_cles_backup, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, PATH_FICHIERS_ARCHIVES};
 use crate::certificats::{charger_enveloppe, ValidateurX509};
 use crate::constantes::*;
@@ -17,7 +20,7 @@ use crate::domaines_traits::AiguillageTransactions;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::mongo_dao::MongoDao;
 use crate::messages_generiques::EvenementRegeneration;
-use crate::transactions::{regenerer_charger_certificats, TransactionCorePkiNouveauCertificat};
+use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
 
 pub async fn regenerer_v2<M,D,T>(
@@ -58,7 +61,7 @@ where
     };
     let thread_lire_transactions = lire_transactions_fichiers(info_regeneration, tx_transaction);
     let thread_traiter_transactions = traiter_transactions_receiver(
-        middleware, rx_transaction, processor, true);
+        middleware, nom_collection_transactions, rx_transaction, processor, true);
 
     let (result_lire, result_traiter) = join![thread_lire_transactions, thread_traiter_transactions];
     result_lire?;
@@ -101,7 +104,7 @@ where
     middleware.set_regeneration(); // Desactiver emission de messages
 
     // Executer toutes les transactions du curseur en ordre
-    if let Err(e) = regenerer_transactions_v2(middleware, resultat_transactions, processor, skip_certificats).await {
+    if let Err(e) = regenerer_transactions_v2(middleware, nom_collection_transactions, resultat_transactions, processor, skip_certificats).await {
         error!("regenerer Erreur regeneration domaine {} : {:?}", nom_domaine, e);
     } else {
         info!("transactions.regenerer Resultat regenerer {:?}", nom_collection_transactions);
@@ -122,7 +125,7 @@ where
 }
 
 async fn traiter_transactions_receiver<'a, M, T>(
-    middleware: &M, mut rx: Receiver<TransactionOwned>, processor: &T, skip_certificats: bool)
+    middleware: &M, nom_collection_transactions: &str, mut rx: Receiver<TransactionOwned>, processor: &T, skip_certificats: bool)
     -> Result<(), CommonError>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
@@ -136,7 +139,21 @@ where
 
         // let uuid_transaction = message_identificateurs.id.as_str();
         let message_id = transaction.id.to_owned();
-        debug!("regenerer_transactions Traiter transaction id:{} => {:?}", message_id, transaction.routage);
+        debug!("traiter_transactions_receiver Traiter transaction id:{} => {:?}", message_id, transaction.routage);
+        let date_traitee = match transaction.evenements.as_ref() {
+            Some(inner) => match inner.transaction_traitee.as_ref() {
+                Some(inner) => inner.clone(),
+                None => {
+                    warn!("regenerer_transactions_v2 Transaction sans date de traitement, {} **SKIP**", message_id);
+                    continue
+                }
+            },
+            None => {
+                // Skip
+                warn!("regenerer_transactions_v2 Transaction sans evenements (date de traitement), {} **SKIP**", message_id);
+                continue
+            }
+        };
 
         // Charger pubkey du certificat - en cas de migration, utiliser certificat original
         let pre_migration = transaction.pre_migration.clone();
@@ -164,19 +181,19 @@ where
                         let message: TransactionCorePkiNouveauCertificat = match serde_json::from_str(transaction.contenu.as_str()) {
                             Ok(inner) => inner,
                             Err(e) => {
-                                debug!("Erreur chargement certificat via transaction CorePki (1) : {:?}", e);
+                                debug!("traiter_transactions_receiver Erreur chargement certificat via transaction CorePki (1) : {:?}", e);
                                 continue
                             }
                         };
                         match charger_enveloppe(message.pem.as_str(), None, None) {
                             Ok(inner) => Arc::new(inner),
                             Err(e) => {
-                                debug!("Erreur chargement certificat via transaction CorePki (2) : {:?}", e);
+                                debug!("traiter_transactions_receiver Erreur chargement certificat via transaction CorePki (2) : {:?}", e);
                                 continue
                             }
                         }
                     } else {
-                        warn!("transactions.regenerer_transactions Certificat {} inconnu, ** SKIP **", pubkey);
+                        warn!("traiter_transactions_receiver Certificat {} inconnu, ** SKIP **", pubkey);
                         continue;
                     }
                 }
@@ -185,13 +202,13 @@ where
 
         #[cfg(debug_assertions)]
         {
-            debug!("transactions.regenerer_transactions Convertir en structure TransactionValide\n{}", transaction.contenu.as_str());
+            debug!("traiter_transactions_receiver Convertir en structure TransactionValide\n{}", transaction.contenu.as_str());
         }
         let mut transaction = TransactionValide {
             transaction: match transaction.try_into() {
                 Ok(inner) => inner,
                 Err(e) => {
-                    warn!("transactions.regenerer_transactions Erreur transaction.try_into : {:?}, ** SKIP **", e);
+                    warn!("traiter_transactions_receiver Erreur transaction.try_into : {:?}, ** SKIP **", e);
                     continue
                 }
             },
@@ -200,31 +217,35 @@ where
 
         if let Some(overrides) = pre_migration {
             if let Some(id) = overrides.id {
-                debug!("Override attributs pre_migration dans la transaction, nouvel id {}", id);
+                debug!("traiter_transactions_receiver Override attributs pre_migration dans la transaction, nouvel id {}", id);
                 // transaction_impl.id = id;
                 transaction.transaction.id = id.to_owned();
             }
             if let Some(pubkey) = overrides.pubkey {
-                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
+                debug!("traiter_transactions_receiver Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
                 transaction.transaction.pubkey = pubkey.to_owned();
             }
             if let Some(estampille) = &overrides.estampille {
-                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
+                debug!("traiter_transactions_receiver Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
                 transaction.transaction.estampille = estampille.clone();
             }
         }
 
-        debug!("transactions.regenerer_transactions Appliquer transaction");
+        debug!("traiter_transactions_receiver Appliquer transaction");
         match processor.aiguillage_transaction(middleware, transaction).await {
-            Ok(_resultat) => (),
-            Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", message_id, e)
+            Ok(_resultat) => {
+                // S'assurer que la transaction est dans la collection DOMAINE/transactions_traitees
+                upsert_transactions_traitees(
+                    middleware, nom_collection_transactions, message_id, EtatTransaction::Complete, Some(true), Some(date_traitee)).await?;
+            },
+            Err(e) => error!("traiter_transactions_receiver ** ERREUR REGENERATION {} ** {:?}", message_id, e)
         }
     }
 
     Ok(())
 }
 
-async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
+async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, nom_collection_transactions: &str, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
                                              -> Result<(), Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
@@ -235,14 +256,28 @@ where
         let mut transaction = match curseur.deserialize_current() {
             Ok(inner) => inner,
             Err(e) => {
-                error!("transactions.regenerer_transactions Erreur transaction deserialize_current - ** SKIP **");
+                error!("regenerer_transactions_v2 Erreur transaction deserialize_current - ** SKIP **");
                 continue  // Skip
             }
         };
 
         // let uuid_transaction = message_identificateurs.id.as_str();
-        let message_id = transaction.id.to_owned();
-        debug!("regenerer_transactions Traiter transaction id:{} => {:?}", message_id, transaction.routage);
+        let transaction_id = transaction.id.to_owned();
+        debug!("regenerer_transactions_v2 Traiter transaction id:{} => {:?}", transaction_id, transaction.routage);
+        let date_traitee = match transaction.evenements.as_ref() {
+            Some(inner) => match inner.transaction_traitee.as_ref() {
+                Some(inner) => inner.clone(),
+                None => {
+                    warn!("regenerer_transactions_v2 Transaction sans date de traitement, {} **SKIP**", transaction_id);
+                    continue
+                }
+            },
+            None => {
+                // Skip
+                warn!("regenerer_transactions_v2 Transaction sans evenements (date de traitement), {} **SKIP**", transaction_id);
+                continue
+            }
+        };
 
         // Charger pubkey du certificat - en cas de migration, utiliser certificat original
         let pre_migration = transaction.pre_migration.clone();
@@ -270,19 +305,19 @@ where
                         let message: TransactionCorePkiNouveauCertificat = match serde_json::from_str(transaction.contenu()?.as_ref()) {
                             Ok(inner) => inner,
                             Err(e) => {
-                                debug!("Erreur chargement certificat via transaction CorePki (1) : {:?}", e);
+                                debug!("regenerer_transactions_v2 Erreur chargement certificat via transaction CorePki (1) : {:?}", e);
                                 continue
                             }
                         };
                         match charger_enveloppe(message.pem.as_str(), None, None) {
                             Ok(inner) => Arc::new(inner),
                             Err(e) => {
-                                debug!("Erreur chargement certificat via transaction CorePki (2) : {:?}", e);
+                                debug!("regenerer_transactions_v2 Erreur chargement certificat via transaction CorePki (2) : {:?}", e);
                                 continue
                             }
                         }
                     } else {
-                        warn!("transactions.regenerer_transactions Certificat {} inconnu, ** SKIP **", pubkey);
+                        warn!("regenerer_transactions_v2 Certificat {} inconnu, ** SKIP **", pubkey);
                         continue;
                     }
                 }
@@ -297,17 +332,17 @@ where
                     Cow::Owned(inner) => inner
                 },
                 Err(e) => {
-                    error!("Erreur conversion contenu {:?}", e);
+                    error!("regenerer_transactions_v2 Erreur conversion contenu {:?}", e);
                     "**erreur**".to_string()
                 }
             };
-            debug!("transactions.regenerer_transactions Convertir en structure TransactionValide\n{}", contenu_str);
+            debug!("regenerer_transactions_v2 Convertir en structure TransactionValide\n{}", contenu_str);
         }
         let mut transaction = TransactionValide {
             transaction: match transaction.try_into() {
                 Ok(inner) => inner,
                 Err(e) => {
-                    warn!("transactions.regenerer_transactions Erreur transaction.try_into : {:?}, ** SKIP **", e);
+                    warn!("regenerer_transactions_v2 Erreur transaction.try_into : {:?}, ** SKIP **", e);
                     continue
                 }
             },
@@ -316,26 +351,80 @@ where
 
         if let Some(overrides) = pre_migration {
             if let Some(id) = overrides.id {
-                debug!("Override attributs pre_migration dans la transaction, nouvel id {}", id);
+                debug!("regenerer_transactions_v2 Override attributs pre_migration dans la transaction, nouvel id {}", id);
                 // transaction_impl.id = id;
                 transaction.transaction.id = id.to_owned();
             }
             if let Some(pubkey) = overrides.pubkey {
-                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
+                debug!("regenerer_transactions_v2 Override attributs pre_migration dans la transaction, nouveau pubkey {}", pubkey);
                 transaction.transaction.pubkey = pubkey.to_owned();
             }
             if let Some(estampille) = &overrides.estampille {
-                debug!("Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
+                debug!("regenerer_transactions_v2 Override attributs pre_migration dans la transaction, nouveau pubkey {:?}", estampille);
                 transaction.transaction.estampille = estampille.clone();
             }
         }
 
-        debug!("transactions.regenerer_transactions Appliquer transaction");
+        debug!("regenerer_transactions_v2 Appliquer transaction");
         match processor.aiguillage_transaction(middleware, transaction).await {
-            Ok(_resultat) => (),
-            Err(e) => error!("transactions.regenerer_transactions ** ERREUR REGENERATION {} ** {:?}", message_id, e)
+            Ok(_resultat) => {
+                upsert_transactions_traitees(
+                    middleware, nom_collection_transactions, transaction_id, EtatTransaction::Complete, Some(true), Some(date_traitee)).await?;
+            },
+            Err(e) => error!("regenerer_transactions_v2 ** ERREUR REGENERATION {} ** {:?}", transaction_id, e)
         }
     }
+
+    Ok(())
+}
+
+
+pub async fn upsert_transactions_traitees<'a, M, S, T>(
+    middleware: &M, nom_collection: S, uuid_transaction: T, etat: EtatTransaction, ok: Option<bool>, date_traitee: Option<DateTime<Utc>>
+)
+    -> Result<(), CommonError>
+where
+    M: MongoDao,
+    S: AsRef<str>,
+    T: AsRef<str>,
+{
+    let date_traitee = date_traitee.unwrap_or_else(|| Utc::now());
+
+    let mut set = doc! {};
+    let transaction_id = uuid_transaction.as_ref();
+
+    let bid_complete = hex::decode(transaction_id)?;
+    let bid_truncated = &bid_complete[0..16];
+    let bid_truncated_base64 = general_purpose::STANDARD.encode(bid_truncated);
+
+    debug!("upsert_transactions_traitees Marquer id {} (bid: {:?}) complete", transaction_id, bid_truncated_base64);
+    let bid_truncated_bson = Bson::Binary(bson::Binary::from_base64(bid_truncated_base64, None)
+        .expect("bid_truncated_bson base64"));
+
+    match etat {
+        EtatTransaction::Complete => {
+            set.insert("_evenements.transaction_complete", Bson::Boolean(true));
+            set.insert("_evenements.transaction_traitee", Bson::DateTime(date_traitee.clone().into()));
+        },
+    };
+
+    // Table transactions_traitees
+    let filtre_transactions_traitees = doc! {
+        "bid_truncated": &bid_truncated_bson,
+    };
+
+    let ops_transactions_traitees = doc!{
+        "$setOnInsert": {
+            TRANSACTION_CHAMP_ID: transaction_id,
+            "date_traitement": &date_traitee,
+        },
+        "$set": {
+            "ok": ok,
+        },
+    };
+    let options = UpdateOptions::builder().upsert(true).build();
+    let collection_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()))?;
+    collection_traitees.update_one(filtre_transactions_traitees, ops_transactions_traitees, options).await?;
 
     Ok(())
 }

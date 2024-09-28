@@ -7,12 +7,13 @@ use futures_util::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use mongodb::options::{CountOptions, Hint};
+use serde_json::json;
 use tokio::spawn;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
-use crate::backup::{reset_backup_flag, BackupStarter};
+use crate::backup::{emettre_evenement_backup, reset_backup_flag, BackupInformation, BackupStarter};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
@@ -278,10 +279,11 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 // Commandes specifiques au domaine
                 debug!("domaines_v2.consommer_commande_trait Autorise global, verifier commande {}", action);
                 match action.as_str() {
-                    COMMANDE_DECLENCHER_BACKUP => self.demarrer_backup(middleware.clone(), m).await,
+                    COMMANDE_DECLENCHER_BACKUP => self.repondre_backup_obsolete(middleware.clone(), m).await,  // Backup V1, non supporte
+                    COMMANDE_DECLENCHER_BACKUP_V2 => self.demarrer_backup(middleware.clone(), m).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
-                    COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.clone(), m).await,
-                    COMMANDE_RESET_BACKUP => self.reset_backup(middleware).await,
+                    // COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.clone(), m).await,
+                    // COMMANDE_RESET_BACKUP => self.reset_backup(middleware).await,
                     _ => self.consommer_commande(middleware, m).await
                 }
             },
@@ -415,6 +417,16 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         Ok(())
     }
 
+    async fn repondre_backup_obsolete<M>(&self, middleware: &M, _message: MessageValide)
+                                          -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where M: Middleware
+    {
+        let domaine = self.get_nom_domaine();
+        let info_backup =  BackupInformation::new(domaine, self.get_collection_transactions().unwrap(), None)?;
+        emettre_evenement_backup(middleware, &info_backup, "backupTermine", &Utc::now()).await?;
+        Ok(Some(middleware.reponse_err(Some(2), None, Some("Obsolete"))?))
+    }
+
     async fn demarrer_backup<M>(&self, middleware: &M, message: MessageValide)
                                 -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
         where M: Middleware
@@ -462,61 +474,6 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         }
 
         Ok(None)
-    }
-
-    async fn reset_backup<M>(&self, middleware: &M)
-                             -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
-    {
-        let nom_collection_transactions = match self.get_collection_transactions() {
-            Some(n) => n,
-            None => Err(Error::Str("domaines.reset_backup Tentative de RESET_BACKUP sur domaine sans collection de transactions"))?
-        };
-        reset_backup_flag(middleware, nom_collection_transactions.as_str()).await
-    }
-
-    /// Sauvegarde une transaction restauree dans la collection du domaine.
-    /// Si la transaction existe deja (par id), aucun effet.
-    async fn restaurer_transaction<M>(&self, middleware: &M, message: MessageValide)
-                                      -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
-    {
-        debug!("restaurer_transaction\n{}", from_utf8(message.message.buffer.as_slice())?);
-
-        let nom_collection_transactions = match self.get_collection_transactions() {
-            Some(n) => n,
-            None => Err(Error::Str("domaines.restaurer_transaction Tentative de restauration sur domaine sans collection de transactions"))?
-        };
-        let message_ref = message.message.parse()?;
-        let message_contenu = message_ref.contenu()?;
-        let message_restauration: MessageRestaurerTransaction = message_contenu.deserialize()?;
-
-        let mut transaction = message_restauration.transaction;
-        if let Err(_) = transaction.verifier_signature() {
-            Err(format!("restaurer_transaction Erreur verification transaction {}, SKIP", transaction.id))?
-        }
-
-        if transaction.evenements.is_none() {
-            Err(format!("Evenements transaction manquants (1) : {}", transaction.id))?
-        }
-
-        let fingerprint_certificat = transaction.pubkey.as_str();
-        if middleware.get_certificat(fingerprint_certificat).await.is_none() {
-            Err(Error::Str("Certificat absent de la transaction restauree, ** SKIP **"))?
-        };
-
-        // Conserver la transaction
-        let resultat_batch = sauvegarder_batch(
-            middleware, nom_collection_transactions.as_str(), vec![&mut transaction]).await?;
-        debug!("domaines.restaurer_transaction Resultat batch sauvegarde : {:?}", resultat_batch);
-
-        match message_restauration.ack {
-            Some(a) => match a {
-                true => Ok(Some(middleware.reponse_ok(None, None)?)),
-                false => Ok(None)
-            },
-            None => Ok(None)
-        }
     }
 
     async fn regenerer_transactions<M>(&self, middleware: &M) -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
