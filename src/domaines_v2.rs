@@ -391,7 +391,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             // TODO - Configurer backup complet via CoreTopologie/Coupdoeil
             // Concatenation de backup le dimanche a 7:09UTC.
             // let complet = dt.minute() == 9 && dt.hour() == 7 && dt.weekday() == Weekday::Sun;
-            let complet = dt.minute() == 9 && dt.hour() == 7;  // && dt.weekday() == Weekday::Sun;
+            let complet = dt.minute() == 9 && dt.hour() == 21;  // && dt.weekday() == Weekday::Sun;
             // let complet = true;
 
             // Demarrer backup incremental des transactions
