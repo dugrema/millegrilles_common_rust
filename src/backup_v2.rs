@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use fs2::FileExt;
 use futures_util::{StreamExt, TryStreamExt};
 
-use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems};
+use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems, Duration};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
@@ -1309,7 +1309,8 @@ where M: GenerateurMessages
         .identity(identity)
         .https_only(true)
         .use_rustls_tls()
-        .http2_adaptive_window(true)
+        .connect_timeout(core::time::Duration::new(20, 0))
+        // .http2_adaptive_window(true)
         .build()?;
 
     let url_consignation = match &serveur_consignation.consignation_url {
