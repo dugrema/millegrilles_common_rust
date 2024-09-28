@@ -794,6 +794,7 @@ pub struct FichierArchiveBackup {
     pub header: HeaderFichierArchive,
     pub position_data: usize,
     pub digest_suffix: String,
+    pub len: u64,
 }
 
 /// Fait la liste des fichiers de backup sur disque, lit le header et les trie.
@@ -806,14 +807,16 @@ pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) 
 
     let mut fichiers = Vec::new();
     loop {
-        let file_path = match paths.next_entry().await? {
+        let (file_path, file_len) = match paths.next_entry().await? {
             Some(inner) => {
                 if inner.file_type().await?.is_file() {
+                    let meta = inner.metadata().await?;
+                    let file_len = meta.len();
                     let file_path = inner.path();
                     if file_path.extension() != Some(mgback_ext.as_os_str()) {
                         continue;  // Wrong extension
                     }
-                    file_path
+                    (file_path, file_len)
                 } else {
                     continue;  // Directory, skip
                 }
@@ -849,7 +852,7 @@ pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) 
 
         let position_data = (4 + taille_header) as usize;  // 4 bytes (version u16, taille header u16) + header
         if inclure_final || header.format != "F".to_string() {
-            fichiers.push(FichierArchiveBackup { path_fichier: file_path, header, position_data, digest_suffix });
+            fichiers.push(FichierArchiveBackup { path_fichier: file_path, header, position_data, digest_suffix, len: file_len });
         }
     }
 
@@ -1308,10 +1311,9 @@ where M: GenerateurMessages
         .add_root_certificate(root_ca)
         .identity(identity)
         .https_only(true)
-        .http1_only()
         .use_rustls_tls()
         .connect_timeout(core::time::Duration::new(20, 0))
-        // .http2_adaptive_window(true)
+        .http2_adaptive_window(true)
         .build()?;
 
     let url_consignation = match &serveur_consignation.consignation_url {
@@ -1552,6 +1554,7 @@ async fn put_backup_file(domaine: &str, version: &str, client: &Client, url_cons
     let file_stream = ReaderStream::new(file_reader);
     let resultat_upload = client.put(url_upload)
         .body(Body::wrap_stream(file_stream))
+        .header("Content-Length", fichier.len)
         .send().await?;
 
     if resultat_upload.status() != 200 {
