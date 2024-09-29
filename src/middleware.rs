@@ -920,7 +920,14 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
         "ok": None::<bool>,
     };
     let collection_transactions_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection_transactions))?;
-    collection_transactions_traitees.insert_one(doc_transaction_traitee, None).await?;
+    if let Err(e) = collection_transactions_traitees.insert_one(doc_transaction_traitee, None).await {
+        if verifier_erreur_duplication_mongo(&e.kind) {
+            // Transaction dupliquee deja recu. On repond Ok immediatement avec code duplication.
+            return Ok(Some(middleware.reponse_ok(Some(1001), Some("Transaction dupliquee"))?))
+        } else {
+            Err(format!("middleware.sauvegarder_traiter_transaction_v2 Erreur sauvegarde transactions_traitees : {:?}", e))?
+        }
+    }
 
     // let doc_transaction =
     match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
