@@ -23,7 +23,7 @@ use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
-use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_emettre_presence_domaine, thread_charger_certificats_chiffrage};
+use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_emettre_presence_domaine, thread_charger_certificats_chiffrage, thread_entretien_validateur};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
@@ -63,7 +63,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             futures.push(spawn(GestionnaireDomaineSimple::consommer_messages(self, middleware, rx)));
         }
 
+        // Threads d'entretien du domaine
         futures.push(spawn(thread_charger_certificats_chiffrage(middleware)));
+        futures.push(spawn(thread_entretien_validateur(middleware)));
 
         Ok(futures)
     }

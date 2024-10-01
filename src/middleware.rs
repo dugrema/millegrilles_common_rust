@@ -812,6 +812,16 @@ where M: GenerateurMessages + ValidateurX509 + ConfigMessages + CleChiffrageHand
     }
 }
 
+pub async fn thread_entretien_validateur<M>(middleware: &M)
+where M: ValidateurX509 + 'static
+{
+    info!("middleware.thread_entretien_validateur : Debut thread");
+    loop {
+        tokio::time::sleep(tokio::time::Duration::new(180, 0)).await;
+        middleware.entretien_validateur().await;
+    }
+}
+
 pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
     -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where
