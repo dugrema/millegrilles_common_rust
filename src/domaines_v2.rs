@@ -23,7 +23,7 @@ use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
-use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
+use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_emettre_presence_domaine, thread_charger_certificats_chiffrage};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
@@ -62,6 +62,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             middleware.ajouter_named_queue(queue_name, named_queue);
             futures.push(spawn(GestionnaireDomaineSimple::consommer_messages(self, middleware, rx)));
         }
+
+        futures.push(spawn(thread_charger_certificats_chiffrage(middleware)));
 
         Ok(futures)
     }
@@ -279,9 +281,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 // Commandes specifiques au domaine
                 debug!("domaines_v2.consommer_commande_trait Autorise global, verifier commande {}", action);
                 match action.as_str() {
-                    COMMANDE_DECLENCHER_BACKUP => self.repondre_backup_obsolete(middleware.clone(), m).await,  // Backup V1, non supporte
-                    COMMANDE_DECLENCHER_BACKUP_V2 => self.demarrer_backup(middleware.clone(), m).await,
-                    COMMANDE_REGENERER => self.regenerer_transactions(middleware.clone()).await,
+                    COMMANDE_DECLENCHER_BACKUP => self.repondre_backup_obsolete(middleware, m).await,  // Backup V1, non supporte
+                    COMMANDE_DECLENCHER_BACKUP_V2 => self.demarrer_backup(middleware, m).await,
+                    COMMANDE_REGENERER => self.regenerer_transactions(middleware).await,
                     // COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.clone(), m).await,
                     // COMMANDE_RESET_BACKUP => self.reset_backup(middleware).await,
                     _ => self.consommer_commande(middleware, m).await

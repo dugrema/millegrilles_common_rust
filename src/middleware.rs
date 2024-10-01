@@ -788,6 +788,30 @@ pub struct ReponseEnveloppe {
     pub ca_pem: Option<String>,
 }
 
+pub async fn thread_charger_certificats_chiffrage<M>(middleware: &M)
+where M: GenerateurMessages + ValidateurX509 + ConfigMessages + CleChiffrageHandler + CleChiffrageCache + 'static
+{
+    info!("middleware.thread_emettre_presence_domaine : Debut thread");
+
+    // Attente initiale
+    tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+    let mut certificats_charges = false;
+    loop {
+        match charger_certificats_chiffrage(middleware).await {
+            Ok(()) => {
+                certificats_charges = true;
+            },
+            Err(e) => warn!("thread_charger_certificats_chiffrage Erreur chargement certificats de chiffrage : {}", e),
+        };
+
+        let attente = match certificats_charges {
+            true => 900,  // Certificats charges, attendre 15 minutes pour refresh
+            false => 20,  // Certificats absents, reessayer regulierement
+        };
+        tokio::time::sleep(tokio::time::Duration::new(attente, 0)).await;
+    }
+}
+
 pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
     -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where
