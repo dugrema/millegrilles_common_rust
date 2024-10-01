@@ -371,7 +371,7 @@ pub fn generer_cle_v2<M,D>(middleware: &M, domaines_backup: Vec<D>) -> Result<(D
     let ca = middleware.get_enveloppe_signature();
     let enveloppes_chiffrage = middleware.get_publickeys_chiffrage();
     if enveloppes_chiffrage.len() == 0 {
-        Err("chiffrage_cle.generer_cle_v2 Auncuns certificats de chiffrage recus")?
+        Err("chiffrage_cle.generer_cle_v2 Aucuns certificats de chiffrage recus")?
     }
     let enveloppes_ref: Vec<&EnveloppeCertificat> = enveloppes_chiffrage.iter().map(|item| item.as_ref()).collect();
 

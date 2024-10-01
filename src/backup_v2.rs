@@ -102,7 +102,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         let cle_backup_domaine = match recuperer_cle_backup(middleware, commande.nom_domaine.as_str()).await {
             Ok(inner) => inner,
             Err(e) => {
-                error!("thread_backup_v2 Erreur chargement de la cle de backup, SKIP: {:?}", e);
+                error!("thread_backup_v2 Erreur chargement de la cle de backup domaine {}, SKIP: {:?}", commande.nom_domaine, e);
                 if let Err(e) = lock_file.unlock() {
                     info!("thread_backup_v2 Error unlocking backup file: {:?}", e);
                 }

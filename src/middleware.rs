@@ -792,10 +792,11 @@ pub struct ReponseEnveloppe {
 pub async fn thread_charger_certificats_chiffrage<M>(middleware: &M)
 where M: GenerateurMessages + ValidateurX509 + ConfigMessages + CleChiffrageHandler + CleChiffrageCache + 'static
 {
-    info!("middleware.thread_emettre_presence_domaine : Debut thread");
+    info!("middleware.thread_charger_certificats_chiffrage : Debut thread");
 
     // Attente initiale
     tokio::time::sleep(tokio::time::Duration::new(5, 0)).await;
+
     let mut certificats_charges = false;
     loop {
         match charger_certificats_chiffrage(middleware).await {
@@ -1209,7 +1210,7 @@ pub async fn charger_certificats_chiffrage<M>(middleware: &M)
     if nb_certs == 0 {
         Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
     } else {
-        debug!("On a {} certificats de maitre des cles valides", nb_certs);
+        warn!("On a {} certificats de maitre des cles valides", nb_certs);
     }
 
     Ok(())
