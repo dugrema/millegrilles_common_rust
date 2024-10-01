@@ -901,6 +901,10 @@ pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(middleware: 
         G: GestionnaireDomaineV2 + AiguillageTransactions,
         S: Serialize + Send + Sync
 {
+    if middleware.get_mode_regeneration() {
+        Err("Regeneration en cours")?
+    }
+
     let mut routage = RoutageMessageAction::builder(domaine, action, vec![Securite::L3Protege]).build();
 
     // Batir message
@@ -930,6 +934,10 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
         M: ValidateurX509 + GenerateurMessages + MongoDao,
         G: GestionnaireDomaineV2 + AiguillageTransactions
 {
+    if middleware.get_mode_regeneration() {
+        Err("Regeneration en cours")?
+    }
+
     let message_id = {
         let message_ref = message.message.parse()?;
         message_ref.id.to_owned()
