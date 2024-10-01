@@ -383,8 +383,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     where
         M: MiddlewareMessages + BackupStarter + MongoDao
     {
+        // Emettre presence meme si on fait une regeneration
         let dt = trigger.get_date();
-
         if dt.minute() % 3 == 0 {
             // Emettre message presence domaine
             let nom_domaine = self.get_nom_domaine();
@@ -392,6 +392,12 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             if let Err(e) = emettre_presence_domaine(middleware, nom_domaine.as_str(), reclame_fuuids).await {
                 warn!("Erreur emission presence du domaine : {}", e);
             }
+        }
+
+        // Arreter le traitement si on est en regeneration
+        if middleware.get_mode_regeneration() {
+            info!("traiter_cedule_base Regeneration en cours, skip traitement cedule");
+            return Ok(());
         }
 
         if dt.minute() % 10 == 4  // 2 fois par heure, minutes 4 et 34.
