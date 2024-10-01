@@ -1210,7 +1210,7 @@ pub async fn charger_certificats_chiffrage<M>(middleware: &M)
     if nb_certs == 0 {
         Err(format!("Echec, aucuns certificats de maitre des cles recus"))?
     } else {
-        warn!("On a {} certificats de maitre des cles valides", nb_certs);
+        info!("On a {} certificats de maitre des cles valides", nb_certs);
     }
 
     Ok(())
