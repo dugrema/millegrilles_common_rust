@@ -196,7 +196,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
         Err("MQ n'est pas disponible, resoumission des transactions annulee")?;
     };
 
-    // Date d'expiration des transactions est 15 minutes apres date de persistence.
+    // Date d'expiration des transactions est 15 jours apres date de persistence.
     let exp_transactions = chrono::Utc::now() - chrono::Duration::days(15);
 
     for nom_collection in collections_transactions {

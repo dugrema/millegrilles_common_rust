@@ -1,8 +1,5 @@
-use std::str::from_utf8;
-use std::sync::Arc;
-
 use async_trait::async_trait;
-use chrono::{DateTime, Datelike, Timelike, Utc, Weekday};
+use chrono::{Timelike, Utc};
 use futures_util::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
@@ -13,29 +10,28 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
-use crate::backup::{emettre_evenement_backup, emettre_evenement_backup_catalogue, reset_backup_flag, BackupInformation, BackupStarter};
+use crate::backup::{emettre_evenement_backup, emettre_evenement_backup_catalogue, BackupInformation, BackupStarter};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
-use crate::db_structs::TransactionValide;
-use crate::domaines::{MessageBackupTransactions, MessageRestaurerTransaction, ReponseNombreTransactions};
+use crate::domaines::{MessageBackupTransactions, ReponseNombreTransactions};
 use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
-use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_emettre_presence_domaine, thread_charger_certificats_chiffrage, thread_entretien_validateur};
+use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_charger_certificats_chiffrage, thread_entretien_validateur};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, sauvegarder_batch, TriggerTransaction};
+use crate::transactions::{charger_transaction, EtatTransaction, TriggerTransaction, resoumettre_transactions};
 use crate::transactions_v2::{regenerer_v2, marquer_transaction_v2};
 
 #[async_trait]
 pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransactions {
-
     async fn initialiser<M>(self: &'static Self, middleware: &'static M)
-        -> Result<FuturesUnordered<JoinHandle<()>>, Error>
-        where M: Middleware
+                            -> Result<FuturesUnordered<JoinHandle<()>>, Error>
+    where
+        M: Middleware
     {
         self.preparer_database_mongodb(middleware).await.expect("preparer_database_mongodb");
         let futures = self.spawn_threads(middleware).await.expect("spawn_threads");
@@ -44,8 +40,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     async fn spawn_threads<M>(self: &'static Self, middleware: &'static M)
-        -> Result<FuturesUnordered<JoinHandle<()>>, Error>
-        where M: Middleware
+                              -> Result<FuturesUnordered<JoinHandle<()>>, Error>
+    where
+        M: Middleware
     {
         let futures = FuturesUnordered::new();
 
@@ -71,7 +68,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     async fn consommer_messages<M>(&self, middleware: &M, mut rx: Receiver<TypeMessage>)
-        where M: Middleware
+    where
+        M: Middleware
     {
         info!("consommer_messages : Debut thread {}", self.get_q_volatils());
         while let Some(message) = rx.recv().await {
@@ -86,17 +84,17 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                         }
                     }
                 },
-                TypeMessage::Certificat(inner) => {warn!("Recu MessageCertificat sur thread consommation, skip : {:?}", inner)},
+                TypeMessage::Certificat(inner) => { warn!("Recu MessageCertificat sur thread consommation, skip : {:?}", inner) },
                 TypeMessage::Regeneration => (), // Rien a faire, on boucle
             };
-
         }
         info!("consommer_messages : Fin thread {}", self.get_q_volatils());
     }
 
     async fn traiter_message_valide_action<M>(&self, middleware: &M, message: MessageValide)
-        -> Result<(), Error>
-        where M: Middleware
+                                              -> Result<(), Error>
+    where
+        M: Middleware
     {
         debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message.type_message);
         let (correlation_id, reply_q) = match &message.type_message {
@@ -153,7 +151,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     async fn preparer_database_mongodb<M>(&self, middleware: &M) -> Result<(), Error>
-        where M: MongoDao + ConfigMessages
+    where
+        M: MongoDao + ConfigMessages
     {
         if let Some(nom_collection_transactions) = self.get_collection_transactions() {
 
@@ -163,7 +162,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 unique: true
             };
             let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1}
+                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1 }
             );
 
             middleware.create_index(
@@ -179,7 +178,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 unique: false
             };
             let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1}
+                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 }
             );
             middleware.create_index(
                 middleware,
@@ -194,9 +193,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 unique: false
             };
             let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1},
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1},
-                ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1},
+                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1 },
+                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1 },
+                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 },
             );
             middleware.create_index(
                 middleware,
@@ -214,7 +213,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 unique: true
             };
             let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from("bid_truncated"), direction: 1}
+                ChampIndex { nom_champ: String::from("bid_truncated"), direction: 1 }
             );
             middleware.create_index(
                 middleware,
@@ -229,7 +228,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 unique: false
             };
             let champs_index_transactions = vec!(
-                ChampIndex {nom_champ: String::from("date_traitement"), direction: 1}
+                ChampIndex { nom_champ: String::from("date_traitement"), direction: 1 }
             );
             middleware.create_index(
                 middleware,
@@ -237,22 +236,23 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 champs_index_transactions,
                 Some(options_unique_transactions)
             ).await?;
-
         }
 
         Ok(())
     }
 
     async fn consommer_requete_trait<M>(&self, middleware: &M, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
+                                        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where
+        M: Middleware
     {
         consommer_requete_trait(self, middleware, m).await
     }
 
     async fn consommer_commande_trait<M>(&self, middleware: &M, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
+                                         -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where
+        M: Middleware
     {
         debug!("Consommer commande trait : {:?}", &m.type_message);
         let action = {
@@ -296,16 +296,18 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     async fn consommer_evenement_trait<M>(&self, middleware: &M, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
+                                          -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where
+        M: Middleware
     {
         consommer_evenement_trait(self, middleware, m).await
     }
 
     /// Traite une transaction en la chargeant, dirigeant vers l'aiguillage puis la marque comme traitee
     async fn traiter_transaction<M>(&self, middleware: &M, m: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: ValidateurX509 + GenerateurMessages + MongoDao
+                                    -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where
+        M: ValidateurX509 + GenerateurMessages + MongoDao
     {
         let message_ref = match m.message.parse() {
             Ok(inner) => inner,
@@ -368,8 +370,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     //     where M: ValidateurX509 + GenerateurMessages + MongoDao;
 
     async fn get_nombre_transactions<M>(&self, middleware: &M)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: GenerateurMessages + MongoDao
+                                        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where
+        M: GenerateurMessages + MongoDao
     {
         get_nombre_transactions(self, middleware).await
     }
@@ -377,11 +380,12 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     /// Invoque a toutes les minutes sur reception du message global du ceduleur
     async fn traiter_cedule_base<M>(&self, middleware: &M, trigger: &MessageCedule)
                                     -> Result<(), Error>
-        where M: MiddlewareMessages + BackupStarter + MongoDao
+    where
+        M: MiddlewareMessages + BackupStarter + MongoDao
     {
         let dt = trigger.get_date();
 
-        if dt.minute() % 2 == 0 {
+        if dt.minute() % 3 == 0 {
             // Emettre message presence domaine
             let nom_domaine = self.get_nom_domaine();
             let reclame_fuuids = self.reclame_fuuids();
@@ -410,6 +414,12 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             }
         }
 
+        if dt.minute() % 5 == 3 {  // Entretien transactions aux 5 minutes
+            if let Err(e) = self.resoumettre_transactions(middleware).await {
+                warn!("Erreur resoumission de transactions : {:?}", e);
+            }
+        }
+
         self.traiter_cedule(middleware, trigger).await?;
 
         Ok(())
@@ -418,21 +428,30 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     /// Methode a re-implementer dans le trait.
     async fn traiter_cedule<M>(&self, _middleware: &M, _trigger: &MessageCedule)
                                -> Result<(), Error>
-    where M: MiddlewareMessages + BackupStarter + MongoDao {
+    where
+        M: MiddlewareMessages + BackupStarter + MongoDao
+    {
         Ok(())
     }
 
     /// Repondre au gestionnaire de backup. Note : c'est une reponse qui ne represente pas l'etat
     /// du backup_v2.
     async fn repondre_backup_obsolete<M>(&self, middleware: &M, message: MessageValide)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
+                                         -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+    where
+        M: Middleware
     {
         let domaine = self.get_nom_domaine();
         let (reply_to, correlation_id) = match &message.type_message {
             TypeMessageOut::Commande(message) => {
-                let reply_to = match message.reply_to.as_ref() {Some(inner)=>inner, None=>Err("domaines_v2.repondre_backup_obsolete Reply_to manquant")?};
-                let correlation_id = match message.correlation_id.as_ref() {Some(inner)=>inner, None=>Err("domaines_v2.repondre_backup_obsolete Reply_to manquant")?};
+                let reply_to = match message.reply_to.as_ref() {
+                    Some(inner) => inner,
+                    None => Err("domaines_v2.repondre_backup_obsolete Reply_to manquant")?
+                };
+                let correlation_id = match message.correlation_id.as_ref() {
+                    Some(inner) => inner,
+                    None => Err("domaines_v2.repondre_backup_obsolete Reply_to manquant")?
+                };
                 (reply_to, correlation_id)
             },
             _ => Err("repondre_backup_obsolete Mauvais type de message")?
@@ -450,7 +469,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
         let nombre_transactions = collection.count_documents(None, options).await? as i64;
 
-        let mut info_backup =  BackupInformation::new(domaine, self.get_collection_transactions().unwrap(), None)?;
+        let mut info_backup = BackupInformation::new(domaine, self.get_collection_transactions().unwrap(), None)?;
         info_backup.uuid_backup = correlation_id.to_string();
         emettre_evenement_backup(middleware, &info_backup, "backupDemarre", &Utc::now()).await?;
         debug!("repondre_backup_obsolete Repondre {} transactions traitees", nombre_transactions);
@@ -462,7 +481,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
     async fn demarrer_backup<M>(&self, middleware: &M, message: MessageValide)
                                 -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
+    where
+        M: Middleware
     {
         if middleware.get_mode_regeneration() == true {
             warn!("demarrer_backup Backup annule, regeneration en cours");
@@ -494,7 +514,10 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         debug!("GestionnaireDomaine.demarrer_backup {} : {}", self.get_nom_domaine(), message_ref.id);
         let message_contenu = message_ref.contenu()?;
         let message_backup: MessageBackupTransactions = message_contenu.deserialize()?;
-        let complet = match message_backup.complet.as_ref() { Some(v) => v.to_owned(), None => false };
+        let complet = match message_backup.complet.as_ref() {
+            Some(v) => v.to_owned(),
+            None => false
+        };
 
         if let Some(nom_collection_transactions) = self.get_collection_transactions() {
             middleware.demarrer_backup(
@@ -510,7 +533,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     async fn regenerer_transactions<M>(&self, middleware: &M) -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-        where M: Middleware
+    where
+        M: Middleware
     {
         let nom_collection_transactions = match self.get_collection_transactions() {
             Some(n) => n,
@@ -530,8 +554,20 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
         Ok(None)
     }
-}
 
+    /// Tente de traiter les transactions en erreur a nouveau.
+    async fn resoumettre_transactions<M>(&self, middleware: &M) -> Result<(), Error>
+    where
+        M: GenerateurMessages + MongoDao
+    {
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(inner) => inner,
+            None => Err("domaines_v2.resoumettre_transactions Aucuns collections de transactions pour ce domaine")?
+        };
+        resoumettre_transactions(middleware, &vec![nom_collection_transactions]).await?;
+        Ok(())
+    }
+}
 async fn consommer_requete_trait<M,G>(gestionnaire: &G, middleware: &M, m: MessageValide)
     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where M: Middleware, G: GestionnaireDomaineSimple
