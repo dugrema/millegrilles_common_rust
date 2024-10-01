@@ -96,6 +96,7 @@ pub trait IsConfigurationPki {
     fn get_enveloppe_privee(&self) -> Arc<EnveloppePrivee>;
 }
 
+#[derive(Clone)]
 pub struct MiddlewareRessources {
     pub configuration: Arc<Box<ConfigurationMessagesDb>>,
     pub validateur: Arc<ValidateurX509Impl>,
