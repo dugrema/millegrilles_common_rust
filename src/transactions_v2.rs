@@ -19,13 +19,13 @@ use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::mongo_dao::MongoDao;
-use crate::messages_generiques::EvenementRegeneration;
+use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration};
 use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
 
 pub async fn regenerer_v2<M,D,T>(
     middleware: &M, nom_domaine: D, nom_collection_transactions: &str,
-    noms_collections_docs: &Vec<String>, processor: &T
+    noms_collections_docs: &Vec<String>, processor: &T, commande: CommandeRegenerer
 )
     -> Result<(), crate::error::Error>
 where
@@ -49,7 +49,12 @@ where
     // Traiter transactions dans les fichiers d'archive
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
     let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), true).await?;
-    let cles_backup = charger_cles_backup(middleware, nom_domaine, &fichiers_backup, None).await?;
+    let cles_backup = match commande.cles_chiffrees {
+        Some(inner) => {
+            todo!()
+        },
+        None => charger_cles_backup(middleware, nom_domaine, &fichiers_backup, None).await?
+    };
 
     debug!("regenerer_v2 Path {:?}\n{} fichiers de backup, {} cles chargees", path_backup, fichiers_backup.len(), cles_backup.len());
 

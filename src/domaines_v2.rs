@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use chrono::{Timelike, Utc};
 use futures_util::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
+use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use mongodb::options::{CountOptions, Hint};
 use serde_json::json;
@@ -18,7 +19,7 @@ use crate::domaines::{MessageBackupTransactions, ReponseNombreTransactions};
 use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
-use crate::messages_generiques::MessageCedule;
+use crate::messages_generiques::{CommandeRegenerer, MessageCedule};
 use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_charger_certificats_chiffrage, thread_entretien_validateur};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
@@ -285,7 +286,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 match action.as_str() {
                     COMMANDE_DECLENCHER_BACKUP => self.repondre_backup_obsolete(middleware, m).await,  // Backup V1, non supporte
                     COMMANDE_DECLENCHER_BACKUP_V2 => self.demarrer_backup(middleware, m).await,
-                    COMMANDE_REGENERER => self.regenerer_transactions(middleware).await,
+                    COMMANDE_REGENERER => self.regenerer_transactions(middleware, m).await,
                     // COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.clone(), m).await,
                     // COMMANDE_RESET_BACKUP => self.reset_backup(middleware).await,
                     _ => self.consommer_commande(middleware, m).await
@@ -538,9 +539,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         Ok(None)
     }
 
-    async fn regenerer_transactions<M>(&self, middleware: &M) -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
-    where
-        M: Middleware
+    async fn regenerer_transactions<M>(&self, middleware: &M, message: MessageValide)
+        -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
+        where M: Middleware
     {
         let nom_collection_transactions = match self.get_collection_transactions() {
             Some(n) => n,
@@ -550,12 +551,15 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         let nom_domaine = self.get_nom_domaine();
         let noms_collections_docs = self.get_collections_volatiles()?;
 
+        let commande: CommandeRegenerer = deser_message_buffer!(message.message);
+
         regenerer_v2(
             middleware,
             nom_domaine,
             nom_collection_transactions.as_str(),
             &noms_collections_docs,
-            self
+            self,
+            commande
         ).await?;
 
         Ok(None)

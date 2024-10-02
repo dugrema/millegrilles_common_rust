@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use chrono::{Utc, Timelike, Datelike, DateTime};
 use serde::{Deserialize, Serialize};
+use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageCedule {
@@ -112,4 +113,10 @@ pub struct EvenementRegeneration {
     pub domaine: String,
     pub position: Option<i64>,
     pub err: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CommandeRegenerer {
+    /// Cles de backup chiffrees. Permet de regenerer sans le maitre des cles.
+    pub cles_chiffrees: Option<EncryptedDocument>
 }
