@@ -1,24 +1,27 @@
-use std::collections::HashMap;
-use std::io::Read;
-use flate2::Compression;
+use base64::{engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use flate2::read::{GzDecoder, GzEncoder};
+use flate2::Compression;
 use futures_util::AsyncReadExt;
 use jwt_simple::prelude::{Deserialize, Serialize};
 use log::debug;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519, CleDechiffrageX25519Impl, Decipher};
+use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
-use millegrilles_cryptographie::x25519::CleSecreteX25519;
+use millegrilles_cryptographie::x25519::{dechiffrer_asymmetrique_ed25519, CleSecreteX25519};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use std::collections::HashMap;
+use std::io::Read;
 
 use multibase::decode;
+use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use crate::chiffrage_cle::ReponseDechiffrageCles;
 use crate::common_messages::DataDechiffre;
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::constantes::*;
-use crate::recepteur_messages::TypeMessage;
 use crate::error::Error;
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::recepteur_messages::TypeMessage;
 
 pub async fn dechiffrer_documents<M,S>(middleware: &M, data_chiffre: DataChiffre, domaine: Option<S>)
     -> Result<DataDechiffre, Error>
@@ -265,6 +268,37 @@ impl<'a> From<DataChiffreBorrow<'a>> for DataChiffre {
             verification: match value.verification { Some(inner) => Some(inner.to_owned()), None => None},
         }
     }
+}
+
+pub fn decrypt_document<M,D>(middleware: &M, document: EncryptedDocument) -> Result<D, Error>
+    where M: GenerateurMessages, D: DeserializeOwned
+{
+    let cle_secrete = match document.cle.as_ref() {
+        Some(inner) => match inner.cles.as_ref() {
+            Some(inner) => {
+                // Trouver la cle qui correspond au fingerprint de notre certificat
+                let enveloppe_signature = middleware.get_enveloppe_signature();
+                let fingerprint = enveloppe_signature.fingerprint()?;
+                match inner.get(fingerprint.as_str()) {
+                    Some(cle_dechiffrage) => {
+                        // Decoder de base64, copier dans CleSecrete
+                        let cle_chiffree = match base64_nopad.decode(cle_dechiffrage) {
+                            Ok(inner) => inner,
+                            Err(_e) => base64.decode(cle_dechiffrage)?  // Try with padding
+                        };
+                        let cle_dechiffree = dechiffrer_asymmetrique_ed25519(cle_chiffree.as_slice(), &enveloppe_signature.cle_privee)?;
+                        cle_dechiffree
+                    },
+                    None => Err("Aucunes cles de dechiffrage ne correspond a la cle privee locale")?
+                }
+            },
+            None => Err("Aucunes cles de dechiffrage du document fournies (1)")?
+        },
+        None => Err("Aucunes cles de dechiffrage du document fournies (2)")?
+    };
+
+    let document_cles = document.decrypt_with_secret(&cle_secrete)?;
+    Ok(serde_json::from_slice(document_cles.as_slice())?)
 }
 
 // #[cfg(test)]

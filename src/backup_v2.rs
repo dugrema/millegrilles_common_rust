@@ -47,6 +47,7 @@ use crate::common_messages::{ReponseInformationConsignationFichiers, RequeteCons
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::db_structs::TransactionOwned;
+use crate::dechiffrage::decrypt_document;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::error::{Error as CommonError, Error};
 use crate::hachages::HacheurBuilder;
@@ -930,32 +931,7 @@ pub async fn charger_cles_backup_message<M>(middleware: &M, domaine: &str, doc_c
     -> Result<HashMap<String, CleSecrete<32>>, CommonError>
     where M: GenerateurMessages
 {
-    let cle_secrete = match doc_cles.cle.as_ref() {
-        Some(inner) => match inner.cles.as_ref() {
-            Some(inner) => {
-                // Trouver la cle qui correspond au fingerprint de notre certificat
-                let enveloppe_signature = middleware.get_enveloppe_signature();
-                let fingerprint = enveloppe_signature.fingerprint()?;
-                match inner.get(fingerprint.as_str()) {
-                    Some(cle_dechiffrage) => {
-                        // Decoder de base64, copier dans CleSecrete
-                        let cle_chiffree = match base64_nopad.decode(cle_dechiffrage) {
-                            Ok(inner) => inner,
-                            Err(_e) => base64.decode(cle_dechiffrage)?  // Try with padding
-                        };
-                        let cle_dechiffree = dechiffrer_asymmetrique_ed25519(cle_chiffree.as_slice(), &enveloppe_signature.cle_privee)?;
-                        cle_dechiffree
-                    },
-                    None => Err("Aucunes cles de dechiffrage ne correspond a la cle privee locale")?
-                }
-            },
-            None => Err("Aucunes cles de dechiffrage du document fournies (1)")?
-        },
-        None => Err("Aucunes cles de dechiffrage du document fournies (2)")?
-    };
-
-    let document_cles = doc_cles.decrypt_with_secret(&cle_secrete)?;
-    let cles_string: ListeClesBackupBase64 = serde_json::from_slice(document_cles.as_slice())?;
+   let cles_string: ListeClesBackupBase64 = decrypt_document(middleware, doc_cles)?;
 
     let mut cles_dechiffrees = HashMap::new();
     for (cle_id, cle_secrete_base64) in cles_string.cles {
