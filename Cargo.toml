@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 
 # millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", tag = "2024.6-release", features = ["chiffrage"] }
-# millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "master", features = ["chiffrage"] }
-millegrilles_cryptographie = { path = "/home/mathieu/RustroverProjects/millegrilles_cryptographie", features = ["chiffrage"] }
+millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "master", features = ["chiffrage"] }
+# millegrilles_cryptographie = { path = "/home/mathieu/RustroverProjects/millegrilles_cryptographie", features = ["chiffrage"] }
 
 async-std = "1.12"
 async-tar = { version = "0.4" }
