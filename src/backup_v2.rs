@@ -14,14 +14,15 @@ use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems, Du
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
-use millegrilles_cryptographie::x25519::{chiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, CleSecreteX25519};
+use millegrilles_cryptographie::x25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, CleSecreteX25519};
 use serde::{Deserialize, Serialize};
-use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
+use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, engine::general_purpose::STANDARD as base64, Engine as _};
 use async_compression::tokio::bufread::{DeflateEncoder, GzipEncoder, DeflateDecoder};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender, Receiver};
 
 use millegrilles_cryptographie::chiffrage::{CleSecrete, FormatChiffrage};
+use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher, DecipherMgs4};
 use millegrilles_cryptographie::hachages::HacheurBlake2b512;
 use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
@@ -918,6 +919,52 @@ pub async fn charger_cles_backup<M>(middleware: &M, domaine: &str, fichiers: &Ve
     }
 
     Ok(cles)
+}
+
+#[derive(Debug, Deserialize)]
+struct ListeClesBackupBase64 {
+    cles: HashMap<String, String>
+}
+
+pub async fn charger_cles_backup_message<M>(middleware: &M, domaine: &str, doc_cles: EncryptedDocument)
+    -> Result<HashMap<String, CleSecrete<32>>, CommonError>
+    where M: GenerateurMessages
+{
+    let cle_secrete = match doc_cles.cle.as_ref() {
+        Some(inner) => match inner.cles.as_ref() {
+            Some(inner) => {
+                // Trouver la cle qui correspond au fingerprint de notre certificat
+                let enveloppe_signature = middleware.get_enveloppe_signature();
+                let fingerprint = enveloppe_signature.fingerprint()?;
+                match inner.get(fingerprint.as_str()) {
+                    Some(cle_dechiffrage) => {
+                        // Decoder de base64, copier dans CleSecrete
+                        let cle_chiffree = match base64_nopad.decode(cle_dechiffrage) {
+                            Ok(inner) => inner,
+                            Err(_e) => base64.decode(cle_dechiffrage)?  // Try with padding
+                        };
+                        let cle_dechiffree = dechiffrer_asymmetrique_ed25519(cle_chiffree.as_slice(), &enveloppe_signature.cle_privee)?;
+                        cle_dechiffree
+                    },
+                    None => Err("Aucunes cles de dechiffrage ne correspond a la cle privee locale")?
+                }
+            },
+            None => Err("Aucunes cles de dechiffrage du document fournies (1)")?
+        },
+        None => Err("Aucunes cles de dechiffrage du document fournies (2)")?
+    };
+
+    let document_cles = doc_cles.decrypt_with_secret(&cle_secrete)?;
+    let cles_string: ListeClesBackupBase64 = serde_json::from_slice(document_cles.as_slice())?;
+
+    let mut cles_dechiffrees = HashMap::new();
+    for (cle_id, cle_secrete_base64) in cles_string.cles {
+        let mut cle_secrete = CleSecrete([0u8; 32]);
+        cle_secrete.0.copy_from_slice(&base64_nopad.decode(cle_secrete_base64)?);
+        cles_dechiffrees.insert(cle_id, cle_secrete);
+    }
+
+    Ok(cles_dechiffrees)
 }
 
 /// Genere une nouvelle archive concatenee a partir de tous les fichiers concatenes et incrementaux existants

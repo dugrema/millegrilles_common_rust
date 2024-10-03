@@ -12,7 +12,7 @@ use tokio::join;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::backup_v2::{charger_cles_backup, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, PATH_FICHIERS_ARCHIVES};
+use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, PATH_FICHIERS_ARCHIVES};
 use crate::certificats::{charger_enveloppe, ValidateurX509};
 use crate::constantes::*;
 use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
@@ -50,9 +50,7 @@ where
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
     let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), true).await?;
     let cles_backup = match commande.cles_chiffrees {
-        Some(inner) => {
-            todo!()
-        },
+        Some(inner) => charger_cles_backup_message(middleware, nom_domaine, inner).await?,
         None => charger_cles_backup(middleware, nom_domaine, &fichiers_backup, None).await?
     };
 
