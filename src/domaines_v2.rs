@@ -284,8 +284,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 // Commandes specifiques au domaine
                 debug!("domaines_v2.consommer_commande_trait Autorise global, verifier commande {}", action);
                 match action.as_str() {
-                    COMMANDE_DECLENCHER_BACKUP => self.repondre_backup_obsolete(middleware, m).await,  // Backup V1, non supporte
-                    COMMANDE_DECLENCHER_BACKUP_V2 => self.demarrer_backup(middleware, m).await,
+                    COMMANDE_DECLENCHER_BACKUP => self.demarrer_backup(middleware, m).await,
                     COMMANDE_REGENERER => self.regenerer_transactions(middleware, m).await,
                     // COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.clone(), m).await,
                     // COMMANDE_RESET_BACKUP => self.reset_backup(middleware).await,

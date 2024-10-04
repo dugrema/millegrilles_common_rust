@@ -1247,19 +1247,14 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 
         let routing_keys_protege = vec!(
             // Ecouter les evenements pour le domaine
-            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_BACKUP_HORAIRE)),
-            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESTAURER_TRANSACTION)),
-            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESTAURER_TRANSACTIONS)),
-            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESET_BACKUP)),
+            String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_DECLENCHER_BACKUP)),
             String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_REGENERER)),
             String::from(format!("requete.{}.{}", nom_domaine, REQUETE_DOMAIN_PING)),
 
             // Evenement globaux
             // String::from(EVENEMENT_GLOBAL_CEDULE),
             String::from(format!("evenement.{}.{}", DOMAINE_NOM_MAITREDESCLES, COMMANDE_CERT_MAITREDESCLES)),
-            String::from(COMMANDE_GLOBAL_BACKUP_HORAIRE),
-            String::from(COMMANDE_GLOBAL_RESTAURER_TRANSACTIONS),
-            String::from(COMMANDE_GLOBAL_RESET_BACKUP),
+            String::from(COMMANDE_GLOBAL_DECLENCHER_BACKUP),
             String::from(COMMANDE_GLOBAL_REGENERER),
         );
         for rk in routing_keys_protege {
@@ -1276,8 +1271,8 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
             // Ecouter les evenements pour le domaine
             // String::from(format!("evenement.{}.{}", DOMAINE_BACKUP, EVENEMENT_BACKUP_DECLENCHER)),
             String::from(format!("requete.{}.{}", nom_domaine, REQUETE_NOMBRE_TRANSACTIONS)),
-            String::from(format!("commande.{}.{}", nom_domaine, EVENEMENT_BACKUP_DECLENCHER)),
-            String::from(format!("evenement.backup.{}", EVENEMENT_BACKUP_DECLENCHER)),
+            // String::from(format!("commande.{}.{}", nom_domaine, EVENEMENT_BACKUP_DECLENCHER)),
+            // String::from(format!("evenement.backup.{}", EVENEMENT_BACKUP_DECLENCHER)),
         );
         for rk in routing_keys_prive {
             let _ = channel.queue_bind(

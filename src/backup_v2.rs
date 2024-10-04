@@ -48,7 +48,7 @@ use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::db_structs::TransactionOwned;
 use crate::dechiffrage::decrypt_document;
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::error::{Error as CommonError, Error};
 use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
@@ -123,6 +123,12 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
                 continue;
             }
         };
+
+        // L'information de base est OK, repondre (si declenchement manuel)
+        let routage_reponse = RoutageMessageReponse::new(&commande.reply_q, &commande.correlation_id);
+        if let Err(e) = middleware.repondre(routage_reponse, ReponseCommande { ok: Some(true), err: None, message: None}).await {
+            warn!("thread_backup_v2 Erreur emission reponse declenchement de backup: {:?}", e);
+        }
 
         // Toujours commencer par un backup incremental pour vider
         // les nouvelles transactions de la base de donnees.
@@ -729,7 +735,8 @@ async fn run_backup_complet<M>(middleware: &M, commande: &CommandeBackup, cle_ba
     info!("Debut backup complet sur {}", commande.nom_domaine);
 
     let domaine = commande.nom_domaine.as_str();
-    let fichiers = organiser_fichiers_backup(path_backup, false).await?;
+    let idmg = middleware.idmg();
+    let fichiers = organiser_fichiers_backup(path_backup, idmg, false).await?;
 
     {
         // Verifier si on a au moins un fichier incremental
@@ -800,7 +807,7 @@ pub struct FichierArchiveBackup {
 }
 
 /// Fait la liste des fichiers de backup sur disque, lit le header et les trie.
-pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) -> Result<Vec<FichierArchiveBackup>, CommonError> {
+pub async fn organiser_fichiers_backup(backup_path: &Path, idmg: &str, inclure_final: bool) -> Result<Vec<FichierArchiveBackup>, CommonError> {
     let mut paths = read_dir(backup_path).await?;
 
     let mgback_ext: OsString = "mgbak".into();
@@ -843,6 +850,10 @@ pub async fn organiser_fichiers_backup(backup_path: &Path, inclure_final: bool) 
             header_len_effective = v;
         }
         let header: HeaderFichierArchive = serde_json::from_slice(&header_vec[0..header_len_effective])?;
+        if header.idmg.as_str() != idmg {
+            warn!("Fichier avec mauvais IDMG (systeme) dans le repertoire : {:?} => {}, **SKIP**", file_path, header.idmg);
+            continue;
+        }
 
         // Extrait le digest partiel du nom du fichier
         let nom_fichier = file_path.file_stem().expect("file stem").to_str().expect("nom_fichier to_str");
@@ -1277,8 +1288,10 @@ async fn synchroniser_consignation<M>(
     let (client, url_consignation) = preparer_client_consignation(middleware, &serveur_consignation)?;
 
     // Determiner version de backup
+    let enveloppe = middleware.get_enveloppe_signature();;
+    let idmg = enveloppe.enveloppe_pub.idmg()?;
     let (fichiers_locaux, version) = trouver_version_backup(
-        domaine, path_backup, &client, url_consignation.as_str()).await?;
+        idmg.as_str(), domaine, path_backup, &client, url_consignation.as_str()).await?;
     let version_effective = match version.as_ref() {
         Some(version) => version.as_str(),
         None => "NEW"
@@ -1375,11 +1388,11 @@ struct ReponseVersionsBackup {
     versions: Option<Vec<VersionBackup>>,
 }
 
-async fn trouver_version_backup(domaine: &str, path_backup: &Path, client: &reqwest::Client, url_consignation: &str)
+async fn trouver_version_backup(idmg: &str, domaine: &str, path_backup: &Path, client: &reqwest::Client, url_consignation: &str)
     -> Result<(Vec<FichierArchiveBackup>, Option<String>), CommonError>
 {
     // Recuperer les fichiers presents localement
-    let fichiers = organiser_fichiers_backup(path_backup, false).await?;
+    let fichiers = organiser_fichiers_backup(path_backup, idmg, false).await?;
     let mut version_courante_locale = None;
     for f in &fichiers {
         if f.header.type_archive.as_str() == "C" {

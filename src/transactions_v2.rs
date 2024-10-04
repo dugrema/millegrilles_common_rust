@@ -50,7 +50,8 @@ where
 
     // Traiter transactions dans les fichiers d'archive
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
-    let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), true).await?;
+    let idmg = middleware.idmg();
+    let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), idmg, true).await?;
     let stats_backup = extraire_stats_backup(middleware, nom_collection_transactions, &fichiers_backup).await?;
     let cles_backup = match commande.cles_chiffrees {
         Some(inner) => charger_cles_backup_message(middleware, inner).await?,
