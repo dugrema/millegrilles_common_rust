@@ -19,15 +19,15 @@ use crate::certificats::{charger_enveloppe, ValidateurX509};
 use crate::constantes::*;
 use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::MongoDao;
-use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration};
+use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
 use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
 
 pub async fn regenerer_v2<M,D,T>(
     middleware: &M, nom_domaine: D, nom_collection_transactions: &str,
-    noms_collections_docs: &Vec<String>, processor: &T, commande: CommandeRegenerer
+    noms_collections_docs: &Vec<String>, processor: &T, commande: CommandeRegenerer, routage_reponse: RoutageMessageReponse
 )
     -> Result<(), crate::error::Error>
 where
@@ -71,6 +71,10 @@ where
         middleware, nom_collection_transactions, rx_transaction, processor, skip_certificats, &status_regeneration);
     let thread_status_updates = thread_regeneration_status_updates(
         middleware, nom_domaine, &stats_backup, &status_regeneration);
+
+    // Repondre Ok immediatement au client pour indiquer que la regeneration est demarree
+    info!("regenerer_v2 Debut regeneration domaine {}", nom_domaine);
+    middleware.repondre(routage_reponse, ReponseCommande {ok: Some(true), message: None, err: None }).await?;
 
     let (result_lire, _, result_status_updates) = join![
         thread_lire_transactions, thread_traiter_transactions, thread_status_updates];
@@ -130,6 +134,8 @@ where
             warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
         }
     }
+
+    info!("regenerer_v2 Fin regeneration domaine {}", nom_domaine);
 
     Ok(())
 }

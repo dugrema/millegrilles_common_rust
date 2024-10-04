@@ -545,12 +545,14 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     {
         let nom_collection_transactions = match self.get_collection_transactions() {
             Some(n) => n,
-            None => Err(format!("domaines_v2.regenerer_transactions Tentative de regeneration sur domaine sans collection de transactions"))?
+            None => Err("domaines_v2.regenerer_transactions Tentative de regeneration sur domaine sans collection de transactions")?
         };
 
         let nom_domaine = self.get_nom_domaine();
         let noms_collections_docs = self.get_collections_volatiles()?;
 
+        let (reply_q, correlation_id) = get_replyq_correlation!(message.type_message);
+        let routage_reponse = RoutageMessageReponse::new(reply_q, correlation_id);
         let commande: CommandeRegenerer = deser_message_buffer!(message.message);
 
         regenerer_v2(
@@ -559,10 +561,11 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             nom_collection_transactions.as_str(),
             &noms_collections_docs,
             self,
-            commande
+            commande,
+            routage_reponse
         ).await?;
 
-        Ok(None)
+        Ok(None)  // Reponse deja transmise
     }
 
     /// Tente de traiter les transactions en erreur a nouveau.
