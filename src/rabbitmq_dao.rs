@@ -1252,6 +1252,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
             String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESTAURER_TRANSACTIONS)),
             String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_RESET_BACKUP)),
             String::from(format!("commande.{}.{}", nom_domaine, COMMANDE_REGENERER)),
+            String::from(format!("requete.{}.{}", nom_domaine, REQUETE_DOMAIN_PING)),
 
             // Evenement globaux
             // String::from(EVENEMENT_GLOBAL_CEDULE),

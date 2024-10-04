@@ -597,13 +597,19 @@ async fn consommer_requete_trait<M,G>(gestionnaire: &G, middleware: &M, m: Messa
         action
     };
 
-    match m.certificat.verifier_exchanges(vec!(Securite::L2Prive))? &&
-        m.certificat.verifier_roles_string(vec![ROLE_BACKUP.to_string()])? {
-        true => match action.as_str() {
-            REQUETE_NOMBRE_TRANSACTIONS => gestionnaire.get_nombre_transactions(middleware).await,
-            _ => gestionnaire.consommer_requete(middleware, m).await
-        },
-        false => gestionnaire.consommer_requete(middleware, m).await
+    match action.as_str() {
+        // Intercepted requests that get responses without any security requirement
+        REQUETE_DOMAIN_PING => Ok(Some(middleware.reponse_ok(Some(1), None)?)),
+
+        // Requests with checks
+        _ => match m.certificat.verifier_exchanges(vec!(Securite::L2Prive))? &&
+            m.certificat.verifier_roles_string(vec![ROLE_BACKUP.to_string()])? {
+            true => match action.as_str() {
+                REQUETE_NOMBRE_TRANSACTIONS => gestionnaire.get_nombre_transactions(middleware).await,
+                _ => gestionnaire.consommer_requete(middleware, m).await  // Passthrough
+            },
+            false => gestionnaire.consommer_requete(middleware, m).await  // Passthrough
+        }
     }
 }
 
