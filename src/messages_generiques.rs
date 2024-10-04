@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use chrono::{Utc, Timelike, Datelike, DateTime};
 use serde::{Deserialize, Serialize};
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
+use crate::backup_v2::StatsBackup;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageCedule {
@@ -107,12 +108,14 @@ pub struct CommandeSauvegarderCertificat {
 }
 
 #[derive(Serialize)]
-pub struct EvenementRegeneration {
+pub struct EvenementRegeneration<'a> {
     pub ok: bool,
-    pub termine: bool,
-    pub domaine: String,
-    pub position: Option<i64>,
     pub err: Option<String>,
+    pub domaine: &'a str,
+    pub event: &'a str,
+    pub termine: bool,
+    pub position: Option<u64>,
+    pub stats_backup: Option<&'a StatsBackup>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -511,74 +511,75 @@ where
     D: AsRef<str>,
     T: TraiterTransaction,
 {
-    let nom_domaine = nom_domaine.as_ref();
-    debug!("transactions.regenerer Regenerer {}", nom_domaine);
-
-    // Skip la validation des transactions si on charge CorePki (les certificats)
-    let skip_certificats = nom_collection_transactions == DOMAINE_PKI;
-
-    // Supprimer contenu des collections
-    for nom_collection in noms_collections_docs {
-        let collection = middleware.get_collection(nom_collection.as_str())?;
-        let resultat_delete = collection.delete_many(doc! {}, None).await?;
-        debug!("Delete collection {} documents : {:?}", nom_collection, resultat_delete);
-    }
-
-    // Creer curseur sur les transactions en ordre de traitement
-    let resultat_transactions = {
-        let filtre = doc! {
-            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
-        };
-        let sort = doc! {
-            TRANSACTION_CHAMP_TRANSACTION_TRAITEE: 1,
-        };
-
-        let options = FindOptions::builder()
-            .sort(sort)
-            .hint(Hint::Name(String::from("backup_transactions")))
-            .build();
-
-        let collection_transactions = middleware.get_collection_typed::<TransactionRef>(nom_collection_transactions)?;
-        if skip_certificats == false {
-            let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
-            regenerer_charger_certificats(middleware, curseur_certs, skip_certificats).await?;
-        } else {
-            info!("Regeneration CorePki - skip chargement certificats pour validation");
-        }
-
-        collection_transactions.find(filtre, options).await
-    }?;
-
-    {
-        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
-            .build();
-        let message = EvenementRegeneration { ok: true, termine: false, domaine: nom_domaine.into(), position: Some(0), err: None };
-        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
-            warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
-        }
-    }
-
-    middleware.set_regeneration(); // Desactiver emission de messages
-
-    // Executer toutes les transactions du curseur en ordre
-    if let Err(e) = regenerer_transactions(middleware, resultat_transactions, processor, skip_certificats).await {
-        error!("regenerer Erreur regeneration domaine {} : {:?}", nom_domaine, e);
-    } else {
-        info!("transactions.regenerer Resultat regenerer {:?}", nom_collection_transactions);
-    }
-
-    middleware.reset_regeneration(); // Reactiver emission de messages
-
-    {
-        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
-            .build();
-        let message = EvenementRegeneration { ok: true, termine: true, domaine: nom_domaine.into(), position: None, err: None };
-        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
-            warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
-        }
-    }
-
-    Ok(())
+    todo!("Obsolete")
+    // let nom_domaine = nom_domaine.as_ref();
+    // debug!("transactions.regenerer Regenerer {}", nom_domaine);
+    //
+    // // Skip la validation des transactions si on charge CorePki (les certificats)
+    // let skip_certificats = nom_collection_transactions == DOMAINE_PKI;
+    //
+    // // Supprimer contenu des collections
+    // for nom_collection in noms_collections_docs {
+    //     let collection = middleware.get_collection(nom_collection.as_str())?;
+    //     let resultat_delete = collection.delete_many(doc! {}, None).await?;
+    //     debug!("Delete collection {} documents : {:?}", nom_collection, resultat_delete);
+    // }
+    //
+    // // Creer curseur sur les transactions en ordre de traitement
+    // let resultat_transactions = {
+    //     let filtre = doc! {
+    //         TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true},
+    //     };
+    //     let sort = doc! {
+    //         TRANSACTION_CHAMP_TRANSACTION_TRAITEE: 1,
+    //     };
+    //
+    //     let options = FindOptions::builder()
+    //         .sort(sort)
+    //         .hint(Hint::Name(String::from("backup_transactions")))
+    //         .build();
+    //
+    //     let collection_transactions = middleware.get_collection_typed::<TransactionRef>(nom_collection_transactions)?;
+    //     if skip_certificats == false {
+    //         let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
+    //         regenerer_charger_certificats(middleware, curseur_certs, skip_certificats).await?;
+    //     } else {
+    //         info!("Regeneration CorePki - skip chargement certificats pour validation");
+    //     }
+    //
+    //     collection_transactions.find(filtre, options).await
+    // }?;
+    //
+    // // {
+    // //     let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
+    // //         .build();
+    // //     let message = EvenementRegeneration { ok: true, termine: false, domaine: nom_domaine.into(), position: Some(0), err: None };
+    // //     if let Err(e) = middleware.emettre_evenement(routage, &message).await {
+    // //         warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
+    // //     }
+    // // }
+    //
+    // middleware.set_regeneration(); // Desactiver emission de messages
+    //
+    // // Executer toutes les transactions du curseur en ordre
+    // if let Err(e) = regenerer_transactions(middleware, resultat_transactions, processor, skip_certificats).await {
+    //     error!("regenerer Erreur regeneration domaine {} : {:?}", nom_domaine, e);
+    // } else {
+    //     info!("transactions.regenerer Resultat regenerer {:?}", nom_collection_transactions);
+    // }
+    //
+    // middleware.reset_regeneration(); // Reactiver emission de messages
+    //
+    // // {
+    // //     let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
+    // //         .build();
+    // //     let message = EvenementRegeneration { ok: true, termine: true, domaine: nom_domaine.into(), position: None, err: None };
+    // //     if let Err(e) = middleware.emettre_evenement(routage, &message).await {
+    // //         warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
+    // //     }
+    // // }
+    //
+    // Ok(())
 }
 
 // S'assurer d'avoir tous les certificats dans redis ou cache

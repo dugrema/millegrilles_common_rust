@@ -1667,9 +1667,17 @@ pub struct StatusRegeneration {
     pub done: bool,
 }
 
-pub fn extraire_stats_backup(fichiers: &Vec<FichierArchiveBackup>) -> StatsBackup {
+pub async fn extraire_stats_backup<M>(middleware: &M, collection_transaction: &str, fichiers: &Vec<FichierArchiveBackup>)
+    -> Result<StatsBackup, CommonError>
+    where M: MongoDao
+{
+
+    let filtre = doc!{};
+    let collection = middleware.get_collection(collection_transaction)?;
+    let transactions_non_traitees = collection.count_documents(filtre, None).await?;
+
     let mut stats = StatsBackup {
-        nombre_transactions: 0,
+        nombre_transactions: transactions_non_traitees,
         nombre_fichiers: 0,
         date_premiere_transaction: None,
         date_derniere_transaction: None,
@@ -1684,5 +1692,5 @@ pub fn extraire_stats_backup(fichiers: &Vec<FichierArchiveBackup>) -> StatsBacku
         stats.nombre_transactions += header.nombre_transactions;
     }
 
-    stats
+    Ok(stats)
 }

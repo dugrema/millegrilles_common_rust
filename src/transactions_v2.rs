@@ -51,7 +51,7 @@ where
     // Traiter transactions dans les fichiers d'archive
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
     let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), true).await?;
-    let stats_backup = extraire_stats_backup(&fichiers_backup);
+    let stats_backup = extraire_stats_backup(middleware, nom_collection_transactions, &fichiers_backup).await?;
     let cles_backup = match commande.cles_chiffrees {
         Some(inner) => charger_cles_backup_message(middleware, inner).await?,
         None => charger_cles_backup(middleware, nom_domaine, &fichiers_backup, None).await?
@@ -75,6 +75,11 @@ where
     // Repondre Ok immediatement au client pour indiquer que la regeneration est demarree
     info!("regenerer_v2 Debut regeneration domaine {}", nom_domaine);
     middleware.repondre(routage_reponse, ReponseCommande {ok: Some(true), message: None, err: None }).await?;
+    let routage_regeneration = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION, vec![Securite::L3Protege])
+        .build();
+
+    // Desactiver emission de messages, met le domaine en mode regeneration
+    middleware.set_regeneration();
 
     let (result_lire, _, result_status_updates) = join![
         thread_lire_transactions, thread_traiter_transactions, thread_status_updates];
@@ -106,31 +111,36 @@ where
         collection_transactions.find(filtre, options).await
     }?;
 
-    {
-        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
-            .build();
-        let message = EvenementRegeneration { ok: true, termine: false, domaine: nom_domaine.into(), position: Some(0), err: None };
-        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
-            warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
-        }
-    }
-
-    middleware.set_regeneration(); // Desactiver emission de messages
-
     // Executer toutes les transactions du curseur en ordre
-    if let Err(e) = regenerer_transactions_v2(middleware, nom_collection_transactions, resultat_transactions, processor, skip_certificats).await {
-        error!("regenerer Erreur regeneration domaine {} : {:?}", nom_domaine, e);
-    } else {
-        info!("transactions.regenerer Resultat regenerer {:?}", nom_collection_transactions);
+    let mut db_transaction_counter = 0u64;
+    match regenerer_transactions_v2(middleware, nom_collection_transactions, resultat_transactions, processor, skip_certificats).await {
+        Ok(inner) => {
+            db_transaction_counter = inner;
+        },
+        Err(e) => {
+            error!("regenerer Erreur regeneration domaine {} : {:?}", nom_domaine, e);
+        }
     }
 
     middleware.reset_regeneration(); // Reactiver emission de messages
 
     {
-        let routage = RoutageMessageAction::builder(nom_domaine, EVENEMENT_REGENERATION_MAJ, vec![Securite::L3Protege])
-            .build();
-        let message = EvenementRegeneration { ok: true, termine: true, domaine: nom_domaine.into(), position: None, err: None };
-        if let Err(e) = middleware.emettre_evenement(routage, &message).await {
+        let total_transactions = {
+            let status_guard = status_regeneration.lock().expect("lock");
+            let nb_transactions_archives = status_guard.nombre_transaction_traites;
+            nb_transactions_archives + db_transaction_counter
+        };
+        // Emettre evenement de fin de regeneration
+        let message_regeneration = EvenementRegeneration {
+            ok: true,
+            err: None,
+            domaine: nom_domaine,
+            event: "done",
+            termine: true,
+            position: Some(total_transactions),
+            stats_backup: Some(&stats_backup),
+        };
+        if let Err(e) = middleware.emettre_evenement(routage_regeneration, &message_regeneration).await {
             warn!("regenerer Erreur emission evenement maj regeneration : {:?}", e);
         }
     }
@@ -275,13 +285,16 @@ where
 }
 
 async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, nom_collection_transactions: &str, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
-                                             -> Result<(), Box<dyn Error>>
+                                             -> Result<u64, Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
     T: AiguillageTransactions,
 {
+    let mut counter = 0u64;
+
     // while let Some(result) = curseur.next().await {
     while curseur.advance().await? {
+        counter += 1;
         let mut transaction = match curseur.deserialize_current() {
             Ok(inner) => inner,
             Err(_) => {
@@ -404,7 +417,7 @@ where
         }
     }
 
-    Ok(())
+    Ok(counter)
 }
 
 
@@ -530,30 +543,35 @@ where
     Ok(())
 }
 
-#[derive(Serialize)]
-struct RegenerationStatusUpdate<'a> {
-    stats_backup: &'a StatsBackup,
-    transaction_courante: u64,
-    done: bool,
-    event: &'a str,
-}
+// #[derive(Serialize)]
+// struct RegenerationStatusUpdate<'a> {
+//     stats_backup: &'a StatsBackup,
+//     transaction_courante: u64,
+//     done: bool,
+//     event: &'a str,
+// }
 
 async fn thread_regeneration_status_updates<M>(middleware: &M, domaine: &str, stats_backup: &StatsBackup, status_regeneration: &Mutex<StatusRegeneration>)
     -> Result<(), CommonError>
     where M: GenerateurMessages
 {
+    let routage = RoutageMessageAction::builder(domaine, EVENEMENT_REGENERATION, vec![Securite::L3Protege])
+        .build();
+
     // Emettre status debut de regeneration
-    emettre_regeneration_update(middleware, domaine, RegenerationStatusUpdate {
-        stats_backup,
-        transaction_courante: 0,
-        done: false,
+    middleware.emettre_evenement(routage.clone(), EvenementRegeneration {
+        ok: true,
+        err: None,
+        domaine,
         event: "start",
+        termine: false,
+        position: Some(0),
+        stats_backup: Some(stats_backup),
     }).await?;
 
     let mut current_count = 0;
     loop {
         tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-
         {
             let guard = status_regeneration.lock().expect("lock");
             current_count = guard.nombre_transaction_traites;
@@ -563,30 +581,29 @@ async fn thread_regeneration_status_updates<M>(middleware: &M, domaine: &str, st
         }
 
         // Emettre status de regeneration
-        emettre_regeneration_update(middleware, domaine, RegenerationStatusUpdate {
-            stats_backup,
-            transaction_courante: current_count,
-            done: false,
+        middleware.emettre_evenement(routage.clone(),EvenementRegeneration {
+            ok: true,
+            err: None,
+            domaine,
             event: "update",
+            termine: false,
+            position: Some(current_count),
+            stats_backup: Some(stats_backup),
         }).await?;
     }
 
-    // Emettre status fin de regeneration
-    emettre_regeneration_update(middleware, domaine, RegenerationStatusUpdate {
-        stats_backup,
-        transaction_courante: current_count,
-        done: true,
-        event: "done",
+    // Note: l'evenement de fin n'est pas emis ici parce qu'il peut rester des transactions a
+    // traiter dans la base de donnees.
+    // Emettre status de regeneration
+    middleware.emettre_evenement(routage.clone(),EvenementRegeneration {
+        ok: true,
+        err: None,
+        domaine,
+        event: "update",
+        termine: false,
+        position: Some(current_count),
+        stats_backup: Some(stats_backup),
     }).await?;
 
-    Ok(())
-}
-
-async fn emettre_regeneration_update<'a,M>(middleware: &M, domaine: &str, status: RegenerationStatusUpdate<'a>) -> Result<(), CommonError>
-    where M: GenerateurMessages
-{
-    let routage = RoutageMessageAction::builder(domaine, "regeneration", vec![Securite::L3Protege])
-        .build();
-    middleware.emettre_evenement(routage, status).await?;
     Ok(())
 }

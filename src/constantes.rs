@@ -288,7 +288,8 @@ pub const EVENEMENT_CEDULE: &str = "cedule";
 pub const EVENEMENT_CEDULEUR_PING: &str = "ping";
 pub const EVENEMENT_BACKUP_DECLENCHER: &str = "declencherBackup";
 pub const EVENEMENT_RESTAURER_TRANSACTION: &str = "restaurerTransaction";
-pub const EVENEMENT_REGENERATION_MAJ: &str = "regenerationMaj";
+// pub const EVENEMENT_REGENERATION_MAJ: &str = "regenerationMaj";
+pub const EVENEMENT_REGENERATION: &str = "regeneration";
 
 // Requetes
 pub const REQUETE_NOMBRE_TRANSACTIONS: &str = "getNombreTransactions";

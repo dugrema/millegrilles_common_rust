@@ -378,9 +378,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     async fn emettre_evenement<R,M>(&self, routage: R, message: M) -> Result<(), crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        if self.get_mode_regeneration() {  // Rien a faire
-            return Ok(())
-        }
+        // if self.get_mode_regeneration() {  // Rien a faire
+        //     return Ok(())
+        // }
 
         let mut routage = routage.into();
 
@@ -405,9 +405,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     async fn transmettre_requete<R,M>(&self, routage: R, message: M) -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        if self.get_mode_regeneration() {  // Rien a faire
-            return Ok(Some(TypeMessage::Regeneration))
-        }
+        // if self.get_mode_regeneration() {  // Rien a faire
+        //     return Ok(Some(TypeMessage::Regeneration))
+        // }
 
         let mut routage = routage.into();
 
@@ -439,9 +439,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
 
-        if self.get_mode_regeneration() {  // Rien a faire
-            return Ok(Some(TypeMessage::Regeneration))
-        }
+        // if self.get_mode_regeneration() {  // Rien a faire
+        //     return Ok(Some(TypeMessage::Regeneration))
+        // }
 
         let mut routage = routage.into();
 
@@ -464,9 +464,9 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        if self.get_mode_regeneration() {  // Rien a faire
-            return Ok(Some(TypeMessage::Regeneration))
-        }
+        // if self.get_mode_regeneration() {  // Rien a faire
+        //     return Ok(Some(TypeMessage::Regeneration))
+        // }
 
         let mut routage = routage.into();
 
@@ -488,10 +488,10 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     async fn repondre<R,M>(&self, routage: R, message: M) -> Result<(), crate::error::Error>
         where R: Into<RoutageMessageReponse> + Send, M: Serialize + Send + Sync
     {
-        if self.get_mode_regeneration() {
-            // Rien a faire
-            return Ok(())
-        }
+        // if self.get_mode_regeneration() {
+        //     // Rien a faire
+        //     return Ok(())
+        // }
 
         // let routage = routage.into();
         //
