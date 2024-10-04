@@ -570,11 +570,9 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     where
         M: GenerateurMessages + MongoDao
     {
-        let nom_collection_transactions = match self.get_collection_transactions() {
-            Some(inner) => inner,
-            None => Err("domaines_v2.resoumettre_transactions Aucuns collections de transactions pour ce domaine")?
+        if let Some(nom_collection_transactions) = self.get_collection_transactions() {
+            resoumettre_transactions(middleware, &vec![nom_collection_transactions]).await?;
         };
-        resoumettre_transactions(middleware, &vec![nom_collection_transactions]).await?;
         Ok(())
     }
 }

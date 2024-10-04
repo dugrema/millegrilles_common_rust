@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::fs;
 use std::fs::{File, FileType};
 use std::io::{ErrorKind, SeekFrom};
@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use fs2::FileExt;
 use futures_util::{StreamExt, TryStreamExt};
 
-use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems, Duration};
+use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems, Duration, DateTime};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
@@ -927,7 +927,7 @@ struct ListeClesBackupBase64 {
     cles: HashMap<String, String>
 }
 
-pub async fn charger_cles_backup_message<M>(middleware: &M, domaine: &str, doc_cles: EncryptedDocument)
+pub async fn charger_cles_backup_message<M>(middleware: &M, doc_cles: EncryptedDocument)
     -> Result<HashMap<String, CleSecrete<32>>, CommonError>
     where M: GenerateurMessages
 {
@@ -1652,4 +1652,37 @@ async fn download_backup_files(path_backup: &Path, liste: &Vec<String>, domaine:
     }
 
     Ok(())
+}
+
+#[derive(Serialize)]
+pub struct StatsBackup {
+    pub nombre_transactions: u64,
+    pub nombre_fichiers: u64,
+    pub date_premiere_transaction: Option<u64>,
+    pub date_derniere_transaction: Option<u64>,
+}
+
+pub struct StatusRegeneration {
+    pub nombre_transaction_traites: u64,
+    pub done: bool,
+}
+
+pub fn extraire_stats_backup(fichiers: &Vec<FichierArchiveBackup>) -> StatsBackup {
+    let mut stats = StatsBackup {
+        nombre_transactions: 0,
+        nombre_fichiers: 0,
+        date_premiere_transaction: None,
+        date_derniere_transaction: None,
+    };
+    for fichier in fichiers {
+        let header = &fichier.header;
+        if stats.date_premiere_transaction.is_none() {
+            stats.date_premiere_transaction = Some(header.debut_backup);
+        }
+        stats.date_derniere_transaction = Some(header.fin_backup);
+        stats.nombre_fichiers += 1;
+        stats.nombre_transactions += header.nombre_transactions;
+    }
+
+    stats
 }

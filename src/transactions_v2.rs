@@ -1,18 +1,20 @@
 use std::borrow::Cow;
 use std::error::Error;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::bson::{doc, Bson};
 use mongodb::{bson, Cursor};
 use mongodb::options::{FindOptions, Hint, UpdateOptions};
-use tokio::join;
+use serde::Serialize;
+use tokio::io::AsyncWriteExt;
+use tokio::{join, spawn};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, PATH_FICHIERS_ARCHIVES};
+use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup, FichierArchiveBackup, RegenerationBackup, StatsBackup, StatusRegeneration, PATH_FICHIERS_ARCHIVES};
 use crate::certificats::{charger_enveloppe, ValidateurX509};
 use crate::constantes::*;
 use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
@@ -49,12 +51,14 @@ where
     // Traiter transactions dans les fichiers d'archive
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
     let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), true).await?;
+    let stats_backup = extraire_stats_backup(&fichiers_backup);
     let cles_backup = match commande.cles_chiffrees {
-        Some(inner) => charger_cles_backup_message(middleware, nom_domaine, inner).await?,
+        Some(inner) => charger_cles_backup_message(middleware, inner).await?,
         None => charger_cles_backup(middleware, nom_domaine, &fichiers_backup, None).await?
     };
 
     debug!("regenerer_v2 Path {:?}\n{} fichiers de backup, {} cles chargees", path_backup, fichiers_backup.len(), cles_backup.len());
+    let status_regeneration = Mutex::new(StatusRegeneration { nombre_transaction_traites: 0, done: false });
 
     let (tx_transaction, rx_transaction) = mpsc::channel(2);
     let info_regeneration = RegenerationBackup {
@@ -64,11 +68,14 @@ where
     };
     let thread_lire_transactions = lire_transactions_fichiers(info_regeneration, tx_transaction);
     let thread_traiter_transactions = traiter_transactions_receiver(
-        middleware, nom_collection_transactions, rx_transaction, processor, true);
+        middleware, nom_collection_transactions, rx_transaction, processor, skip_certificats, &status_regeneration);
+    let thread_status_updates = thread_regeneration_status_updates(
+        middleware, nom_domaine, &stats_backup, &status_regeneration);
 
-    let (result_lire, result_traiter) = join![thread_lire_transactions, thread_traiter_transactions];
+    let (result_lire, _, result_status_updates) = join![
+        thread_lire_transactions, thread_traiter_transactions, thread_status_updates];
     result_lire?;
-    result_traiter?;
+    result_status_updates?;
 
     // Creer curseur sur les transactions en ordre de traitement
     let resultat_transactions = {
@@ -128,12 +135,14 @@ where
 }
 
 async fn traiter_transactions_receiver<'a, M, T>(
-    middleware: &M, nom_collection_transactions: &str, mut rx: Receiver<TransactionOwned>, processor: &T, skip_certificats: bool)
-    -> Result<(), CommonError>
+    middleware: &M, nom_collection_transactions: &str, mut rx: Receiver<TransactionOwned>, processor: &T,
+    skip_certificats: bool, status_regeneration: &Mutex<StatusRegeneration>
+)
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
+    M: ValidateurX509 + GenerateurMessages + MongoDao,
     T: AiguillageTransactions,
 {
+    let mut transaction_counter = 0u64;
     loop {
         let transaction = match rx.recv().await {
             Some(inner) => inner,
@@ -238,14 +247,25 @@ where
         match processor.aiguillage_transaction(middleware, transaction).await {
             Ok(_resultat) => {
                 // S'assurer que la transaction est dans la collection DOMAINE/transactions_traitees
-                upsert_transactions_traitees(
-                    middleware, nom_collection_transactions, message_id, EtatTransaction::Complete, Some(true), Some(date_traitee)).await?;
+                if let Err(e) = upsert_transactions_traitees(
+                    middleware, nom_collection_transactions, &message_id, EtatTransaction::Complete, Some(true), Some(date_traitee)).await {
+                    error!("traiter_transactions_receiver ** ERREUR REGENERATION {} ** {:?}", message_id, e)
+                }
             },
             Err(e) => error!("traiter_transactions_receiver ** ERREUR REGENERATION {} ** {:?}", message_id, e)
         }
+
+        // Update status
+        transaction_counter += 1;
+        {
+            let mut guard = status_regeneration.lock().expect("lock");
+            guard.nombre_transaction_traites = transaction_counter;
+        }
     }
 
-    Ok(())
+    // Mis a jour status, indique aux autres threads que le traitement est termine
+    let mut guard = status_regeneration.lock().expect("lock");
+    guard.done = true;
 }
 
 async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, nom_collection_transactions: &str, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
@@ -258,7 +278,7 @@ where
     while curseur.advance().await? {
         let mut transaction = match curseur.deserialize_current() {
             Ok(inner) => inner,
-            Err(e) => {
+            Err(_) => {
                 error!("regenerer_transactions_v2 Erreur transaction deserialize_current - ** SKIP **");
                 continue  // Skip
             }
@@ -501,5 +521,66 @@ where
 
     collection_traitees.update_one(filtre_transactions_traitees, ops_transactions_traitees, options).await?;
 
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct RegenerationStatusUpdate<'a> {
+    stats_backup: &'a StatsBackup,
+    transaction_courante: u64,
+    done: bool,
+    event: &'a str,
+}
+
+async fn thread_regeneration_status_updates<M>(middleware: &M, domaine: &str, stats_backup: &StatsBackup, status_regeneration: &Mutex<StatusRegeneration>)
+    -> Result<(), CommonError>
+    where M: GenerateurMessages
+{
+    // Emettre status debut de regeneration
+    emettre_regeneration_update(middleware, domaine, RegenerationStatusUpdate {
+        stats_backup,
+        transaction_courante: 0,
+        done: false,
+        event: "start",
+    }).await?;
+
+    let mut current_count = 0;
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+
+        {
+            let guard = status_regeneration.lock().expect("lock");
+            current_count = guard.nombre_transaction_traites;
+            if guard.done {
+                break;  // Complete
+            }
+        }
+
+        // Emettre status de regeneration
+        emettre_regeneration_update(middleware, domaine, RegenerationStatusUpdate {
+            stats_backup,
+            transaction_courante: current_count,
+            done: false,
+            event: "update",
+        }).await?;
+    }
+
+    // Emettre status fin de regeneration
+    emettre_regeneration_update(middleware, domaine, RegenerationStatusUpdate {
+        stats_backup,
+        transaction_courante: current_count,
+        done: true,
+        event: "done",
+    }).await?;
+
+    Ok(())
+}
+
+async fn emettre_regeneration_update<'a,M>(middleware: &M, domaine: &str, status: RegenerationStatusUpdate<'a>) -> Result<(), CommonError>
+    where M: GenerateurMessages
+{
+    let routage = RoutageMessageAction::builder(domaine, "regeneration", vec![Securite::L3Protege])
+        .build();
+    middleware.emettre_evenement(routage, status).await?;
     Ok(())
 }
