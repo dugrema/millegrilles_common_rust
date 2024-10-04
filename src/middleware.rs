@@ -681,9 +681,10 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
     }
 }
 
-pub async fn emettre_presence_domaine(
-    middleware: &(impl ValidateurX509 + GenerateurMessages + ConfigMessages), nom_domaine: &str, reclame_fuuids: bool)
+pub async fn emettre_presence_domaine<M>(
+    middleware: &M, nom_domaine: &str, reclame_fuuids: bool)
     -> Result<(), Box<dyn Error>>
+    where M: ValidateurX509 + GenerateurMessages + ConfigMessages
 {
 
     let instance_id = match &middleware.get_configuration_noeud().instance_id {

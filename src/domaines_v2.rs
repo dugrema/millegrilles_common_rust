@@ -64,6 +64,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         // Threads d'entretien du domaine
         futures.push(spawn(thread_charger_certificats_chiffrage(middleware)));
         futures.push(spawn(thread_entretien_validateur(middleware)));
+        futures.push(spawn(thread_annonce_initiale(self, middleware)));
 
         Ok(futures)
     }
@@ -729,4 +730,23 @@ async fn get_nombre_transactions<M,G>(gestionnaire: &G, middleware: &M)
 
     let reponse = ReponseNombreTransactions { ok: true, domaine: gestionnaire.get_nom_domaine(), nombre_transactions };
     Ok(Some(middleware.build_reponse(reponse)?.0))
+}
+
+// Utilise pour faire des annonces initiales du domaine immediatement apres le demarrage
+async fn thread_annonce_initiale<M,G>(gestionnaire: &G, middleware: &M)
+where M: ValidateurX509 + GenerateurMessages + ConfigMessages, G: GestionnaireDomaineV2
+{
+    // Wait 5 seconds after startup
+    tokio::time::sleep(tokio::time::Duration::from_millis(3000)).await;
+
+    loop {
+        let nom_domaine = gestionnaire.get_nom_domaine();
+        let reclame_fuuids = gestionnaire.reclame_fuuids();
+        if let Err(e) = emettre_presence_domaine(middleware, nom_domaine.as_str(), reclame_fuuids).await {
+            warn!("Erreur emission presence du domaine : {}", e);
+        }
+
+        // Every 24 hours - not really useful, this is done every few minutes from a ping event.
+        tokio::time::sleep(tokio::time::Duration::from_secs(24 * 3_600)).await;
+    }
 }
