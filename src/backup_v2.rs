@@ -56,6 +56,8 @@ use crate::recepteur_messages::TypeMessage;
 
 pub const PATH_FICHIERS_ARCHIVES: &str = "/var/opt/millegrilles/archives";
 
+pub const CONST_ARCHIVE_NEW_VERSION: &str = "NEW";
+
 #[derive(Clone)]
 enum TypeArchive {
     Incremental,
@@ -139,7 +141,28 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         if backup_complet == true  {
             // Generer un nouveau fichier concatene, potentiellement des nouveaux fichiers finaux.
             if let Err(e) = run_backup_complet(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
-                error!("thread_backup_v2 Erreur durant backup complet: {:?}", e);
+                error!("thread_backup_v2 Erreur durant un backup complet: {:?}", e);
+            }
+        } else {
+            // Verifier si c'est le premier backup incremental
+            match middleware.get_enveloppe_signature().enveloppe_pub.idmg() {
+                Ok(idmg) => match trouver_version_backup_local(path_backup.as_ref(), idmg.as_str()).await {
+                    Ok((fichiers, version)) => {
+                        if fichiers.len() > 0 && version.is_none() {
+                            // Au moins 1 fichier et aucune version (pas de fichier Concatene)
+                            info!("thread_backup_v2 Declencehement backup complet sur premier backup incremental");
+                            if let Err(e) = run_backup_complet(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
+                                error!("thread_backup_v2 Erreur durant le premier backup complet: {:?}", e);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("thread_backup_v2 Erreur durant verification version locale: {:?}", e);
+                    }
+                },
+                Err(e) => {
+                    error!("thread_backup_v2 Erreur chargement idmg: {:?}", e);
+                }
             }
         }
 
@@ -903,18 +926,20 @@ pub async fn charger_cles_backup<M>(middleware: &M, domaine: &str, fichiers: &Ve
     let vec_cle_ids: Vec<&str> = cle_ids_set.into_iter().collect();
     let nombre_cles_a_charger = vec_cle_ids.len();
 
+    info!("charger_cles_backup Charger {} cles de backup", nombre_cles_a_charger);
+
     // Recuperer cles a partir du maitre des cles
     let mut cles = HashMap::new();
     if nombre_cles_a_charger > 0 {
         let reponse_cles = get_cles_rechiffrees_v2(
             middleware, domaine, vec_cle_ids, Some(false)).await?;
-        if reponse_cles.len() != 1 {
-            Err(format!("backup_v2.recuperer_cle_backup Mauvais nombre de cles recus: {:?}", reponse_cles.len()))?;
-        }
+        // if reponse_cles.len() != 1 {
+        //     Err(format!("backup_v2.recuperer_cle_backup Mauvais nombre de cles recus: {:?}", reponse_cles.len()))?;
+        // }
         for cle in reponse_cles {
             let cle_id = match cle.cle_id {
                 Some(inner) => inner,
-                None => Err("Reponse cle sans cle_id")?
+                None => Err("backup_v2.charger_cles_backup Reponse cle sans cle_id")?
             };
             let mut cle_secrete = CleSecreteX25519 { 0: [0u8; 32] };
             cle_secrete.0.copy_from_slice(base64_nopad.decode(&cle.cle_secrete_base64)?.as_slice());
@@ -1294,7 +1319,8 @@ async fn synchroniser_consignation<M>(
         idmg.as_str(), domaine, path_backup, &client, url_consignation.as_str()).await?;
     let version_effective = match version.as_ref() {
         Some(version) => version.as_str(),
-        None => "NEW"
+        // None => CONST_ARCHIVE_NEW_VERSION
+        None => Err(format!("backup_v2.synchroniser_consignation Aucune version pour le backup domaine {}", domaine))?
     };
 
     // Downloader les listes de fichier (fichiers finaux et version courante)
@@ -1388,10 +1414,7 @@ struct ReponseVersionsBackup {
     versions: Option<Vec<VersionBackup>>,
 }
 
-async fn trouver_version_backup(idmg: &str, domaine: &str, path_backup: &Path, client: &reqwest::Client, url_consignation: &str)
-    -> Result<(Vec<FichierArchiveBackup>, Option<String>), CommonError>
-{
-    // Recuperer les fichiers presents localement
+async fn trouver_version_backup_local(path_backup: &Path, idmg: &str) -> Result<(Vec<FichierArchiveBackup>, Option<String>), CommonError>{
     let fichiers = organiser_fichiers_backup(path_backup, idmg, false).await?;
     let mut version_courante_locale = None;
     for f in &fichiers {
@@ -1403,6 +1426,25 @@ async fn trouver_version_backup(idmg: &str, domaine: &str, path_backup: &Path, c
             }
         }
     }
+    Ok((fichiers, version_courante_locale))
+}
+
+async fn trouver_version_backup(idmg: &str, domaine: &str, path_backup: &Path, client: &reqwest::Client, url_consignation: &str)
+    -> Result<(Vec<FichierArchiveBackup>, Option<String>), CommonError>
+{
+    // Recuperer les fichiers presents localement
+    let (fichiers, version_courante_locale) = trouver_version_backup_local(path_backup, idmg).await?;
+    // let fichiers = organiser_fichiers_backup(path_backup, idmg, false).await?;
+    // let mut version_courante_locale = None;
+    // for f in &fichiers {
+    //     if f.header.type_archive.as_str() == "C" {
+    //         if version_courante_locale.is_some() {
+    //             Err("backup_v2.trouver_version_backup Plus d'un fichier concatene present")?
+    //         } else {
+    //             version_courante_locale = Some(f.digest_suffix.clone());
+    //         }
+    //     }
+    // }
 
     debug!("Version courante du backup: {:?}", version_courante_locale);
 

@@ -430,15 +430,24 @@ pub async fn get_cles_rechiffrees_v2<M,D,C>(middleware: &M, domaine: D, cle_ids:
 
     match middleware.transmettre_requete(routage, &requete).await? {
         Some(TypeMessage::Valide(reponse)) => {
-            // Dechiffrer la reponse
             let message_ref = reponse.message.parse()?;
-            let enveloppe_signature = middleware.get_enveloppe_signature();
-            let reponse: ReponseRequeteDechiffrageV2 = message_ref.dechiffrer(enveloppe_signature.as_ref())?;
-            // let reponse: ReponseRequeteDechiffrageV2 = deser_message_buffer!(reponse.message);
-            if reponse.ok && reponse.cles.is_some() {
-                Ok(reponse.cles.expect("cles"))
-            } else {
-                Err(format!("chiffrage_cle.get_cles_rechiffrees_v2 Erreur reponse dechiffrage cles code: {}, err: {:?}", reponse.code, reponse.err))?
+            match message_ref.kind {
+                millegrilles_cryptographie::messages_structs::MessageKind::ReponseChiffree => {
+                    // Dechiffrer la reponse
+                    let enveloppe_signature = middleware.get_enveloppe_signature();
+                    let reponse: ReponseRequeteDechiffrageV2 = message_ref.dechiffrer(enveloppe_signature.as_ref())?;
+                    // let reponse: ReponseRequeteDechiffrageV2 = deser_message_buffer!(reponse.message);
+                    if reponse.ok && reponse.cles.is_some() {
+                        Ok(reponse.cles.expect("cles"))
+                    } else {
+                        Err(format!("chiffrage_cle.get_cles_rechiffrees_v2 Erreur reponse dechiffrage cles code: {}, err: {:?}", reponse.code, reponse.err))?
+                    }
+                },
+                _ => {
+                    let buffer_contenu = message_ref.contenu()?;
+                    let contenu: ReponseCommande = buffer_contenu.deserialize()?;
+                    Err(format!("chiffrage_cle.get_cles_rechiffrees_v2 Erreur recuperer cles: {:?}", contenu))?
+                }
             }
         },
         _ => Err("chiffrage_cle.get_cles_rechiffrees_v2 Mauvais type de reponse")?
