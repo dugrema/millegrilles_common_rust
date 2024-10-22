@@ -1317,10 +1317,18 @@ async fn synchroniser_consignation<M>(
     let idmg = enveloppe.enveloppe_pub.idmg()?;
     let (fichiers_locaux, version) = trouver_version_backup(
         idmg.as_str(), domaine, path_backup, &client, url_consignation.as_str()).await?;
+
     let version_effective = match version.as_ref() {
         Some(version) => version.as_str(),
         // None => CONST_ARCHIVE_NEW_VERSION
-        None => Err(format!("backup_v2.synchroniser_consignation Aucune version pour le backup domaine {}", domaine))?
+        None => {
+            if fichiers_locaux.len() == 0 {
+                info!("synchroniser_consignation Aucunes transactions locales dans le domaine {} et aucune version dans consignation, SKIP sync", domaine);
+                return Ok(());
+            } else {
+                Err(format!("backup_v2.synchroniser_consignation Aucune version pour le backup domaine {}", domaine))?
+            }
+        }
     };
 
     // Downloader les listes de fichier (fichiers finaux et version courante)
