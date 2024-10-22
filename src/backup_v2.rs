@@ -46,6 +46,7 @@ use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechif
 use crate::common_messages::{ReponseInformationConsignationFichiers, RequeteConsignationFichiers};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
+use crate::constantes::Securite::L3Protege;
 use crate::db_structs::TransactionOwned;
 use crate::dechiffrage::decrypt_document;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
@@ -77,6 +78,8 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         let backup_complet = commande.complet;
 
         let path_backup = preparer_path_backup(PATH_FICHIERS_ARCHIVES, commande.nom_domaine.as_str());
+
+        let mut backup_ok= true;
 
         // Lock pour empecher autre process de backup
         let (lock_file, path_lock_file) = {
@@ -132,16 +135,26 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
             warn!("thread_backup_v2 Erreur emission reponse declenchement de backup: {:?}", e);
         }
 
+        // Evenement intial de backup (done=false)
+        emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
+                                 BackupEvent {ok: backup_ok, done: false, err: None}).await;
+
         // Toujours commencer par un backup incremental pour vider
         // les nouvelles transactions de la base de donnees.
         if let Err(e) = backup_incremental(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
             error!("thread_backup_v2 Erreur durant backup incremental: {:?}", e);
+            backup_ok = false;
+            emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
+                                     BackupEvent {ok: backup_ok, done: false, err: Some("Erreur durant un backup incremental".to_string())}).await;
         }
 
         if backup_complet == true  {
             // Generer un nouveau fichier concatene, potentiellement des nouveaux fichiers finaux.
             if let Err(e) = run_backup_complet(middleware, &commande, &cle_backup_domaine, path_backup.as_ref()).await {
                 error!("thread_backup_v2 Erreur durant un backup complet: {:?}", e);
+                backup_ok = false;
+                emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
+                                         BackupEvent {ok: backup_ok, done: false, err: Some("Erreur durant un backup complet".to_string())}).await;
             }
         } else {
             // Verifier si c'est le premier backup incremental
@@ -169,6 +182,9 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         // Synchroniser les archives avec le serveur de consignation
         if let Err(e) = synchroniser_consignation(middleware, &commande, path_backup.as_path(), &serveur_consignation).await {
             error!("thread_backup_v2 Erreur durant upload des fichiers de backup: {:?}", e);
+            backup_ok = false;
+            emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
+                                     BackupEvent {ok: backup_ok, done: false, err: Some("Erreur durant upload des fichiers de backup".to_string())}).await;
         }
 
         // Retirer le lock de backup
@@ -178,6 +194,10 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         if let Err(e) = fs::remove_file(path_lock_file) {
             info!("thread_backup_v2 Error deleting lock file: {:?}", e);
         };
+
+        // Evenement final de backup (done=true)
+        emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
+                                 BackupEvent {ok: backup_ok, done: true, err: None}).await;
     }
 }
 
@@ -1757,3 +1777,39 @@ pub async fn extraire_stats_backup<M>(middleware: &M, collection_transaction: &s
 
     Ok(stats)
 }
+
+#[derive(Serialize)]
+struct BackupEvent {
+    ok: bool,  // Si false, indique echec dans le backup
+    done: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    err: Option<String>,
+}
+
+pub async fn emettre_evenement_backup<M>(middleware: &M, domaine: &str, event: BackupEvent)
+    where M: GenerateurMessages
+{
+    let routage = RoutageMessageAction::builder(
+        domaine, BACKUP_EVENEMENT_MAJ, vec![L3Protege]).build();
+    if let Err(e) = middleware.emettre_evenement(routage, &event).await {
+        error!("emettre_evenement_backup Erreur emission evenement backup: {:?}", e);
+    }
+}
+
+// pub async fn emettre_evenement_backup<M>(
+//     middleware: &M, info_backup: &BackupInformation, evenement: &str, timestamp: &DateTime<Utc>)
+//     -> Result<(), crate::error::Error>
+//     where M: GenerateurMessages
+// {
+//     let value = json!({
+//         "uuid_rapport": info_backup.uuid_backup.as_str(),
+//         "evenement": evenement,
+//         "domaine": info_backup.domaine.as_str(),
+//         "timestamp": timestamp.timestamp(),
+//     });
+//
+//     let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ, vec![L2Prive])
+//         .build();
+//
+//     Ok(middleware.emettre_evenement(routage, &value).await?)
+// }
