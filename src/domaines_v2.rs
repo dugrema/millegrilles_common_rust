@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::{Timelike, Utc};
+use chrono::{Datelike, Timelike, Utc, Weekday};
 use futures_util::stream::FuturesUnordered;
 use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::deser_message_buffer;
@@ -401,12 +401,12 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
             return Ok(());
         }
 
-        if dt.minute() % 10 == 4  // 2 fois par heure, minutes 4 et 34.
+        if dt.minute() % 30 == 4  // 2 fois par heure, minutes 4 et 34.
         {
             // TODO - Configurer backup complet via CoreTopologie/Coupdoeil
             // Concatenation de backup le dimanche a 7:04UTC.
-            // let complet = dt.minute() == 4 && dt.hour() == 7 && dt.weekday() == Weekday::Sun;
-            let complet = dt.minute() == 4 && dt.hour() == 21;
+            let complet = dt.minute() == 4 && dt.hour() == 7 && dt.weekday() == Weekday::Sun;
+            // let complet = dt.minute() == 4 && dt.hour() == 21;
             // let complet = true;
 
             // Demarrer backup incremental des transactions
@@ -672,9 +672,9 @@ async fn consommer_evenement_trait<G,M>(gestionnaire: &G, middleware: &M, m: Mes
                 _ => gestionnaire.consommer_evenement(middleware, m).await
             }
         },
-        false => match m.certificat.verifier_exchanges(vec!(Securite::L2Prive))? {
+        false => match m.certificat.verifier_exchanges(vec!(Securite::L3Protege))? {
             true => {
-                match m.certificat.verifier_roles(vec![RolesCertificats::Backup])? {
+                match m.certificat.verifier_delegation_globale(DELEGATION_GLOBALE_PROPRIETAIRE)? {
                     true => match action.as_str() {
                         EVENEMENT_BACKUP_DECLENCHER => gestionnaire.demarrer_backup(middleware, m).await,
                         _ => gestionnaire.consommer_evenement(middleware, m).await
