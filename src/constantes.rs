@@ -416,3 +416,6 @@ pub const TOPOLOGIE_NOM_DOMAINE: &str = DOMAINE_TOPOLOGIE;
 pub const COMMANDE_FICHIERS_REACTIVER: &str = "reactiverFuuids";
 
 pub const PATH_REGLES_VALIDATION: &str = "/var/opt/millegrilles/configuration/idmg_validation.json";
+
+
+pub const REQUETE_GET_FILEHOST_FOR_INSTANCE: &str = "getFilehostForInstance";

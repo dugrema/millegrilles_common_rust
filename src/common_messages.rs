@@ -321,3 +321,29 @@ pub struct ReponseRequeteDechiffrageV2 {
     pub cles: Option<Vec<ResponseRequestDechiffrageV2Cle>>,
     pub err: Option<String>,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct FilehostForInstanceRequest {
+    pub instance_id: Option<String>,
+    pub filehost_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RequeteFilehostItem {
+    pub filehost_id: String,
+    pub instance_id: Option<String>,
+    pub url_internal: Option<String>,
+    pub url_external: Option<String>,
+    pub deleted: bool,
+    pub sync_active: bool,
+    #[serde(with = "epochseconds")]
+    pub created: DateTime<Utc>,
+    #[serde(with = "epochseconds")]
+    pub modified: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RequestFilehostForInstanceResponse {
+    pub ok: bool,
+    pub filehost: RequeteFilehostItem,
+}

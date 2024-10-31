@@ -128,6 +128,18 @@ pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messa
         Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
     };
 
+    let cert_ca = match &routage.ajouter_ca {
+        true => {
+            let ca = enveloppe_privee.enveloppe_ca.as_ref();
+            let chaine_pem = ca.chaine_pem()?;
+            match chaine_pem.get(0) {
+                Some(inner) => Some(inner.to_string()),
+                None => None
+            }
+        },
+        false => None
+    };
+
     let routage_message: RoutageMessage = (&routage).into();
 
     let mut cle_privee_u8 = SecretKey::default();
@@ -144,11 +156,14 @@ pub fn build_message_action<R,M>(type_message: millegrilles_cryptographie::messa
         let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
         certificat.extend(pem_vec.iter().map(|s| s.as_str()));
 
-        let generateur = MessageMilleGrillesBuilderDefault::new(
+        let mut generateur = MessageMilleGrillesBuilderDefault::new(
             type_message, contenu.as_str())
             .routage(routage_message)
             .signing_key(&signing_key)
             .certificat(certificat);
+        if let Some(ca) = cert_ca.as_ref() {
+            generateur = generateur.millegrille(ca.as_str());
+        }
 
         // Allouer un Vec et serialiser le message signe.
         let message_ref = generateur.build_into_alloc(&mut buffer)?;

@@ -1,6 +1,6 @@
 [package]
 name = "millegrilles_common_rust"
-version = "2024.7.6"
+version = "2024.8.0"
 edition = "2021"
 
 [dependencies]
@@ -16,7 +16,7 @@ log = { version = "0.4"}
 env_logger = { version = "0.11" }
 num-traits = "0.2"
 rand = "0.8"
-reqwest = { version = "0.12", features = ["default-tls", "native-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream", "socks"] }
+reqwest = { version = "0.12", features = ["default-tls", "native-tls", "rustls-tls", "rustls-tls-manual-roots", "json", "multipart", "stream", "socks", "cookies"] }
 tempfile = { version = "3.10" }
 flate2 = "1.0"
 xz2 = { version = "0.1", features = ["tokio"] }
