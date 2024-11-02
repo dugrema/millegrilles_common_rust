@@ -183,7 +183,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         }
 
         // Synchroniser les archives avec le serveur de consignation
-        if let Err(e) = synchroniser_consignation(middleware, &commande, path_backup.as_path(), serveur_consignation.as_str()).await {
+        if let Err(e) = synchroniser_consignation(middleware, &commande, path_backup.as_path(), &serveur_consignation).await {
             error!("thread_backup_v2 Erreur durant upload des fichiers de backup: {:?}", e);
             backup_ok = false;
             emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
@@ -210,7 +210,7 @@ fn preparer_path_backup(path_backup: &str, domaine: &str) -> PathBuf {
     path_domaine
 }
 
-async fn get_serveur_consignation<M>(middleware: &M) -> Result<String, CommonError>
+async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFilehostItem, CommonError>
     where M: GenerateurMessages
 {
     let routage = RoutageMessageAction::builder(
@@ -227,15 +227,15 @@ async fn get_serveur_consignation<M>(middleware: &M) -> Result<String, CommonErr
 
     let filehost = reponse.filehost;
 
-    let url = match filehost.url_external {
-        Some(inner) => inner,
-        None => match filehost.url_internal {
-            Some(inner) => inner,
-            None => Err("backup_v2.get_serveur_consignation No filehost server availabled")?
-        }
-    };
+    // let url = match filehost.url_external {
+    //     Some(inner) => inner,
+    //     None => match filehost.url_internal {
+    //         Some(inner) => inner,
+    //         None => Err("backup_v2.get_serveur_consignation No filehost server availabled")?
+    //     }
+    // };
 
-    Ok(url)
+    Ok(filehost)
 }
 
 /// Fait un backup incremental en transferant les transactions completees avec succes dans un fichier.
@@ -1325,7 +1325,7 @@ async fn rotation_repertoires_backup(path_archives: &Path, fichiers: &Vec<Fichie
 
 /// Upload le fichier de backup vers la consignation.
 async fn synchroniser_consignation<M>(
-    middleware: &M, commande_backup: &CommandeBackup, path_backup: &Path, serveur_consignation: &str
+    middleware: &M, commande_backup: &CommandeBackup, path_backup: &Path, serveur_consignation: &RequeteFilehostItem
 )
     -> Result<(), CommonError>
     where M: GenerateurMessages
@@ -1383,7 +1383,7 @@ async fn synchroniser_consignation<M>(
     Ok(())
 }
 
-async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &str)
+async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &RequeteFilehostItem)
     -> Result<(reqwest::Client, Url), CommonError>
     where M: GenerateurMessages
 {
@@ -1393,42 +1393,105 @@ async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &
         Some(cert) => cert.as_str(),
         None => Err(format!("Certificat CA manquant"))?
     };
-    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
 
-    let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
-    let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
-    cert_pem_list.insert(0, cle_privee_pem.to_string());
-    let pem_keycert = cert_pem_list.join("\n");
+    // let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+    // let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
+    // let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
+    // cert_pem_list.insert(0, cle_privee_pem.to_string());
+    // let pem_keycert = cert_pem_list.join("\n");
+    //
+    // // let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
+    //
+    // let cert = pem_keycert.as_bytes();
+    // let key = cle_privee_pem.as_bytes();
+    // let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
 
-    // let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
-
-    let cert = pem_keycert.as_bytes();
-    let key = cle_privee_pem.as_bytes();
-    let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
-
-    let client = reqwest::Client::builder()
-        .add_root_certificate(root_ca)
+    let mut client_builder = reqwest::Client::builder()
+        // .add_root_certificate(root_ca)
         //.identity(identity)
-        .identity(pkcs8)
+        // .identity(pkcs8)
         .https_only(true)
         .use_native_tls()
         // .use_rustls_tls()
         .connect_timeout(core::time::Duration::new(20, 0))
         .http2_adaptive_window(true)
-        .cookie_store(true)
-        .build()?;
+        .cookie_store(true);
+
+    let url_string = match serveur_consignation.url_external.as_ref() {
+        Some(inner) => {
+            // Using external connection. Check the kind of security check
+            if let Some(tls_external) = serveur_consignation.tls_external.as_ref() {
+                if tls_external.as_str() == "millegrille" {
+                    debug!("preparer_client_consignation Using external connection with millegrille client TLS authentication");
+                    // MilleGrille client TLS authentication
+                    let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+                    let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
+                    let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
+                    cert_pem_list.insert(0, cle_privee_pem.to_string());
+                    let pem_keycert = cert_pem_list.join("\n");
+                    let cert = pem_keycert.as_bytes();
+                    let key = cle_privee_pem.as_bytes();
+                    let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
+
+                    client_builder = client_builder
+                        .add_root_certificate(root_ca)
+                        .identity(pkcs8);
+                } else if tls_external.as_str() == "external" {
+                    debug!("preparer_client_consignation Using external connection with internet authority server TLS check");
+                } else {
+                    // No certificate check
+                    debug!("preparer_client_consignation Using external connection with **NO** TLS check");
+                    client_builder = client_builder
+                        .danger_accept_invalid_certs(true)
+                        .danger_accept_invalid_hostnames(true);
+                }
+            } else {
+                // No certificate check
+                debug!("preparer_client_consignation Using external connection with **NO** TLS check");
+                client_builder = client_builder
+                    .danger_accept_invalid_certs(true)
+                    .danger_accept_invalid_hostnames(true);
+            }
+
+            // Return the external url
+            inner.as_str()
+        },
+        None => match serveur_consignation.url_internal.as_ref() {
+            Some(inner) => {
+                debug!("preparer_client_consignation Using internal connection with millegrille client TLS authentication");
+                // MilleGrille client TLS authentication
+                let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
+                let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
+                let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
+                cert_pem_list.insert(0, cle_privee_pem.to_string());
+                let pem_keycert = cert_pem_list.join("\n");
+                let cert = pem_keycert.as_bytes();
+                let key = cle_privee_pem.as_bytes();
+                let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
+
+                client_builder = client_builder
+                    .add_root_certificate(root_ca)
+                    .identity(pkcs8);
+
+                inner.as_str()
+            },
+            None => Err("preparer_client_consignation filehost with no external/internal URL")?
+        }
+    };
+
+    let client = client_builder.build()?;
 
     // Authenticate
-    let filehost_url = url::Url::parse(serveur_consignation)?;
+    let filehost_url = url::Url::parse(url_string)?;
     let authentication_url = filehost_url.join("/filehost/authenticate")?;
-    debug!("Authentication url: {:?}", authentication_url.as_str());
+    debug!("preparer_client_consignation Authentication url: {:?}", authentication_url.as_str());
     let routage = RoutageMessageAction::builder("filehost", "authenticate", vec!{})
         .ajouter_ca(true)
         .build();
     let nomessage = json!({"auth": true});
     let authentication_message = middleware.build_message_action(MessageKind::Commande, routage, nomessage)?.0;
     let result = client.post(authentication_url).body(authentication_message.buffer).send().await?.error_for_status()?;
-    info!("Result: {:?}", result);
+    info!("preparer_client_consignation Result: {:?}", result);
 
     Ok((client, filehost_url))
 }

@@ -334,6 +334,7 @@ pub struct RequeteFilehostItem {
     pub instance_id: Option<String>,
     pub url_internal: Option<String>,
     pub url_external: Option<String>,
+    pub tls_external: Option<String>,
     pub deleted: bool,
     pub sync_active: bool,
     #[serde(with = "epochseconds")]
