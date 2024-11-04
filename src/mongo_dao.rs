@@ -310,3 +310,115 @@ pub mod opt_chrono_datetime_as_bson_datetime {
         Ok(helper.map(|Helper(external)| external))
     }
 }
+
+pub mod map_opt_chrono_datetime_as_bson_datetime {
+    use std::collections::HashMap;
+    use chrono::Utc;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::ser::SerializeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(
+        #[serde(with = "crate::mongo_dao::opt_chrono_datetime_as_bson_datetime")]
+        Option<chrono::DateTime<Utc>>,
+    );
+
+    pub fn serialize<S>(
+        value: &Option<HashMap<String, Option<chrono::DateTime<Utc>>>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(inner ) => {
+                let mut map = serializer.serialize_map(Some(inner.len()))?;
+                for (k, v) in inner.iter() {
+                    let helper = Helper(v.to_owned());
+                    map.serialize_entry(k, &helper)?;
+                }
+                map.end()
+            },
+            None => None::<usize>.serialize(serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<HashMap<String, Option<chrono::DateTime<Utc>>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+
+        #[derive(Deserialize)]
+        struct OptionalDateHelper(
+            #[serde(with = "crate::mongo_dao::opt_chrono_datetime_as_bson_datetime")]
+            Option<chrono::DateTime<Utc>>,
+        );
+
+        impl Into<Option<chrono::DateTime<Utc>>> for OptionalDateHelper {
+            fn into(self) -> Option<chrono::DateTime<Utc>> {
+                match self.0 {
+                    Some(inner) => Some(inner),
+                    None => None
+                }
+            }
+        }
+
+        #[derive(Deserialize)]
+        struct MapHelper(
+            HashMap<String, OptionalDateHelper>,
+        );
+
+        let map_helper: Option<MapHelper> = Option::deserialize(deserializer)?;
+        match map_helper {
+            Some(inner) => {
+                let mut final_map: HashMap<String, Option<chrono::DateTime<Utc>>> = HashMap::new();
+                for (k, v) in inner.0.into_iter() {
+                    final_map.insert(k, v.into());
+                }
+                Ok(Some(final_map))
+            },
+            None => Ok(None),
+        }
+
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+    use std::error::Error;
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Debug)]
+    struct TestMap {
+        #[serde(with = "crate::mongo_dao::map_opt_chrono_datetime_as_bson_datetime")]
+        ma_map: Option<HashMap<String, Option<DateTime<Utc>>>>
+    }
+
+    #[test]
+    fn test_encode_map_dates() -> Result<(), Box<dyn Error>> {
+        println!("Tada");
+
+        let test_map_vide = TestMap { ma_map: None };
+        let map_vide_str = serde_json::to_string(&test_map_vide)?;
+        println!("Map vide: {:?}", map_vide_str);
+
+        let mut contenu_map = HashMap::new();
+        contenu_map.insert("Date1".to_string(), Some(Utc::now()));
+        contenu_map.insert("PasDate".to_string(), None);
+        let test_map = TestMap { ma_map: Some(contenu_map) };
+        let map_data_str = serde_json::to_string(&test_map)?;
+        println!("Map data: {:?}", map_data_str);
+
+
+        // Deserialize
+        let map_vide_rebuilt: TestMap = serde_json::from_str(map_vide_str.as_str())?;
+        println!("Map vide deserialized: {:?}", map_vide_rebuilt);
+        let map_data_rebuilt: TestMap = serde_json::from_str(map_data_str.as_str())?;
+        println!("Map data deserialized: {:?}", map_data_rebuilt);
+
+        Ok(())
+    }
+
+}
