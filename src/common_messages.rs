@@ -348,3 +348,9 @@ pub struct RequestFilehostForInstanceResponse {
     pub ok: bool,
     pub filehost: RequeteFilehostItem,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct EventFilehost {
+    pub filehost_id: String,
+    pub event: String,
+}
