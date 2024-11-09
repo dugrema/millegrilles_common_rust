@@ -1825,7 +1825,7 @@ pub async fn emettre_evenement_backup<M>(middleware: &M, domaine: &str, event: B
     where M: GenerateurMessages
 {
     let routage = RoutageMessageAction::builder(
-        domaine, BACKUP_EVENEMENT_MAJ, vec![L3Protege]).build();
+        domaine, BACKUP_EVENEMENT_MAJ, vec![Securite::L1Public]).build();
     if let Err(e) = middleware.emettre_evenement(routage, &event).await {
         error!("emettre_evenement_backup Erreur emission evenement backup: {:?}", e);
     }
