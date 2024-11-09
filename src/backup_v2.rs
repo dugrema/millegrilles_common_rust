@@ -46,7 +46,7 @@ use crate::backup::CommandeBackup;
 use crate::mongo_dao::MongoDao;
 use crate::certificats::{CollectionCertificatsPem, ValidateurX509};
 use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2, requete_charger_cles};
-use crate::common_messages::{FilehostForInstanceRequest, ReponseInformationConsignationFichiers, RequestFilehostForInstanceResponse, RequeteConsignationFichiers, RequeteFilehostItem};
+use crate::common_messages::{BackupEvent, FilehostForInstanceRequest, ReponseInformationConsignationFichiers, RequestFilehostForInstanceResponse, RequeteConsignationFichiers, RequeteFilehostItem};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::constantes::Securite::L3Protege;
@@ -140,7 +140,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
 
         // Evenement intial de backup (done=false)
         emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
-                                 BackupEvent {ok: backup_ok, done: false, err: None}).await;
+                                 BackupEvent {ok: backup_ok, done: false, domaine: commande.nom_domaine.clone(), err: None, version: None}).await;
 
         // Toujours commencer par un backup incremental pour vider
         // les nouvelles transactions de la base de donnees.
@@ -148,7 +148,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
             error!("thread_backup_v2 Erreur durant backup incremental: {:?}", e);
             backup_ok = false;
             emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
-                                     BackupEvent {ok: backup_ok, done: false, err: Some("Erreur durant un backup incremental".to_string())}).await;
+                                     BackupEvent {ok: backup_ok, done: false, domaine: commande.nom_domaine.clone(), err: Some("Erreur durant un backup incremental".to_string()), version: None}).await;
         }
 
         if backup_complet == true  {
@@ -157,7 +157,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
                 error!("thread_backup_v2 Erreur durant un backup complet: {:?}", e);
                 backup_ok = false;
                 emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
-                                         BackupEvent {ok: backup_ok, done: false, err: Some("Erreur durant un backup complet".to_string())}).await;
+                                         BackupEvent {ok: backup_ok, done: false, domaine: commande.nom_domaine.clone(), err: Some("Erreur durant un backup complet".to_string()), version: None}).await;
             }
         } else {
             // Verifier si c'est le premier backup incremental
@@ -183,12 +183,16 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         }
 
         // Synchroniser les archives avec le serveur de consignation
-        if let Err(e) = synchroniser_consignation(middleware, &commande, path_backup.as_path(), &serveur_consignation).await {
-            error!("thread_backup_v2 Erreur durant upload des fichiers de backup: {:?}", e);
-            backup_ok = false;
-            emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
-                                     BackupEvent {ok: backup_ok, done: false, err: Some("Erreur durant upload des fichiers de backup".to_string())}).await;
-        }
+        let version = match synchroniser_consignation(middleware, &commande, path_backup.as_path(), &serveur_consignation).await {
+            Ok(version) => version,
+            Err(e) => {
+                error!("thread_backup_v2 Erreur durant upload des fichiers de backup: {:?}", e);
+                backup_ok = false;
+                emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
+                                         BackupEvent { ok: backup_ok, done: false, domaine: commande.nom_domaine.clone(), err: Some("Erreur durant upload des fichiers de backup".to_string()), version: None }).await;
+                None
+            }
+        };
 
         // Retirer le lock de backup
         if let Err(e) = lock_file.unlock() {
@@ -200,7 +204,7 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
 
         // Evenement final de backup (done=true)
         emettre_evenement_backup(middleware, commande.nom_domaine.as_str(),
-                                 BackupEvent {ok: backup_ok, done: true, err: None}).await;
+                                 BackupEvent {ok: backup_ok, done: true, domaine: commande.nom_domaine.clone(), err: None, version}).await;
     }
 }
 
@@ -1327,7 +1331,7 @@ async fn rotation_repertoires_backup(path_archives: &Path, fichiers: &Vec<Fichie
 async fn synchroniser_consignation<M>(
     middleware: &M, commande_backup: &CommandeBackup, path_backup: &Path, serveur_consignation: &RequeteFilehostItem
 )
-    -> Result<(), CommonError>
+    -> Result<Option<String>, CommonError>
     where M: GenerateurMessages
 {
     let domaine = commande_backup.nom_domaine.as_str();
@@ -1348,7 +1352,7 @@ async fn synchroniser_consignation<M>(
         None => {
             if fichiers_locaux.len() == 0 {
                 info!("synchroniser_consignation Aucunes transactions locales dans le domaine {} et aucune version dans consignation, SKIP sync", domaine);
-                return Ok(());
+                return Ok(None);
             } else {
                 Err(format!("backup_v2.synchroniser_consignation Aucune version pour le backup domaine {}", domaine))?
             }
@@ -1380,7 +1384,7 @@ async fn synchroniser_consignation<M>(
         warn!("De nouveaux fichiers d'archives on ete downloades a partir du serveur de consignation.");
     }
 
-    Ok(())
+    Ok(Some(version_effective.to_owned()))
 }
 
 async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &RequeteFilehostItem)
@@ -1394,28 +1398,13 @@ async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &
         None => Err(format!("Certificat CA manquant"))?
     };
 
-    // let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
-    // let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
-    // let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
-    // cert_pem_list.insert(0, cle_privee_pem.to_string());
-    // let pem_keycert = cert_pem_list.join("\n");
-    //
-    // // let identity = reqwest::Identity::from_pem(pem_keycert.as_bytes())?;
-    //
-    // let cert = pem_keycert.as_bytes();
-    // let key = cle_privee_pem.as_bytes();
-    // let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
-
     let mut client_builder = reqwest::Client::builder()
-        // .add_root_certificate(root_ca)
-        //.identity(identity)
-        // .identity(pkcs8)
         .https_only(true)
         .use_native_tls()
-        // .use_rustls_tls()
+        // .use_rustls_tls()  // Note: cause des problemes de connexion intermittents avec nginx
         .connect_timeout(core::time::Duration::new(20, 0))
         .http2_adaptive_window(true)
-        .cookie_store(true);
+        .cookie_store(true);  // Requis pour authentification
 
     let url_string = match serveur_consignation.url_external.as_ref() {
         Some(inner) => {
@@ -1710,18 +1699,12 @@ async fn put_backup_file(domaine: &str, version: &str, client: &Client, url_cons
 
     let url_upload = match fichier.header.type_archive.as_str() {
         "C" => {
-            // format!("{}/fichiers_transfert/backup_v2/{}/concatene/{}/{}", url_consignation, domaine, version, nom_fichier)
-            // format!("{}/filehost/backup_v2/{}/concatene/{}/{}", url_consignation, domaine, version, nom_fichier)
             url_consignation.join(format!("filehost/backup_v2/{}/concatene/{}/{}", domaine, version, nom_fichier).as_str())?
         },
         "I" => {
-            // format!("{}/fichiers_transfert/backup_v2/{}/incremental/{}/{}", url_consignation, domaine, version, nom_fichier)
-            // format!("{}/filehost/backup_v2/{}/incremental/{}/{}", url_consignation, domaine, version, nom_fichier)
             url_consignation.join(format!("filehost/backup_v2/{}/incremental/{}/{}", domaine, version, nom_fichier).as_str())?
         },
         "F" => {
-            // format!("{}/fichiers_transfert/backup_v2/{}/final/{}", url_consignation, domaine, nom_fichier)
-            // format!("{}/filehost/backup_v2/{}/final/{}", url_consignation, domaine, nom_fichier)
             url_consignation.join(format!("filehost/backup_v2/{}/final/{}", domaine, nom_fichier).as_str())?
         },
         _ => Err(format!("backup_v2.put_backup_file Mauvais type d'archive, doit etre C, I ou F : {}", fichier.header.type_archive))?
@@ -1758,13 +1741,9 @@ async fn download_backup_files(path_backup: &Path, liste: &Vec<String>, domaine:
 
         let url_download = match nom_fichier.contains("_F_") {
             true => {
-                // format!("{}/fichiers_transfert/backup_v2/{}/final/{}", url_consignation, domaine, nom_fichier)
-                // format!("{}/filehost/backup_v2/{}/final/{}", url_consignation, domaine, nom_fichier)
                 url_consignation.join(format!("filehost/backup_v2/{}/final/{}", domaine, nom_fichier).as_str())?
             },
             false => {
-                // format!("{}/fichiers_transfert/backup_v2/{}/archives/{}/{}", url_consignation, domaine, version, nom_fichier)
-                // format!("{}/filehost/backup_v2/{}/archives/{}/{}", url_consignation, domaine, version, nom_fichier)
                 url_consignation.join(format!("filehost/backup_v2/{}/archives/{}/{}", domaine, version, nom_fichier).as_str())?
             }
         };
@@ -1842,14 +1821,6 @@ pub async fn extraire_stats_backup<M>(middleware: &M, collection_transaction: &s
     Ok(stats)
 }
 
-#[derive(Serialize)]
-struct BackupEvent {
-    ok: bool,  // Si false, indique echec dans le backup
-    done: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    err: Option<String>,
-}
-
 pub async fn emettre_evenement_backup<M>(middleware: &M, domaine: &str, event: BackupEvent)
     where M: GenerateurMessages
 {
@@ -1859,21 +1830,3 @@ pub async fn emettre_evenement_backup<M>(middleware: &M, domaine: &str, event: B
         error!("emettre_evenement_backup Erreur emission evenement backup: {:?}", e);
     }
 }
-
-// pub async fn emettre_evenement_backup<M>(
-//     middleware: &M, info_backup: &BackupInformation, evenement: &str, timestamp: &DateTime<Utc>)
-//     -> Result<(), crate::error::Error>
-//     where M: GenerateurMessages
-// {
-//     let value = json!({
-//         "uuid_rapport": info_backup.uuid_backup.as_str(),
-//         "evenement": evenement,
-//         "domaine": info_backup.domaine.as_str(),
-//         "timestamp": timestamp.timestamp(),
-//     });
-//
-//     let routage = RoutageMessageAction::builder(info_backup.domaine.as_str(), BACKUP_EVENEMENT_MAJ, vec![L2Prive])
-//         .build();
-//
-//     Ok(middleware.emettre_evenement(routage, &value).await?)
-// }

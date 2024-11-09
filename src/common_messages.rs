@@ -354,3 +354,14 @@ pub struct EventFilehost {
     pub filehost_id: String,
     pub event: String,
 }
+
+
+#[derive(Serialize, Deserialize)]
+pub struct BackupEvent {
+    pub ok: bool,  // Si false, indique echec dans le backup
+    pub done: bool,
+    pub domaine: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub err: Option<String>,
+    pub version: Option<String>,
+}
