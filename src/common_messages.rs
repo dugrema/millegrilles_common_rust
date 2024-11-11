@@ -328,6 +328,12 @@ pub struct FilehostForInstanceRequest {
     pub filehost_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileUsage {
+    pub count: Option<usize>,
+    pub size: Option<usize>,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct RequeteFilehostItem {
     pub filehost_id: String,
@@ -341,6 +347,7 @@ pub struct RequeteFilehostItem {
     pub created: DateTime<Utc>,
     #[serde(with = "epochseconds")]
     pub modified: DateTime<Utc>,
+    pub fuuid: Option<FileUsage>,
 }
 
 #[derive(Serialize, Deserialize)]
