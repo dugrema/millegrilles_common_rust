@@ -121,5 +121,6 @@ pub struct EvenementRegeneration<'a> {
 #[derive(Serialize, Deserialize)]
 pub struct CommandeRegenerer {
     /// Cles de backup chiffrees. Permet de regenerer sans le maitre des cles.
-    pub cles_chiffrees: Option<EncryptedDocument>
+    pub cles_chiffrees: Option<EncryptedDocument>,
+    pub version: Option<String>,
 }

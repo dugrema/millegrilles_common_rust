@@ -183,8 +183,11 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         }
 
         // Synchroniser les archives avec le serveur de consignation
-        let version = match synchroniser_consignation(middleware, &commande, path_backup.as_path(), &serveur_consignation).await {
-            Ok(version) => version,
+        let version = match synchroniser_consignation(middleware, commande.nom_domaine.as_str(), path_backup.as_path(), &serveur_consignation, None).await {
+            Ok(result) => match result {
+                Some(result) => Some(result.0),
+                None => None
+            },
             Err(e) => {
                 error!("thread_backup_v2 Erreur durant upload des fichiers de backup: {:?}", e);
                 backup_ok = false;
@@ -214,7 +217,7 @@ fn preparer_path_backup(path_backup: &str, domaine: &str) -> PathBuf {
     path_domaine
 }
 
-async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFilehostItem, CommonError>
+pub async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFilehostItem, CommonError>
     where M: GenerateurMessages
 {
     let routage = RoutageMessageAction::builder(
@@ -392,11 +395,11 @@ async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct HeaderFichierArchive {
-    idmg: String,
-    domaine: String,
+pub struct HeaderFichierArchive {
+    pub idmg: String,
+    pub domaine: String,
     /// Type de fichier: I (incremental), C (concatene), F (final)
-    type_archive: String,
+    pub type_archive: String,
     /// Date de la premiere transaction du backup (epoch seconds)
     debut_backup: u64,
     /// Date de la derniere transaction du backup (epoch seconds)
@@ -1328,14 +1331,13 @@ async fn rotation_repertoires_backup(path_archives: &Path, fichiers: &Vec<Fichie
 }
 
 /// Upload le fichier de backup vers la consignation.
-async fn synchroniser_consignation<M>(
-    middleware: &M, commande_backup: &CommandeBackup, path_backup: &Path, serveur_consignation: &RequeteFilehostItem
+pub async fn synchroniser_consignation<M>(
+    middleware: &M, domaine: &str, path_backup: &Path, serveur_consignation: &RequeteFilehostItem,
+    version_remote: Option<String>,
 )
-    -> Result<Option<String>, CommonError>
+    -> Result<Option<(String, bool)>, CommonError>
     where M: GenerateurMessages
 {
-    let domaine = commande_backup.nom_domaine.as_str();
-
     let (client, url_consignation) = preparer_client_consignation(middleware, serveur_consignation).await?;
 
     info!("synchroniser_consignation Utilisation url_consignation {}", url_consignation);
@@ -1343,21 +1345,66 @@ async fn synchroniser_consignation<M>(
     // Determiner version de backup
     let enveloppe = middleware.get_enveloppe_signature();;
     let idmg = enveloppe.enveloppe_pub.idmg()?;
-    let (fichiers_locaux, version) = trouver_version_backup(
+    let (mut fichiers_locaux, version) = trouver_version_backup(
         idmg.as_str(), domaine, path_backup, &client, &url_consignation).await?;
 
-    let version_effective = match version.as_ref() {
-        Some(version) => version.as_str(),
-        // None => CONST_ARCHIVE_NEW_VERSION
-        None => {
-            if fichiers_locaux.len() == 0 {
-                info!("synchroniser_consignation Aucunes transactions locales dans le domaine {} et aucune version dans consignation, SKIP sync", domaine);
-                return Ok(None);
-            } else {
-                Err(format!("backup_v2.synchroniser_consignation Aucune version pour le backup domaine {}", domaine))?
+    let mut version_effective = match version.as_ref() {
+        Some(version_locale) => {
+            match version_remote.as_ref() {
+                Some(version_remote) => {  // On a une version locale et remote
+                    if version_locale == version_remote {
+                        version_locale  // Idem, utiliser cette version
+                    } else {
+                        // Difference, rotation locale et utiliser remote pour restoration
+                        info!("synchroniser_consignation Change backup version for {}, rotate current files out (version: {}) and download requested version {}", domaine, version_locale, version_remote);
+                        rotation_repertoires_backup(path_backup, &fichiers_locaux).await?;
+                        fichiers_locaux.clear();  // Retirer les fichiers locaux pour s'assurer de tout downloader
+                        version_remote
+                    }
+                },
+                None => version_locale  // Utiliser version locale
+            }
+        },
+        None => {  // Aucune version locale (e.g. nouveau systeme)
+            match version_remote.as_ref() {
+                Some(version_remote) => version_remote,  // Utiliser version fournie pour restoration
+                None => {
+                    // Aucune version a restorer et on a un nouveau systeme
+                    if fichiers_locaux.len() == 0 {
+                        info!("synchroniser_consignation Aucunes transactions locales dans le domaine {} et aucune version dans consignation, SKIP sync", domaine);
+                        return Ok(None);
+                    } else {
+                        Err(format!("backup_v2.synchroniser_consignation Aucune version pour le backup domaine {}", domaine))?
+                    }
+                }
             }
         }
     };
+
+    // let mut version_effective = match version.as_ref() {
+    //     Some(version) => version.as_str(),
+    //     // None => CONST_ARCHIVE_NEW_VERSION
+    //     None => {
+    //         if fichiers_locaux.len() == 0 {
+    //             info!("synchroniser_consignation Aucunes transactions locales dans le domaine {} et aucune version dans consignation, SKIP sync", domaine);
+    //             return Ok(None);
+    //         } else {
+    //             Err(format!("backup_v2.synchroniser_consignation Aucune version pour le backup domaine {}", domaine))?
+    //         }
+    //     }
+    // };
+    //
+    // if let Some(version_backup) = version_remote.as_ref() {
+    //     if Some(version_backup.as_str()) != Some(version_effective) {
+    //         if fichiers_locaux.len() > 0 {
+    //             info!("synchroniser_consignation Change backup version for {}, rotate current files out (version: {}) and download requested version {}", domaine, version_effective, version_backup);
+    //             rotation_repertoires_backup(path_backup, &fichiers_locaux).await?;
+    //         } else {
+    //             info!("synchroniser_consignation Change backup version for {}, download requested version {}", domaine, version_backup);
+    //         }
+    //         version_effective = version_backup.as_str();
+    //     }
+    // }
 
     // Downloader les listes de fichier (fichiers finaux et version courante)
     let listes = download_liste_fichiers_backup(domaine, version_effective, &fichiers_locaux, &client, &url_consignation).await?;
@@ -1384,7 +1431,7 @@ async fn synchroniser_consignation<M>(
         warn!("De nouveaux fichiers d'archives on ete downloades a partir du serveur de consignation.");
     }
 
-    Ok(Some(version_effective.to_owned()))
+    Ok(Some((version_effective.to_owned(), nouveaux_fichiers_downloades)))
 }
 
 async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &RequeteFilehostItem)
@@ -1601,6 +1648,7 @@ async fn download_liste_fichiers_backup<'a>(
         info_sync.download_archives = parse_stream_liste_fichiers(&mut set_archives_local, resultat_fichiers_archives).await?;
     } else if(resultat_fichiers_archives.status() == 404) {
         // Ok, fichiers ne sont pas uploades pour cette version
+        debug!("Resultat fichiers archives: Aucunes archives pour domaine {} version {}", domaine, version);
     } else {
         resultat_fichiers_archives.error_for_status()?;  // Raise error
     }

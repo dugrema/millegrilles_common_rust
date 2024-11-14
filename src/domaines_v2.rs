@@ -1,3 +1,5 @@
+use std::fs;
+use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use chrono::{Datelike, Timelike, Utc, Weekday};
 use futures_util::stream::FuturesUnordered;
@@ -12,7 +14,9 @@ use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
 use crate::backup::{emettre_evenement_backup, emettre_evenement_backup_catalogue, BackupInformation, BackupStarter};
+use crate::backup_v2::{get_serveur_consignation, organiser_fichiers_backup, synchroniser_consignation, PATH_FICHIERS_ARCHIVES};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
+use crate::common_messages::RequeteFilehostItem;
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::domaines::{MessageBackupTransactions, ReponseNombreTransactions};
@@ -555,6 +559,33 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         let routage_reponse = RoutageMessageReponse::new(reply_q, correlation_id);
         let commande: CommandeRegenerer = deser_message_buffer!(message.message);
 
+        if let Some(version) = commande.version.as_ref() {
+            info!("regenerer_transactions Restoration domaine {} avec version specifiee {}", nom_domaine, version);
+
+            // Verifier si la version specifiee est la meme que celle presente dans le repertoire
+            // d'archives du domaine.
+            let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
+            // S'assurer que le repertoire existe
+            fs::create_dir_all(&path_backup)?;
+
+            let idmg = middleware.idmg();
+            let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), idmg, true).await?;
+            let mut version_locale = None;
+            for f in &fichiers_backup {
+                if f.header.type_archive.as_str() == "C" {
+                    version_locale = Some(f.digest_suffix.as_str());
+                    break;
+                }
+            }
+
+            let changer_version = version_locale != Some(version.as_str());
+
+            if changer_version {
+                info!("regenerer_transactions Sync domaine {} version distante {}", nom_domaine, version);
+                remplacer_backup_domain_sync(middleware, nom_domaine.as_str(), version.as_str()).await?;
+            }
+        }
+
         regenerer_v2(
             middleware,
             nom_domaine,
@@ -749,4 +780,20 @@ where M: ValidateurX509 + GenerateurMessages + ConfigMessages, G: GestionnaireDo
         // Every 24 hours - not really useful, this is done every few minutes from a ping event.
         tokio::time::sleep(tokio::time::Duration::from_secs(24 * 3_600)).await;
     }
+}
+
+async fn remplacer_backup_domain_sync<M>(middleware: &M, domaine: &str, version: &str) -> Result<(), Error>
+    where M: ValidateurX509 + GenerateurMessages + ConfigMessages
+{
+    info!("remplacer_backup_domain_sync Domaine {} version {}", domaine, version);
+
+    // Charger le serveur de consignation
+    let serveur_consignation = get_serveur_consignation(middleware).await?;
+
+    let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, domaine));
+    // S'assurer que le repertoire existe
+    fs::create_dir_all(&path_backup)?;
+
+    synchroniser_consignation(middleware, domaine, &path_backup, &serveur_consignation, Some(version.to_string())).await?;
+    Ok(())
 }

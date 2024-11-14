@@ -222,8 +222,25 @@ where
                             }
                         }
                     } else {
-                        warn!("traiter_transactions_receiver Certificat {} inconnu, ** SKIP **", pubkey);
-                        continue;
+                        // Process normal mais certificat inconnu de CorePki
+                        match transaction.certificat.as_ref() {
+                            Some(inner) => {
+                                match middleware.charger_enveloppe(inner, None, None).await {
+                                    Ok(inner) => {
+                                        info!("traiter_transactions_receiver Utilisation certificat {} inclus dans les transactions (inconnu de CorePki)", pubkey);
+                                        inner
+                                    },
+                                    Err(_) => {
+                                        warn!("traiter_transactions_receiver Certificat {} inclus dans la transaction est invalide, ** SKIP **", pubkey);
+                                        continue;
+                                    }
+                                }
+                            },
+                            None => {
+                                warn!("traiter_transactions_receiver Certificat {} inconnu, ** SKIP **", pubkey);
+                                continue
+                            }
+                        }
                     }
                 }
             }
