@@ -86,7 +86,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                     match self.traiter_message_valide_action(middleware, inner).await {
                         Ok(r) => r,
                         Err(e) => {
-                            error!("GestionnaireMessages domaines.consommer_messages/ValideAction Erreur traitement message domaine={} : {:?}", self.get_nom_domaine(), e);
+                            error!("GestionnaireMessages domaines.consommer_messages/ValideAction Erreur traitement message domaine={} : {:?}",
+                                self.get_nom_domaine(), e);
                         }
                     }
                 },
@@ -103,7 +104,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         M: Middleware
     {
         debug!("traiter_message_valide_action domaine {} : {:?}", self.get_nom_domaine(), &message.type_message);
-        let (correlation_id, reply_q) = match &message.type_message {
+        let (correlation_id, reply_q, domaine, action) = match &message.type_message {
             TypeMessageOut::Requete(r) |
             TypeMessageOut::Commande(r) |
             TypeMessageOut::Transaction(r) => {
@@ -115,19 +116,47 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                     Some(inner) => Some(inner.clone()),
                     None => None,
                 };
-                (correlation_id, reply_q)
+                let domaine = r.domaine.clone();
+                let action = r.action.clone();
+                (correlation_id, reply_q, domaine, action)
             }
-            TypeMessageOut::Reponse(_) |
-            TypeMessageOut::Evenement(_) => (None, None)
+            TypeMessageOut::Reponse(_) => (None, None, "N/A".to_string(), "N/A".to_string()),
+            TypeMessageOut::Evenement(r) => {
+                (None, None, r.domaine.clone(), r.action.clone())
+            }
         };
 
         let resultat = match &message.type_message {
-            TypeMessageOut::Requete(_) => self.consommer_requete_trait(middleware, message).await,
-            TypeMessageOut::Commande(_) => self.consommer_commande_trait(middleware, message).await,
-            TypeMessageOut::Evenement(_) => self.consommer_evenement_trait(middleware, message).await,
+            TypeMessageOut::Requete(_) => {
+                match self.consommer_requete_trait(middleware, message).await {
+                    Ok(inner) => inner,
+                    Err(e) => {
+                        error!("traiter_message_valide_action Error processing requete.{:?}.{:?}: {:?}", domaine, action, e);
+                        return Ok(())
+                    }
+                }
+            },
+            TypeMessageOut::Commande(_) => {
+                match self.consommer_commande_trait(middleware, message).await  {
+                    Ok(inner) => inner,
+                    Err(e) => {
+                        error!("traiter_message_valide_action Error processing commande.{:?}.{:?}: {:?}", domaine, action, e);
+                        return Ok(())
+                    }
+                }
+            },
+            TypeMessageOut::Evenement(_) => {
+                match self.consommer_evenement_trait(middleware, message).await {
+                    Ok(inner) => inner,
+                    Err(e) => {
+                        error!("traiter_message_valide_action Error processing evenement.{:?}.{:?}: {:?}", domaine, action, e);
+                        return Ok(())
+                    }
+                }
+            },
             TypeMessageOut::Transaction(_) => Err(Error::Str("domaines_v2.MiddlewareMessages.traiter_message_valide_action Transaction recue, non supporte sur ce type de gestionnaire"))?,
             TypeMessageOut::Reponse(_) => Err(Error::Str("domaines_v2.MiddlewareMessages.traiter_message_valide_action Recu reponse sur thread consommation, drop message"))?,
-        }?;
+        };
 
         match resultat {
             Some(reponse) => {
