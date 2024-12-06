@@ -218,6 +218,7 @@ pub enum ErreurVerification {
     SignatureInvalide,
     CertificatInconnu(String),
     CertificatInvalide,
+    CertificatCaManquant(String),
     EnteteManquante,
     ErreurGenerique,
 }

@@ -1185,7 +1185,8 @@ impl ValidateurX509 for ValidateurX509Impl {
                             if idmg_local == idmg_certificat.as_str() || e.millegrille.is_some() {
                                 Ok(self.cacher(e).await?.0)
                             } else {
-                                Err(format!("certificats.charger_enveloppe Erreur chargement certificat {} : certificat CA manquant pour millegrille {} tierce", fp, idmg_certificat))?
+                                info!("certificats.charger_enveloppe Erreur chargement certificat {} : certificat CA manquant pour millegrille {} tierce", fp, idmg_certificat);
+                                Err(ErreurVerification::CertificatCaManquant(idmg_certificat))?
                             }
                         }
                     },
