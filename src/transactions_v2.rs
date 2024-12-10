@@ -165,11 +165,18 @@ where
     T: AiguillageTransactions,
 {
     let mut transaction_counter = 0u64;
+    #[cfg(debug_assertions)]
+    let mut process_start = Utc::now().timestamp_micros();
+
     loop {
         let transaction = match rx.recv().await {
             Some(inner) => inner,
             None => break  // Done
         };
+
+        if transaction_counter % 1000 == 0 {
+            info!(target: "millegrilles_common_rust::rebuild_transaction", "traiter_transactions_receiver: Regeneration {} transactions processed, in progress ...", transaction_counter);
+        }
 
         // let uuid_transaction = message_identificateurs.id.as_str();
         let message_id = transaction.id.to_owned();
@@ -282,6 +289,17 @@ where
             }
         }
 
+        #[cfg(debug_assertions)]
+        let (start_processing, transaction_copy) = {
+            let duration = Utc::now().timestamp_micros() - process_start;
+            if duration > 150 {
+                debug!(target: "millegrilles_common_rust::rebuild_transaction", "regenerer_transactions_v2 Transaction {}/{:?} other processing duration: {} us",
+                    transaction.transaction.id, match transaction.transaction.routage.as_ref(){Some(inner)=>inner.action.as_ref(),None=>None}, duration);
+            }
+
+            (Utc::now().timestamp_micros(), transaction.transaction.clone())
+        };
+
         debug!("traiter_transactions_receiver Appliquer transaction");
         match processor.aiguillage_transaction(middleware, transaction).await {
             Ok(_resultat) => {
@@ -292,6 +310,16 @@ where
                 }
             },
             Err(e) => error!("traiter_transactions_receiver ** ERREUR REGENERATION {} ** {:?}", message_id, e)
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            let duration = Utc::now().timestamp_micros() - start_processing;
+            if duration > 9_000 {
+                debug!(target: "millegrilles_common_rust::rebuild_transaction", "regenerer_transactions_v2 Transaction {}/{:?} duration: {} us",
+                    transaction_copy.id, match transaction_copy.routage.as_ref(){Some(inner)=>inner.action.as_ref(),None=>None}, duration);
+            }
+            process_start = Utc::now().timestamp_micros();  // Reset start of processing
         }
 
         // Update status
@@ -305,6 +333,8 @@ where
     // Mis a jour status, indique aux autres threads que le traitement est termine
     let mut guard = status_regeneration.lock().expect("lock");
     guard.done = true;
+
+    info!("traiter_transactions_receiver: Regeneration {} transactions processed, done.", transaction_counter);
 }
 
 async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, nom_collection_transactions: &str, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
@@ -430,7 +460,6 @@ where
             }
         }
 
-        debug!("regenerer_transactions_v2 Appliquer transaction");
         match processor.aiguillage_transaction(middleware, transaction).await {
             Ok(_resultat) => {
                 upsert_transactions_traitees(
