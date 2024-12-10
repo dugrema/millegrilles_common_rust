@@ -16,22 +16,25 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup, FichierArchiveBackup, RegenerationBackup, StatsBackup, StatusRegeneration, PATH_FICHIERS_ARCHIVES};
 use crate::certificats::{charger_enveloppe, ValidateurX509};
+use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
+use crate::domaines_v2::GestionnaireDomaineSimple;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::MongoDao;
 use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
 use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
 
-pub async fn regenerer_v2<M,D,T>(
-    middleware: &M, nom_domaine: D, nom_collection_transactions: &str,
+pub async fn regenerer_v2<M,G,D,T>(
+    middleware: &M, gestionnaire_domaine: &G, nom_domaine: D, nom_collection_transactions: &str,
     noms_collections_docs: &Vec<String>, processor: &T, commande: CommandeRegenerer, routage_reponse: RoutageMessageReponse
 )
     -> Result<(), crate::error::Error>
 where
-    M: GenerateurMessages + MongoDao + ValidateurX509 /*+ VerificateurMessage*/,
+    M: GenerateurMessages + MongoDao + ValidateurX509 + ConfigMessages /*+ VerificateurMessage*/,
+    G: GestionnaireDomaineSimple,
     D: AsRef<str>,
     T: AiguillageTransactions,
 {
@@ -41,12 +44,14 @@ where
     // Skip la validation des transactions si on charge CorePki (les certificats)
     let skip_certificats = nom_collection_transactions == DOMAINE_PKI;
 
-    // Supprimer contenu des collections
+    // Drop collections
     for nom_collection in noms_collections_docs {
         let collection = middleware.get_collection(nom_collection.as_str())?;
-        let resultat_delete = collection.delete_many(doc! {}, None).await?;
-        debug!("regenerer_v2 Delete collection {} documents : {:?}", nom_collection, resultat_delete);
+        collection.drop(None).await?;
+        debug!("regenerer_v2 Dropped collection {}", nom_collection);
     }
+    // Recreate all indexes (idempotent)
+    gestionnaire_domaine.preparer_database_mongodb(middleware).await?;
 
     // Traiter transactions dans les fichiers d'archive
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
@@ -303,7 +308,7 @@ where
 }
 
 async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, nom_collection_transactions: &str, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
-                                             -> Result<u64, Box<dyn Error>>
+    -> Result<u64, Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
     T: AiguillageTransactions,

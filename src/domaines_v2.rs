@@ -190,87 +190,87 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         M: MongoDao + ConfigMessages
     {
         if let Some(nom_collection_transactions) = self.get_collection_transactions() {
-
-            // Index transactions par uuid-transaction
-            let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from("index_champ_id")),
-                unique: true
-            };
-            let champs_index_transactions = vec!(
-                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1 }
-            );
-
-            middleware.create_index(
-                middleware,
-                nom_collection_transactions.as_str(),
-                champs_index_transactions,
-                Some(options_unique_transactions)
-            ).await?;
-
-            // Index transactions completes
-            let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from(TRANSACTION_CHAMP_COMPLETE)),
-                unique: false
-            };
-            let champs_index_transactions = vec!(
-                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 }
-            );
-            middleware.create_index(
-                middleware,
-                nom_collection_transactions.as_str(),
-                champs_index_transactions,
-                Some(options_unique_transactions)
-            ).await?;
-
-            // Index backup transactions
-            let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from(BACKUP_CHAMP_BACKUP_TRANSACTIONS)),
-                unique: false
-            };
-            let champs_index_transactions = vec!(
-                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1 },
-                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1 },
-                ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 },
-            );
-            middleware.create_index(
-                middleware,
-                nom_collection_transactions.as_str(),
-                champs_index_transactions,
-                Some(options_unique_transactions)
-            ).await?;
-
-            // Tables transactions_traitees
-            let table_transactions_traitees = format!("{}/{}", nom_collection_transactions, COLLECTION_TRANSACTION_TRAITEES);
-
-            // Index transaction id unique
-            let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from("index_champ_bid")),
-                unique: true
-            };
-            let champs_index_transactions = vec!(
-                ChampIndex { nom_champ: String::from("bid_truncated"), direction: 1 }
-            );
-            middleware.create_index(
-                middleware,
-                table_transactions_traitees.as_str(),
-                champs_index_transactions,
-                Some(options_unique_transactions)
-            ).await?;
-
-            // Index
-            let options_unique_transactions = IndexOptions {
-                nom_index: Some(String::from("index_date_traitement")),
-                unique: false
-            };
-            let champs_index_transactions = vec!(
-                ChampIndex { nom_champ: String::from("date_traitement"), direction: 1 }
-            );
-            middleware.create_index(
-                middleware,
-                table_transactions_traitees.as_str(),
-                champs_index_transactions,
-                Some(options_unique_transactions)
-            ).await?;
+            prepare_mongodb_domain_indexes(middleware, nom_collection_transactions).await?;
+            // // Index transactions par uuid-transaction
+            // let options_unique_transactions = IndexOptions {
+            //     nom_index: Some(String::from("index_champ_id")),
+            //     unique: true
+            // };
+            // let champs_index_transactions = vec!(
+            //     ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1 }
+            // );
+            //
+            // middleware.create_index(
+            //     middleware,
+            //     nom_collection_transactions.as_str(),
+            //     champs_index_transactions,
+            //     Some(options_unique_transactions)
+            // ).await?;
+            //
+            // // Index transactions completes
+            // let options_unique_transactions = IndexOptions {
+            //     nom_index: Some(String::from(TRANSACTION_CHAMP_COMPLETE)),
+            //     unique: false
+            // };
+            // let champs_index_transactions = vec!(
+            //     ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 }
+            // );
+            // middleware.create_index(
+            //     middleware,
+            //     nom_collection_transactions.as_str(),
+            //     champs_index_transactions,
+            //     Some(options_unique_transactions)
+            // ).await?;
+            //
+            // // Index backup transactions
+            // let options_unique_transactions = IndexOptions {
+            //     nom_index: Some(String::from(BACKUP_CHAMP_BACKUP_TRANSACTIONS)),
+            //     unique: false
+            // };
+            // let champs_index_transactions = vec!(
+            //     ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1 },
+            //     ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1 },
+            //     ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 },
+            // );
+            // middleware.create_index(
+            //     middleware,
+            //     nom_collection_transactions.as_str(),
+            //     champs_index_transactions,
+            //     Some(options_unique_transactions)
+            // ).await?;
+            //
+            // // Tables transactions_traitees
+            // let table_transactions_traitees = format!("{}/{}", nom_collection_transactions, COLLECTION_TRANSACTION_TRAITEES);
+            //
+            // // Index transaction id unique
+            // let options_unique_transactions = IndexOptions {
+            //     nom_index: Some(String::from("index_champ_bid")),
+            //     unique: true
+            // };
+            // let champs_index_transactions = vec!(
+            //     ChampIndex { nom_champ: String::from("bid_truncated"), direction: 1 }
+            // );
+            // middleware.create_index(
+            //     middleware,
+            //     table_transactions_traitees.as_str(),
+            //     champs_index_transactions,
+            //     Some(options_unique_transactions)
+            // ).await?;
+            //
+            // // Index
+            // let options_unique_transactions = IndexOptions {
+            //     nom_index: Some(String::from("index_date_traitement")),
+            //     unique: false
+            // };
+            // let champs_index_transactions = vec!(
+            //     ChampIndex { nom_champ: String::from("date_traitement"), direction: 1 }
+            // );
+            // middleware.create_index(
+            //     middleware,
+            //     table_transactions_traitees.as_str(),
+            //     champs_index_transactions,
+            //     Some(options_unique_transactions)
+            // ).await?;
         }
 
         Ok(())
@@ -617,6 +617,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
         regenerer_v2(
             middleware,
+            self,
             nom_domaine,
             nom_collection_transactions.as_str(),
             &noms_collections_docs,
@@ -824,5 +825,94 @@ async fn remplacer_backup_domain_sync<M>(middleware: &M, domaine: &str, version:
     fs::create_dir_all(&path_backup)?;
 
     synchroniser_consignation(middleware, domaine, &path_backup, &serveur_consignation, Some(version.to_string())).await?;
+    Ok(())
+}
+
+pub async fn prepare_mongodb_domain_indexes<M,S>(middleware: &M, collection_name: S) -> Result<(), Error>
+    where M: MongoDao + ConfigMessages, S: AsRef<str>
+{
+    let collection = collection_name.as_ref();
+
+    // Index transactions par uuid-transaction
+    let options_unique_transactions = IndexOptions {
+        nom_index: Some(String::from("index_champ_id")),
+        unique: true
+    };
+    let champs_index_transactions = vec!(
+        ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_ID), direction: 1 }
+    );
+
+    middleware.create_index(
+        middleware,
+        collection,
+        champs_index_transactions,
+        Some(options_unique_transactions)
+    ).await?;
+
+    // Index transactions completes
+    let options_unique_transactions = IndexOptions {
+        nom_index: Some(String::from(TRANSACTION_CHAMP_COMPLETE)),
+        unique: false
+    };
+    let champs_index_transactions = vec!(
+        ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 }
+    );
+    middleware.create_index(
+        middleware,
+        collection,
+        champs_index_transactions,
+        Some(options_unique_transactions)
+    ).await?;
+
+    // Index backup transactions
+    let options_unique_transactions = IndexOptions {
+        nom_index: Some(String::from(BACKUP_CHAMP_BACKUP_TRANSACTIONS)),
+        unique: false
+    };
+    let champs_index_transactions = vec!(
+        ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_TRANSACTION_TRAITEE), direction: 1 },
+        ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_BACKUP_FLAG), direction: 1 },
+        ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 },
+    );
+    middleware.create_index(
+        middleware,
+        collection,
+        champs_index_transactions,
+        Some(options_unique_transactions)
+    ).await?;
+
+    // Tables transactions_traitees
+    let table_transactions_traitees = format!("{}/{}", collection, COLLECTION_TRANSACTION_TRAITEES);
+
+    // Index transaction id unique
+    let options_unique_transactions = IndexOptions {
+        nom_index: Some(String::from("index_champ_bid")),
+        unique: true
+    };
+    let champs_index_transactions = vec!(
+        ChampIndex { nom_champ: String::from("bid_truncated"), direction: 1 }
+    );
+    middleware.create_index(
+        middleware,
+        table_transactions_traitees.as_str(),
+        champs_index_transactions,
+        Some(options_unique_transactions)
+    ).await?;
+
+    // Index
+    let options_unique_transactions = IndexOptions {
+        nom_index: Some(String::from("index_date_traitement")),
+        unique: false
+    };
+    let champs_index_transactions = vec!(
+        ChampIndex { nom_champ: String::from("date_traitement"), direction: 1 }
+    );
+    middleware.create_index(
+        middleware,
+        table_transactions_traitees.as_str(),
+        champs_index_transactions,
+        Some(options_unique_transactions)
+    ).await?;
+
     Ok(())
 }
