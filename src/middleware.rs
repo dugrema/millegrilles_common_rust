@@ -12,7 +12,7 @@ use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, FingerprintPem};
-use mongodb::{bson::{Bson, doc, Document, to_bson}, Collection};
+use mongodb::{bson::{Bson, doc, Document, to_bson}, ClientSession, Collection};
 use mongodb::bson as bson;
 use mongodb::options::UpdateOptions;
 use openssl::x509::store::X509Store;
@@ -84,7 +84,8 @@ pub trait MiddlewareMessages:
     IsConfigNoeud + FormatteurMessage + EmetteurCertificat +
     // VerificateurMessage + ChiffrageFactoryTrait +
     RedisTrait + RabbitMqTrait +
-    EmetteurNotificationsTrait + CleChiffrageHandler + CleChiffrageCache
+    // EmetteurNotificationsTrait +
+    CleChiffrageHandler + CleChiffrageCache
     // + Chiffreur<CipherMgs3, Mgs3CipherKeys> + Dechiffreur<DecipherMgs3, Mgs3CipherData>
 {}
 
@@ -180,33 +181,33 @@ impl CleChiffrageCache for MiddlewareMessage {
     }
 }
 
-#[async_trait]
-impl EmetteurNotificationsTrait for MiddlewareMessage {
-    async fn emettre_notification_proprietaire(
-        &self, contenu: NotificationMessageInterne, niveau: &str, expiration: Option<i64>, destinataires: Option<Vec<String>>
-    )
-        -> Result<(), crate::error::Error>
-    {
-        self.ressources.emetteur_notifications.emettre_notification_proprietaire(
-            self, contenu, niveau, expiration, destinataires).await
-    }
-
-    async fn emettre_notification_usager<D,S,N> (
-        &self,
-        user_id: S,
-        contenu: NotificationMessageInterne,
-        niveau: N,
-        domaine: D,
-        expiration: Option<i64>,
-        // cle_dechiffree: Option<CleDechiffree>
-    ) -> Result<String, crate::error::Error>
-        where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
-    {
-        todo!("fix me")
-        // self.ressources.emetteur_notifications.emettre_notification_usager(
-        //     self, user_id, contenu, niveau, domaine, expiration, cle_dechiffree).await
-    }
-}
+// #[async_trait]
+// impl EmetteurNotificationsTrait for MiddlewareMessage {
+//     async fn emettre_notification_proprietaire(
+//         &self, contenu: NotificationMessageInterne, niveau: &str, expiration: Option<i64>, destinataires: Option<Vec<String>>
+//     )
+//         -> Result<(), crate::error::Error>
+//     {
+//         self.ressources.emetteur_notifications.emettre_notification_proprietaire(
+//             self, contenu, niveau, expiration, destinataires).await
+//     }
+//
+//     async fn emettre_notification_usager<D,S,N> (
+//         &self,
+//         user_id: S,
+//         contenu: NotificationMessageInterne,
+//         niveau: N,
+//         domaine: D,
+//         expiration: Option<i64>,
+//         // cle_dechiffree: Option<CleDechiffree>
+//     ) -> Result<String, crate::error::Error>
+//         where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
+//     {
+//         todo!("fix me")
+//         // self.ressources.emetteur_notifications.emettre_notification_usager(
+//         //     self, user_id, contenu, niveau, domaine, expiration, cle_dechiffree).await
+//     }
+// }
 
 impl RabbitMqTrait for MiddlewareMessage {
     fn ajouter_named_queue<S>(&self, queue_name: S, named_queue: NamedQueue) where S: Into<String> {
@@ -896,8 +897,9 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
 
 /// Serialize et conserve une nouvelle transaction.
 /// Retourne la reponse (Option) et le message_id (String).
-pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
-                                                                 -> Result<(Option<MessageMilleGrillesBufferDefault>, String), crate::error::Error>
+pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(
+    middleware: &M, valeur: &S, gestionnaire: &G, session: &mut ClientSession, domaine: &str, action: &str)
+    -> Result<(Option<MessageMilleGrillesBufferDefault>, String), crate::error::Error>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
         G: GestionnaireDomaineV2 + AiguillageTransactions,
@@ -924,12 +926,12 @@ pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(middleware: 
     let type_message_out = TypeMessageOut::Transaction(routage);
     let message_valide = MessageValide { message, type_message: type_message_out, certificat };
 
-    Ok((sauvegarder_traiter_transaction_v2(middleware, message_valide, gestionnaire).await?, message_id))
+    Ok((sauvegarder_traiter_transaction_v2(middleware, message_valide, gestionnaire, session).await?, message_id))
 }
 
 /// Sauvegarde une nouvelle transaction et de la traite immediatement
 pub async fn sauvegarder_traiter_transaction_v2<M, G>(
-    middleware: &M, message: MessageValide, gestionnaire: &G
+    middleware: &M, message: MessageValide, gestionnaire: &G, session: &mut ClientSession,
 )
     -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
     where
@@ -986,7 +988,7 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
     };
 
     // Traiter transaction
-    let reponse = gestionnaire.aiguillage_transaction(middleware, message.try_into()?).await?;
+    let reponse = gestionnaire.aiguillage_transaction(middleware, message.try_into()?, session).await?;
 
     debug!("middleware.sauvegarder_traiter_transaction_v2 Transaction {} traitee", message_id);
 

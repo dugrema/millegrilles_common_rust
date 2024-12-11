@@ -6,7 +6,7 @@ use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 use mongodb::bson::{doc, Bson};
-use mongodb::{bson, Cursor};
+use mongodb::{bson, ClientSession, Cursor};
 use mongodb::options::{FindOptions, Hint, UpdateOptions};
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
@@ -22,7 +22,7 @@ use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
 use crate::domaines_v2::GestionnaireDomaineSimple;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{start_transaction_regular, MongoDao};
 use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
 use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
@@ -52,6 +52,7 @@ where
     }
     // Recreate all indexes (idempotent)
     gestionnaire_domaine.preparer_database_mongodb(middleware).await?;
+    let mut session = middleware.get_session().await?;
 
     // Traiter transactions dans les fichiers d'archive
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
@@ -74,7 +75,7 @@ where
     };
     let thread_lire_transactions = lire_transactions_fichiers(info_regeneration, tx_transaction);
     let thread_traiter_transactions = traiter_transactions_receiver(
-        middleware, nom_collection_transactions, rx_transaction, processor, skip_certificats, &status_regeneration);
+        middleware, nom_collection_transactions, rx_transaction, processor, skip_certificats, &status_regeneration, &mut session);
     let thread_status_updates = thread_regeneration_status_updates(
         middleware, nom_domaine, &stats_backup, &status_regeneration);
 
@@ -119,7 +120,7 @@ where
 
     // Executer toutes les transactions du curseur en ordre
     let mut db_transaction_counter = 0u64;
-    match regenerer_transactions_v2(middleware, nom_collection_transactions, resultat_transactions, processor, skip_certificats).await {
+    match regenerer_transactions_v2(middleware, nom_collection_transactions, resultat_transactions, processor, skip_certificats, &mut session).await {
         Ok(inner) => {
             db_transaction_counter = inner;
         },
@@ -158,7 +159,7 @@ where
 
 async fn traiter_transactions_receiver<'a, M, T>(
     middleware: &M, nom_collection_transactions: &str, mut rx: Receiver<TransactionOwned>, processor: &T,
-    skip_certificats: bool, status_regeneration: &Mutex<StatusRegeneration>
+    skip_certificats: bool, status_regeneration: &Mutex<StatusRegeneration>, session: &mut ClientSession,
 )
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
@@ -168,6 +169,10 @@ where
     #[cfg(debug_assertions)]
     let mut process_start = Utc::now().timestamp_micros();
 
+    if let Err(e) = start_transaction_regular(session).await {
+        panic!("Error starting new transaction: {:?}", e);
+    }
+
     loop {
         let transaction = match rx.recv().await {
             Some(inner) => inner,
@@ -176,6 +181,12 @@ where
 
         if transaction_counter % 1000 == 0 {
             info!(target: "millegrilles_common_rust::rebuild_transaction", "traiter_transactions_receiver: Regeneration {} transactions processed, in progress ...", transaction_counter);
+            if let Err(e) = session.commit_transaction().await {
+                panic!("Error committing batch: {:?}", e);
+            };
+            if let Err(e) = start_transaction_regular(session).await {
+                panic!("Error starting new transaction: {:?}", e);
+            }
         }
 
         // let uuid_transaction = message_identificateurs.id.as_str();
@@ -301,7 +312,7 @@ where
         };
 
         debug!("traiter_transactions_receiver Appliquer transaction");
-        match processor.aiguillage_transaction(middleware, transaction).await {
+        match processor.aiguillage_transaction(middleware, transaction, session).await {
             Ok(_resultat) => {
                 // S'assurer que la transaction est dans la collection DOMAINE/transactions_traitees
                 if let Err(e) = upsert_transactions_traitees(
@@ -330,6 +341,10 @@ where
         }
     }
 
+    if let Err(e) = session.commit_transaction().await {
+        panic!("Error committing final transaction batch: {:?}", e);
+    }
+
     // Mis a jour status, indique aux autres threads que le traitement est termine
     let mut guard = status_regeneration.lock().expect("lock");
     guard.done = true;
@@ -337,13 +352,19 @@ where
     info!("traiter_transactions_receiver: Regeneration {} transactions processed, done.", transaction_counter);
 }
 
-async fn regenerer_transactions_v2<'a, M, T>(middleware: &M, nom_collection_transactions: &str, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)
+async fn regenerer_transactions_v2<'a, M, T>(
+    middleware: &M, nom_collection_transactions: &str, mut curseur: Cursor<TransactionRef<'a>>, processor: &T,
+    skip_certificats: bool, session: &mut ClientSession)
     -> Result<u64, Box<dyn Error>>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
     T: AiguillageTransactions,
 {
     let mut counter = 0u64;
+
+    // Session cleanup
+    session.commit_transaction().await?;
+    session.start_transaction(None).await?;
 
     // while let Some(result) = curseur.next().await {
     while curseur.advance().await? {
@@ -460,7 +481,7 @@ where
             }
         }
 
-        match processor.aiguillage_transaction(middleware, transaction).await {
+        match processor.aiguillage_transaction(middleware, transaction, session).await {
             Ok(_resultat) => {
                 upsert_transactions_traitees(
                     middleware, nom_collection_transactions, transaction_id, EtatTransaction::Complete, Some(true), Some(date_traitee)).await?;
@@ -468,6 +489,8 @@ where
             Err(e) => error!("regenerer_transactions_v2 ** ERREUR REGENERATION {} ** {:?}", transaction_id, e)
         }
     }
+
+    session.commit_transaction().await?;
 
     Ok(counter)
 }

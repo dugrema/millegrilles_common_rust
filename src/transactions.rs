@@ -96,7 +96,7 @@ impl TriggerTransaction {
     }
 }
 
-pub async fn charger_transaction<M>(middleware: &M, nom_collection: &str, trigger: &TriggerTransaction) -> Result<TransactionValide, String>
+pub async fn charger_transaction<M>(middleware: &M, nom_collection: &str, trigger: &TriggerTransaction) -> Result<TransactionValide, CommonError>
 where
     M: ValidateurX509 + MongoDao,
 {
@@ -114,13 +114,13 @@ where
     match collection.find_one(filtre, None).await {
         Ok(d) => match d {
             Some(d) => extraire_transaction(middleware, d).await,
-            None => Err(format!("Transaction introuvable : {}", uuid_transaction)),
+            None => Err(CommonError::String(format!("Transaction introuvable : {}", uuid_transaction))),
         },
-        Err(e) => Err(format!("Erreur chargement transaction {} : {:?}", uuid_transaction, e)),
+        Err(e) => Err(CommonError::String(format!("Erreur chargement transaction {} : {:?}", uuid_transaction, e))),
     }
 }
 
-async fn extraire_transaction(validateur: &impl ValidateurX509, transaction: TransactionOwned) -> Result<TransactionValide, String> {
+async fn extraire_transaction(validateur: &impl ValidateurX509, transaction: TransactionOwned) -> Result<TransactionValide, CommonError> {
     let certificat = {
         let fingerprint = transaction.pubkey.as_str();
         match validateur.get_certificat(fingerprint).await {
@@ -149,7 +149,7 @@ pub enum EtatTransaction {
 }
 
 pub async fn marquer_transaction<'a, M, S, T>(middleware: &M, nom_collection: S, uuid_transaction: T, etat: EtatTransaction)
-    -> Result<(), String>
+    -> Result<(), CommonError>
     where
         M: MongoDao,
         S: AsRef<str>,
@@ -181,15 +181,15 @@ pub async fn marquer_transaction<'a, M, S, T>(middleware: &M, nom_collection: S,
             if update_result.matched_count == 1 {
                 Ok(())
             } else {
-                Err(format!("Erreur update transaction {}, aucun match", uuid_transaction_str))
+                Err(CommonError::String(format!("Erreur update transaction {}, aucun match", uuid_transaction_str)))
             }
         },
-        Err(e) => Err(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction_str, e)),
+        Err(e) => Err(CommonError::String(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction_str, e))),
     }
 }
 
 /// Resoumet une batch de transaction non completee pour chaque collection.
-pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDao), collections_transactions: &Vec<String>) -> Result<(), String> {
+pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDao), collections_transactions: &Vec<String>) -> Result<(), CommonError> {
 
     debug!("Resoumettre transactions incompletes pour {:?}", collections_transactions);
     if middleware.mq_disponible() == false {

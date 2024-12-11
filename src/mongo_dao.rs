@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use log::{debug, error, info};
-use mongodb::{bson::doc, Client, Collection, Cursor, Database};
+use mongodb::{bson::doc, Client, Collection, Cursor, Database, ClientSession};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
-use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
+use mongodb::options::{Acknowledgment, AuthMechanism, ClientOptions, Credential, ReadConcern, ServerAddress, TlsOptions, TransactionOptions, WriteConcern};
 use serde::Serialize;
 use serde_json::Value;
 use tokio_stream::StreamExt;
@@ -19,26 +19,31 @@ use std::error::Error;
 use std::time::Duration;
 use std::vec::IntoIter;
 use chrono::{DateTime, Utc};
+use dryoc::kx::Session;
+
 use crate::bson::Array;
 use crate::rabbitmq_dao::emettre_certificat_compte;
+use crate::error::Error as CommonError;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
-    fn get_database(&self) -> Result<Database, String>;
-    fn get_collection<S>(&self, nom_collection: S) -> Result<Collection<Document>, String>
+    fn get_database(&self) -> Result<Database, CommonError>;
+    async fn get_session(&self) -> Result<ClientSession, CommonError>;
+
+    fn get_collection<S>(&self, nom_collection: S) -> Result<Collection<Document>, CommonError>
         where S: AsRef<str>
     {
         let database = self.get_database()?;
         Ok(database.collection(nom_collection.as_ref()))
     }
 
-    fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, String> {
+    fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, CommonError> {
         let database = self.get_database()?;
         Ok(database.collection::<T>(nom_collection))
     }
 
     async fn create_index<C>(&self, configuration: &C, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>)
-        -> Result<(), String>
+        -> Result<(), CommonError>
         where C: ConfigMessages
     {
         let database = self.get_database()?;
@@ -51,9 +56,13 @@ pub struct MongoDaoImpl {
     db_name: String,
 }
 
+#[async_trait]
 impl MongoDao for MongoDaoImpl {
-    fn get_database(&self) -> Result<Database, String> {
+    fn get_database(&self) -> Result<Database, CommonError> {
         Ok(self.client.database(&self.db_name))
+    }
+    async fn get_session(&self) -> Result<ClientSession, CommonError> {
+        Ok(self.client.start_session(None).await?)
     }
 }
 
@@ -110,7 +119,7 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
 }
 
 async fn create_index<C>(configuration: &C, database: &Database, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>)
-    -> Result<(), String>
+    -> Result<(), CommonError>
     where C: ConfigMessages
 {
 
@@ -143,7 +152,7 @@ async fn create_index<C>(configuration: &C, database: &Database, nom_collection:
                 error!("create_index Erreur inscription a midcompte : {:?}", e);
             }
 
-            Err(format!("Erreur connexion MongoDB (initial, creation index) : {:?}", e))
+            Err(CommonError::String(format!("Erreur connexion MongoDB (initial, creation index) : {:?}", e)))
         }
     }
 }
@@ -421,4 +430,13 @@ mod test {
         Ok(())
     }
 
+}
+
+pub async fn start_transaction_regular(session: &mut ClientSession) -> Result<(), CommonError> {
+    let options = TransactionOptions::builder()
+        .read_concern(ReadConcern::majority())
+        .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        .build();
+    session.start_transaction(options).await?;
+    Ok(())
 }

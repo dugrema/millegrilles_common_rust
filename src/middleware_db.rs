@@ -9,7 +9,7 @@ use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
-use mongodb::Database;
+use mongodb::{ClientSession, Database};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
@@ -21,6 +21,7 @@ use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX5
 use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
+use crate::error::Error as CommonError;
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::{charger_certificat_redis, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
@@ -123,7 +124,9 @@ impl IsConfigNoeud for MiddlewareDb {
 
 #[async_trait]
 impl MongoDao for MiddlewareDb {
-    fn get_database(&self) -> Result<Database, String> { self.ressources.mongo.get_database() }
+    fn get_database(&self) -> Result<Database, CommonError> { self.ressources.mongo.get_database() }
+
+    async fn get_session(&self) -> Result<ClientSession, CommonError> { self.ressources.mongo.get_session().await }
 }
 
 #[async_trait]

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use mongodb::ClientSession;
 use crate::certificats::ValidateurX509;
 use crate::db_structs::TransactionValide;
 use crate::generateur_messages::GenerateurMessages;
@@ -62,7 +63,7 @@ pub trait GestionnaireDomaineV2: GestionnaireBusMillegrilles + ConsommateurMessa
 
 #[async_trait]
 pub trait AiguillageTransactions {
-    async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide)
+    async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: ValidateurX509 + GenerateurMessages + MongoDao;
 }
