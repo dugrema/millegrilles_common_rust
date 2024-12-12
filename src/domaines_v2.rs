@@ -629,7 +629,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
         self.traitement_post_regeneration(middleware).await?;
 
-        Ok(None)  // Reponse deja transmise
+        Ok(None)
     }
 
     async fn traitement_post_regeneration<M>(&self, _middleware: &M) -> Result<(), Error>
