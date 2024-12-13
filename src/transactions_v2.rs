@@ -22,7 +22,7 @@ use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
 use crate::domaines_v2::GestionnaireDomaineSimple;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{start_transaction_regular, MongoDao};
+use crate::mongo_dao::{start_transaction_regeneration, start_transaction_regular, MongoDao};
 use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
 use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
@@ -169,7 +169,7 @@ where
     #[cfg(debug_assertions)]
     let mut process_start = Utc::now().timestamp_micros();
 
-    if let Err(e) = start_transaction_regular(session).await {
+    if let Err(e) = start_transaction_regeneration(session).await {
         panic!("Error starting new transaction: {:?}", e);
     }
 
@@ -179,14 +179,17 @@ where
             None => break  // Done
         };
 
-        if transaction_counter % 1000 == 0 {
-            info!(target: "millegrilles_common_rust::rebuild_transaction", "traiter_transactions_receiver: Regeneration {} transactions processed, in progress ...", transaction_counter);
+        if transaction_counter % 100 == 0
+        {
             if let Err(e) = session.commit_transaction().await {
                 panic!("Error committing batch: {:?}", e);
             };
-            if let Err(e) = start_transaction_regular(session).await {
+            if let Err(e) = start_transaction_regeneration(session).await {
                 panic!("Error starting new transaction: {:?}", e);
             }
+        }
+        if transaction_counter % 1000 == 0 {
+            info!(target: "millegrilles_common_rust::rebuild_transaction", "traiter_transactions_receiver: Regeneration {} transactions processed, in progress ...", transaction_counter);
         }
 
         // let uuid_transaction = message_identificateurs.id.as_str();

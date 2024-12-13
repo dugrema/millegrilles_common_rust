@@ -440,3 +440,17 @@ pub async fn start_transaction_regular(session: &mut ClientSession) -> Result<()
     session.start_transaction(options).await?;
     Ok(())
 }
+
+pub async fn start_transaction_regeneration(session: &mut ClientSession) -> Result<(), CommonError> {
+    let options = TransactionOptions::builder()
+        .read_concern(ReadConcern::local())
+        .write_concern(
+            WriteConcern::builder()
+                .journal(false)
+                .w(Acknowledgment::Majority)
+                .build()
+        )
+        .build();
+    session.start_transaction(options).await?;
+    Ok(())
+}
