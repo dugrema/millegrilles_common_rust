@@ -73,9 +73,10 @@ where
         fichiers: fichiers_backup,
         cles: cles_backup,
     };
+    let session_batch_size = gestionnaire_domaine.get_rebuild_transaction_batch_size();
     let thread_lire_transactions = lire_transactions_fichiers(info_regeneration, tx_transaction);
     let thread_traiter_transactions = traiter_transactions_receiver(
-        middleware, nom_collection_transactions, rx_transaction, processor, skip_certificats, &status_regeneration, &mut session);
+        middleware, nom_collection_transactions, rx_transaction, processor, skip_certificats, &status_regeneration, &mut session, session_batch_size);
     let thread_status_updates = thread_regeneration_status_updates(
         middleware, nom_domaine, &stats_backup, &status_regeneration);
 
@@ -160,6 +161,7 @@ where
 async fn traiter_transactions_receiver<'a, M, T>(
     middleware: &M, nom_collection_transactions: &str, mut rx: Receiver<TransactionOwned>, processor: &T,
     skip_certificats: bool, status_regeneration: &Mutex<StatusRegeneration>, session: &mut ClientSession,
+    session_batch_size: u64
 )
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao,
@@ -179,7 +181,7 @@ where
             None => break  // Done
         };
 
-        if transaction_counter % 100 == 0
+        if transaction_counter % session_batch_size == 0
         {
             if let Err(e) = session.commit_transaction().await {
                 panic!("Error committing batch: {:?}", e);

@@ -59,6 +59,8 @@ pub trait GestionnaireDomaineV2: GestionnaireBusMillegrilles + ConsommateurMessa
     /// Retourne true si utilise consignation fichiers avec fuuids
     fn reclame_fuuids(&self) -> bool { false }
 
+    fn get_rebuild_transaction_batch_size(&self) -> u64 { 250 }
+
 }
 
 #[async_trait]
