@@ -552,8 +552,9 @@ where
 }
 
 
-pub async fn marquer_transaction_v2<'a, M, S, T>(middleware: &M, nom_collection: S, uuid_transaction: T, etat: EtatTransaction, ok: Option<bool>)
-                                                 -> Result<(), CommonError>
+pub async fn marquer_transaction_v2<'a, M, S, T>(
+    middleware: &M, nom_collection: S, uuid_transaction: T, etat: EtatTransaction, ok: Option<bool>, session: &mut ClientSession)
+    -> Result<(), CommonError>
 where
     M: MongoDao,
     S: AsRef<str>,
@@ -607,7 +608,7 @@ where
     let collection_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()))?;
 
     // Executer les deux operations
-    match collection.update_one(filtre, ops, None).await {
+    match collection.update_one_with_session(filtre, ops, None, session).await {
         Ok(update_result) => {
             if update_result.matched_count == 1 {
                 ()
@@ -618,7 +619,7 @@ where
         Err(e) => Err(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction_str, e))?,
     };
 
-    collection_traitees.update_one(filtre_transactions_traitees, ops_transactions_traitees, options).await?;
+    collection_traitees.update_one_with_session(filtre_transactions_traitees, ops_transactions_traitees, options, session).await?;
 
     Ok(())
 }

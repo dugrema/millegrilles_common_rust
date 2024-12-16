@@ -826,7 +826,8 @@ where M: ValidateurX509 + 'static
     }
 }
 
-pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str)
+pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(
+    middleware: &M, valeur: &S, gestionnaire: &G, domaine: &str, action: &str, session: &mut ClientSession)
     -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
@@ -850,12 +851,12 @@ pub async fn sauvegarder_traiter_transaction_serializable<M,G,S>(middleware: &M,
     let type_message_out = TypeMessageOut::Transaction(routage);
     let message_valide = MessageValide { message, type_message: type_message_out, certificat };
 
-    Ok(sauvegarder_traiter_transaction(middleware, message_valide, gestionnaire).await?)
+    Ok(sauvegarder_traiter_transaction(middleware, message_valide, gestionnaire, session).await?)
 }
 
 /// Sauvegarde une nouvelle transaction et de la traite immediatement
 pub async fn sauvegarder_traiter_transaction<M, G>(
-    middleware: &M, message: MessageValide, gestionnaire: &G
+    middleware: &M, message: MessageValide, gestionnaire: &G, session: &mut ClientSession
 )
     -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
     where
@@ -870,7 +871,7 @@ pub async fn sauvegarder_traiter_transaction<M, G>(
     };
 
     // let doc_transaction =
-    match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
+    match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str(), session).await {
         Ok(d) => Ok(d),
         Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction Erreur sauvegarde transaction : {:?}", e))
     }?;
@@ -967,7 +968,7 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
         "ok": None::<bool>,
     };
     let collection_transactions_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection_transactions))?;
-    if let Err(e) = collection_transactions_traitees.insert_one(doc_transaction_traitee, None).await {
+    if let Err(e) = collection_transactions_traitees.insert_one_with_session(doc_transaction_traitee, None, session).await {
         if verifier_erreur_duplication_mongo(&e.kind) {
             // Transaction dupliquee deja recu. On repond Ok immediatement avec code duplication.
             return Ok(Some(middleware.reponse_ok(Some(1001), Some("Transaction dupliquee"))?))
@@ -977,7 +978,7 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
     }
 
     // let doc_transaction =
-    match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str()).await {
+    match sauvegarder_transaction(middleware, &message, nom_collection_transactions.as_str(), session).await {
         Ok(d) => Ok(d),
         Err(e) => Err(format!("middleware.sauvegarder_traiter_transaction_v2 Erreur sauvegarde transaction : {:?}", e))
     }?;
@@ -997,14 +998,15 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
         &nom_collection_transactions,
         message_id,
         EtatTransaction::Complete,
-        Some(true)
+        Some(true),
+        session
     ).await?;
 
     Ok(reponse)
 }
 
 
-pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_collection: &str)
+pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_collection: &str, session: &mut ClientSession)
     -> Result<(), crate::error::Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
@@ -1053,7 +1055,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
     debug!("sauvegarder_transaction Inserer nouvelle transaction\n:{:?}", contenu_doc);
 
     let collection = middleware.get_collection(nom_collection)?;
-    match collection.insert_one(&contenu_doc, None).await {
+    match collection.insert_one_with_session(&contenu_doc, None, session).await {
         Ok(_) => {
             debug!("sauvegarder_transaction Transaction sauvegardee dans collection de reception");
             Ok(())
