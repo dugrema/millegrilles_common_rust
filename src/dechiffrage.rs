@@ -253,6 +253,19 @@ impl DataChiffre {
         }
     }
 
+    pub fn borrow(&self) -> DataChiffreBorrow {
+        DataChiffreBorrow {
+            data_chiffre: self.data_chiffre.as_str(),
+            cle_id: self.cle_id.as_ref().map(|x| x.as_str()),
+            format: self.format.as_ref().map(|x| x.as_str()),
+            nonce: self.nonce.as_ref().map(|x| x.as_str()),
+            verification: self.verification.as_ref().map(|x| x.as_str()),
+            header: self.header.as_ref().map(|x| x.as_str()),
+            ref_hachage_bytes: self.ref_hachage_bytes.as_ref().map(|x| x.as_str()),
+            hachage_bytes: self.hachage_bytes.as_ref().map(|x| x.as_str()),
+        }
+    }
+
 }
 
 impl<'a> From<DataChiffreBorrow<'a>> for DataChiffre {
