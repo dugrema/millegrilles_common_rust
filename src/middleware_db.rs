@@ -10,6 +10,7 @@ use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use mongodb::{ClientSession, Database};
+use mongodb::options::{Acknowledgment, SessionOptions, TransactionOptions, WriteConcern};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
@@ -127,6 +128,10 @@ impl MongoDao for MiddlewareDb {
     fn get_database(&self) -> Result<Database, CommonError> { self.ressources.mongo.get_database() }
 
     async fn get_session(&self) -> Result<ClientSession, CommonError> { self.ressources.mongo.get_session().await }
+
+    async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError> {
+        self.ressources.mongo.get_session_rebuild().await
+    }
 }
 
 #[async_trait]

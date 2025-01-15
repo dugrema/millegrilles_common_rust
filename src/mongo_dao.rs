@@ -6,7 +6,7 @@ use mongodb::{bson::doc, Client, Collection, Cursor, Database, ClientSession};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
-use mongodb::options::{Acknowledgment, AuthMechanism, ClientOptions, Credential, ReadConcern, ServerAddress, TlsOptions, TransactionOptions, WriteConcern};
+use mongodb::options::{Acknowledgment, AuthMechanism, ClientOptions, Credential, ReadConcern, ServerAddress, SessionOptions, TlsOptions, TransactionOptions, WriteConcern};
 use serde::Serialize;
 use serde_json::Value;
 use tokio_stream::StreamExt;
@@ -29,6 +29,7 @@ use crate::error::Error as CommonError;
 pub trait MongoDao: Send + Sync {
     fn get_database(&self) -> Result<Database, CommonError>;
     async fn get_session(&self) -> Result<ClientSession, CommonError>;
+    async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError>;
 
     fn get_collection<S>(&self, nom_collection: S) -> Result<Collection<Document>, CommonError>
         where S: AsRef<str>
@@ -62,7 +63,30 @@ impl MongoDao for MongoDaoImpl {
         Ok(self.client.database(&self.db_name))
     }
     async fn get_session(&self) -> Result<ClientSession, CommonError> {
-        Ok(self.client.start_session(None).await?)
+        let write_concern = WriteConcern::builder()
+            .journal(true)
+            .w(Acknowledgment::Majority)
+            .build();
+        let transaction_options = TransactionOptions::builder()
+            .read_concern(ReadConcern::MAJORITY)
+            .write_concern(write_concern)
+            .build();
+        let options = SessionOptions::builder()
+            .default_transaction_options(transaction_options).build();
+        Ok(self.client.start_session(options).await?)
+    }
+
+    async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError> {
+        let write_concern = WriteConcern::builder()
+            .journal(true)
+            .w(Acknowledgment::Nodes(1))
+            .build();
+        let transaction_options = TransactionOptions::builder()
+            .read_concern(ReadConcern::LOCAL)
+            .write_concern(write_concern)
+            .build();
+        let options = SessionOptions::builder().default_transaction_options(transaction_options).build();
+        Ok(self.client.start_session(options).await?)
     }
 }
 
@@ -435,22 +459,27 @@ mod test {
 pub async fn start_transaction_regular(session: &mut ClientSession) -> Result<(), CommonError> {
     let options = TransactionOptions::builder()
         .read_concern(ReadConcern::majority())
-        .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        .write_concern(WriteConcern::builder()
+            .journal(true)
+            .w(Acknowledgment::Majority).build())
         .build();
     session.start_transaction(options).await?;
     Ok(())
 }
 
 pub async fn start_transaction_regeneration(session: &mut ClientSession) -> Result<(), CommonError> {
+    // Write concern requiring just 1 ACK, journalled
+    let write_concern = WriteConcern::builder()
+        .journal(true)
+        // .w(Acknowledgment::Majority)
+        .w(Acknowledgment::Nodes(1))
+        .build();
+
     let options = TransactionOptions::builder()
         .read_concern(ReadConcern::local())
-        .write_concern(
-            WriteConcern::builder()
-                .journal(false)
-                .w(Acknowledgment::Majority)
-                .build()
-        )
+        .write_concern(write_concern)
         .build();
+
     session.start_transaction(options).await?;
     Ok(())
 }

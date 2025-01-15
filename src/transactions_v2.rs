@@ -52,7 +52,7 @@ where
     }
     // Recreate all indexes (idempotent)
     gestionnaire_domaine.preparer_database_mongodb(middleware).await?;
-    let mut session = middleware.get_session().await?;
+    let mut session = middleware.get_session_rebuild().await?;
 
     // Traiter transactions dans les fichiers d'archive
     let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
