@@ -205,6 +205,9 @@ pub struct DataChiffreBorrow<'a> {
 
     #[serde(borrow, skip_serializing_if="Option::is_none")]
     pub hachage_bytes: Option<&'a str>,
+
+    #[serde(borrow, skip_serializing_if="Option::is_none")]
+    pub compression: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -235,6 +238,9 @@ pub struct DataChiffre {
 
     #[serde(skip_serializing_if="Option::is_none")]
     pub hachage_bytes: Option<String>,
+
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub compression: Option<String>,
 }
 
 impl DataChiffre {
@@ -263,6 +269,7 @@ impl DataChiffre {
             header: self.header.as_ref().map(|x| x.as_str()),
             ref_hachage_bytes: self.ref_hachage_bytes.as_ref().map(|x| x.as_str()),
             hachage_bytes: self.hachage_bytes.as_ref().map(|x| x.as_str()),
+            compression: self.compression.as_ref().map(|x| x.as_str()),
         }
     }
 
@@ -279,6 +286,7 @@ impl<'a> From<DataChiffreBorrow<'a>> for DataChiffre {
             cle_id: match value.cle_id { Some(inner) => Some(inner.to_owned()), None => None},
             nonce: match value.nonce { Some(inner) => Some(inner.to_owned()), None => None},
             verification: match value.verification { Some(inner) => Some(inner.to_owned()), None => None},
+            compression: match value.compression { Some(inner) => Some(inner.to_owned()), None => None},
         }
     }
 }
