@@ -53,13 +53,14 @@ pub trait MongoDao: Send + Sync {
         create_index(configuration, &database, nom_collection, champs_index, options).await
     }
 
-    async fn rename_collection<S,D>(&self, source: S, destination: D) -> Result<(), CommonError>
+    async fn rename_collection<S,D>(&self, source: S, destination: D, drop_target: bool) -> Result<(), CommonError>
         where S: AsRef<str> + Send, D: AsRef<str> + Send
     {
         let db_name = self.get_db_name();
         let command = doc!{
             "renameCollection": format!("{}.{}", db_name, source.as_ref()),
-            "to": format!("{}.{}", db_name, destination.as_ref())
+            "to": format!("{}.{}", db_name, destination.as_ref()),
+            "dropTarget": drop_target,
         };
         let database = self.get_admin_database()?;
         match database.run_command(command, None).await {
