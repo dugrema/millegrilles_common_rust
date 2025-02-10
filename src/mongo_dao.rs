@@ -28,6 +28,8 @@ use crate::error::Error as CommonError;
 #[async_trait]
 pub trait MongoDao: Send + Sync {
     fn get_database(&self) -> Result<Database, CommonError>;
+    fn get_admin_database(&self) -> Result<Database, CommonError>;
+    fn get_db_name(&self) -> &str;
     async fn get_session(&self) -> Result<ClientSession, CommonError>;
     async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError>;
 
@@ -50,6 +52,21 @@ pub trait MongoDao: Send + Sync {
         let database = self.get_database()?;
         create_index(configuration, &database, nom_collection, champs_index, options).await
     }
+
+    async fn rename_collection<S,D>(&self, source: S, destination: D) -> Result<(), CommonError>
+        where S: AsRef<str> + Send, D: AsRef<str> + Send
+    {
+        let db_name = self.get_db_name();
+        let command = doc!{
+            "renameCollection": format!("{}.{}", db_name, source.as_ref()),
+            "to": format!("{}.{}", db_name, destination.as_ref())
+        };
+        let database = self.get_admin_database()?;
+        match database.run_command(command, None).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(CommonError::String(format!("rename_collection Error {:?}", e))),
+        }
+    }
 }
 
 pub struct MongoDaoImpl {
@@ -62,6 +79,13 @@ impl MongoDao for MongoDaoImpl {
     fn get_database(&self) -> Result<Database, CommonError> {
         Ok(self.client.database(&self.db_name))
     }
+
+    fn get_admin_database(&self) -> Result<Database, CommonError> {
+        Ok(self.client.database("admin"))
+    }
+
+    fn get_db_name(&self) -> &str {self.db_name.as_str()}
+
     async fn get_session(&self) -> Result<ClientSession, CommonError> {
         let write_concern = WriteConcern::builder()
             .journal(true)

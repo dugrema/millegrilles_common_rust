@@ -127,6 +127,10 @@ impl IsConfigNoeud for MiddlewareDb {
 impl MongoDao for MiddlewareDb {
     fn get_database(&self) -> Result<Database, CommonError> { self.ressources.mongo.get_database() }
 
+    fn get_admin_database(&self) -> Result<Database, CommonError> { self.ressources.mongo.get_admin_database() }
+
+    fn get_db_name(&self) -> &str { self.ressources.mongo.get_db_name() }
+
     async fn get_session(&self) -> Result<ClientSession, CommonError> { self.ressources.mongo.get_session().await }
 
     async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError> {
