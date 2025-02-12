@@ -369,6 +369,56 @@ pub mod opt_chrono_datetime_as_bson_datetime {
     }
 }
 
+pub mod map_chrono_datetime_as_bson_datetime {
+    use std::collections::HashMap;
+    use chrono::Utc;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::ser::SerializeMap;
+    use mongodb::bson;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(
+        #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+        chrono::DateTime<Utc>,
+    );
+
+    pub fn serialize<S>(
+        value: &HashMap<String, chrono::DateTime<Utc>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(value.len()))?;
+        for (k, v) in value.iter() {
+            let helper = Helper(v.to_owned());
+            map.serialize_entry(k, &helper)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<String, chrono::DateTime<Utc>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+         impl Into<chrono::DateTime<Utc>> for Helper {
+            fn into(self) -> chrono::DateTime<Utc> { self.0 }
+        }
+
+        #[derive(Deserialize)]
+        struct MapHelper(
+            HashMap<String, Helper>,
+        );
+
+        let map_helper: MapHelper = MapHelper::deserialize(deserializer)?;
+        let mut final_map: HashMap<String, chrono::DateTime<Utc>> = HashMap::new();
+        for (k, v) in map_helper.0.into_iter() {
+            final_map.insert(k, v.into());
+        }
+        Ok(final_map)
+    }
+}
+
 pub mod map_opt_chrono_datetime_as_bson_datetime {
     use std::collections::HashMap;
     use chrono::Utc;
