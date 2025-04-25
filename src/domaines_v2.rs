@@ -25,7 +25,7 @@ use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::{CommandeRegenerer, MessageCedule};
 use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_charger_certificats_chiffrage, thread_entretien_validateur};
-use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
+use crate::mongo_dao::{start_transaction_regular, ChampIndex, IndexOptions, MongoDao};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, TriggerTransaction, resoumettre_transactions};
@@ -338,66 +338,68 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     }
 
     /// Traite une transaction en la chargeant, dirigeant vers l'aiguillage puis la marque comme traitee
+    /// Utilise par recovery de transaction en echec.
     async fn traiter_transaction<M>(&self, middleware: &M, m: MessageValide)
                                     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where
         M: ValidateurX509 + GenerateurMessages + MongoDao
     {
-        todo!("obsolete?");
-        // let message_ref = match m.message.parse() {
-        //     Ok(inner) => inner,
-        //     Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur parse message {}", e))?
-        // };
-        // let message_contenu = match message_ref.contenu() {
-        //     Ok(inner) => inner,
-        //     Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur conversion message contenu {:?} : {:?}", m, e))?
-        // };
-        // let trigger: TriggerTransaction = match message_contenu.deserialize() {
-        //     Ok(inner) => inner,
-        //     Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur conversion message vers Trigger {:?} : {:?}", m, e))?
-        // };
-        //
-        // let nom_collection_transactions = match self.get_collection_transactions() {
-        //     Some(n) => n,
-        //     None => {
-        //         Err(Error::Str("domaines_v2.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
-        //     }
-        // };
-        //
-        // let transaction = charger_transaction(middleware, nom_collection_transactions.as_str(), &trigger).await?;
-        // debug!("traiter_transaction Traitement transaction, chargee : {:?}", transaction.transaction.id);
-        //
-        // let uuid_transaction = transaction.transaction.id.clone();
-        // match self.aiguillage_transaction(middleware, transaction).await {
-        //     Ok(r) => {
-        //         // Marquer transaction completee
-        //         debug!("traiter_transaction Transaction traitee {}, marquer comme completee", uuid_transaction);
-        //         let nom_collection_transactions = match self.get_collection_transactions() {
-        //             Some(n) => n,
-        //             None => {
-        //                 Err(Error::Str("domaines_v2.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
-        //             }
-        //         };
-        //         // marquer_transaction(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete).await?;
-        //         marquer_transaction_v2(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete, Some(true)).await?;
-        //
-        //         // Repondre en fonction du contenu du trigger
-        //         if let Some(reponse) = r {
-        //             if let Some(routage_reponse) = trigger.reply_info() {
-        //                 debug!("traiter_transaction Emettre reponse vers {:?} = {:?}", routage_reponse, reponse);
-        //                 let message_ref = reponse.parse()?;
-        //                 if let Err(e) = middleware.repondre(routage_reponse, message_ref).await {
-        //                     error!("traiter_transaction domaines.traiter_transaction: Erreur emission reponse pour une transaction : {:?}", e);
-        //                 }
-        //             }
-        //         }
-        //
-        //         Ok(None)
-        //     },
-        //     Err(e) => {
-        //         Err(e)?
-        //     }
-        // }
+        let message_ref = match m.message.parse() {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur parse message {}", e))?
+        };
+        let message_contenu = match message_ref.contenu() {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur conversion message contenu {:?} : {:?}", m, e))?
+        };
+        let trigger: TriggerTransaction = match message_contenu.deserialize() {
+            Ok(inner) => inner,
+            Err(e) => Err(format!("domaines_v2.traiter_transaction Erreur conversion message vers Trigger {:?} : {:?}", m, e))?
+        };
+
+        let nom_collection_transactions = match self.get_collection_transactions() {
+            Some(n) => n,
+            None => {
+                Err(Error::Str("domaines_v2.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
+            }
+        };
+
+        let transaction = charger_transaction(middleware, nom_collection_transactions.as_str(), &trigger).await?;
+        debug!("traiter_transaction Traitement transaction, chargee : {:?}", transaction.transaction.id);
+
+        let uuid_transaction = transaction.transaction.id.clone();
+        let mut session = middleware.get_session().await?;
+        start_transaction_regular(&mut session).await?;
+        match self.aiguillage_transaction(middleware, transaction, &mut session).await {
+            Ok(r) => {
+                // Marquer transaction completee
+                debug!("traiter_transaction Transaction traitee {}, marquer comme completee", uuid_transaction);
+                let nom_collection_transactions = match self.get_collection_transactions() {
+                    Some(n) => n,
+                    None => {
+                        Err(Error::Str("domaines_v2.traiter_transaction Tentative de sauvegarde de transaction pour gestionnaire sans collection pour transactions"))?
+                    }
+                };
+                // marquer_transaction(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete).await?;
+                marquer_transaction_v2(middleware, nom_collection_transactions, uuid_transaction, EtatTransaction::Complete, Some(true), &mut session).await?;
+
+                // Repondre en fonction du contenu du trigger
+                if let Some(reponse) = r {
+                    if let Some(routage_reponse) = trigger.reply_info() {
+                        debug!("traiter_transaction Emettre reponse vers {:?} = {:?}", routage_reponse, reponse);
+                        let message_ref = reponse.parse()?;
+                        if let Err(e) = middleware.repondre(routage_reponse, message_ref).await {
+                            error!("traiter_transaction domaines.traiter_transaction: Erreur emission reponse pour une transaction : {:?}", e);
+                        }
+                    }
+                }
+
+                Ok(None)
+            },
+            Err(e) => {
+                Err(e)?
+            }
+        }
     }
 
     // async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide)
