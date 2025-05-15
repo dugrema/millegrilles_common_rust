@@ -212,6 +212,33 @@ pub fn verifier_reponse_ok_option(reponse: &Option<TypeMessage>) -> bool {
     }
 }
 
+pub fn parse_confirmation_response(message: &TypeMessage) -> Option<MessageConfirmation> {
+    match message {
+        TypeMessage::Valide(m) => {
+            let message_ref = match m.message.parse() {
+                Ok(inner) => inner,
+                Err(e) => {
+                    error!("parse_confirmation_response Erreur parse message buffer : {}", e);
+                    return None
+                }
+            };
+            match message_ref.contenu() {
+                Ok(inner) => {
+                    match inner.deserialize::<MessageConfirmation>() {
+                        Ok(r) => Some(r),
+                        Err(_) => None
+                    }
+                },
+                Err(e) => {
+                    error!("parse_confirmation_response Erreur contenu() {:?}", e);
+                    None
+                }
+            }
+        },
+        _ => None
+    }
+}
+
 pub struct DataDechiffre {
     pub ref_hachage_bytes: Option<String>,
     pub data_dechiffre: Vec<u8>,
