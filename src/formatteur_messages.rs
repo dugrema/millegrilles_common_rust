@@ -229,7 +229,7 @@ pub fn build_message_action_chiffre<R,M>(
 struct ReponseMessage<'a> {
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<usize>,
+    code: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -299,7 +299,7 @@ pub trait FormatteurMessage {
 
     fn reponse_ok<O>(&self, code: O, message: Option<&str>)
         -> Result<MessageMilleGrillesBufferDefault, crate::error::Error>
-        where O: Into<Option<usize>>
+        where O: Into<Option<i64>>
     {
         let code = code.into();
         let message = match message { Some(inner) => { Some(inner.into()) }, None => None };
@@ -312,7 +312,7 @@ pub trait FormatteurMessage {
 
     fn reponse_err<O>(&self, code: O, message: Option<&str>, err: Option<&str>)
         -> Result<MessageMilleGrillesBufferDefault, crate::error::Error>
-        where O: Into<Option<usize>>
+        where O: Into<Option<i64>>
     {
         let code = code.into();
         let message = match message { Some(inner) => { Some(inner.into()) }, None => None };
