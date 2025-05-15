@@ -172,6 +172,8 @@ pub struct InformationDechiffrageV2 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MessageConfirmation {
     ok: Option<bool>,
+    code: Option<i64>,
+    err: Option<String>,
 }
 
 pub fn verifier_reponse_ok(message: &TypeMessage) -> bool {
