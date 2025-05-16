@@ -281,9 +281,11 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     where
         M: Middleware
     {
+        let type_message = m.type_message.clone();
         match consommer_requete_trait(self, middleware, m).await {
             Ok(inner) => Ok(inner),
             Err(Error::ErrorResponse(code, message, error)) => {
+                info!("consommer_requete_trait Returning ErrorResponse for {:?}: code: {:?}, message: {:?}, error: {:?}", type_message, code, message, error);
                 let message =  match message.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
                 let error =  match error.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
                 Ok(Some(middleware.reponse_err(code, message, error)?))
@@ -339,6 +341,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         match self.consommer_commande(middleware, m).await {
             Ok(inner) => Ok(inner),
             Err(Error::ErrorResponse(code, message, error)) => {
+                info!("consommer_commande Returning ErrorResponse for action {}: code: {:?}, message: {:?}, error: {:?}", action, code, message, error);
                 let message =  match message.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
                 let error =  match error.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
                 Ok(Some(middleware.reponse_err(code, message, error)?))
