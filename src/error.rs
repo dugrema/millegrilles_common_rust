@@ -32,6 +32,8 @@ pub enum Error {
     FromUtf8Error(FromUtf8Error),
     TokioSendError(String),
     Base64DecodeError(base64::DecodeError),
+    /// Used to wrap an error response back to the user, params are (Code, Message, Error)
+    ErrorResponse(Option<i64>, Option<String>, Option<String>),
 }
 
 impl fmt::Display for Error {
