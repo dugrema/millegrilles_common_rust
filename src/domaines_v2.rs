@@ -281,7 +281,15 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     where
         M: Middleware
     {
-        consommer_requete_trait(self, middleware, m).await
+        match consommer_requete_trait(self, middleware, m).await {
+            Ok(inner) => Ok(inner),
+            Err(Error::ErrorResponse(code, message, error)) => {
+                let message =  match message.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
+                let error =  match error.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
+                Ok(Some(middleware.reponse_err(code, message, error)?))
+            },
+            Err(e) => Err(e)?
+        }
     }
 
     async fn consommer_commande_trait<M>(&self, middleware: &M, m: MessageValide)
@@ -318,15 +326,26 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
                 // Commandes specifiques au domaine
                 debug!("domaines_v2.consommer_commande_trait Autorise global, verifier commande {}", action);
                 match action.as_str() {
-                    COMMANDE_DECLENCHER_BACKUP => self.demarrer_backup(middleware, m).await,
-                    COMMANDE_REGENERER => self.regenerer_transactions(middleware, m).await,
+                    COMMANDE_DECLENCHER_BACKUP => return Ok(self.demarrer_backup(middleware, m).await?),
+                    COMMANDE_REGENERER => return Ok(self.regenerer_transactions(middleware, m).await?),
                     // COMMANDE_RESTAURER_TRANSACTION => self.restaurer_transaction(middleware.clone(), m).await,
                     // COMMANDE_RESET_BACKUP => self.reset_backup(middleware).await,
-                    _ => self.consommer_commande(middleware, m).await
+                    _ => () // self.consommer_commande(middleware, m).await
                 }
             },
-            false => self.consommer_commande(middleware, m).await
+            false => () // self.consommer_commande(middleware, m).await
         }
+
+        match self.consommer_commande(middleware, m).await {
+            Ok(inner) => Ok(inner),
+            Err(Error::ErrorResponse(code, message, error)) => {
+                let message =  match message.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
+                let error =  match error.as_ref() {Some(inner)=>Some(inner.as_str()), None=>None};
+                Ok(Some(middleware.reponse_err(code, message, error)?))
+            },
+            Err(e) => Err(e)?
+        }
+
     }
 
     async fn consommer_evenement_trait<M>(&self, middleware: &M, m: MessageValide)
