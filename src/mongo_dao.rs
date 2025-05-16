@@ -5,7 +5,7 @@ use log::{debug, error, info};
 use mongodb::{bson::doc, Client, Collection, Cursor, Database, ClientSession};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
-use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
+use mongodb::error::{BulkWriteFailure, ErrorKind, Result as ResultMongo, WriteFailure};
 use mongodb::options::{Acknowledgment, AuthMechanism, ClientOptions, Credential, ReadConcern, ServerAddress, SessionOptions, TlsOptions, TransactionOptions, WriteConcern};
 use serde::Serialize;
 use serde_json::Value;
@@ -256,13 +256,14 @@ pub fn convertir_to_bson_array<S>(valeur: S)
 
 /// Return true si l'erreur est une duplication sur insert
 pub fn verifier_erreur_duplication_mongo(kind: &ErrorKind) -> bool {
-    return match kind {
+    match kind {
         ErrorKind::Write(f) => {
             match f {
                 WriteFailure::WriteError(we) => we.code == 11000,  // true si code de duplication
                 _ => false
             }
         },
+        ErrorKind::BulkWrite(f) => true,
         _ => false
     }
 }
