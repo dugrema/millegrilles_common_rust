@@ -1,6 +1,6 @@
 [package]
 name = "millegrilles_common_rust"
-version = "2025.3.2"
+version = "2025.3.3"
 edition = "2021"
 
 [dependencies]
@@ -25,7 +25,6 @@ async-compression = { version = "0.4", features = ["tokio", "all-algorithms"] }
 fs2 = "0.4.3"
 
 # Tokio, async
-async-recursion = "1.1"
 async-trait = "0.1"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = { version = "0.1" }
@@ -58,7 +57,7 @@ uuid = { version = "1.8", features = ["serde", "v4"] }
 substring = { version = "1.4" }
 
 # MongoDB
-mongodb = { version = "2.8", default-features = false, features = ["tokio-runtime", "bson-chrono-0_4"] }
+mongodb = { version = "2.8.2", default-features = false, features = ["tokio-runtime", "bson-chrono-0_4"] }
 
 # RabbitMQ
 lapin = { "version" = "2.3" }

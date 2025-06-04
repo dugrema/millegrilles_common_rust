@@ -359,8 +359,9 @@ pub struct FilehostForInstanceRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileUsage {
-    pub count: Option<usize>,
-    pub size: Option<usize>,
+    // Note: using f64 rather than usize/u64 because of random bug loading large values with mongo client 2.8.1
+    pub count: Option<f64>,
+    pub size: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
