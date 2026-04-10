@@ -1,21 +1,22 @@
-use log::{debug, error};
+use log::{error};
 use std::collections::HashMap;
-use std::error::Error;
+
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage::{FormatChiffrage, optionformatchiffragestr};
 use mongodb::bson::{bson, Bson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use multibase;
 
-use millegrilles_cryptographie::{messages_structs::epochseconds, chiffrage::formatchiffragestr, heapless};
+
+use millegrilles_cryptographie::messages_structs::epochseconds;
 use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
+use millegrilles_cryptographie::heapless;
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 
 use crate::dechiffrage::DataChiffre;
 
 use crate::error::Error as CommonError;
-use crate::hachages::verifier_multihash;
+
 use crate::recepteur_messages::TypeMessage;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

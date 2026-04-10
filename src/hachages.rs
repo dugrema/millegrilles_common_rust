@@ -163,8 +163,8 @@ impl HacheurBuilder {
         let hacheur_interne: Box<dyn HacheurInterne> = match u64::from(self.digester) {
             0x12 => Box::new(HacheurSha2_256{hacheur: Sha2_256::default()}),
             0x13 => Box::new(HacheurSha2_512{hacheur: Sha2_512::default()}),
-            0xb240 => Box::new(HacheurBlake2b_512{hacheur: Blake2b512::default()}),
-            0xb260 => Box::new(HacheurBlake2s_256{hacheur: Blake2s256::default()}),
+            0xb240 => Box::new(HacheurBlake2b512{hacheur: Blake2b512::default()}),
+            0xb260 => Box::new(HacheurBlake2s256{hacheur: Blake2s256::default()}),
             _ => panic!("Type hacheur inconnu")
         };
 
@@ -208,9 +208,9 @@ impl HacheurInterne for HacheurSha2_512 {
 }
 
 #[derive(Debug)]
-struct HacheurBlake2b_512 { hacheur: Blake2b512 }
-impl HacheurInterne for HacheurBlake2b_512 {
-    fn new() -> Self { HacheurBlake2b_512{hacheur: Blake2b512::default()} }
+struct HacheurBlake2b512 { hacheur: Blake2b512 }
+impl HacheurInterne for HacheurBlake2b512 {
+    fn new() -> Self { HacheurBlake2b512{hacheur: Blake2b512::default()} }
     fn update(&mut self, data: &[u8]) { self.hacheur.update(data) }
     fn finalize(&mut self) -> Vec<u8> {
         let digest = self.hacheur.finalize();
@@ -220,9 +220,9 @@ impl HacheurInterne for HacheurBlake2b_512 {
 }
 
 #[derive(Debug)]
-struct HacheurBlake2s_256 { hacheur: Blake2s256 }
-impl HacheurInterne for HacheurBlake2s_256 {
-    fn new() -> Self { HacheurBlake2s_256{hacheur: Blake2s256::default()} }
+struct HacheurBlake2s256 { hacheur: Blake2s256 }
+impl HacheurInterne for HacheurBlake2s256 {
+    fn new() -> Self { HacheurBlake2s256{hacheur: Blake2s256::default()} }
     fn update(&mut self, data: &[u8]) { self.hacheur.update(data) }
     fn finalize(&mut self) -> Vec<u8> {
         let digest = self.hacheur.finalize();

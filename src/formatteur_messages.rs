@@ -1,44 +1,33 @@
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
-use std::fmt::Formatter;
+
+
 use std::sync::Arc;
-use hex;
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+
 use log::debug;
-use mongodb::bson as bson;
-use openssl::pkey::{Id, PKey};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde::de::{DeserializeOwned, Visitor};
-use serde_json::{json, Map, Number, Value};
-use uuid::Uuid;
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine as _};
 
-use crate::certificats::{ValidateurX509, VerificateurPermissions};
-use crate::hachages::{hacher_bytes, hacher_message};
-use crate::middleware::map_msg_to_bson;
-use crate::signatures::signer_message;
+use serde::{Serialize, Serializer};
+
+use serde_json::{Map, Value};
+
+
+use crate::certificats::ValidateurX509;
+
+
 // use crate::verificateur::{ResultatValidation, ValidationOptions};
-use crate::bson::{Document, Bson};
-use std::convert::{TryFrom, TryInto};
-use millegrilles_cryptographie::chiffrage::FormatChiffrage;
-use millegrilles_cryptographie::chiffrage_cles::{Cipher, CleChiffrageX25519};
+
+
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
 use millegrilles_cryptographie::heapless;
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, RoutageMessage, MessageMilleGrillesBuilderDefault};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesBuilderDefault, RoutageMessage};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
-use multibase::Base;
-use multihash::Code;
-use openssl::sign::Verifier;
-use crate::chiffrage_cle::CommandeSauvegarderCle;
-use crate::common_messages::DataDechiffre;
-use crate::constantes::MessageKind;
-use crate::constantes::MessageKind::ReponseChiffree;
+
+
 // use crate::dechiffrage::dechiffrer_data;
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
-use crate::mongo_dao::convertir_to_bson;
+use crate::generateur_messages::RoutageMessageAction;
+
 
 pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
                         -> Result<(MessageMilleGrillesBufferDefault, String), crate::error::Error>
