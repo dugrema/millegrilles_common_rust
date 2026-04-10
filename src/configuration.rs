@@ -273,7 +273,7 @@ impl ConfigurationPki {
         let enveloppe_privee = &self.enveloppe_privee;
 
         // Preparer cle, cert, pass
-        let password: [u8; 32] = rand::thread_rng().gen::<[u8; 32]>();
+        let password: [u8; 32] = rand::rng().random::<[u8; 32]>();
         let password: String = multibase::encode(multibase::Base::Base64, password);
         // let enveloppe_privee = charger_enveloppe_privee(
         //     self.certfile.as_path(), self.keyfile.as_path(), validateur)
@@ -293,7 +293,10 @@ impl ConfigurationPki {
 
         let mut builder = Pkcs12::builder();
         builder.ca(ca_stack);
-        let cert_p12 = builder.build(password.as_str(), "Mon cert", cle_privee, certificat)
+        builder.name("Mon cert");
+        builder.pkey(cle_privee);
+        builder.cert(certificat);
+        let cert_p12 = builder.build2(password.as_str())
             .expect("Erreur creation cle/certificat p12");
 
         // Sauvegarder certificat p12 dans un fichier temporaire

@@ -20,7 +20,7 @@ impl MessageCedule {
         let now = Utc::now();
 
         let time = &now.time();
-        let date = &now.date();
+        let date = &now.date_naive();
 
         let flag_heure = time.minute() == 0;
         let flag_jour = flag_heure && time.hour() == 0;
