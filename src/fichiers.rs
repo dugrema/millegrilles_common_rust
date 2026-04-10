@@ -163,6 +163,7 @@ pub struct FichierCompressionResult {
     // pub cipher_data: Mgs4CipherKeys,
 }
 
+#[allow(dead_code)]
 pub struct FichierCompressionChiffrage<R> {
     reader: ReaderStream<R>,
     output_path: PathBuf,
@@ -270,6 +271,7 @@ pub struct FichierCompressionChiffrage<R> {
 //     }
 // }
 
+#[allow(dead_code)]
 pub struct CompressionChiffrageProcessor {
     rx: Option<Receiver<TokioResult<Bytes>>>,
     path_output: Option<String>,

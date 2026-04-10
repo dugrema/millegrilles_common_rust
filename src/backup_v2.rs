@@ -57,6 +57,7 @@ pub const PATH_FICHIERS_ARCHIVES: &str = "/var/opt/millegrilles/archives";
 pub const CONST_ARCHIVE_NEW_VERSION: &str = "NEW";
 
 #[derive(Clone)]
+#[allow(dead_code)]
 enum TypeArchive {
     Incremental,
     Concatene,
@@ -277,6 +278,7 @@ struct RequeteCleIdBackup {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct ReponseCleIdBackup {
     ok: bool,
     code: Option<usize>,
@@ -1527,12 +1529,14 @@ async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct VersionBackup {
     date: u64,
     version: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ReponseVersionsBackup {
     version_courante: Option<VersionBackup>,
     versions: Option<Vec<VersionBackup>>,

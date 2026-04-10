@@ -648,7 +648,7 @@ async fn thread_regeneration_status_updates<M>(middleware: &M, domaine: &str, st
         stats_backup: Some(stats_backup),
     }).await?;
 
-    let mut current_count = 0;
+    let mut current_count;
     loop {
         tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
         {

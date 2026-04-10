@@ -338,6 +338,7 @@ where
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 struct ErreurResoumission {
     recuperable: bool,
     uuid_transaction: Option<String>,
@@ -466,6 +467,7 @@ pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut 
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct RowResultatUuidTransaction {
     // #[serde(rename="en-tete")]
     // entete: RowEnteteUuidTransaction
@@ -473,6 +475,7 @@ pub struct RowResultatUuidTransaction {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct RowEnteteUuidTransaction {
     uuid_transaction: String
 }
@@ -626,6 +629,7 @@ pub async fn regenerer_charger_certificats<'a, M>(middleware: &M, mut curseur: C
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct TransactionCorePkiNouveauCertificat { pub pem: String }
 
 async fn regenerer_transactions<'a, M, T>(middleware: &M, mut curseur: Cursor<TransactionRef<'a>>, processor: &T, skip_certificats: bool)

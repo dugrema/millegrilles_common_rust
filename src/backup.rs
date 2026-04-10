@@ -43,7 +43,7 @@ use crate::recepteur_messages::TypeMessage;
 
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
-const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 10 * 1024 * 1024;
+// const TRANSACTIONS_DECOMPRESSED_MAX_SIZE: usize = 10 * 1024 * 1024;
 const BACKUP_TRANSACTIONS_MAX_SIZE: usize = 9 * 1024 * 1024;
 // const TRANSACTIONS_MAX_NB: usize = 10000;  // Limite du nombre de transactions par fichier
 
@@ -1081,6 +1081,7 @@ async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collecti
 
 /// Struct de backup
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct BackupInformation {
     /// Nom complet de la collection de transactions mongodb
     nom_collection_transactions: String,
@@ -1152,7 +1153,7 @@ impl<const K: usize> CatalogueBackup<K> {
     // }
 }
 
-struct CatalogueBackupBuilder<const K: usize> {
+pub struct CatalogueBackupBuilder<const K: usize> {
     date_backup: DateTime<Utc>,      // Date de creation du backup (now)
     date_debut_backup: Option<DateTime<Utc>>,  // Date de traitement de la premiere transaction
     date_fin_backup: Option<DateTime<Utc>>,  // Date de traitement de la derniere transaction

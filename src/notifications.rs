@@ -77,7 +77,7 @@ pub struct EmetteurNotifications {
 
 #[derive(Clone, Deserialize)]
 pub struct MessageCertificat {
-    certificat: Vec<String>
+    pub certificat: Vec<String>
 }
 
 impl EmetteurNotifications {

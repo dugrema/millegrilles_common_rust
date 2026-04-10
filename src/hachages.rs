@@ -105,6 +105,7 @@ pub fn verifier_multihash(hachage: &str, contenu: &[u8]) -> Result<bool, Error> 
     Ok(correspond)
 }
 
+#[allow(dead_code)]
 pub struct Hacheur {
     hacheur_interne: Box<dyn HacheurInterne>,
     digester: Code,
@@ -177,6 +178,7 @@ impl HacheurBuilder {
     }
 }
 
+#[allow(dead_code)]
 trait HacheurInterne: Send {
     fn new() -> Self where Self: Sized;
     fn update(&mut self, data: &[u8]);
