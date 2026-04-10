@@ -3,7 +3,8 @@ use std::error::Error;
 use std::io::Write;
 use std::path::PathBuf;
 use std::str::from_utf8;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -50,7 +51,7 @@ const BACKUP_TRANSACTIONS_MAX_SIZE: usize = 9 * 1024 * 1024;
 // Epoch en ms du demarrage du backup courant
 // Utilise pour ignorer des flags de demande de backup recus durant le backup
 const PERIODE_PROTECTION_FIN_COMPLET: i64 = 30_000;
-static mut DERNIER_BACKUP_COMPLET_FIN_DOMAINES: Option<HashMap<String, i64>> = None;
+static DERNIER_BACKUP_COMPLET_FIN_DOMAINES: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
 const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
@@ -62,23 +63,16 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
         if commande.complet {
             // Protection de backup complet a repetition (reset toutes les transactions)
             let now = Utc::now().timestamp_millis();
-            unsafe {
-                let dernier_backup_complet = match DERNIER_BACKUP_COMPLET_FIN_DOMAINES.as_ref() {
-                    Some(inner) => {
-                        match inner.get(commande.nom_domaine.as_str()) {
-                            Some(inner) => inner.to_owned(),
-                            None => 0
-                        }
-                    },
-                    None => {
-                        DERNIER_BACKUP_COMPLET_FIN_DOMAINES = Some(HashMap::new());
-                        0
-                    }
-                };
-                if dernier_backup_complet > 0 && now - PERIODE_PROTECTION_FIN_COMPLET < dernier_backup_complet {
-                    info!("thread_backup Backup complet deja termine recemment ({}:{}) - SKIP", commande.nom_domaine, dernier_backup_complet);
-                    abandonner_backup = true;
-                }
+            let dernier_backup_complet = DERNIER_BACKUP_COMPLET_FIN_DOMAINES
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+                .unwrap()
+                .get(&commande.nom_domaine)
+                .cloned()
+                .unwrap_or(0);
+            if dernier_backup_complet > 0 && now - PERIODE_PROTECTION_FIN_COMPLET < dernier_backup_complet {
+                info!("thread_backup Backup complet deja termine recemment ({}:{}) - SKIP", commande.nom_domaine, dernier_backup_complet);
+                abandonner_backup = true;
             }
         }
 
@@ -108,13 +102,12 @@ pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBacku
             Err(e) => error!("backup.thread_backup Erreur backup domaine {} : {:?}", commande.nom_domaine, e)
         };
         if commande.complet {
-            unsafe {
-                DERNIER_BACKUP_COMPLET_FIN_DOMAINES
-                    .as_mut()
-                    .expect("DERNIER_BACKUP_COMPLET_FIN_DOMAINES")
-                    .insert(commande.nom_domaine.clone(), Utc::now().timestamp_millis());
-            }  // Set flag fin complet
-        }
+            DERNIER_BACKUP_COMPLET_FIN_DOMAINES
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+                .unwrap()
+                .insert(commande.nom_domaine.clone(), Utc::now().timestamp_millis());
+        }  // Set flag fin complet
     }
 }
 
