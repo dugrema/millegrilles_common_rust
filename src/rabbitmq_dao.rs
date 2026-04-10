@@ -16,7 +16,6 @@ use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefau
 use tokio::{sync, task};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
-use tokio_amqp::*;
 use tokio_stream::StreamExt;
 use url::Url;
 
@@ -74,7 +73,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     {
         let resultat = Connection::connect_with_config(
             &addr,
-            ConnectionProperties::default().with_tokio(),
+            ConnectionProperties::default(),
             get_tls_config(pki, mq),
         ).await;
 
@@ -132,7 +131,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     // Reessayer la connexion (meme si erreur - regenerer l'erreur d'auth)
     Connection::connect_with_config(
         &addr,
-        ConnectionProperties::default().with_tokio(),
+        ConnectionProperties::default(),
         get_tls_config(pki, mq),
     ).await
 }
