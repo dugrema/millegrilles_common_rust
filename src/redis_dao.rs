@@ -2,7 +2,7 @@ use std::error::Error;
 
 use log::{debug, info};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
-use redis::aio::Connection;
+use redis::aio::MultiplexedConnection;
 use redis::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -70,7 +70,7 @@ impl RedisDao {
     }
 
     pub async fn liste_certificats_fingerprints(&self) -> Result<Vec<String>, Box<dyn Error>> {
-        let mut con = self.client.get_async_connection().await?;
+        let mut con = self.client.get_multiplexed_async_connection().await?;
         // let resultat: String = redis::cmd("GET").arg("certificat:zQmYZfSGuY86wTDBPM6MdYzRGWSqrYtWdbXfquMVG5buxrm").query_async(&mut con).await?;
         let resultat: Vec<String> = redis::cmd("KEYS").arg(format!("{}:*", CLE_CERTIFICAT)).query_async::<_, Vec<String>>(&mut con).await?;
         debug!("Resultat : {:?}", resultat);
@@ -84,7 +84,7 @@ impl RedisDao {
     pub async fn get_certificat<S>(&self, fingerprint: S) -> Result<Option<RediCertificatV1>, Box<dyn Error>>
         where S: AsRef<str>
     {
-        let mut con = self.client.get_async_connection().await?;
+        let mut con = self.client.get_multiplexed_async_connection().await?;
         let cle = format!("{}:{}", CLE_CERTIFICAT, fingerprint.as_ref());
         let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async::<_, Option<String>>(&mut con).await?;
 
@@ -99,7 +99,7 @@ impl RedisDao {
     }
 
     pub async fn save_certificat(&self, certificat: &EnveloppeCertificat) -> Result<(), crate::error::Error> {
-        let mut con = self.client.get_async_connection().await?;
+        let mut con = self.client.get_multiplexed_async_connection().await?;
 
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
         let cle_cert = format!("{}:{}", CLE_CERTIFICAT, certificat.fingerprint()?);
@@ -132,7 +132,7 @@ impl RedisDao {
         Ok(())
     }
 
-    pub async fn save_cle_maitredescles(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: &str, contenu: &Value, connexion: &mut Connection)
+    pub async fn save_cle_maitredescles(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: &str, contenu: &Value, connexion: &mut MultiplexedConnection)
         -> Result<(), crate::error::Error>
     {
         // let mut con = self.client.get_async_connection().await?;
@@ -192,7 +192,7 @@ impl RedisDao {
     {
         let cle = format!("cle:{}:{}", fingerprint.as_ref(), hachage_bytes.as_ref());
 
-        let mut con = self.client.get_async_connection().await?;
+        let mut con = self.client.get_multiplexed_async_connection().await?;
 
         // Selectioner DB 3 pour cles
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
@@ -203,8 +203,8 @@ impl RedisDao {
     }
 
     /// Wrapper pour get_async_connection (expose la connexion async)
-    pub async fn get_async_connection(&self) -> Result<Connection, Box<dyn Error>> {
-        let mut con = self.client.get_async_connection().await?;
+    pub async fn get_async_connection(&self) -> Result<MultiplexedConnection, Box<dyn Error>> {
+        let mut con = self.client.get_multiplexed_async_connection().await?;
         // Selectioner DB 3 pour cles
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
         Ok(con)
@@ -250,7 +250,7 @@ impl RedisDao {
         let fingerprint = enveloppe_privee.fingerprint()?;
         let label_cle = format!("cle_manquante:{}", fingerprint);
 
-        let mut con = self.client.get_async_connection().await?;
+        let mut con = self.client.get_multiplexed_async_connection().await?;
 
         // Selectioner DB 3 pour cles
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
@@ -272,7 +272,7 @@ impl RedisDao {
     {
         let cle = format!("cle_versCA:{}", fingerprint.as_ref());
 
-        let mut con = self.client.get_async_connection().await?;
+        let mut con = self.client.get_multiplexed_async_connection().await?;
 
         // Selectioner DB 3 pour cles
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
