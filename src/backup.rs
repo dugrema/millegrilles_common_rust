@@ -7,43 +7,39 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures::pin_mut;
 use log::{debug, error, info, warn};
 
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResultVec, CleChiffrageHandler};
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, epochseconds, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{epochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::bson::doc;
-use mongodb::Cursor;
 use mongodb::options::{FindOptions, Hint};
-use multibase::{Base, encode};
-use reqwest::Body;
-use reqwest::multipart::Part;
+use mongodb::Cursor;
+use multibase::{encode, Base};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tempfile::{TempDir, tempdir};
-use tokio::fs::File as File_tokio;
-use tokio::sync::mpsc::{Sender, Receiver};
+use tempfile::{tempdir, TempDir};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::try_join;
 
 use tokio::time::timeout;
-use tokio_util::codec::{BytesCodec, FramedRead};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::certificats::{CollectionCertificatsPem, ValidateurX509};
 use crate::configuration::ConfigMessages;
-use crate::constantes::*;
 use crate::constantes::Securite::{L2Prive, L3Protege};
+use crate::constantes::*;
 use crate::db_structs::TransactionOwned;
+use crate::error::Error as CommonError;
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
 use crate::recepteur_messages::TypeMessage;
-use crate::error::Error as CommonError;
 
 // Max size des transactions, on tente de limiter la taille finale du message
 // decompresse a 5MB (bytes vers base64 augmente taille de 50%)
@@ -1079,9 +1075,9 @@ async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collecti
     Ok(())
 }
 
-trait BackupHandler {
-    fn run() -> Result<(), String>;
-}
+// trait BackupHandler {
+//     fn run() -> Result<(), String>;
+// }
 
 /// Struct de backup
 #[derive(Debug)]
@@ -1323,12 +1319,12 @@ impl BackupInformation {
 
 }
 
-impl BackupHandler for BackupInformation {
-    fn run() -> Result<(), String> {
-        info!("Demarrage backup");
-        Ok(())
-    }
-}
+// impl BackupHandler for BackupInformation {
+//     fn run() -> Result<(), String> {
+//         info!("Demarrage backup");
+//         Ok(())
+//     }
+// }
 
 // struct TransactionWriter {
 //     fichier_writer: FichierWriter<MgsCipherKeysCurrent, CipherMgsCurrent>,

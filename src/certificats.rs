@@ -26,7 +26,7 @@ use openssl::x509::store::{X509Store, X509StoreBuilder};
 use openssl::x509::verify::X509VerifyFlags;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
-use x509_parser::parse_x509_certificate;
+// use x509_parser::parse_x509_certificate;
 use blake2::{Blake2s256, Digest};
 
 use crate::constantes::*;
@@ -43,13 +43,13 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 
 use crate::verificateur::charger_regles_verification;
 
-// OID des extensions x509v3 de MilleGrille
-const OID_EXCHANGES: &str = "1.2.3.4.0";
-const OID_ROLES: &str = "1.2.3.4.1";
-const OID_DOMAINES: &str = "1.2.3.4.2";
-const OID_USERID: &str = "1.2.3.4.3";
-const OID_DELEGATION_GLOBALE: &str = "1.2.3.4.4";
-const OID_DELEGATION_DOMAINES: &str = "1.2.3.4.5";
+// OID des extensions x509v3 de MilleGrille (documentation seulement)
+// const OID_EXCHANGES: &str = "1.2.3.4.0";
+// const OID_ROLES: &str = "1.2.3.4.1";
+// const OID_DOMAINES: &str = "1.2.3.4.2";
+// const OID_USERID: &str = "1.2.3.4.3";
+// const OID_DELEGATION_GLOBALE: &str = "1.2.3.4.4";
+// const OID_DELEGATION_DOMAINES: &str = "1.2.3.4.5";
 
 const TAILLE_CACHE_MAX: usize = 250;      // Limite a ne pas depasser dans le cache
 const TAILLE_CACHE_NETTOYER: usize = 50;  // Trigger un nettoyage regulier du cache
@@ -1295,34 +1295,34 @@ impl Debug for ValidateurX509Impl {
     }
 }
 
-fn parse_x509(cert: &[u8]) -> Result<ExtensionsMilleGrille, String> {
-    let (_, cert_parsed) = parse_x509_certificate(&cert).expect("Erreur parsing X509");
-    debug!("Certificat X509 parsed : {:?}", cert_parsed);
-
-    let extensions = cert_parsed.extensions();
-
-    let mut exchanges = None;
-    let mut roles = None;
-    let mut domaines = None;
-    let mut user_id = None;
-    let mut delegation_globale = None;
-    let mut delegation_domaines = None;
-
-    for ext in extensions {
-        debug!("Extension ext = {:?}", ext);
-        match ext.oid.to_id_string().as_str() {
-            OID_EXCHANGES => { exchanges = Some(extraire_vec_strings(ext.value).expect("Erreur extraction exchanges")) },
-            OID_ROLES => { roles = Some(extraire_vec_strings(ext.value).expect("Erreur extraction roles")) },
-            OID_DOMAINES => { domaines = Some(extraire_vec_strings(ext.value).expect("Erreur extraction domaines")) },
-            OID_USERID => { user_id = Some(String::from_utf8(ext.value.to_vec()).expect("Erreur extraction user_id")) },
-            OID_DELEGATION_GLOBALE => { delegation_globale = Some(String::from_utf8(ext.value.to_vec()).expect("Erreur extraction delegation_globale")) },
-            OID_DELEGATION_DOMAINES => { delegation_domaines = Some(extraire_vec_strings(ext.value).expect("Erreur extraction delegation_domaines")) },
-            _ => (), // Inconnu
-        }
-    }
-
-    Ok(ExtensionsMilleGrille {exchanges, roles, domaines, user_id, delegation_globale, delegation_domaines})
-}
+// fn parse_x509(cert: &[u8]) -> Result<ExtensionsMilleGrille, String> {
+//     let (_, cert_parsed) = parse_x509_certificate(&cert).expect("Erreur parsing X509");
+//     debug!("Certificat X509 parsed : {:?}", cert_parsed);
+//
+//     let extensions = cert_parsed.extensions();
+//
+//     let mut exchanges = None;
+//     let mut roles = None;
+//     let mut domaines = None;
+//     let mut user_id = None;
+//     let mut delegation_globale = None;
+//     let mut delegation_domaines = None;
+//
+//     for ext in extensions {
+//         debug!("Extension ext = {:?}", ext);
+//         match ext.oid.to_id_string().as_str() {
+//             OID_EXCHANGES => { exchanges = Some(extraire_vec_strings(ext.value).expect("Erreur extraction exchanges")) },
+//             OID_ROLES => { roles = Some(extraire_vec_strings(ext.value).expect("Erreur extraction roles")) },
+//             OID_DOMAINES => { domaines = Some(extraire_vec_strings(ext.value).expect("Erreur extraction domaines")) },
+//             OID_USERID => { user_id = Some(String::from_utf8(ext.value.to_vec()).expect("Erreur extraction user_id")) },
+//             OID_DELEGATION_GLOBALE => { delegation_globale = Some(String::from_utf8(ext.value.to_vec()).expect("Erreur extraction delegation_globale")) },
+//             OID_DELEGATION_DOMAINES => { delegation_domaines = Some(extraire_vec_strings(ext.value).expect("Erreur extraction delegation_domaines")) },
+//             _ => (), // Inconnu
+//         }
+//     }
+//
+//     Ok(ExtensionsMilleGrille {exchanges, roles, domaines, user_id, delegation_globale, delegation_domaines})
+// }
 
 // #[derive(Clone, Debug)]
 // pub struct ExtensionsMilleGrille {
@@ -1356,16 +1356,16 @@ fn parse_x509(cert: &[u8]) -> Result<ExtensionsMilleGrille, String> {
 //     }
 // }
 
-fn extraire_vec_strings(data: &[u8]) -> Result<Vec<String>, String> {
-    let value= String::from_utf8(data.to_vec()).expect("Erreur lecture exchanges");
-    let split = value.split(",");
-    let mut vec = Vec::new();
-    for v in split {
-        vec.push(String::from(v));
-    }
-
-    Ok(vec)
-}
+// fn extraire_vec_strings(data: &[u8]) -> Result<Vec<String>, String> {
+//     let value= String::from_utf8(data.to_vec()).expect("Erreur lecture exchanges");
+//     let split = value.split(",");
+//     let mut vec = Vec::new();
+//     for v in split {
+//         vec.push(String::from(v));
+//     }
+//
+//     Ok(vec)
+// }
 
 pub fn ordered_map<S>(value: &HashMap<String, String>, serializer: S) -> Result<S::Ok, S::Error>
 where
