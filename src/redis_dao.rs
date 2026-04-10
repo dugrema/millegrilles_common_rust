@@ -72,7 +72,7 @@ impl RedisDao {
     pub async fn liste_certificats_fingerprints(&self) -> Result<Vec<String>, Box<dyn Error>> {
         let mut con = self.client.get_async_connection().await?;
         // let resultat: String = redis::cmd("GET").arg("certificat:zQmYZfSGuY86wTDBPM6MdYzRGWSqrYtWdbXfquMVG5buxrm").query_async(&mut con).await?;
-        let resultat: Vec<String> = redis::cmd("KEYS").arg(format!("{}:*", CLE_CERTIFICAT)).query_async(&mut con).await?;
+        let resultat: Vec<String> = redis::cmd("KEYS").arg(format!("{}:*", CLE_CERTIFICAT)).query_async::<_, Vec<String>>(&mut con).await?;
         debug!("Resultat : {:?}", resultat);
 
         // Conserver fingerprint, retirer version
@@ -86,7 +86,7 @@ impl RedisDao {
     {
         let mut con = self.client.get_async_connection().await?;
         let cle = format!("{}:{}", CLE_CERTIFICAT, fingerprint.as_ref());
-        let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
+        let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async::<_, Option<String>>(&mut con).await?;
 
         match resultat {
             Some(r) => {
@@ -104,7 +104,7 @@ impl RedisDao {
         // Verifier si le certificat existe (reset le TTL a 48h s'il existe deja)
         let cle_cert = format!("{}:{}", CLE_CERTIFICAT, certificat.fingerprint()?);
         debug!("Verifier presence {}, reset TTL", cle_cert);
-        let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async(&mut con).await?;
+        let ttl_info : i32 = redis::cmd("EXPIRE").arg(cle_cert.as_str()).arg(TTL_CERTIFICAT).query_async::<_, i32>(&mut con).await?;
         debug!("Presence {}, reponse ttl reset {}", cle_cert, ttl_info);
 
         if ttl_info == 0 {
@@ -126,7 +126,7 @@ impl RedisDao {
                 .arg(cle_cert).arg(cert_json)
                 .arg("NX")
                 .arg("EX").arg(TTL_CERTIFICAT)  // TTL certificat
-                .query_async(&mut con).await?;
+                .query_async::<_, ()>(&mut con).await?;
         }
 
         Ok(())
@@ -159,7 +159,7 @@ impl RedisDao {
             .arg(cle_label).arg(contenu_json)
             .arg("NX")
             .arg("EXAT").arg(expiration)  // Timestamp d'expiration du certificat
-            .query_async(connexion).await?;
+            .query_async::<_, Option<String>>(connexion).await?;
 
         if let Some(code) = resultat {
             if code == "OK" {
@@ -169,10 +169,10 @@ impl RedisDao {
                 // Conserver reference de confirmation vers CA
                 let _: () = redis::cmd("SADD")
                     .arg(&ca_transfert_label).arg(hachage_bytes)
-                    .query_async(connexion).await?;
+                    .query_async::<_, ()>(connexion).await?;
                 let _: () = redis::cmd("EXPIREAT")
                     .arg(&ca_transfert_label).arg(expiration)
-                    .query_async(connexion).await?;
+                    .query_async::<_, ()>(connexion).await?;
             }
         }
 
@@ -181,7 +181,7 @@ impl RedisDao {
         let _: () = redis::cmd("SREM")
             .arg(ca_cle_manquante)
             .arg(hachage_bytes)
-            .query_async(connexion).await?;
+            .query_async::<_, ()>(connexion).await?;
 
         Ok(())
     }
@@ -197,7 +197,7 @@ impl RedisDao {
         // Selectioner DB 3 pour cles
         redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
 
-        let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
+        let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async::<_, Option<String>>(&mut con).await?;
 
         Ok(resultat)
     }
@@ -253,14 +253,14 @@ impl RedisDao {
         let mut con = self.client.get_async_connection().await?;
 
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
 
         let _: () = redis::cmd("SADD")
             .arg(&label_cle).arg(hachage_bytes.as_ref())
-            .query_async(&mut con).await?;
+            .query_async::<_, ()>(&mut con).await?;
         let _: () = redis::cmd("EXPIREAT")
             .arg(&label_cle).arg(expiration)
-            .query_async(&mut con).await?;
+            .query_async::<_, ()>(&mut con).await?;
 
         Ok(())
     }
@@ -275,12 +275,12 @@ impl RedisDao {
         let mut con = self.client.get_async_connection().await?;
 
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
 
         let _: () = redis::cmd("SREM")
             .arg(cle)
             .arg(hachage_bytes.as_ref())
-            .query_async(&mut con).await?;
+            .query_async::<_, ()>(&mut con).await?;
 
         Ok(())
     }
