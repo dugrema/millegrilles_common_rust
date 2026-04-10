@@ -379,6 +379,13 @@ pub mod map_chrono_datetime_as_bson_datetime {
         chrono::DateTime<Utc>,
     );
 
+    // MOVE THIS HERE (Module level)
+    impl From<Helper> for chrono::DateTime<Utc> {
+        fn from(helper: Helper) -> Self {
+            helper.0
+        }
+    }
+
     pub fn serialize<S>(
         value: &HashMap<String, chrono::DateTime<Utc>>,
         serializer: S,
@@ -398,10 +405,6 @@ pub mod map_chrono_datetime_as_bson_datetime {
     where
         D: Deserializer<'de>,
     {
-         impl Into<chrono::DateTime<Utc>> for Helper {
-            fn into(self) -> chrono::DateTime<Utc> { self.0 }
-        }
-
         #[derive(Deserialize)]
         struct MapHelper(
             HashMap<String, Helper>,
