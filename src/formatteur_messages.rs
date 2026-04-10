@@ -12,7 +12,7 @@ use serde::{Serialize, Serializer};
 use serde_json::{Map, Value};
 
 
-use crate::certificats::ValidateurX509;
+
 
 
 // use crate::verificateur::{ResultatValidation, ValidationOptions};

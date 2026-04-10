@@ -18,7 +18,7 @@ use serde::Serialize;
 use crate::configuration::ConfigurationPki;
 use crate::constantes::*;
 use crate::formatteur_messages::{build_message_action, build_reponse, FormatteurMessage};
-use crate::middleware::IsConfigurationPki;
+
 use crate::rabbitmq_dao::{MessageOut, MqMessageSendInformation, RabbitMqExecutor, TypeMessageOut};
 use crate::recepteur_messages::TypeMessage;
 

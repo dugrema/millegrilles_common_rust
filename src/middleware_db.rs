@@ -186,7 +186,7 @@ impl ValidateurX509 for MiddlewareDb {
             persiste
         };
 
-        /// Retourne le certificat et indicateur qu'il a ete persiste
+        // Retourne le certificat et indicateur qu'il a ete persiste
         Ok((enveloppe, persiste))
     }
 

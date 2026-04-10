@@ -135,21 +135,8 @@ pub fn configurer() -> MiddlewareRessources {
     ));
 
     let enveloppe_privee = pki.get_enveloppe_privee();
-    let extensions = enveloppe_privee.enveloppe_pub.get_extensions().expect("extensions Ok").expect("extensions Some");
-    let roles = &extensions.roles;
-    let identitie_from = match roles {
-        Some(r) => format!("{:?}", r),
-        None => {
-            let subject = enveloppe_privee.enveloppe_pub.subject().expect("subject");
-            match subject.get("commonName") {
-                Some(cn) => cn.to_owned(),
-                None => enveloppe_privee.fingerprint().expect("fingerprint Ok").to_owned()
-            }
-        }
-    };
-
-    let emetteur_notifications = Arc::new(EmetteurNotifications::new(
-        &enveloppe_privee.enveloppe_ca, Some(identitie_from)).expect("EmetteurNotifications.new"));
+    let _extensions = enveloppe_privee.enveloppe_pub.get_extensions().expect("extensions Ok").expect("extensions Some");
+    let emetteur_notifications = Arc::new(EmetteurNotifications::new(&enveloppe_privee.enveloppe_ca).expect("EmetteurNotifications.new"));
 
     MiddlewareRessources { configuration, validateur, rabbitmq, generateur_messages, emetteur_notifications }
 }
@@ -269,7 +256,7 @@ impl ValidateurX509 for MiddlewareMessage {
             persiste
         };
 
-        /// Retourne le certificat et indicateur qu'il a ete persiste
+        // Retourne le certificat et indicateur qu'il a ete persiste
         Ok((enveloppe, persiste))
     }
 

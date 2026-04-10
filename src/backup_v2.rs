@@ -36,7 +36,7 @@ use tokio::join;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}};
 use url::Url;
-use x509_parser::nom::AsBytes;
+
 use crate::backup::CommandeBackup;
 use crate::mongo_dao::MongoDao;
 use crate::certificats::ValidateurX509;
@@ -1337,7 +1337,7 @@ pub async fn synchroniser_consignation<M>(
     info!("synchroniser_consignation Utilisation url_consignation {}", url_consignation);
 
     // Determiner version de backup
-    let enveloppe = middleware.get_enveloppe_signature();;
+    let enveloppe = middleware.get_enveloppe_signature();
     let idmg = enveloppe.enveloppe_pub.idmg()?;
     let (mut fichiers_locaux, version) = trouver_version_backup(
         idmg.as_str(), domaine, path_backup, &client, &url_consignation).await?;

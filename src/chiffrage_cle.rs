@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
-use blake2::Digest;
 use chrono::{DateTime, Utc};
 use log::{error, info};
 use millegrilles_cryptographie::chiffrage::{FormatChiffrage, formatchiffragestr};

@@ -7,7 +7,7 @@ use openssl::pkey::{PKey, Public};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::certificats::ValidateurX509;
+
 use crate::formatteur_messages::{preparer_btree_recursif, map_valeur_recursif};
 use crate::signatures::verifier_message as ref_verifier_message;
 use crate::error::Error as CommonError;

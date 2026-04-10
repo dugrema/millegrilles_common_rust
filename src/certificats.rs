@@ -133,12 +133,9 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&s
     }
 
     // Verifier la chaine avec la date courante.
-    let mut presentement_valide = false;
-    match store {
-        Some(s) => {
-            presentement_valide = verifier_certificat(cert, &intermediaire, s)?;
-        },
-        None => (),
+
+    if let Some(s) = store {
+        verifier_certificat(cert, &intermediaire, s)?;
     }
 
     // let cle_publique = cert.public_key().unwrap();

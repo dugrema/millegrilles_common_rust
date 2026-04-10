@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use log::{debug, error, warn};
 use serde::{Serialize, Deserialize};
-use std::io::prelude::*;
+
 use std::str::from_utf8;
 
 use chrono::{DateTime, Utc};
@@ -69,7 +69,6 @@ struct Notification {
 }
 
 pub struct EmetteurNotifications {
-    from: Option<String>,
     cle_derivee_proprietaire: CleSecreteCipher,
     commande_cle_proprietaire: Mutex<Option<MessageMilleGrillesBufferDefault>>,
     commande_cle_transmise: Mutex<bool>,
@@ -83,7 +82,7 @@ pub struct MessageCertificat {
 
 impl EmetteurNotifications {
 
-    pub fn new(enveloppe_ca: &EnveloppeCertificat, champ_from: Option<String>) -> Result<Self, crate::error::Error> {
+    pub fn new(enveloppe_ca: &EnveloppeCertificat) -> Result<Self, crate::error::Error> {
 
         let cle_millegrille_public = &enveloppe_ca.certificat.public_key()?;
         let fingerprint_ca = enveloppe_ca.fingerprint()?;
@@ -91,7 +90,6 @@ impl EmetteurNotifications {
         let cle_cipher = CleSecreteCipher::CleDerivee((fingerprint_ca, cle_derivee_proprietaire));
 
         Ok(EmetteurNotifications {
-            from: champ_from,
             cle_derivee_proprietaire: cle_cipher,
             commande_cle_proprietaire: Mutex::new(None::<MessageMilleGrillesBufferDefault>),
             commande_cle_transmise: Mutex::new(false),
