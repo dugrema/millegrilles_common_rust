@@ -1,18 +1,13 @@
 use base64::{engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
-use flate2::read::{GzDecoder, GzEncoder};
-use flate2::Compression;
-use futures_util::AsyncReadExt;
 use jwt_simple::prelude::{Deserialize, Serialize};
 use log::debug;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519, CleDechiffrageX25519Impl, Decipher};
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
-use millegrilles_cryptographie::x25519::{dechiffrer_asymmetrique_ed25519, CleSecreteX25519};
+use millegrilles_cryptographie::x25519::dechiffrer_asymmetrique_ed25519;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::collections::HashMap;
-use std::io::Read;
 
-use multibase::decode;
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
@@ -145,7 +140,7 @@ pub fn dechiffrer_data(mut cle: CleDechiffrageX25519Impl, data: DataChiffre) -> 
     //     None => ()
     // }
 
-    let mut decipher = DecipherMgs4::new(&cle)?;
+    let decipher = DecipherMgs4::new(&cle)?;
     let data_dechiffre = decipher.gz_to_vec(data.data_chiffre.as_bytes())?;
 
     // // Dechiffrer message
@@ -259,7 +254,7 @@ impl DataChiffre {
         }
     }
 
-    pub fn borrow(&self) -> DataChiffreBorrow {
+    pub fn borrow(&self) -> DataChiffreBorrow<'_> {
         DataChiffreBorrow {
             data_chiffre: self.data_chiffre.as_str(),
             cle_id: self.cle_id.as_ref().map(|x| x.as_str()),

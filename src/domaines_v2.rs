@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use async_trait::async_trait;
 use chrono::{Datelike, Timelike, Utc, Weekday};
 use futures_util::stream::FuturesUnordered;
@@ -16,7 +16,6 @@ use tokio::task::JoinHandle;
 use crate::backup::{emettre_evenement_backup, emettre_evenement_backup_catalogue, BackupInformation, BackupStarter};
 use crate::backup_v2::{get_serveur_consignation, organiser_fichiers_backup, synchroniser_consignation, PATH_FICHIERS_ARCHIVES};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
-use crate::common_messages::RequeteFilehostItem;
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::domaines::{MessageBackupTransactions, ReponseNombreTransactions};

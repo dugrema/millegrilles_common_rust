@@ -1,14 +1,11 @@
-use log::{debug, error, info, warn};
-use std::collections::BTreeMap;
-use std::error::Error;
+use log::debug;
 
 use jwt_simple::prelude::*;
 
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
-use crate::common_messages::{InformationDechiffrage, InformationDechiffrageV2};
-use crate::constantes::{DOMAINE_NOM_GROSFICHIERS, DOMAINE_NOM_MESSAGERIE, RolesCertificats, Securite};
+use crate::common_messages::InformationDechiffrageV2;
+use crate::constantes::{DOMAINE_NOM_GROSFICHIERS, DOMAINE_NOM_MESSAGERIE, Securite};
 use crate::formatteur_messages::FormatteurMessage;
-use crate::generateur_messages::GenerateurMessages;
 
 pub const CONST_DUREE_TOKEN_VALIDE: u64 = 60 * 60 * 6;
 

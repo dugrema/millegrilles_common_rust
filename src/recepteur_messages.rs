@@ -1,22 +1,20 @@
-use std::collections::HashMap;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::str::from_utf8;
 use std::sync::Arc;
-use chrono::Utc;
 
 use lapin::message::Delivery;
-use log::{debug, error, info, trace, warn};
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageValidable};
+use log::{debug, error, info};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use TypeMessageOut as TypeMessageIn;
 
-use crate::certificats::{MessageInfoCertificat, ValidateurX509};
+use crate::certificats::ValidateurX509;
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{formatter_message_certificat, IsConfigurationPki};
+use crate::middleware::IsConfigurationPki;
 use crate::rabbitmq_dao::TypeMessageOut;
 
 /// Traitement d'un message Delivery. Convertit en MessageMillegrille, valide le certificat
@@ -137,7 +135,7 @@ pub async fn traiter_delivery<M,S>(
     Ok(Some(TypeMessage::Valide(MessageValide { message, type_message, certificat })))
 }
 
-pub async fn intercepter_message<M>(middleware: &M, message: &TypeMessage) -> bool
+pub async fn intercepter_message<M>(_middleware: &M, message: &TypeMessage) -> bool
     where M: ValidateurX509 + GenerateurMessages + IsConfigurationPki + ConfigMessages
 {
     // Intercepter reponses et requetes de certificat

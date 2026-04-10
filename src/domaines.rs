@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::error::Error;
 use std::str::from_utf8;
 use std::sync::Arc;
 
@@ -9,9 +7,8 @@ use log::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use mongodb::options::{CountOptions, Hint};
 use serde::{Serialize, Deserialize};
-use serde_json::Value;
 use tokio::spawn;
-use tokio::sync::{mpsc, mpsc::{Receiver, Sender}};
+use tokio::sync::{mpsc, mpsc::Receiver};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration as DurationTokio, sleep};
 
@@ -24,9 +21,9 @@ use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
 use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
-use crate::rabbitmq_dao::{emettre_certificat_compte, NamedQueue, QueueType, TypeMessageOut};
+use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, Transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation};
+use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation};
 use crate::error::Error as CommonError;
 
 #[async_trait]
@@ -75,7 +72,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
         -> Result<FuturesUnordered<JoinHandle<()>>, crate::error::Error>
         where M: MiddlewareMessages + 'static
     {
-        let mut futures = FuturesUnordered::new();
+        let futures = FuturesUnordered::new();
 
         // Mapping par Q nommee
         let qs = self.preparer_queues();
@@ -83,7 +80,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
             let (tx, rx) = mpsc::channel::<TypeMessage>(1);
             let queue_name = match &q {
                 QueueType::ExchangeQueue(q) => q.nom_queue.clone(),
-                QueueType::ReplyQueue(q) => { continue; }  // Skip
+                QueueType::ReplyQueue(_q) => { continue; }  // Skip
                 QueueType::Triggers(d, s) => format!("{}.{:?}", d, s)
             };
             let named_queue = NamedQueue::new(q, tx, Some(1), None);
@@ -208,7 +205,7 @@ pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
                         Ok(None)
                     },
                     COMMANDE_CERT_MAITREDESCLES => {
-                        let type_message = TypeMessage::Valide(m);
+                        let _type_message = TypeMessage::Valide(m);
                         error!("domaines.GestionnaireMessages.consommer_evenement_trait Fix intercepter certificat maitre des cles");
                         // match middleware.recevoir_certificat_chiffrage(middleware.as_ref(), &type_message).await {
                         //     Ok(_) => (),
@@ -350,7 +347,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         // Preparer les index MongoDB
         self.preparer_index_mongodb(middleware.as_ref()).await?;
 
-        let mut futures = FuturesUnordered::new();
+        let futures = FuturesUnordered::new();
 
         // Mapping par Q nommee
         let qs = self.preparer_queues()?;
@@ -358,7 +355,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             let (tx, rx) = mpsc::channel::<TypeMessage>(1);
             let queue_name = match &q {
                 QueueType::ExchangeQueue(q) => q.nom_queue.clone(),
-                QueueType::ReplyQueue(q) => { continue; }  // Skip
+                QueueType::ReplyQueue(_q) => { continue; }  // Skip
                 QueueType::Triggers(d, s) => format!("{}.{:?}", d, s)
             };
             let named_queue = NamedQueue::new(q, tx, Some(1), None);
@@ -698,7 +695,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         }
     }
 
-    async fn get_nombre_transactions<M>(&self, middleware: &M, message: MessageValide)
+    async fn get_nombre_transactions<M>(&self, middleware: &M, _message: MessageValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
         where M: Middleware + 'static
     {
@@ -805,7 +802,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         let message_restauration: MessageRestaurerTransaction = message_contenu.deserialize()?;
 
         let mut transaction = message_restauration.transaction;
-        if let Err(e) = transaction.verifier_signature() {
+        if let Err(_e) = transaction.verifier_signature() {
             Err(format!("restaurer_transaction Erreur verification transaction {}, SKIP", transaction.id))?
         }
 
@@ -828,7 +825,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         // // };
         // // debug!("Certificat message : {:?}", certificat);
         // // let enveloppe = middleware.charger_enveloppe(certificat, Some(fingerprint_certificat), None).await?;
-        let certificat = match middleware.get_certificat(fingerprint_certificat).await {
+        let _certificat = match middleware.get_certificat(fingerprint_certificat).await {
             Some(inner) => inner,
             None => Err(format!("Certificat absent de la transaction restauree, ** SKIP **"))?
         };
@@ -903,7 +900,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             true => {
                 match action.as_str() {
                     // Commandes standard
-                    COMMANDE_BACKUP_HORAIRE => {
+                    _COMMANDE_BACKUP_HORAIRE => {
                         self.demarrer_backup(middleware.as_ref(), m).await
                     },
                     COMMANDE_RESTAURER_TRANSACTIONS => {

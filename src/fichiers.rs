@@ -1,29 +1,10 @@
-use std::error::Error;
-use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::pin::Pin;
 
-use async_compression::tokio::bufread::GzipEncoder;
-use async_std::io::ReadExt;
-use async_tar::Archive;
-use async_trait::async_trait;
-use log::{debug, warn};
-use multibase::Base;
-use multihash::Code;
-use tokio::fs::File;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader, Result as TokioResult};
+use tokio::io::Result as TokioResult;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender, Receiver};
-use tokio_stream::{StreamExt, wrappers::ReceiverStream};
-use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}};
-use xz2::stream;
-use flate2::write::GzEncoder;
-use flate2::Compression;
+use tokio_util::{bytes::Bytes, io::ReaderStream};
 
-use crate::certificats::ValidateurX509;
-use crate::constantes::*;
-use crate::generateur_messages::GenerateurMessages;
-use crate::hachages::Hacheur;
 
 const PRESET_COMPRESSION_XZ: u32 = 6;
 const BUFFER_SIZE: usize = 64 * 1024;
@@ -298,7 +279,7 @@ pub struct CompressionChiffrageProcessor {
 
 impl CompressionChiffrageProcessor {
     pub fn new() -> (Self, Sender<TokioResult<Bytes>>) {
-        let (tx, mut rx) = mpsc::channel(2);
+        let (tx, rx) = mpsc::channel(2);
         (Self { rx: Some(rx), path_output: None }, tx)
     }
 
@@ -306,7 +287,7 @@ impl CompressionChiffrageProcessor {
         where S: ToString
     {
         let path_output = path_output.to_string();
-        let (tx, mut rx) = mpsc::channel(2);
+        let (tx, rx) = mpsc::channel(2);
         (Self { rx: Some(rx), path_output: Some(path_output) }, tx)
     }
 

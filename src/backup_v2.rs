@@ -1,32 +1,27 @@
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
-use std::sync::{Arc, Mutex};
 use std::fs;
-use std::fs::{File, FileType};
+use std::fs::File;
 use std::io::{ErrorKind, SeekFrom};
-use std::ops::Index;
 use std::path::{Path, PathBuf};
 use fs2::FileExt;
 use futures_util::{StreamExt, TryStreamExt};
 
-use chrono::{{SecondsFormat, TimeZone, Utc}, format::strftime::StrftimeItems, Duration, DateTime};
+use chrono::{{TimeZone, Utc}, format::strftime::StrftimeItems};
 use log::{debug, error, info, warn};
-use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleChiffrageStruct, CleDechiffrageStruct, Decipher};
+use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
-use millegrilles_cryptographie::x25519::{chiffrer_asymmetrique_ed25519, dechiffrer_asymmetrique_ed25519, deriver_asymetrique_ed25519, CleSecreteX25519};
+use millegrilles_cryptographie::x25519::CleSecreteX25519;
 use serde::{Deserialize, Serialize};
-use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, engine::general_purpose::STANDARD as base64, Engine as _};
-use async_compression::tokio::bufread::{DeflateEncoder, GzipEncoder, DeflateDecoder};
+use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
+use async_compression::tokio::bufread::{DeflateEncoder, DeflateDecoder};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{Sender, Receiver};
 
-use millegrilles_cryptographie::chiffrage::{CleSecrete, FormatChiffrage};
+use millegrilles_cryptographie::chiffrage::CleSecrete;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher, DecipherMgs4};
-use millegrilles_cryptographie::hachages::HacheurBlake2b512;
-use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
-use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use mongodb::bson::doc;
 use mongodb::options::{DeleteOptions, FindOneOptions, FindOptions, Hint};
@@ -36,7 +31,7 @@ use reqwest::{Body, Client, Response};
 use serde_json::json;
 use substring::Substring;
 use tokio::fs::read_dir;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, Result as TokioResult};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, Result as TokioResult};
 use tokio::join;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}};
@@ -44,12 +39,11 @@ use url::Url;
 use x509_parser::nom::AsBytes;
 use crate::backup::CommandeBackup;
 use crate::mongo_dao::MongoDao;
-use crate::certificats::{CollectionCertificatsPem, ValidateurX509};
-use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2, requete_charger_cles};
-use crate::common_messages::{BackupEvent, FilehostForInstanceRequest, ReponseInformationConsignationFichiers, RequestFilehostForInstanceResponse, RequeteConsignationFichiers, RequeteFilehostItem};
+use crate::certificats::ValidateurX509;
+use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2};
+use crate::common_messages::{BackupEvent, FilehostForInstanceRequest, RequestFilehostForInstanceResponse, RequeteFilehostItem};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
-use crate::constantes::Securite::L3Protege;
 use crate::db_structs::TransactionOwned;
 use crate::dechiffrage::decrypt_document;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
@@ -312,7 +306,7 @@ async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result
     let routage_demande_cleid = RoutageMessageAction::builder(
         DOMAINE_TOPOLOGIE, "getCleidBackupDomaine", vec![Securite::L3Protege]).build();
 
-    let mut reponse_cle_id = match middleware.transmettre_requete(routage_demande_cleid, requete_cleid_backup).await? {
+    let reponse_cle_id = match middleware.transmettre_requete(routage_demande_cleid, requete_cleid_backup).await? {
         Some(TypeMessage::Valide(m)) => {
             let reponse: ReponseCleIdBackup = deser_message_buffer!(m.message);
             if reponse.ok {
@@ -561,7 +555,7 @@ async fn encryption_pipe_thread(cle_secrete: &CleSecrete<32>, mut rx: Receiver<T
     Ok(result)
 }
 
-async fn deflate_pipe_thread(mut rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>) -> Result<(), CommonError> {
+async fn deflate_pipe_thread(rx: Receiver<TokioResult<Bytes>>, tx: Sender<TokioResult<Bytes>>) -> Result<(), CommonError> {
     let stream = ReceiverStream::new(rx);
     let reader = StreamReader::new(stream);
     let encoder = DeflateEncoder::new(BufReader::new(reader));
@@ -1045,7 +1039,7 @@ async fn generer_archive_concatenee<M>(
 
 async fn lire_archives_thread(
     fichiers: &Vec<FichierArchiveBackup>, cles: &HashMap<String, CleSecrete<32>>,
-    mut tx: Sender<TokioResult<Bytes>>
+    tx: Sender<TokioResult<Bytes>>
 )
     -> Result<(), CommonError>
 {
@@ -1348,7 +1342,7 @@ pub async fn synchroniser_consignation<M>(
     let (mut fichiers_locaux, version) = trouver_version_backup(
         idmg.as_str(), domaine, path_backup, &client, &url_consignation).await?;
 
-    let mut version_effective = match version.as_ref() {
+    let version_effective = match version.as_ref() {
         Some(version_locale) => {
             match version_remote.as_ref() {
                 Some(version_remote) => {  // On a une version locale et remote
@@ -1646,7 +1640,7 @@ async fn download_liste_fichiers_backup<'a>(
 
         // Retirer fichiers connus partout de set_final_local. Recuperer liste de fichiers manquants localement a downloader.
         info_sync.download_archives = parse_stream_liste_fichiers(&mut set_archives_local, resultat_fichiers_archives).await?;
-    } else if(resultat_fichiers_archives.status() == 404) {
+    } else if resultat_fichiers_archives.status() == 404  {
         // Ok, fichiers ne sont pas uploades pour cette version
         debug!("Resultat fichiers archives: Aucunes archives pour domaine {} version {}", domaine, version);
     } else {

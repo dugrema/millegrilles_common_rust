@@ -2,8 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
-use log::{debug, warn};
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use log::debug;
 use openssl::pkey::{PKey, Public};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

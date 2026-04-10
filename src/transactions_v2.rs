@@ -8,13 +8,11 @@ use log::{debug, error, info, warn};
 use mongodb::bson::{doc, Bson};
 use mongodb::{bson, ClientSession, Cursor};
 use mongodb::options::{FindOptions, Hint, UpdateOptions};
-use serde::Serialize;
-use tokio::io::AsyncWriteExt;
-use tokio::{join, spawn};
+use tokio::join;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::Receiver;
 
-use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup, FichierArchiveBackup, RegenerationBackup, StatsBackup, StatusRegeneration, PATH_FICHIERS_ARCHIVES};
+use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, StatsBackup, StatusRegeneration, PATH_FICHIERS_ARCHIVES};
 use crate::certificats::{charger_enveloppe, ValidateurX509};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
@@ -22,7 +20,7 @@ use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
 use crate::domaines_v2::GestionnaireDomaineSimple;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{start_transaction_regeneration, start_transaction_regular, MongoDao};
+use crate::mongo_dao::{start_transaction_regeneration, MongoDao};
 use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
 use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
@@ -374,7 +372,7 @@ where
     // while let Some(result) = curseur.next().await {
     while curseur.advance().await? {
         counter += 1;
-        let mut transaction = match curseur.deserialize_current() {
+        let transaction = match curseur.deserialize_current() {
             Ok(inner) => inner,
             Err(_) => {
                 error!("regenerer_transactions_v2 Erreur transaction deserialize_current - ** SKIP **");

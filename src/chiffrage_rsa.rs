@@ -1,10 +1,4 @@
-use std::error::Error;
 
-use openssl::encrypt::{Decrypter, Encrypter};
-use openssl::hash::MessageDigest;
-use openssl::pkey::{PKey, Private, Public};
-use openssl::rsa::Padding;
-use zeroize::Zeroize;
 
 // pub fn chiffrer_asymetrique(public_key: &PKey<Public>, cle_symmetrique: &[u8]) -> Result<Vec<u8>, crate::error::Error> {
 //     const SIZE_MAX: usize = 4096/8;

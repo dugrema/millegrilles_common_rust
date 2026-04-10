@@ -5,7 +5,7 @@ use log::{debug, error, info};
 use mongodb::{bson::doc, Client, Collection, Cursor, Database, ClientSession};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
-use mongodb::error::{BulkWriteFailure, ErrorKind, Result as ResultMongo, WriteFailure};
+use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
 use mongodb::options::{Acknowledgment, AuthMechanism, ClientOptions, Credential, ReadConcern, ServerAddress, SessionOptions, TlsOptions, TransactionOptions, WriteConcern};
 use serde::Serialize;
 use serde_json::Value;
@@ -13,13 +13,9 @@ use tokio_stream::StreamExt;
 
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
-use crate::constantes::*;
 use serde::de::DeserializeOwned;
-use std::error::Error;
 use std::time::Duration;
 use std::vec::IntoIter;
-use chrono::{DateTime, Utc};
-use dryoc::kx::Session;
 
 use crate::bson::Array;
 use crate::rabbitmq_dao::emettre_certificat_compte;
@@ -263,7 +259,7 @@ pub fn verifier_erreur_duplication_mongo(kind: &ErrorKind) -> bool {
                 _ => false
             }
         },
-        ErrorKind::BulkWrite(f) => true,
+        ErrorKind::BulkWrite(_f) => true,
         _ => false
     }
 }

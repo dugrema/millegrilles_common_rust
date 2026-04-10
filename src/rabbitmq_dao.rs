@@ -11,7 +11,7 @@ use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options:
 use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
 use log::{debug, error, info, log_enabled, trace, warn};
-use log::Level::{Debug, Trace};
+use log::Level::Trace;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use tokio::{sync, task};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};

@@ -4,14 +4,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, error};
+use log::debug;
 
 
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, RoutageMessage};
 use millegrilles_cryptographie::x509::EnveloppePrivee;
 use serde::Serialize;
 
-use serde_json::Value;
 
 
 // use crate::chiffrage_cle::CommandeSauvegarderCle;
@@ -505,7 +504,7 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         //
         // Ok(())
 
-        let (message, message_id) = {
+        let (message, _message_id) = {
             let guard_enveloppe_privee = self.enveloppe_privee.lock().expect("lock");
             build_reponse(message, guard_enveloppe_privee.as_ref())?
         };

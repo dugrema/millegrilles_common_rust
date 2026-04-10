@@ -206,7 +206,7 @@ pub fn build_message_action_chiffre<R,M>(
 
         // Allouer un Vec et serialiser le message signe.
         // let message_ref = generateur.build_into_alloc(&mut buffer)?;
-        let mut message_ref = generateur.encrypt_into_alloc(&mut buffer, cipher).unwrap();
+        let message_ref = generateur.encrypt_into_alloc(&mut buffer, cipher).unwrap();
         message_ref.id.to_owned()
     };
 

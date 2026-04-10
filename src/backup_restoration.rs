@@ -44,7 +44,7 @@ impl<'a> TransactionReader<'a> {
         let mut xz_output = Vec::new();
         xz_output.reserve(TransactionReader::BUFFER_SIZE);
 
-        let mut dechiffrage_output = [0u8; TransactionReader::BUFFER_SIZE];
+        let _dechiffrage_output = [0u8; TransactionReader::BUFFER_SIZE];
 
         let mut output_complet = Vec::new();
         // let mut output_file = File::create(PathBuf::from("/tmp/output_dechiffrage.data")).await?;

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::str::from_utf8;
@@ -10,8 +9,8 @@ use futures::stream::FuturesUnordered;
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::deser_message_buffer;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
-use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, FingerprintPem};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use mongodb::{bson::{Bson, doc, Document, to_bson}, ClientSession, Collection};
 use mongodb::bson as bson;
 use mongodb::options::UpdateOptions;
@@ -31,14 +30,14 @@ use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
 use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error as CommonError;
-use crate::formatteur_messages::{build_message_action, build_reponse, FormatteurMessage};
+use crate::formatteur_messages::{build_message_action, FormatteurMessage};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
 use crate::mongo_dao::{MongoDao, verifier_erreur_duplication_mongo};
 use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
 use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::redis_dao::RedisDao;
-use crate::transactions::{EtatTransaction, marquer_transaction, Transaction, transmettre_evenement_persistance};
+use crate::transactions::{EtatTransaction, marquer_transaction};
 use crate::transactions_v2::marquer_transaction_v2;
 
 /// Structure avec hooks interne de preparation du middleware
@@ -354,7 +353,7 @@ impl ValidateurX509 for MiddlewareMessage {
 }
 
 
-pub fn verifier_expiration_certs(enveloppe_privee: &EnveloppePrivee, certificat_local: &EnveloppePrivee) -> bool {
+pub fn verifier_expiration_certs(enveloppe_privee: &EnveloppePrivee, _certificat_local: &EnveloppePrivee) -> bool {
     // Valider le certificat local
     let date_courante = Utc::now();
 
@@ -737,7 +736,7 @@ impl EmetteurCertificat for ValidateurX509Impl {
         todo!()
     }
 
-    async fn repondre_certificat<S, T>(&self, reply_q: S, correlation_id: T) -> Result<(), crate::error::Error>
+    async fn repondre_certificat<S, T>(&self, _reply_q: S, _correlation_id: T) -> Result<(), crate::error::Error>
         where S: AsRef<str> + Send, T: AsRef<str> + Send
     {
         todo!()
@@ -1010,7 +1009,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
     -> Result<(), crate::error::Error>
     where M: ValidateurX509 + GenerateurMessages + MongoDao,
 {
-    let mut message_ref = m.message.parse()?;
+    let message_ref = m.message.parse()?;
 
     // Fix deserialization contenu en utilisant une version owned
     let mut message_owned: MessageMilleGrillesOwned = serde_json::from_slice(m.message.buffer.as_slice())?;

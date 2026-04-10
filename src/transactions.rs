@@ -1,37 +1,29 @@
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
-use std::convert::TryFrom;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Debug;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, error, info, warn};
-use millegrilles_cryptographie::messages_structs::{RoutageMessage, epochseconds, optionepochseconds, MessageMilleGrillesBufferDefault};
+use log::{debug, error, warn};
+use millegrilles_cryptographie::messages_structs::{RoutageMessage, MessageMilleGrillesBufferDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
-use mongodb::{bson::doc, Collection, Cursor};
+use mongodb::{bson::doc, Cursor};
 use mongodb::bson as bson;
-use mongodb::bson::{Bson, Document};
+use mongodb::bson::Bson;
 use mongodb::error::{BulkWriteError, ErrorKind};
-use mongodb::options::{FindOptions, Hint, InsertManyOptions, UpdateOptions};
-use multibase::{encode, Base};
+use mongodb::options::{FindOptions, Hint, InsertManyOptions};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use tokio_stream::StreamExt;
-use base64::{Engine as _, engine::general_purpose};
-use tokio::sync::mpsc::{Sender, Receiver};
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 use crate::certificats::{charger_enveloppe, ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
 use crate::db_structs::{EvenementsTransaction, TransactionOwned, TransactionRef, TransactionValide};
-use crate::domaines_traits::AiguillageTransactions;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::messages_generiques::{CommandeUsager, EvenementRegeneration};
-use crate::middleware::{map_serializable_to_bson, ReponseEnveloppe, requete_certificat};
-use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
-use crate::recepteur_messages::{MessageValide, TypeMessage};
+use crate::messages_generiques::CommandeUsager;
+use crate::middleware::requete_certificat;
+use crate::mongo_dao::MongoDao;
 // use crate::verificateur::VerificateurMessage;
 use crate::error::Error as CommonError;
 
@@ -133,7 +125,7 @@ async fn extraire_transaction(validateur: &impl ValidateurX509, transaction: Tra
 
 pub trait Transaction: Clone + Debug + Send + Sync {
     fn get_contenu(&self) -> &str;
-    fn get_routage(&self) -> &RoutageMessage;
+    fn get_routage(&self) -> &RoutageMessage<'_>;
     fn get_id(&self) -> &str;
     fn get_uuid_transaction(&self) -> &str;
     fn get_estampille(&self) -> &DateTime<Utc>;
@@ -257,7 +249,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
             "$currentDate": { TRANSACTION_CHAMP_DATE_RESOUMISE: true }
         };
         // while let Some(Ok(transaction)) = curseur.next().await {
-        while match curseur.advance().await { Ok(inner) => inner, Err(e) => Err(String::from("Erreur curseur.advance"))?} {
+        while match curseur.advance().await { Ok(inner) => inner, Err(_e) => Err(String::from("Erreur curseur.advance"))?} {
             let transaction = match curseur.deserialize_current() {
                 Ok(inner) => inner,
                 Err(e) => {
@@ -377,7 +369,7 @@ pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut 
     transactions_bson.reserve(transactions.len());
     {
         // Serialiser les transactions vers le format bson
-        while let Some(mut t) = transactions.pop() {
+        while let Some(t) = transactions.pop() {
             debug!("sauvegarder_batch Message a serialiser en bson Id: {}", t.id);
 
             // Injecter backup flag true (c'est une restoration, le backup existe deja)
@@ -504,7 +496,7 @@ impl ResultatBatchInsert {
     }
 }
 
-pub async fn regenerer<M,D,T>(middleware: &M, nom_domaine: D, nom_collection_transactions: &str, noms_collections_docs: &Vec<String>, processor: &T)
+pub async fn regenerer<M,D,T>(_middleware: &M, _nom_domaine: D, _nom_collection_transactions: &str, _noms_collections_docs: &Vec<String>, _processor: &T)
     -> Result<(), crate::error::Error>
 where
     M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
@@ -644,9 +636,9 @@ where
 {
     // while let Some(result) = curseur.next().await {
     while curseur.advance().await? {
-        let mut transaction = match curseur.deserialize_current() {
+        let transaction = match curseur.deserialize_current() {
             Ok(inner) => inner,
-            Err(e) => {
+            Err(_e) => {
                 error!("transactions.regenerer_transactions Erreur transaction chargement en-tete - ** SKIP **");
                 continue  // Skip
             }

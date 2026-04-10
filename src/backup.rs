@@ -1,39 +1,36 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::from_utf8;
-use std::sync::{Arc, mpsc, Mutex};
+use std::sync::Arc;
 
-use async_std::fs::File;
-use async_std::prelude::FutureExt;
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures::pin_mut;
 use log::{debug, error, info, warn};
 
-use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CipherResultVec, CleChiffrageHandler, CleChiffrageStruct};
+use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResultVec, CleChiffrageHandler};
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, epochseconds, MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, epochseconds, MessageMilleGrillesBufferDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
-use mongodb::bson::{doc, Document};
+use mongodb::bson::doc;
 use mongodb::Cursor;
 use mongodb::options::{FindOptions, Hint};
 use multibase::{Base, encode};
-use multihash::Code;
 use reqwest::Body;
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::json;
 use tempfile::{TempDir, tempdir};
 use tokio::fs::File as File_tokio;
 use tokio::sync::mpsc::{Sender, Receiver};
 use tokio::try_join;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader, Result as TokioResult};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
-use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}, codec::{BytesCodec, FramedRead}};
+use tokio_util::codec::{BytesCodec, FramedRead};
 use tokio_stream::StreamExt;
 use uuid::Uuid;
 
@@ -42,14 +39,9 @@ use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::constantes::Securite::{L2Prive, L3Protege};
 use crate::db_structs::TransactionOwned;
-use crate::fichiers::{CompressionChiffrageProcessor, FichierCompressionChiffrage, FichierCompressionResult};
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::hachages::hacher_bytes;
-use crate::middleware::IsConfigurationPki;
-use crate::middleware_db::MiddlewareDb;
-use crate::mongo_dao::{convertir_bson_deserializable, CurseurIntoIter, CurseurMongo, CurseurStream, MongoDao};
-use crate::rabbitmq_dao::TypeMessageOut;
+use crate::mongo_dao::{convertir_bson_deserializable, CurseurStream, MongoDao};
 use crate::recepteur_messages::TypeMessage;
 use crate::error::Error as CommonError;
 
@@ -208,7 +200,7 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     let handle_generer = generer_backup_wrapper(middleware, curseur_transactions, &info_backup, tx_keepalive);
     let handle_keepalive = generer_keepalive(middleware, &info_backup, rx_keepalive);
 
-    let resultat = try_join!(handle_generer, handle_keepalive)?;
+    let _resultat = try_join!(handle_generer, handle_keepalive)?;
 
     // Emettre evenement fin backup pour le domaine
     emettre_evenement_backup(middleware, &info_backup, "backupTermine", &Utc::now()).await?;
@@ -217,7 +209,7 @@ pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
 }
 
 async fn generer_backup_wrapper<M>(
-    middleware: &M, mut curseur: Cursor<TransactionOwned>, info_backup: &BackupInformation,
+    middleware: &M, curseur: Cursor<TransactionOwned>, info_backup: &BackupInformation,
     tx_keepalive: tokio::sync::oneshot::Sender<bool>
 )
     -> Result<(), crate::error::Error>
@@ -244,7 +236,7 @@ async fn generer_backup<M>(middleware: &M, mut curseur: Cursor<TransactionOwned>
     let timestamp_backup = Utc::now();
     debug!("generer_fichiers_backup Debut generer fichiers de backup avec timestamp {:?}", timestamp_backup);
     let mut termine = false;
-    let mut transactions_total: usize = 0;
+    let _transactions_total: usize = 0;
 
     while ! &termine {
         let (tx, rx) = tokio::sync::mpsc::channel(10);
@@ -259,7 +251,7 @@ async fn generer_backup<M>(middleware: &M, mut curseur: Cursor<TransactionOwned>
     Ok(())
 }
 
-async fn verifier_transactions<M>(middleware: &M, curseur: &mut Cursor<TransactionOwned>, sender: Sender<TransactionOwned>)
+async fn verifier_transactions<M>(_middleware: &M, curseur: &mut Cursor<TransactionOwned>, sender: Sender<TransactionOwned>)
     -> Result<bool, crate::error::Error>
     where M: ValidateurX509
 {
@@ -278,7 +270,7 @@ async fn verifier_transactions<M>(middleware: &M, curseur: &mut Cursor<Transacti
         debug!("verifier_transactions Traiter transaction id:{}", transaction.id);
         compteur = compteur + 1;
 
-        if let Err(e) = transaction.verifier_signature() {
+        if let Err(_e) = transaction.verifier_signature() {
             error!("verifier_transactions Transaction {} invalide (hachage/signature) - SKIP", transaction.id);
             continue
         }
@@ -347,7 +339,7 @@ async fn verifier_transactions<M>(middleware: &M, curseur: &mut Cursor<Transacti
     Ok(true)
 }
 
-async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, mut receiver: tokio::sync::oneshot::Receiver<bool>)
+async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, receiver: tokio::sync::oneshot::Receiver<bool>)
     -> Result<(), crate::error::Error>
     where M: GenerateurMessages
 {
@@ -359,7 +351,7 @@ async fn generer_keepalive<M>(middleware: &M, info_backup: &BackupInformation, m
     loop {
         match timeout(duration, &mut receiver).await {
             Ok(_) => break,
-            Err(e) => {
+            Err(_e) => {
                 // Ok, attendre
             }
         }
@@ -402,7 +394,7 @@ async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<Transaction
     // Boucler pour toutes les transactions du domaine. Creer un nouveau catalogue chaque fois
     // que la taille limite est atteinte (buffer_output depasse).
     let mut taille_transactions = 0;
-    while let Some(mut transaction) = receiver.recv().await {
+    while let Some(transaction) = receiver.recv().await {
         let transaction_id = transaction.id.clone();
 
         let (transaction_bytes, certificat, date_traitement_transaction) = match traiter_transaction_catalogue(middleware, &mut builder, transaction).await {
@@ -484,7 +476,7 @@ async fn generer_catalogue<M>(middleware: &M, mut receiver: Receiver<Transaction
 }
 
 async fn traiter_transaction_catalogue<M>(
-    middleware: &M, builder: &mut CatalogueBackupBuilder<32>, transaction: TransactionOwned
+    middleware: &M, _builder: &mut CatalogueBackupBuilder<32>, transaction: TransactionOwned
 )
     -> Result<(Vec<u8>, Arc<EnveloppeCertificat>, DateTime<Utc>), crate::error::Error>
     where M: GenerateurMessages + ValidateurX509
@@ -651,7 +643,7 @@ async fn traiter_transaction_catalogue<M>(
 // }
 
 async fn serialiser_catalogue<M>(
-    middleware: &M, mut gzip_writer: GzEncoder<Vec<u8>>, mut builder: CatalogueBackupBuilder<32>, info_backup: &BackupInformation, ca: &EnveloppeCertificat)
+    middleware: &M, gzip_writer: GzEncoder<Vec<u8>>, mut builder: CatalogueBackupBuilder<32>, info_backup: &BackupInformation, ca: &EnveloppeCertificat)
     -> Result<(), crate::error::Error>
     where M: MongoDao + GenerateurMessages
 {
@@ -702,7 +694,7 @@ async fn serialiser_catalogue<M>(
                 Err(crate::error::Error::String(String::from("serialiser_catalogue Erreur sauvegarder fichier backup, ** SKIPPED **")))?
             }
         },
-        Err(e) => {
+        Err(_e) => {
             Err(crate::error::Error::String(String::from("backup.serialiser_catalogue Aucune reponse, on assume que le backup a echoue, ** SKIPPED **")))?
         }
     };

@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::str::from_utf8;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use log::error;
@@ -8,7 +7,7 @@ use millegrilles_cryptographie::ed25519::{MessageId, verifier};
 use millegrilles_cryptographie::ed25519_dalek::VerifyingKey;
 use millegrilles_cryptographie::error::Error;
 use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, optionepochseconds, HacheurMessage, PreMigrationOwned, PreMigration, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, HacheurMessage, PreMigrationOwned, PreMigration};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use crate::mongo_dao::opt_chrono_datetime_as_bson_datetime;
 use serde::{Deserialize, Serialize};
@@ -84,7 +83,7 @@ pub struct TransactionRef<'a> {
 impl<'a> TransactionRef<'a> {
 
     /// Parse le contenu et retourne un buffer qui peut servir a deserializer avec serde
-    pub fn contenu(&self) -> Result<Cow<str>, crate::error::Error> {
+    pub fn contenu(&self) -> Result<Cow<'_, str>, crate::error::Error> {
         match self.contenu {
             Some(inner) => Ok(Cow::Borrowed(inner)),
             None => match self.contenu_escaped {

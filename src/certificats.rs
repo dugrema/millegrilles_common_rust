@@ -1,5 +1,5 @@
 use std::collections::{HashMap, BTreeMap, HashSet};
-use crate::recepteur_messages::{ErreurValidation, ErreurVerification, MessageValide, TypeMessage};
+use crate::recepteur_messages::{ErreurVerification, TypeMessage};
 
 use std::fmt::{Debug, Formatter};
 use std::fs::read_to_string;
@@ -37,7 +37,7 @@ use std::convert::TryInto;
 
 
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille};
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesRef, MessageValidable};
+use millegrilles_cryptographie::messages_structs::MessageValidable;
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 
@@ -143,7 +143,7 @@ pub fn charger_enveloppe(pem: &str, store: Option<&X509Store>, ca_pem: Option<&s
 
     // let cle_publique = cert.public_key().unwrap();
 
-    let cert_der = cert.to_der()?;  //.expect("Erreur exporter cert format DEV");
+    let _cert_der = cert.to_der()?;  //.expect("Erreur exporter cert format DEV");
     // let extensions = parse_x509(cert_der.as_slice()).expect("Erreur preparation extensions X509 MilleGrille");
 
     Ok(EnveloppeCertificat {
@@ -374,10 +374,10 @@ pub fn charger_enveloppe_privee<V>(path_cert: &Path, path_cle: &Path, validateur
     let pem_cert = read_to_string(path_cert).unwrap();
     let enveloppe = charger_enveloppe(&pem_cert, Some(validateur.store()), None)?;
 
-    let clecert_pem = format!("{}\n{}", pem_cle, pem_cert);
+    let _clecert_pem = format!("{}\n{}", pem_cle, pem_cert);
 
     // Recreer la chaine de certificats avec les PEM.
-    let chaine_pem = enveloppe.chaine_pem();
+    let _chaine_pem = enveloppe.chaine_pem();
     // let mut chaine_pem: Vec<String> = Vec::new();
     // let cert_pem = String::from_utf8(enveloppe.certificat().to_pem().unwrap()).unwrap();
     // chaine_pem.push(cert_pem);
@@ -827,7 +827,7 @@ pub async fn valider_certificat<'a, M, V>(
                 Err(ErreurVerification::CertificatInvalide)?
             }
         },
-        Err(e) => Err(ErreurVerification::CertificatInvalide)?
+        Err(_e) => Err(ErreurVerification::CertificatInvalide)?
     }
 
     match middleware.valider_pour_date(enveloppe.as_ref(), message.estampille()) {
@@ -835,12 +835,12 @@ pub async fn valider_certificat<'a, M, V>(
             true => Ok(enveloppe),
             false => Err(ErreurVerification::CertificatInvalide)?
         },
-        Err(e) => Err(ErreurVerification::CertificatInvalide)?
+        Err(_e) => Err(ErreurVerification::CertificatInvalide)?
     }
 }
 
 pub async fn valider_certificat_regle<'a, M, V>(
-    middleware: &M,
+    _middleware: &M,
     message: &'a V,
     regle: &str
 )
@@ -909,7 +909,7 @@ pub async fn valider_certificat_regle<'a, M, V>(
                 Err(ErreurVerification::CertificatInvalide)?
             }
         },
-        Err(e) => {
+        Err(_e) => {
             warn!("valider_certificat_regle Certificat de MilleGrille n'est pas CA");
             Err(ErreurVerification::CertificatInvalide)?
         }
@@ -918,7 +918,7 @@ pub async fn valider_certificat_regle<'a, M, V>(
     // Verifier que la pubkey correspond
     let pubkey_enveloppe = match enveloppe.fingerprint_pk() {
         Ok(inner) => inner,
-        Err(e) => {
+        Err(_e) => {
             warn!("valider_certificat_regle Erreur chargement pubkey de l'enveloppe");
             Err(ErreurVerification::SignatureInvalide)?
         }
@@ -949,7 +949,7 @@ pub async fn valider_certificat_regle<'a, M, V>(
     let cert_millegrille = &enveloppe_millegrille.certificat;
     let store = match build_store(cert_millegrille, valider_date_courante) {
         Ok(inner) => inner,
-        Err(e) => {
+        Err(_e) => {
             warn!("valider_certificat_regle Erreur preparation store (no date)");
             Err(ErreurVerification::CertificatInvalide)?
         }
@@ -1249,13 +1249,13 @@ impl ValidateurX509 for ValidateurX509Impl {
     }
 
     fn est_cache(&self, fingerprint: &str) -> bool {
-        let mut mutex = self.cache_certificats.lock().expect("lock");
+        let mutex = self.cache_certificats.lock().expect("lock");
         mutex.contains_key(fingerprint)
     }
 
     /// Retourne une liste de certificats qui n'ont pas encore ete persiste.
     fn certificats_persister(&self) -> Vec<Arc<EnveloppeCertificat>> {
-        let mut mutex = self.cache_certificats.lock().expect("lock");
+        let mutex = self.cache_certificats.lock().expect("lock");
         mutex.iter()
             .filter(|(_,c)| !c.persiste)
             .map(|e| e.1.enveloppe.clone())

@@ -1,32 +1,22 @@
 use std::collections::HashMap;
-use std::error::Error;
 use std::sync::Mutex;
 use log::{debug, error, warn};
 use serde::{Serialize, Deserialize};
-use serde_json::{json, Map, Value};
-use flate2::write::GzEncoder;
-use flate2::Compression;
-use std::io;
 use std::io::prelude::*;
 use std::str::from_utf8;
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::chiffrage_mgs4::CleSecreteCipher;
-use millegrilles_cryptographie::ed25519_dalek::{SecretKey, SigningKey};
-use millegrilles_cryptographie::heapless;
-use millegrilles_cryptographie::messages_structs::{optionepochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesBuilderDefault, RoutageMessage, MessageMilleGrilleBufferContenu};
-use millegrilles_cryptographie::x25519::{CleDerivee, deriver_asymetrique_ed25519};
+use millegrilles_cryptographie::messages_structs::{optionepochseconds, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesBuilderDefault, RoutageMessage};
+use millegrilles_cryptographie::x25519::deriver_asymetrique_ed25519;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
-use multibase::{Base, encode};
 
 use crate::certificats::ValidateurX509;
 
 use crate::chiffrage_cle::CommandeSauvegarderCle;
-use crate::common_messages::{MessageReponse, verifier_reponse_ok, verifier_reponse_ok_option};
+use crate::common_messages::MessageReponse;
 use crate::constantes::*;
-use crate::formatteur_messages::build_message_action;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};
 use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
@@ -157,7 +147,7 @@ impl EmetteurNotifications {
             },
             false => {
                 debug!("emettre_notification_proprietaire Emettre commande cle");
-                let mut cle_id = message_signe.dechiffrage.as_ref().expect("dechiffrage").cle_id.as_ref().expect("cle_id").clone();
+                let cle_id = message_signe.dechiffrage.as_ref().expect("dechiffrage").cle_id.as_ref().expect("cle_id").clone();
 
                 let (mut commande_outer, cle_id) = match (*self.commande_cle_proprietaire.lock().expect("lock")).as_ref() {
                     Some(c) => {
@@ -227,7 +217,7 @@ impl EmetteurNotifications {
         };
 
         // Retirer les cles de chiffrage, ajuster le cle_id
-        let mut dechiffrage = message_signe.dechiffrage.as_mut().expect("dechiffrage");
+        let dechiffrage = message_signe.dechiffrage.as_mut().expect("dechiffrage");
         dechiffrage.cles = None;
         dechiffrage.cle_id = Some(cle_id.clone());
 
@@ -260,7 +250,7 @@ impl EmetteurNotifications {
 
         // let message_signe_buffer: MessageMilleGrillesBufferDefault = message_signe.try_into()?;
 
-        let mut notification = Notification {
+        let notification = Notification {
             message: message_signe,  // from_utf8(message_signe_buffer.buffer.as_slice())?.to_string(),
             destinataires,
             expiration,

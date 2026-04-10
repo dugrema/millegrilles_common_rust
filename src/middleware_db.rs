@@ -1,16 +1,12 @@
-use std::collections::HashMap;
-use std::error::Error;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use futures::stream::FuturesUnordered;
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesRef, MessageMilleGrillesRefDefault};
+use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use mongodb::{ClientSession, Database};
-use mongodb::options::{Acknowledgment, SessionOptions, TransactionOptions, WriteConcern};
 use openssl::x509::store::X509Store;
 use openssl::x509::X509;
 use serde::Serialize;
@@ -18,14 +14,14 @@ use tokio::sync::{mpsc, mpsc::Sender, Notify};
 use tokio::task::JoinHandle;
 
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
-use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, VerificateurPermissions};
+use crate::certificats::ValidateurX509;
 use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
 use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::error::Error as CommonError;
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{charger_certificat_redis, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessage, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
+use crate::middleware::{charger_certificat_redis, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
 use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
 use crate::notifications::NotificationMessageInterne;
 use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
@@ -72,11 +68,11 @@ impl EmetteurNotificationsTrait for MiddlewareDb {
 
     async fn emettre_notification_usager<D,S,N> (
         &self,
-        user_id: S,
-        contenu: NotificationMessageInterne,
-        niveau: N,
-        domaine: D,
-        expiration: Option<i64>,
+        _user_id: S,
+        _contenu: NotificationMessageInterne,
+        _niveau: N,
+        _domaine: D,
+        _expiration: Option<i64>,
         // cle_dechiffree: Option<CleDechiffree>
     ) -> Result<String, crate::error::Error>
         where D: AsRef<str> + Send, S: AsRef<str> + Send, N: AsRef<str> + Send
@@ -353,7 +349,7 @@ impl EmetteurCertificat for MiddlewareDb {
         }
     }
 
-    async fn repondre_certificat<S, T>(&self, reply_q: S, correlation_id: T) -> Result<(), crate::error::Error>
+    async fn repondre_certificat<S, T>(&self, _reply_q: S, _correlation_id: T) -> Result<(), crate::error::Error>
         where S: AsRef<str> + Send, T: AsRef<str> + Send
     {
         todo!()

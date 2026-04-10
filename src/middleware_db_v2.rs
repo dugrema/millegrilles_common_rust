@@ -1,4 +1,3 @@
-use std::sync::Arc;
 
 use futures_util::stream::FuturesUnordered;
 use log::info;
@@ -6,13 +5,13 @@ use static_cell::StaticCell;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::backup::{CommandeBackup, thread_backup};
+use crate::backup::CommandeBackup;
 use crate::backup_v2::thread_backup_v2;
 use crate::chiffrage_cle::CleChiffrageHandlerImpl;
 use crate::configuration::IsConfigNoeud;
 use crate::error::Error;
-use crate::middleware_db::{configurer, MiddlewareDb, MiddlewareHooks};
-use crate::rabbitmq_dao::{RabbitMqExecutor, run_rabbitmq, run_rabbitmq_v2};
+use crate::middleware_db::{configurer, MiddlewareDb};
+use crate::rabbitmq_dao::run_rabbitmq_v2;
 use crate::redis_dao::RedisDao;
 
 static MIDDLEWARE: StaticCell<MiddlewareDb> = StaticCell::new();
@@ -46,7 +45,7 @@ pub fn preparer() -> Result<(&'static MiddlewareDb, FuturesUnordered<JoinHandle<
     let middleware = MIDDLEWARE.try_init(middleware).expect("StaticCell MIDDLEWARE init");
 
     // Preparer threads execution
-    let mut futures = FuturesUnordered::new();
+    let futures = FuturesUnordered::new();
     futures.push(tokio::spawn(thread_backup_v2(middleware, rx_backup)));
     let rabbitmq = middleware.ressources.ressources.rabbitmq.clone();
     futures.push(tokio::spawn(run_rabbitmq_v2(middleware, rabbitmq, configuration)));
