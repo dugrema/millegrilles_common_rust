@@ -152,7 +152,7 @@ impl RedisDao {
         let contenu_json = serde_json::to_string(contenu)?;
 
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(connexion).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(connexion).await?;
 
         // Conserver certificat
         let resultat: Option<String> = redis::cmd("SET")
@@ -195,7 +195,7 @@ impl RedisDao {
         let mut con = self.client.get_async_connection().await?;
 
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
 
         let resultat: Option<String> = redis::cmd("GET").arg(cle).query_async(&mut con).await?;
 
@@ -206,7 +206,7 @@ impl RedisDao {
     pub async fn get_async_connection(&self) -> Result<Connection, Box<dyn Error>> {
         let mut con = self.client.get_async_connection().await?;
         // Selectioner DB 3 pour cles
-        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
+        redis::cmd("SELECT").arg(REDIS_DB_ID).query_async::<_, ()>(&mut con).await?;
         Ok(con)
     }
 
