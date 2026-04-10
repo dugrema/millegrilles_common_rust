@@ -6,9 +6,7 @@ use tokio::sync::mpsc::{Sender, Receiver};
 use tokio_util::{bytes::Bytes, io::ReaderStream};
 
 
-const PRESET_COMPRESSION_XZ: u32 = 6;
-const BUFFER_SIZE: usize = 64 * 1024;
-const BUFFER_CHIFFRAGE_SIZE: usize = 2 * BUFFER_SIZE + 2 * 17;  // Output est 2 x buffer plus 2 x header (17 bytes)
+
 
 // pub struct FichierWriter<K, M>
 //     where M: CipherMgs<K>,

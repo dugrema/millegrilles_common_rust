@@ -1492,33 +1492,7 @@ struct ReponseBackup {
 // }
 
 
-/// Genere une nouvelle Part pour un fichier a uploader dans un form multipart
-async fn file_to_part(filename: &str, file: File_tokio) -> Part {
-    let metadata = &file.metadata().await.expect("md");
-    let len = metadata.len();
 
-    let stream = FramedRead::new(file, BytesCodec::new());
-    // let reader = BufReader::new(file);
-    let body = Body::wrap_stream(stream);
-
-    Part::stream_with_length(body, len)
-        .mime_str("application/octet-stream").expect("mimetype")
-        .file_name(filename.to_owned())
-}
-
-/// Genere une nouvelle Part pour un fichier a uploader dans un form multipart
-fn bytes_to_part(filename: &str, contenu: Vec<u8>, mimetype: Option<&str>) -> Part {
-
-    let mimetype_inner = match mimetype {
-        Some(m) => m,
-        None => "application/octet-stream"
-    };
-
-    let vec_message = Vec::from(contenu);
-    Part::bytes(vec_message)
-        .mime_str(mimetype_inner).expect("mimetype")
-        .file_name(filename.to_owned())
-}
 
 /// Reset l'etat de backup des transactions d'une collection
 pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &str) -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
@@ -1692,11 +1666,7 @@ pub async fn emettre_evenement_regeneration<M>(
     Ok(middleware.emettre_evenement(routage, &value).await?)
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct ReponseCertificat {
-    ok: Option<bool>,
-    chaine_pem: Option<Vec<String>>,
-}
+
 
 // #[cfg(test)]
 // mod backup_tests {
