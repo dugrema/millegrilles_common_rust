@@ -900,9 +900,9 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             true => {
                 match action.as_str() {
                     // Commandes standard
-                    _COMMANDE_BACKUP_HORAIRE => {
-                        self.demarrer_backup(middleware.as_ref(), m).await
-                    },
+                    // _COMMANDE_BACKUP_HORAIRE => {
+                    //     self.demarrer_backup(middleware.as_ref(), m).await
+                    // },
                     COMMANDE_RESTAURER_TRANSACTIONS => {
                         self.restaurer_transaction(middleware.as_ref(), m).await
                     },
