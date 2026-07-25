@@ -139,7 +139,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
 pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn Error>>
     where C: ConfigMessages
 {
-    const PORT: u16 = 444;
+    const MTLS_PORT: u16 = 444;
     const COMMANDE: &str = "administration/ajouterCompte";
 
     let config_mq = configuration.get_configuration_mq();
@@ -147,8 +147,12 @@ pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<d
     if let Some(midcompte) = configuration.get_configuration_noeud().midcompte_url.as_ref() {
         hosts.push(midcompte.clone());
     }
-    hosts.push(Url::parse(format!("https://nginx:{}", PORT).as_str())?);
-    hosts.push(Url::parse(format!("https://{}:{}", config_mq.host.as_str(), PORT).as_str())?);
+    // Default internal midcompte service in a docker network
+    hosts.push(Url::parse("https://midcompte:2444")?);
+    // Accessing MQ from a different host
+    hosts.push(Url::parse(format!("https://{}:{}", config_mq.host.as_str(), MTLS_PORT).as_str())?);
+    // Last-resort fallback for local
+    hosts.push(Url::parse(format!("https://nginx:{}", MTLS_PORT).as_str())?);
 
     debug!("Tenter creer compte MQ avec hosts {:?}", hosts);
 
