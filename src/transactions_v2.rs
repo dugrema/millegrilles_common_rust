@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::error::Error;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
@@ -12,7 +11,7 @@ use tokio::join;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 
-use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, StatsBackup, StatusRegeneration, PATH_FICHIERS_ARCHIVES};
+use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, StatsBackup, StatusRegeneration};
 use crate::certificats::{charger_enveloppe, ValidateurX509};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
@@ -53,7 +52,7 @@ where
     let mut session = middleware.get_session_rebuild().await?;
 
     // Traiter transactions dans les fichiers d'archive
-    let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
+    let path_backup = middleware.get_path_backup().join(nom_domaine);
     let idmg = middleware.idmg();
     let fichiers_backup = organiser_fichiers_backup(path_backup.as_path(), idmg, true).await?;
     let stats_backup = extraire_stats_backup(middleware, nom_collection_transactions, &fichiers_backup).await?;

@@ -260,6 +260,7 @@ pub const DELEGATION_GLOBALE_PROPRIETAIRE: &str = "proprietaire";
 pub const NEW_LINE_BYTE: u8 = 0x0A;
 pub const EMPTY_ARRAY: [u8; 0] = [0u8; 0];
 pub const DEFAULT_Q_TTL: u32 = 300000;
+pub const DEFAULT_BACKUP_PATH: &str = "/var/opt/millegrilles/archives";
 
 // Domaines tiers
 pub const DOMAINE_APPLICATION_INSTANCE: &str = "instance";
@@ -420,3 +421,5 @@ pub const PATH_REGLES_VALIDATION: &str = "/var/opt/millegrilles/configuration/id
 
 
 pub const REQUETE_GET_FILEHOST_FOR_INSTANCE: &str = "getFilehostForInstance";
+
+pub const ENV_BACKUP_PATH: &str = "BACKUP_PATH";

@@ -26,6 +26,7 @@ pub trait MongoDao: Send + Sync {
     fn get_database(&self) -> Result<Database, CommonError>;
     fn get_admin_database(&self) -> Result<Database, CommonError>;
     fn get_db_name(&self) -> &str;
+    fn get_path_backup(&self) -> &PathBuf;
     async fn get_session(&self) -> Result<ClientSession, CommonError>;
     async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError>;
 
@@ -69,6 +70,7 @@ pub trait MongoDao: Send + Sync {
 pub struct MongoDaoImpl {
     client: Client,
     db_name: String,
+    path_backup: PathBuf,
 }
 
 #[async_trait]
@@ -82,6 +84,10 @@ impl MongoDao for MongoDaoImpl {
     }
 
     fn get_db_name(&self) -> &str {self.db_name.as_str()}
+
+    fn get_path_backup(&self) -> &PathBuf {
+        &self.path_backup
+    }
 
     async fn get_session(&self) -> Result<ClientSession, CommonError> {
         let write_concern = WriteConcern::builder()
@@ -130,6 +136,7 @@ pub fn initialiser<C>(configuration: &C) -> Result<MongoDaoImpl, String>
     Ok(MongoDaoImpl{
         client,
         db_name: idmg.to_owned(),
+        path_backup: mongo.path_backup.to_owned(),
     })
 }
 

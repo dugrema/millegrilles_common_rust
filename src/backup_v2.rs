@@ -53,7 +53,7 @@ use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
 use crate::recepteur_messages::TypeMessage;
 
-pub const PATH_FICHIERS_ARCHIVES: &str = "/var/opt/millegrilles/archives";
+// pub const PATH_FICHIERS_ARCHIVES: &str = "/var/opt/millegrilles/archives";
 
 pub const CONST_ARCHIVE_NEW_VERSION: &str = "NEW";
 
@@ -69,14 +69,14 @@ pub async fn thread_backup_v2<M>(middleware: &M, mut rx: Receiver<CommandeBackup
 where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
 {
     // Verifier que le path de backup est disponible
-    fs::create_dir_all(PATH_FICHIERS_ARCHIVES).unwrap();
+    fs::create_dir_all(middleware.get_path_backup()).unwrap();
 
     while let Some(commande) = rx.recv().await {
         debug!("thread_backup_v2 Debut commande backup {:?}", commande);
 
         let backup_complet = commande.complet;
 
-        let path_backup = preparer_path_backup(PATH_FICHIERS_ARCHIVES, commande.nom_domaine.as_str());
+        let path_backup = preparer_path_backup(middleware.get_path_backup(), commande.nom_domaine.as_str());
 
         let mut backup_ok= true;
 
@@ -207,8 +207,9 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
     }
 }
 
-fn preparer_path_backup(path_backup: &str, domaine: &str) -> PathBuf {
-    let path_domaine = PathBuf::from(format!("{}/{}", path_backup, domaine));
+fn preparer_path_backup(path_backup: &PathBuf, domaine: &str) -> PathBuf {
+    let path_domaine = path_backup.join(domaine);
+    // let path_domaine = PathBuf::from(format!("{}/{}", path_backup, domaine));
     fs::create_dir_all(&path_domaine).unwrap();
     path_domaine
 }

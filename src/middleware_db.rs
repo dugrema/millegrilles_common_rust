@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -126,6 +127,10 @@ impl MongoDao for MiddlewareDb {
     fn get_admin_database(&self) -> Result<Database, CommonError> { self.ressources.mongo.get_admin_database() }
 
     fn get_db_name(&self) -> &str { self.ressources.mongo.get_db_name() }
+
+    fn get_path_backup(&self) -> &PathBuf {
+        self.ressources.mongo.get_path_backup()
+    }
 
     async fn get_session(&self) -> Result<ClientSession, CommonError> { self.ressources.mongo.get_session().await }
 

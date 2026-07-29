@@ -14,6 +14,7 @@ use rand::Rng;
 
 use crate::certificats::{build_store_path, charger_enveloppe_privee, ValidateurX509, ValidateurX509Impl};
 use url::Url;
+use crate::constantes::{DEFAULT_BACKUP_PATH, ENV_BACKUP_PATH};
 
 pub trait ConfigMessages: IsConfigNoeud + Send + Sync {
     fn get_configuration_mq(&self) -> &ConfigurationMq;
@@ -112,10 +113,16 @@ fn charger_configuration_mongo(pki: &ConfigurationPki) -> Result<ConfigurationMo
 
     let keycert_file = pki.exporter_clecert().expect("Erreur chargement cle/cert pour Mongo");
 
+    let path_backup = match std::env::var(ENV_BACKUP_PATH) {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => PathBuf::from(DEFAULT_BACKUP_PATH),
+    };
+    
     Ok(ConfigurationMongo {
         host: std::env::var("MG_MONGO_HOST").unwrap_or_else(|_| "mongo".into()),
         port,
         keycert_file,
+        path_backup,
     })
 }
 
@@ -230,6 +237,7 @@ pub struct ConfigurationMongo {
     pub host: String,
     pub port: u16,
     pub keycert_file: PathBuf,
+    pub path_backup: PathBuf,
 }
 
 #[derive(Clone, Debug)]

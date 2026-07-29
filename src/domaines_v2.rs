@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 use async_trait::async_trait;
 use chrono::{Datelike, Timelike, Utc, Weekday};
 use futures_util::stream::FuturesUnordered;
@@ -14,7 +13,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
 
 use crate::backup::{emettre_evenement_backup, emettre_evenement_backup_catalogue, BackupInformation, BackupStarter};
-use crate::backup_v2::{get_serveur_consignation, organiser_fichiers_backup, synchroniser_consignation, PATH_FICHIERS_ARCHIVES};
+use crate::backup_v2::{get_serveur_consignation, organiser_fichiers_backup, synchroniser_consignation};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
@@ -617,7 +616,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
 
             // Verifier si la version specifiee est la meme que celle presente dans le repertoire
             // d'archives du domaine.
-            let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, nom_domaine));
+            let path_backup = middleware.get_path_backup().join(&nom_domaine);
             // S'assurer que le repertoire existe
             fs::create_dir_all(&path_backup)?;
 
@@ -846,14 +845,14 @@ where M: ValidateurX509 + GenerateurMessages + ConfigMessages, G: GestionnaireDo
 }
 
 async fn remplacer_backup_domain_sync<M>(middleware: &M, domaine: &str, version: &str) -> Result<(), Error>
-    where M: ValidateurX509 + GenerateurMessages + ConfigMessages
+    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages
 {
     info!("remplacer_backup_domain_sync Domaine {} version {}", domaine, version);
 
     // Charger le serveur de consignation
     let serveur_consignation = get_serveur_consignation(middleware).await?;
 
-    let path_backup = PathBuf::from(format!("{}/{}", PATH_FICHIERS_ARCHIVES, domaine));
+    let path_backup = middleware.get_path_backup().join(domaine);
     // S'assurer que le repertoire existe
     fs::create_dir_all(&path_backup)?;
 
