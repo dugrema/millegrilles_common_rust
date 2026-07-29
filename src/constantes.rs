@@ -294,6 +294,7 @@ pub const EVENEMENT_REGENERATION: &str = "regeneration";
 // Requetes
 pub const REQUETE_NOMBRE_TRANSACTIONS: &str = "getNombreTransactions";
 pub const REQUETE_DOMAIN_PING: &str = "ping";
+pub const REQUETE_FICHE_MILLEGRILLE: &str = "ficheMillegrille";
 
 // Transactions
 pub const COLLECTION_TRANSACTION_TRAITEES: &str = "transactions_traitees";

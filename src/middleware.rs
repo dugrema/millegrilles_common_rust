@@ -21,7 +21,6 @@ use serde_json::json;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use base64::{Engine as _, engine::general_purpose};
-
 use crate::backup::BackupStarter;
 use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
 use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
@@ -129,9 +128,11 @@ pub fn configurer() -> MiddlewareRessources {
     // Connecter au middleware mongo et MQ
     let rabbitmq = Arc::new(RabbitMqExecutor::new(securite.into()));
 
+    let dev = match std::env::var("DEV") { Ok(val) => val.as_str() == "1", _ => false };
     let generateur_messages = Arc::new(GenerateurMessagesImpl::new(
         configuration.get_configuration_pki(),
-        rabbitmq.clone()
+        rabbitmq.clone(),
+        dev,
     ));
 
     let enveloppe_privee = pki.get_enveloppe_privee();
@@ -475,6 +476,10 @@ impl GenerateurMessages for MiddlewareMessage {
 
     fn get_securite(&self) -> &Securite {
         self.ressources.generateur_messages.get_securite()
+    }
+
+    fn is_dev(&self) -> bool {
+        self.ressources.generateur_messages.is_dev()
     }
 }
 

@@ -48,6 +48,7 @@ use crate::db_structs::TransactionOwned;
 use crate::dechiffrage::decrypt_document;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::error::{Error as CommonError, Error};
+use crate::fiche_systeme::{FichePublique, RequeteFicheMillegrille};
 use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
 use crate::recepteur_messages::TypeMessage;
@@ -227,15 +228,43 @@ pub async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFileho
         Err("backup_v2.get_serveur_consignation Reponse information consignation est en erreur (ok==false)")?
     }
 
-    let filehost = reponse.filehost;
+    let mut filehost = reponse.filehost;
 
-    // let url = match filehost.url_external {
-    //     Some(inner) => inner,
-    //     None => match filehost.url_internal {
-    //         Some(inner) => inner,
-    //         None => Err("backup_v2.get_serveur_consignation No filehost server availabled")?
-    //     }
-    // };
+    if let Some(instance_id) = filehost.instance_id.as_ref() {
+        let enveloppe_pub = middleware.get_enveloppe_signature().enveloppe_pub.clone();
+        if let Ok(common_name) = enveloppe_pub.get_common_name() {
+            if instance_id == &common_name {
+                if middleware.is_dev() {
+                    // Same host dev mode, use localhost:444 (hard coded mtls port)
+                    filehost.url_external = Some("https://localhost:444".to_string());
+                    filehost.tls_external = Some("millegrille".to_string());
+                } else {
+                    // Same host, inject hard-coded internal docker hostname
+                    filehost.url_external = Some("https://filehost:1443".to_string());
+                    filehost.tls_external = Some("millegrille".to_string());
+                }
+            } else {
+                // Need to fetch the instance's hostname/mtls_port
+                let routage = RoutageMessageAction::builder(
+                    DOMAINE_TOPOLOGIE, REQUETE_FICHE_MILLEGRILLE, vec![Securite::L1Public]).build();
+                let requete = RequeteFicheMillegrille {idmg: enveloppe_pub.idmg()?};
+                let reponse: FichePublique = match middleware.transmettre_requete(routage, &requete).await? {
+                    Some(TypeMessage::Valide(reponse)) => deser_message_buffer!(reponse.message),
+                    _ => Err("backup_v2.get_serveur_consignation Reponse information consignation de type invalide")?
+                };
+                if let Some(instances) = reponse.instances.get(&common_name) {
+                    if let Some(domaines) = instances.domaines.as_ref() {
+                        if let Some(hostname) = domaines.get(0) {
+                            if let Some(mtls_port) = instances.ports.get("https_mtls") {
+                                filehost.url_external = Some(format!("https://{}:{}", hostname, mtls_port));
+                                filehost.tls_external = Some("millegrille".to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Ok(filehost)
 }

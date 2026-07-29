@@ -230,6 +230,8 @@ pub trait GenerateurMessages: FormatteurMessage + Send + Sync {
     fn get_mode_regeneration(&self) -> bool;
 
     fn get_securite(&self) -> &Securite;
+
+    fn is_dev(&self) -> bool;
 }
 
 pub struct GenerateurMessagesImpl {
@@ -239,17 +241,19 @@ pub struct GenerateurMessagesImpl {
     enveloppe_privee: Mutex<Arc<EnveloppePrivee>>,
     mode_regeneration: Mutex<bool>,
     securite: Securite,
+    dev: bool,
 }
 
 impl GenerateurMessagesImpl {
 
-    pub fn new(config: &ConfigurationPki, rabbitmq: Arc<RabbitMqExecutor>) -> Self {
+    pub fn new(config: &ConfigurationPki, rabbitmq: Arc<RabbitMqExecutor>, dev: bool) -> Self {
         let securite = rabbitmq.securite.clone();
         Self {
             rabbitmq,
             enveloppe_privee: Mutex::new(config.get_enveloppe_privee()),
             mode_regeneration: Mutex::new(false),
             securite,
+            dev,
         }
     }
 
@@ -620,6 +624,10 @@ impl GenerateurMessages for GenerateurMessagesImpl {
 
     fn get_securite(&self) -> &Securite {
         &self.securite
+    }
+
+    fn is_dev(&self) -> bool {
+        self.dev
     }
 }
 

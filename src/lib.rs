@@ -39,6 +39,7 @@ pub mod domaines_traits;
 pub mod middleware_db_v2;
 pub mod backup_v2;
 mod transactions_v2;
+mod fiche_systeme;
 
 // Re-exports
 pub use millegrilles_cryptographie;

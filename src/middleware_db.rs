@@ -316,6 +316,10 @@ impl GenerateurMessages for MiddlewareDb {
     fn get_mode_regeneration(&self) -> bool { self.ressources.ressources.generateur_messages.as_ref().get_mode_regeneration() }
 
     fn get_securite(&self) -> &Securite { self.ressources.ressources.generateur_messages.get_securite() }
+
+    fn is_dev(&self) -> bool {
+        self.ressources.ressources.generateur_messages.is_dev()
+    }
 }
 
 #[async_trait]
