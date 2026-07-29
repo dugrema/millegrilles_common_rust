@@ -364,6 +364,13 @@ pub struct FileUsage {
     pub size: Option<usize>,
 }
 
+/// Filehost configuration
+/// Note that url_internal is obsolete, the proper url value must be injected in url_external.
+/// Logic : - when instance_id is None, use external_url (it MUST be provided) with external tls method
+///         - when instance_id exists:
+///              - always use mtls method millegrille,
+///              - for same (local) instance_id use hard-coded filehost:1443
+///              - otherwise use FichePublique.instances[instance_id] with mtls port
 #[derive(Serialize, Deserialize)]
 pub struct RequeteFilehostItem {
     pub filehost_id: String,
