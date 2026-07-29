@@ -1518,27 +1518,7 @@ async fn preparer_client_consignation<M>(middleware: &M, serveur_consignation: &
             // Return the external url
             inner.as_str()
         },
-        None => match serveur_consignation.url_internal.as_ref() {
-            Some(inner) => {
-                debug!("preparer_client_consignation Using internal connection with millegrille client TLS authentication");
-                // MilleGrille client TLS authentication
-                let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
-                let cle_privee_pem = enveloppe_privee.cle_privee_pem.as_str();
-                let mut cert_pem_list = enveloppe_privee.chaine_pem.clone();
-                cert_pem_list.insert(0, cle_privee_pem.to_string());
-                let pem_keycert = cert_pem_list.join("\n");
-                let cert = pem_keycert.as_bytes();
-                let key = cle_privee_pem.as_bytes();
-                let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
-
-                client_builder = client_builder
-                    .add_root_certificate(root_ca)
-                    .identity(pkcs8);
-
-                inner.as_str()
-            },
-            None => Err("preparer_client_consignation filehost with no external/internal URL")?
-        }
+        None => Err("preparer_client_consignation filehost with no configured URL")?
     };
 
     let client = client_builder.build()?;
