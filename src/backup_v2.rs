@@ -231,6 +231,8 @@ pub async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFileho
 
     let mut filehost = reponse.filehost;
 
+    debug!("backup_v2 Filehost information received: {:?}", filehost);
+
     if let Some(instance_id) = filehost.instance_id.as_ref() {
         let enveloppe_pub = middleware.get_enveloppe_signature().enveloppe_pub.clone();
         if let Ok(common_name) = enveloppe_pub.get_common_name() {
@@ -239,10 +241,12 @@ pub async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFileho
                     // Same host dev mode, use localhost:444 (hard coded mtls port)
                     filehost.url_external = Some("https://localhost:444".to_string());
                     filehost.tls_external = Some("millegrille".to_string());
+                    debug!("backup_v2 Choosing internal-dev filehost");
                 } else {
                     // Same host, inject hard-coded internal docker hostname
                     filehost.url_external = Some("https://filehost:1443".to_string());
                     filehost.tls_external = Some("millegrille".to_string());
+                    debug!("backup_v2 Choosing internal-docker filehost");
                 }
             } else {
                 // Need to fetch the instance's hostname/mtls_port
@@ -253,15 +257,24 @@ pub async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFileho
                     Some(TypeMessage::Valide(reponse)) => deser_message_buffer!(reponse.message),
                     _ => Err("backup_v2.get_serveur_consignation Reponse information consignation de type invalide")?
                 };
-                if let Some(instances) = reponse.instances.get(&common_name) {
+                debug!("backup_v2 Using filehost information on instance: {} for backup, received: {:?}", instance_id, reponse);
+                if let Some(instances) = reponse.instances.get(instance_id) {
                     if let Some(domaines) = instances.domaines.as_ref() {
                         if let Some(hostname) = domaines.get(0) {
                             if let Some(mtls_port) = instances.ports.get("https_mtls") {
                                 filehost.url_external = Some(format!("https://{}:{}", hostname, mtls_port));
                                 filehost.tls_external = Some("millegrille".to_string());
+                            } else {
+                                warn!("backup_v2 Missing filehost https_mtls port");
                             }
+                        } else {
+                            warn!("backup_v2 Missing instance {} hostname for backup", instance_id);
                         }
+                    } else {
+                        warn!("backup_v2 No domains received in fiche, unable to get filhost information for backup");
                     }
+                } else {
+                    warn!("backup_v2 Instance id {} not found in fiche, unable to get filehost information for backup", instance_id);
                 }
             }
         }

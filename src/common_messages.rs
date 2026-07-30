@@ -371,7 +371,7 @@ pub struct FileUsage {
 ///              - always use mtls method millegrille,
 ///              - for same (local) instance_id use hard-coded filehost:1443
 ///              - otherwise use FichePublique.instances[instance_id] with mtls port
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequeteFilehostItem {
     pub filehost_id: String,
     pub instance_id: Option<String>,
@@ -387,20 +387,20 @@ pub struct RequeteFilehostItem {
     pub fuuid: Option<FileUsage>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RequestFilehostForInstanceResponse {
     pub ok: bool,
     pub filehost: RequeteFilehostItem,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EventFilehost {
     pub filehost_id: String,
     pub event: String,
 }
 
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BackupEvent {
     pub ok: bool,  // Si false, indique echec dans le backup
     pub done: bool,
