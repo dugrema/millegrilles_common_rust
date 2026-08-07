@@ -24,7 +24,6 @@ pub mod middleware_db;
 pub mod redis_dao;
 pub mod chiffrage_rsa;
 pub mod chiffrage_cle;
-pub mod backup_restoration;
 pub mod chiffrage_streamxchacha20poly1305;
 pub mod math;
 pub mod notifications;
