@@ -370,9 +370,9 @@ async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result
                 Err(e) => {
                     error!("Key {} unknown to MaitreDesCles, read all available backup files and resubmit encrypted keys.", cle_id_backup);
                     return if let Err(e2) = resubmit_backup_keys(middleware, domaine_backup, cle_id_backup.as_str()).await {
-                        Err(CommonError::String(format!("Backup of {} failed (missing key). Key resubmission failed: {:?}\nOriginal error: {:?}", domaine_backup, e2, e)))
+                        Err(CommonError::String(format!("Backup of {} failed (missing key). Key resubmission failed: {:?} Original error: {:?}", domaine_backup, e2, e)))
                     } else {
-                        Err(CommonError::String(format!("Backup of {} failed (missing key). Encrypted backup keys have been resubmitted - you can now decrypt manually and retry the backup.\nOriginal error: {:?}", domaine_backup, e)))
+                        Err(CommonError::String(format!("Backup of {} failed (missing key). Encrypted backup keys have been resubmitted - you can now decrypt manually and retry the backup. Original error: {:?}", domaine_backup, e)))
                     }
                 }
             };
@@ -1933,15 +1933,15 @@ async fn resubmit_backup_keys<M>(middleware: &M, domaine: &str, missing_key_id: 
         cles_dechiffrage.push(command);
     }
 
-    info!("resubmit_backup_keys Resubmitting {} keys, missing key found? {}", cles_dechiffrage.len(), missing_key_found);
+    warn!("resubmit_backup_keys Resubmitting {} keys, missing key found? {}", cles_dechiffrage.len(), missing_key_found);
 
     let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_AJOUTER_CLE_DOMAINES, vec![Securite::L1Public])
-        .timeout_blocking(3000)
+        .timeout_blocking(500)
         .build();
     for command in cles_dechiffrage {
         let cle_id = command.get_cle_ref()?;
         if let Err(e) = middleware.transmettre_commande(routage.clone(), command).await {
-            warn!("resubmit_backup_keys Error re-transmitting key id {}: {:?}", cle_id, e);
+            error!("resubmit_backup_keys Error re-transmitting key id {}: {:?}", cle_id, e);
         }
     }
 
