@@ -40,7 +40,7 @@ use url::Url;
 use crate::backup::CommandeBackup;
 use crate::mongo_dao::MongoDao;
 use crate::certificats::ValidateurX509;
-use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2};
+use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2, CommandeAjouterCleDomaine};
 use crate::common_messages::{BackupEvent, FilehostForInstanceRequest, RequestFilehostForInstanceResponse, RequeteFilehostItem};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
@@ -52,8 +52,6 @@ use crate::fiche_systeme::{FichePublique, RequeteFicheMillegrille};
 use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
 use crate::recepteur_messages::TypeMessage;
-
-// pub const PATH_FICHIERS_ARCHIVES: &str = "/var/opt/millegrilles/archives";
 
 pub const CONST_ARCHIVE_NEW_VERSION: &str = "NEW";
 
@@ -345,7 +343,7 @@ pub struct CleBackupDomaine {
 /// Recupere la cle de backup de transactions.
 /// En genere une nouvelle si elle n'existe pas ou est trop vieille.
 async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result<CleBackupDomaine, CommonError>
-    where M: GenerateurMessages + ValidateurX509 + CleChiffrageHandler
+    where M: MongoDao + GenerateurMessages + ValidateurX509 + CleChiffrageHandler
 {
     let requete_cleid_backup = RequeteCleIdBackup { domaine: domaine_backup.to_owned() };
     let routage_demande_cleid = RoutageMessageAction::builder(
@@ -366,8 +364,19 @@ async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result
     let cle_backup_domaine = match reponse_cle_id {
         Some(cle_id_backup) => {
             debug!("recuperer_cle_backup Charger la cle a partir du maitre des cles");
-            let cles = get_cles_rechiffrees_v2(
-                middleware, domaine_backup, vec![cle_id_backup.as_str()], Some(true)).await?;
+            let cles = match get_cles_rechiffrees_v2(
+                middleware, domaine_backup, vec![cle_id_backup.as_str()], Some(true)).await {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Key {} unknown to MaitreDesCles, read all available backup files and resubmit encrypted keys.", cle_id_backup);
+                    return if let Err(e2) = resubmit_backup_keys(middleware, domaine_backup, cle_id_backup.as_str()).await {
+                        Err(CommonError::String(format!("Backup of {} failed (missing key). Key resubmission failed: {:?}\nOriginal error: {:?}", domaine_backup, e2, e)))
+                    } else {
+                        Err(CommonError::String(format!("Backup of {} failed (missing key). Encrypted backup keys have been resubmitted - you can now decrypt manually and retry the backup.\nOriginal error: {:?}", domaine_backup, e)))
+                    }
+                }
+            };
+
             if cles.len() != 1 {
                 Err(format!("backup_v2.recuperer_cle_backup Mauvais nombre de cles recus: {:?}", cles.len()))?;
             }
@@ -1898,4 +1907,43 @@ pub async fn emettre_evenement_backup<M>(middleware: &M, domaine: &str, event: B
     if let Err(e) = middleware.emettre_evenement(routage, &event).await {
         error!("emettre_evenement_backup Erreur emission evenement backup: {:?}", e);
     }
+}
+
+async fn resubmit_backup_keys<M>(middleware: &M, domaine: &str, missing_key_id: &str) -> Result<(), CommonError>
+    where M: MongoDao + GenerateurMessages + ValidateurX509 + CleChiffrageHandler
+{
+    let path_backup = preparer_path_backup(middleware.get_path_backup(), domaine);
+    let idmg = middleware.get_enveloppe_signature().enveloppe_pub.idmg()?;
+    let fichiers = organiser_fichiers_backup(&path_backup, idmg.as_str(), true).await?;
+    let mut keys = HashSet::new();
+    let mut cles_dechiffrage = Vec::with_capacity(100);
+    let mut missing_key_found = false;
+    for f in fichiers {
+        let cle = f.header.cle_dechiffrage;
+        let cle_id = cle.get_cle_ref()?;
+        if keys.contains(&cle_id) {
+            continue  // Already handled
+        }
+        keys.insert(cle_id.clone());
+        if cle_id.as_str() == missing_key_id {
+            missing_key_found = true;
+        }
+        // Create a command to sve the encrypted key in MaitreDesCles (CA)
+        let command = CommandeAjouterCleDomaine {cles: HashMap::new(), signature: cle};
+        cles_dechiffrage.push(command);
+    }
+
+    info!("resubmit_backup_keys Resubmitting {} keys, missing key found? {}", cles_dechiffrage.len(), missing_key_found);
+
+    let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_AJOUTER_CLE_DOMAINES, vec![Securite::L1Public])
+        .timeout_blocking(3000)
+        .build();
+    for command in cles_dechiffrage {
+        let cle_id = command.get_cle_ref()?;
+        if let Err(e) = middleware.transmettre_commande(routage.clone(), command).await {
+            warn!("resubmit_backup_keys Error re-transmitting key id {}: {:?}", cle_id, e);
+        }
+    }
+
+    Ok(())
 }
