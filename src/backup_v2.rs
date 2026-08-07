@@ -86,7 +86,13 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
                 Ok(inner) => inner,
                 Err(e) => {
                     if ErrorKind::NotFound == e.kind() {
-                        File::create(&path_lockfile).expect("new lockfile")
+                        match File::create(&path_lockfile) {
+                            Ok(file) => file,
+                            Err(e) => {
+                                error!("thread_backup_v2 Error creating lockfile {:?} - SKIP backup", e);
+                                continue;
+                            }
+                        }
                     } else {
                         warn!("thread_backup_v2 Error opening lockfile {:?} - SKIP backup", e);
                         continue;
