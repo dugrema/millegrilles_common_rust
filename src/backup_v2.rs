@@ -106,11 +106,20 @@ where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleCh
         let cle_backup_domaine = match recuperer_cle_backup(middleware, commande.nom_domaine.as_str()).await {
             Ok(inner) => inner,
             Err(e) => {
-                error!("thread_backup_v2 Erreur chargement de la cle de backup domaine {}, SKIP: {:?}", commande.nom_domaine, e);
-                if let Err(e) = lock_file.unlock() {
-                    info!("thread_backup_v2 Error unlocking backup file: {:?}", e);
+                // An error occured when retrieving the backup key - not a big deal, each backup archive has a copy. We just create a new one.
+                match generer_cle_backup_domaine(middleware, commande.nom_domaine.as_str()).await {
+                    Ok(new_key) => {
+                        warn!("thread_backup_v2 Erreur chargement de la cle de backup domaine {}, une nouvelle cle a ete generee: {:?}", commande.nom_domaine, e);
+                        new_key
+                    }
+                    Err(e2) => {
+                        error!("thread_backup_v2 Erreur chargement de la cle de backup domaine {} : {:?} et erreur creation de nouvelle cle: {:?}", commande.nom_domaine, e, e2);
+                        if let Err(e) = lock_file.unlock() {
+                            info!("thread_backup_v2 Error unlocking backup file: {:?}", e);
+                        }
+                        continue;
+                    }
                 }
-                continue;
             }
         };
 
@@ -398,44 +407,7 @@ async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result
         }
         None => {
             debug!("recuperer_cle_backup Generer une nouvelle cle de backup");
-            let (info_chiffrage, cle_derivee) = generer_cle_v2(
-                middleware, vec![domaine_backup.to_owned()])?;
-            debug!("Info chiffrage nouvelle cle: {:?}", info_chiffrage);
-
-            // Sauvegarder la nouvelle cle aupres du maitre des cles
-            let signature = match info_chiffrage.signature {
-                Some(inner) => inner,
-                None => Err("backup_v2.recuperer_cle_backup SignatureDomaine non genere")?
-            };
-            let cle_ref = signature.get_cle_ref()?.to_string();
-            let cles = match info_chiffrage.cles {
-                Some(inner) => inner,
-                None => Err("backup_v2.recuperer_cle_backup Cles chiffrees non genere")?
-            };
-            let cles = cles.into_iter().collect();
-            ajouter_cles_domaine(middleware, signature.clone(), cles, None).await?;
-
-            // Enregistrer cle_id aupres de CoreTopologie
-            let routage_enregistrer_cleid = RoutageMessageAction::builder(
-                DOMAINE_TOPOLOGIE, "setCleidBackupDomaine", vec![Securite::L3Protege]).build();
-            let commande_enregistrer_cleid = CommandeEnregistrerCleidBackup {
-                domaine: domaine_backup.to_owned(), cle_id: Some(cle_ref.clone()), reset: None };
-            if let Some(TypeMessage::Valide(message)) = middleware.transmettre_commande(routage_enregistrer_cleid, &commande_enregistrer_cleid).await? {
-                let message_ref = message.message.parse()?.contenu()?;
-                let reponse: ReponseCommande = message_ref.deserialize()?;
-                if reponse.ok != Some(true) {
-                    Err("backup_v2.recuperer_cle_backup Erreur enregistrement cle_id backup aupres de CoreTopologie (reponse false)")?
-                }
-            } else {
-                Err("backup_v2.recuperer_cle_backup Erreur enregistrement cle_id backup aupres de CoreTopologie")?
-            };
-
-            // Retourner la cle secrete
-            CleBackupDomaine {
-                cle: cle_derivee.secret,
-                cle_id: cle_ref,
-                signature_cle: signature,
-            }
+            generer_cle_backup_domaine(middleware, domaine_backup).await?
         }
     };
 
@@ -1946,4 +1918,47 @@ async fn resubmit_backup_keys<M>(middleware: &M, domaine: &str, missing_key_id: 
     }
 
     Ok(())
+}
+
+async fn generer_cle_backup_domaine<M>(middleware: &M, domaine: &str) -> Result<CleBackupDomaine, CommonError>
+    where M: GenerateurMessages + CleChiffrageHandler
+{
+    let (info_chiffrage, cle_derivee) = generer_cle_v2(
+        middleware, vec![domaine.to_owned()])?;
+    debug!("Info chiffrage nouvelle cle: {:?}", info_chiffrage);
+
+    // Sauvegarder la nouvelle cle aupres du maitre des cles
+    let signature = match info_chiffrage.signature {
+        Some(inner) => inner,
+        None => Err("backup_v2.recuperer_cle_backup SignatureDomaine non genere")?
+    };
+    let cle_ref = signature.get_cle_ref()?.to_string();
+    let cles = match info_chiffrage.cles {
+        Some(inner) => inner,
+        None => Err("backup_v2.recuperer_cle_backup Cles chiffrees non genere")?
+    };
+    let cles = cles.into_iter().collect();
+    ajouter_cles_domaine(middleware, signature.clone(), cles, None).await?;
+
+    // Enregistrer cle_id aupres de CoreTopologie
+    let routage_enregistrer_cleid = RoutageMessageAction::builder(
+        DOMAINE_TOPOLOGIE, "setCleidBackupDomaine", vec![Securite::L3Protege]).build();
+    let commande_enregistrer_cleid = CommandeEnregistrerCleidBackup {
+        domaine: domaine.to_owned(), cle_id: Some(cle_ref.clone()), reset: None };
+    if let Some(TypeMessage::Valide(message)) = middleware.transmettre_commande(routage_enregistrer_cleid, &commande_enregistrer_cleid).await? {
+        let message_ref = message.message.parse()?.contenu()?;
+        let reponse: ReponseCommande = message_ref.deserialize()?;
+        if reponse.ok != Some(true) {
+            Err("backup_v2.recuperer_cle_backup Erreur enregistrement cle_id backup aupres de CoreTopologie (reponse false)")?
+        }
+    } else {
+        Err("backup_v2.recuperer_cle_backup Erreur enregistrement cle_id backup aupres de CoreTopologie")?
+    };
+
+    // Retourner la cle secrete
+    Ok(CleBackupDomaine {
+        cle: cle_derivee.secret,
+        cle_id: cle_ref,
+        signature_cle: signature,
+    })
 }
