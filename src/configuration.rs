@@ -142,7 +142,7 @@ fn charger_configuration_pki() -> Result<ConfigurationPki, String> {
 
     // Preparer enveloppe privee
     let enveloppe_privee = match custom_certpath {
-        true => {
+        false => {
             // We don't have a custom certificate path, try to load key/cert from same file
             match EnveloppePrivee::from_files_combined(&keyfile, &ca_certfile) {
                 Ok(c) => c,
@@ -152,7 +152,7 @@ fn charger_configuration_pki() -> Result<ConfigurationPki, String> {
                 }
             }
         }
-        false => EnveloppePrivee::from_files(&certfile, &keyfile, &ca_certfile).expect("Erreur chargement cert/cle X509")
+        true => EnveloppePrivee::from_files(&certfile, &keyfile, &ca_certfile).expect("Erreur chargement cert/cle X509")
     };
 
     // Perform complete certificate validation with CA for currrent date
