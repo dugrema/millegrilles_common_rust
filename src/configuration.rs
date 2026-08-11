@@ -1,9 +1,3 @@
-use std::fs::{File, Permissions, read_to_string};
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use log::{debug, info};
 use millegrilles_cryptographie::x509::EnveloppePrivee;
 use multibase;
@@ -11,10 +5,15 @@ use openssl::pkcs12::Pkcs12;
 use openssl::stack::Stack;
 use openssl::x509::X509;
 use rand::Rng;
+use std::fs::{File, Permissions, read_to_string};
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use crate::certificats::{build_store_path, charger_enveloppe_privee, ValidateurX509, ValidateurX509Impl};
-use url::Url;
+use crate::certificats::{ValidateurX509, ValidateurX509Impl, build_store_path};
 use crate::constantes::{DEFAULT_BACKUP_PATH, ENV_BACKUP_PATH};
+use url::Url;
 
 pub trait ConfigMessages: IsConfigNoeud + Send + Sync {
     fn get_configuration_mq(&self) -> &ConfigurationMq;
@@ -132,16 +131,36 @@ fn charger_configuration_pki() -> Result<ConfigurationPki, String> {
     let validateur: Arc<ValidateurX509Impl> = Arc::new(build_store_path(ca_certfile.as_path()).expect("Erreur chargement store X509"));
 
     let keyfile = PathBuf::from(std::env::var("KEYFILE").unwrap_or_else(|_| "/run/secrets/key.pem".into()));
-    let certfile = PathBuf::from(std::env::var("CERTFILE").unwrap_or_else(|_| "/run/secrets/cert.pem".into()));
+    // let certfile = PathBuf::from(std::env::var("CERTFILE").unwrap_or_else(|_| "/run/secrets/cert.pem".into()));
+
+    let (certfile, custom_certpath) = match std::env::var("CERTFILE") {
+        Ok(p) => (PathBuf::from(p), true),
+        Err(_e) => {
+            ("/run/secrets/key.pem".into(), false)
+        }
+    };
 
     // Preparer enveloppe privee
-    let enveloppe_privee = Arc::new(
-        charger_enveloppe_privee(
-            certfile.as_path(),
-            keyfile.as_path(),
-            validateur.clone()
-        ).expect("Erreur chargement cle ou certificat")
-    );
+    let enveloppe_privee = match custom_certpath {
+        true => {
+            // We don't have a custom certificate path, try to load key/cert from same file
+            match EnveloppePrivee::from_files_combined(&keyfile, &ca_certfile) {
+                Ok(c) => c,
+                Err(_e) => {
+                    // The key/cert may not be combined - try loading separately
+                    EnveloppePrivee::from_files(&certfile, &keyfile, &ca_certfile).expect("Erreur chargement cert/cle X509")
+                }
+            }
+        }
+        false => EnveloppePrivee::from_files(&certfile, &keyfile, &ca_certfile).expect("Erreur chargement cert/cle X509")
+    };
+
+    // Perform complete certificate validation with CA for currrent date
+    if ! validateur.valider_chaine(&enveloppe_privee.enveloppe_pub, None, true).expect("Error verifying certificate") {
+        panic!("Invalid certificate for module");
+    }
+
+    let enveloppe_privee = Arc::new(enveloppe_privee);
 
     Ok(ConfigurationPki {
         keyfile,
