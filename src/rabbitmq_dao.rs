@@ -1211,7 +1211,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 
     let options = QueueDeclareOptions {
         passive: false,
-        durable: false,
+        durable: true,
         exclusive: false,
         auto_delete: true,
         nowait: false,
