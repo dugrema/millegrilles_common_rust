@@ -7,7 +7,12 @@ use crate::recepteur_messages::TypeMessage;
 use crate::certificats::{EnveloppeCertificat, EnveloppePrivee};
 use crate::configuration::{ConfigMessages, IsConfigNoeud};
 use crate::formatteur_messages::FormatteurMessage;
+use crate::chiffrage_cle::CleChiffrageCache;
+use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use mongodb::{bson::Document, Collection};
+use std::sync::Arc;
+
+
 
 #[async_trait]
 impl DatabaseService for MiddlewareMessage {
@@ -30,7 +35,30 @@ impl MessagingService for MiddlewareMessage {
 #[async_trait]
 impl SecurityService for MiddlewareMessage {
     async fn get_publickeys_chiffrage(&self) -> Vec<EnveloppeCertificat> {
-        self.get_publickeys_chiffrage().await.into_iter().map(|c| c.into()).collect()
+        ChiffrageService::get_publickeys_chiffrage(self).into_iter().map(|c| (*c).clone()).collect()
+    }
+}
+
+#[async_trait]
+impl CertificatService for MiddlewareMessage {
+    async fn emettre_certificat(&self, _routage: RoutageMessageAction) -> Result<(), crate::error::Error> {
+        // Placeholder implementation
+        Err(crate::error::Error::String("CertificatService::emitre_certificat not implemented yet".to_string()))
+    }
+}
+
+#[async_trait]
+impl ChiffrageService for MiddlewareMessage {
+    fn get_publickeys_chiffrage(&self) -> Vec<Arc<EnveloppeCertificat>> {
+        CleChiffrageHandler::get_publickeys_chiffrage(&self.cle_chiffrage_handler)
+    }
+
+    fn entretien_cle_chiffrage(&self) {
+        self.cle_chiffrage_handler.entretien_cle_chiffrage();
+    }
+
+    fn ajouter_certificat_chiffrage(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), crate::error::Error> {
+        self.cle_chiffrage_handler.ajouter_certificat_chiffrage(certificat).map_err(|e| crate::error::Error::String(e.to_string()))
     }
 }
 
@@ -58,6 +86,8 @@ pub struct MiddlewareContext<'a> {
     pub database: &'a dyn DatabaseService,
     pub messaging: &'a dyn MessagingService,
     pub security: &'a dyn SecurityService,
+    pub certificat: &'a dyn CertificatService,
+    pub chiffrage: &'a dyn ChiffrageService,
     pub config: &'a dyn ConfigService,
     pub format: &'a dyn FormatService,
     pub backup: &'a dyn BackupService,
@@ -70,6 +100,8 @@ impl<'a> MiddlewareContext<'a> {
             database: middleware,
             messaging: middleware,
             security: middleware,
+            certificat: middleware,
+            chiffrage: middleware,
             config: middleware,
             format: middleware,
             backup: middleware,
