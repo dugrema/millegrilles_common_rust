@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crate::v3::traits::*;
-use crate::middleware::{MiddlewareMessage, RedisTrait};
+use crate::middleware::{MiddlewareMessage, RedisTrait, IsConfigurationPki};
 use crate::redis_dao::RedisDao;
 use crate::generateur_messages::{RoutageMessageAction, GenerateurMessages};
 use crate::recepteur_messages::TypeMessage;
@@ -41,9 +41,19 @@ impl SecurityService for MiddlewareMessage {
 
 #[async_trait]
 impl CertificatService for MiddlewareMessage {
-    async fn emettre_certificat(&self, _routage: RoutageMessageAction) -> Result<(), crate::error::Error> {
-        // Placeholder implementation
-        Err(crate::error::Error::String("CertificatService::emitre_certificat not implemented yet".to_string()))
+    async fn emettre_certificat(&self, routage: RoutageMessageAction) -> Result<(), crate::error::Error> {
+        let enveloppe_privee = self.ressources.configuration.get_configuration_pki().get_enveloppe_privee();
+        let enveloppe_certificat = enveloppe_privee.enveloppe_pub.as_ref();
+        let message = crate::middleware::formatter_message_certificat(enveloppe_certificat)?;
+
+        if let Some(redis) = self.redis.as_ref() {
+            if let Err(e) = redis.save_certificat(enveloppe_certificat).await {
+                log::warn!("MiddlewareDb.emettre_certificat Erreur sauvegarde certificat local sous redis : {:?}", e);
+            }
+        }
+
+        self.ressources.generateur_messages.emettre_evenement(routage, &message).await?;
+        Ok(())
     }
 }
 
