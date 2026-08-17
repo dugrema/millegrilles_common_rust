@@ -11,11 +11,10 @@ use crate::chiffrage_cle::CleChiffrageCache;
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use mongodb::{bson::Document, Collection};
 use std::sync::Arc;
-
-
+use crate::middleware_db::MiddlewareDb;
 
 #[async_trait]
-impl DatabaseService for MiddlewareMessage {
+impl DatabaseService for MiddlewareDb {
     async fn get_collection(&self, name: &str) -> Result<Collection<Document>, crate::error::Error> {
         self.get_collection(name).await.map_err(|e| crate::error::Error::String(format!("{:?}", e)))
     }
@@ -90,32 +89,46 @@ impl FormatService for MiddlewareMessage {
     }
 }
 
-impl BackupService for MiddlewareMessage {}
+impl BackupService for MiddlewareDb {}
 
 pub struct MiddlewareContext<'a> {
-    pub database: &'a dyn DatabaseService,
     pub messaging: &'a dyn MessagingService,
     pub security: &'a dyn SecurityService,
     pub certificat: &'a dyn CertificatService,
     pub chiffrage: &'a dyn ChiffrageService,
     pub config: &'a dyn ConfigService,
     pub format: &'a dyn FormatService,
-    pub backup: &'a dyn BackupService,
+    pub backup: Option<&'a dyn BackupService>,
+    pub database: Option<&'a dyn DatabaseService>,
     pub redis: Option<&'a RedisDao>,
 }
 
 impl<'a> MiddlewareContext<'a> {
     pub fn new(middleware: &'a MiddlewareMessage) -> Self {
         Self {
-            database: middleware,
             messaging: middleware,
             security: middleware,
             certificat: middleware,
             chiffrage: middleware,
             config: middleware,
             format: middleware,
-            backup: middleware,
+            backup: None,
+            database: None,
             redis: middleware.get_redis(),
         }
     }
+
+    // pub fn with_db(middleware: &'a MiddlewareDb) -> Self {
+    //     Self {
+    //         messaging: middleware,
+    //         security: middleware,
+    //         certificat: middleware,
+    //         chiffrage: middleware,
+    //         config: middleware,
+    //         format: middleware,
+    //         backup: Some(middleware),
+    //         database: Some(middleware),
+    //         redis: middleware.get_redis(),
+    //     }
+    // }
 }
