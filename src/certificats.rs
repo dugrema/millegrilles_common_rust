@@ -36,7 +36,7 @@ use crate::constantes::*;
 use std::convert::TryInto;
 
 
-use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille};
+pub use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee, ExtensionsMilleGrille};
 use millegrilles_cryptographie::messages_structs::MessageValidable;
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction};

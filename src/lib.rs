@@ -9,6 +9,7 @@ pub mod formatteur_messages;
 pub mod generateur_messages;
 pub mod hachages;
 pub mod middleware;
+pub mod v3;
 pub mod mongo_dao;
 pub mod rabbitmq_dao;
 pub mod recepteur_messages;

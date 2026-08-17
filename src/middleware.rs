@@ -1,8 +1,6 @@
-use std::convert::TryFrom;
 use std::error::Error;
 use std::str::from_utf8;
 use std::sync::Arc;
-
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream::FuturesUnordered;
@@ -144,10 +142,10 @@ pub fn configurer() -> MiddlewareRessources {
 
 // Middleware de base avec validateur et generateur de messages
 pub struct MiddlewareMessage {
-    ressources: MiddlewareRessources,
-    redis: Option<RedisDao>,
+    pub ressources: MiddlewareRessources,
+    pub redis: Option<RedisDao>,
     // chiffrage_factory: Arc<ChiffrageFactoryImpl>,
-    cle_chiffrage_handler: CleChiffrageHandlerImpl,
+    pub cle_chiffrage_handler: CleChiffrageHandlerImpl,
 }
 
 impl MiddlewareMessages for MiddlewareMessage {}
