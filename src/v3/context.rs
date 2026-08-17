@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crate::v3::traits::*;
-use crate::middleware::{MiddlewareMessage, RedisTrait, IsConfigurationPki};
+use crate::middleware::{MiddlewareMessage, RedisTrait};
 use crate::redis_dao::RedisDao;
 use crate::generateur_messages::{RoutageMessageAction, GenerateurMessages};
 use crate::recepteur_messages::TypeMessage;
