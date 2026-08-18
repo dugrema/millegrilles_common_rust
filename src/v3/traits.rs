@@ -52,11 +52,6 @@ pub trait SecurityService: Send + Sync {
 }
 
 #[async_trait]
-pub trait CertificatService: Send + Sync {
-    async fn emettre_certificat(&self, routage: RoutageMessageAction) -> Result<(), Error>;
-}
-
-#[async_trait]
 pub trait ChiffrageService: Send + Sync {
     fn get_publickeys_chiffrage(&self) -> Vec<Arc<EnveloppeCertificat>>;
     fn entretien_cle_chiffrage(&self);
@@ -76,5 +71,3 @@ pub trait FormatService: Send + Sync {
 
 #[async_trait]
 pub trait BackupService: Send + Sync {}
-
-pub trait RedisService: crate::middleware::RedisTrait {}

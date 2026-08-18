@@ -1,18 +1,15 @@
-use std::sync::Arc;
-use crate::v3::traits::*;
+use crate::certificats::build_store_path_v2;
+use crate::chiffrage_cle::CleChiffrageHandlerImpl;
+use crate::configuration::{ConfigMessages, ConfigurationMessages, IsConfigNoeud, charger_configuration};
+use crate::rabbitmq_dao::RabbitMqExecutor;
+use crate::redis_dao::RedisDao;
 use crate::v3::impls::config_service::ConfigServiceImpl;
 use crate::v3::impls::messaging_service::MessagingServiceImpl;
 use crate::v3::impls::security_service::SecurityServiceImpl;
-use crate::configuration::{charger_configuration, ConfigMessages, ConfigurationMessages, ConfigurationMessagesDb, IsConfigNoeud};
-use crate::redis_dao::RedisDao;
-use lapin::{Connection, ConnectionProperties};
+use crate::v3::traits::*;
 use log::info;
 use millegrilles_cryptographie::x509::EnveloppePrivee;
-use millegrilles_cryptographie::x509_store::ValidateurX509Impl;
-use url::Url;
-use crate::certificats::{build_store_path_v2, VerificateurPermissions};
-use crate::chiffrage_cle::CleChiffrageHandlerImpl;
-use crate::rabbitmq_dao::RabbitMqExecutor;
+use std::sync::Arc;
 
 // Dummy for FormatService since it's required by MiddlewareContext
 struct DummyFormatService;
@@ -58,7 +55,6 @@ impl PocCompositionRoot {
         let security_impl = Arc::new(SecurityServiceImpl::new(
             validator,
             CleChiffrageHandlerImpl::new(),
-            messaging_impl.clone(),
             config.clone(),
         ));
 
@@ -73,7 +69,6 @@ impl PocCompositionRoot {
             messaging_impl,
             security_impl.clone(),
             security_impl.clone(),
-            security_impl,
             config_impl,
             format_impl,
             redis_dao,
