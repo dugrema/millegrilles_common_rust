@@ -227,18 +227,6 @@ pub trait MqMessageSendInformation {
     fn get_reqly_q_name(&self) -> Option<String>;
 }
 
-// pub trait MqRequeteCertificat {
-//     async fn request_certificat<M,S>(&self, middleware: &M, fingerprint: S) -> Result<EnveloppeCertificat, String>
-//         where
-//             S: Into<String>,
-//             M: GenerateurMessages + ValidateurX509;
-// }
-
-// pub struct RabbitMqExecutorConfig {
-//     pub executor: RabbitMqExecutor,
-//     pub securite: Securite,
-// }
-
 pub struct RabbitMqExecutor {
     connexion: Mutex<Option<Arc<Connection>>>,
     named_queues: Mutex<HashMap<String, NamedQueue>>,
@@ -1653,9 +1641,9 @@ pub enum MessageInterne {
 #[derive(Clone, Debug)]
 pub struct MessageOut {
     pub message: MessageMilleGrillesBufferDefault,
-    message_id: String,
-    type_message: TypeMessageOut,
-    attente_expiration: Option<DateTime<Utc>>,
+    pub message_id: String,
+    pub type_message: TypeMessageOut,
+    pub attente_expiration: Option<DateTime<Utc>>,
 }
 
 impl MessageOut {
