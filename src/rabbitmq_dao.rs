@@ -136,8 +136,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     ).await
 }
 
-pub async fn emettre_certificat_compte<C>(configuration: &C) -> Result<(), Box<dyn Error>>
-    where C: ConfigMessages
+pub async fn emettre_certificat_compte(configuration: &dyn ConfigMessages) -> Result<(), Box<dyn Error>>
 {
     const MTLS_PORT: u16 = 444;
     const COMMANDE: &str = "administration/ajouterCompte";
