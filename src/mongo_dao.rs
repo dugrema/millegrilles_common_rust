@@ -1,25 +1,22 @@
-use std::path::PathBuf;
-
+use crate::bson::Array;
+use crate::certificats::ValidateurX509;
+use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
+use crate::error::Error as CommonError;
+use crate::rabbitmq_dao::emettre_certificat_compte;
 use async_trait::async_trait;
 use log::{debug, error, info};
-use mongodb::{bson::doc, Client, Collection, Cursor, Database, ClientSession};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
 use mongodb::options::{Acknowledgment, AuthMechanism, ClientOptions, Credential, ReadConcern, ServerAddress, SessionOptions, TlsOptions, TransactionOptions, WriteConcern};
+use mongodb::{Client, ClientSession, Collection, Cursor, Database, bson::doc};
 use serde::Serialize;
-use serde_json::Value;
-use tokio_stream::StreamExt;
-
-use crate::certificats::ValidateurX509;
-use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
 use serde::de::DeserializeOwned;
+use serde_json::Value;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::vec::IntoIter;
-
-use crate::bson::Array;
-use crate::rabbitmq_dao::emettre_certificat_compte;
-use crate::error::Error as CommonError;
+use tokio_stream::StreamExt;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
@@ -313,40 +310,11 @@ impl CurseurStream for CurseurMongo {
     }
 }
 
-// pub fn convertir_value_mongodate(date: Value) -> Result<DateTime<Utc>, String> {
-//     match date.as_object() {
-//         Some(inner) => match inner.get("$date") {
-//             Some(inner) => match inner.as_object() {
-//                 Some(inner) => match inner.get("$numberLong") {
-//                     Some(inner) => match inner.as_str() {
-//                         Some(inner) => {
-//                             match inner.parse::<i64>() {
-//                                 Ok(ms) => {
-//                                     match DateTime::from_timestamp(ms/1000, 0) {
-//                                         Some(inner) => Ok(inner),
-//                                         None => Err(format!("convertir_value_mongodate Erreur conversion date (absente)"))
-//                                     }
-//                                 },
-//                                 Err(e) => Err(format!("convertir_value_mongodate {:?}", e))
-//                             }
-//                         },
-//                         None => Err("convertir_value_mongodate Format n'est str".to_string())
-//                     },
-//                     None => Err("convertir_value_mongodate $date.$numberLong absent".to_string()),
-//                 },
-//                 None => Err("convertir_value_mongodate format $date n'est pas object".to_string()),
-//             },
-//             None => Err("convertir_value_mongodate $date absent".to_string()),
-//         },
-//         None => Err("convertir_value_mongodate top level n'est pas object".to_string()),
-//     }
-// }
-
 // Source : https://github.com/mongodb/bson-rust/issues/303
 pub mod opt_chrono_datetime_as_bson_datetime {
     use chrono::Utc;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use mongodb::bson;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     #[derive(Serialize, Deserialize)]
     struct Helper(
@@ -374,11 +342,11 @@ pub mod opt_chrono_datetime_as_bson_datetime {
 }
 
 pub mod map_chrono_datetime_as_bson_datetime {
-    use std::collections::HashMap;
     use chrono::Utc;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use serde::ser::SerializeMap;
     use mongodb::bson;
+    use serde::ser::SerializeMap;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
 
     #[derive(Serialize, Deserialize)]
     struct Helper(
@@ -427,10 +395,10 @@ pub mod map_chrono_datetime_as_bson_datetime {
 }
 
 pub mod map_opt_chrono_datetime_as_bson_datetime {
-    use std::collections::HashMap;
     use chrono::Utc;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde::ser::SerializeMap;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
 
     #[derive(Serialize, Deserialize)]
     struct Helper(
@@ -500,10 +468,10 @@ pub mod map_opt_chrono_datetime_as_bson_datetime {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
-    use std::error::Error;
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+    use std::error::Error;
 
     #[derive(Serialize, Deserialize, Debug)]
     struct TestMap {
