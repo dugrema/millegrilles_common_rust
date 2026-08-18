@@ -30,6 +30,7 @@ impl From<ConfigurationNoeud> for RedisConfiguration {
     }
 }
 
+#[derive(Clone)]
 pub struct RedisDao {
     _url_connexion: String,
     client: Client,
@@ -210,38 +211,6 @@ impl RedisDao {
         Ok(con)
     }
 
-    // pub async fn get_cleversca_batch<S>(&self, fingerprint: S, taille_batch: Option<usize>) -> Result<CurseurRedis<'static>, Box<dyn Error>>
-    //     where S: AsRef<str>
-    // {
-    //     let cle = format!("cle_versCA:{}", fingerprint.as_ref());
-    //     let taille_batch_effective = match taille_batch {
-    //         Some(t) => t,
-    //         None => 1000
-    //     };
-    //
-    //     let mut con = self.client.get_async_connection().await?;
-    //
-    //     // Selectioner DB 3 pour cles
-    //     redis::cmd("SELECT").arg(REDIS_DB_ID).query_async(&mut con).await?;
-    //
-    //     CurseurRedis::try_new(con, cle).await
-    //
-    //     // let mut iter_scan: redis::AsyncIter<String> = redis::cmd("SSCAN")
-    //     //     .arg(cle).cursor_arg(0).clone().iter_async(&mut con).await?;
-    //     //
-    //     // Ok(iter_scan)
-    //
-    //     // let mut cles = Vec::new();
-    //     // while let Some(hachage_bytes) = iter_scan.next_item().await {
-    //     //     cles.push(hachage_bytes);
-    //     //     if cles.len() >= taille_batch_effective {
-    //     //         break
-    //     //     }
-    //     // }
-    //     //
-    //     // Ok(cles)
-    // }
-
     pub async fn ajouter_cle_manquante<S>(&self, enveloppe_privee: &EnveloppePrivee, hachage_bytes: S)
         -> Result<(), crate::error::Error>
         where S: AsRef<str>
@@ -292,62 +261,3 @@ pub struct RediCertificatV1 {
     pub pems: Vec<String>,
     pub ca: Option<String>,
 }
-
-// pub struct CurseurRedis<'a> {
-//     con: Connection,
-//     pub iter: Option<redis::AsyncIter<'a, String>>,
-// }
-//
-// impl<'a> CurseurRedis<'a> {
-//
-//     pub async fn try_new<S>(mut con: Connection, cle_param: S) -> Result<CurseurRedis<'a>, Box<dyn Error>>
-//         where S: Into<String>
-//     {
-//         let cle = cle_param.into();
-//
-//         let mut curseur = CurseurRedis { con, iter: None };
-//
-//         let iter_scan: redis::AsyncIter<String> = redis::cmd("SSCAN")
-//             .arg(cle).cursor_arg(0).clone().iter_async::<'a>(&mut curseur.con).await?;
-//         curseur.iter = Some(iter_scan);
-//
-//         Ok(curseur)
-//     }
-// }
-
-// #[cfg(test)]
-// mod test_integration_redis_dao {
-//     use super::*;
-//     use crate::test_setup::setup;
-//     use crate::certificats::certificats_tests::charger_enveloppe_privee_env;
-//
-//     const URL_REDIS: &str = "redis://localhost:6379";
-//
-//     #[tokio::test]
-//     async fn connecter_redis() {
-//         setup("connecter_redis");
-//         let client = RedisDao::new(Some(URL_REDIS)).expect("client");
-//         // let mut con = client.get_async_connection().await?;
-//         let resultat = client.liste_certificats_fingerprints().await.expect("resultat");
-//         info!("Resultat : {:?}", resultat);
-//     }
-//
-//     #[tokio::test]
-//     async fn get_certificat() {
-//         setup("get_certificat");
-//         let client = RedisDao::new(Some(URL_REDIS)).expect("client");
-//         let resultat = client.get_certificat("zQmdmwoc9cync8afXBXvnBar2yHyZihVnHvYrt3zSG4wHoX").await.expect("resultat");
-//         info!("Resultat : {:?}", resultat);
-//     }
-//
-//     #[tokio::test]
-//     async fn set_certificat() {
-//         setup("set_certificat");
-//         let (_, enveloppe) = charger_enveloppe_privee_env();
-//         let cert = enveloppe.enveloppe;
-//
-//         let client = RedisDao::new(Some(URL_REDIS)).expect("client");
-//
-//         let _ = client.save_certificat(cert.as_ref()).await.expect("resultat");
-//     }
-// }

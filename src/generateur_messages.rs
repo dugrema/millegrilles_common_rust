@@ -256,124 +256,7 @@ impl GenerateurMessagesImpl {
             dev,
         }
     }
-
-    // async fn emettre_message_serializable<M>(
-    //     &self,
-    //     routage: RoutageMessageAction,
-    //     message: &M,
-    //     blocking: bool,
-    //     type_message_out: TypeMessageOut
-    // ) -> Result<Option<TypeMessage>, String>
-    // where
-    //     M: Serialize + Send + Sync,
-    // {
-    //     let partition = match &routage.partition {
-    //         Some(p) => Some(p.as_str()),
-    //         None => None
-    //     };
-    //     let user_id = match &routage.user_id {
-    //         Some(p) => Some(p.as_str()),
-    //         None => None
-    //     };
-    //     let message_signe = match self.formatter_message(
-    //         type_message_out.clone().into(),
-    //         message,
-    //         Some(routage.domaine.as_str()),
-    //         Some(routage.action.as_str()),
-    //         partition,
-    //         user_id,
-    //         None,
-    //         routage.ajouter_ca.clone()
-    //     ) {
-    //         Ok(m) => m,
-    //         Err(e) => Err(format!("Erreur soumission transaction : {:?}", e))?,
-    //     };
-    //
-    //     self.emettre_message_millegrille(routage, blocking, type_message_out, message_signe).await
-    // }
-
-    // async fn emettre(&self, message: MessageOut) -> Result<Option<sync::oneshot::Receiver<TypeMessage>>, String> {
-    //
-    //     if self.get_mode_regeneration() {
-    //         // Rien a faire
-    //         return Ok(None)
-    //     }
-    //
-    //     self.rabbitmq.send_out(message).await
-    // }
 }
-
-// pub fn build_message_action<R,M>(routage: R, message: M, enveloppe_privee: &EnveloppePrivee)
-//     -> Result<(MessageMilleGrillesBufferDefault, String), String>
-//     where R: Into<RoutageMessageAction>, M: Serialize + Send + Sync
-// {
-//     let routage = routage.into();
-//     let contenu = match serde_json::to_string(&message) {
-//         Ok(inner) => inner,
-//         Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
-//     };
-//
-//     let estampille = Utc::now();
-//
-//     let routage_message: RoutageMessage = routage.clone().into();
-//
-//     let mut cle_privee_u8 = SecretKey::default();
-//     match enveloppe_privee.cle_privee().raw_private_key() {
-//         Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
-//         Err(e) => Err(format!("build_message_action Erreur raw_private_key {:?}", e))?
-//     };
-//     let signing_key = SigningKey::from_bytes(&cle_privee_u8);
-//
-//     let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
-//     let pem_vec = enveloppe_privee.enveloppe.get_pem_vec_extracted();
-//     certificat.extend(pem_vec.iter().map(|s| s.as_str()));
-//
-//     let generateur = MessageMilleGrillesBuilderDefault::new(
-//         millegrilles_cryptographie::messages_structs::MessageKind::Commande, contenu.as_str(), estampille, &signing_key)
-//         .routage(routage_message)
-//         .certificat(certificat);
-//
-//     // Allouer un Vec et serialiser le message signe.
-//     let mut buffer = Vec::new();
-//     let message_ref = generateur.build_into_alloc(&mut buffer)?;
-//
-//     // Retourner le nouveau message
-//     Ok((MessageMilleGrillesBufferDefault::from(buffer), message_ref.id.to_owned()))
-// }
-//
-// pub fn build_reponse<M>(message: M, enveloppe_privee: &EnveloppePrivee)
-//                         -> Result<(MessageMilleGrillesBufferDefault, String), String>
-//     where M: Serialize + Send + Sync
-// {
-//     let contenu = match serde_json::to_string(&message) {
-//         Ok(inner) => inner,
-//         Err(e) => Err(format!("Erreur serde::to_vec : {:?}", e))?
-//     };
-//
-//     let estampille = Utc::now();
-//
-//     let mut cle_privee_u8 = SecretKey::default();
-//     match enveloppe_privee.cle_privee().raw_private_key() {
-//         Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
-//         Err(e) => Err(format!("build_reponse Erreur raw_private_key {:?}", e))?
-//     };
-//     let signing_key = SigningKey::from_bytes(&cle_privee_u8);
-//
-//     let mut certificat: heapless::Vec<&str, 4> = heapless::Vec::new();
-//     let pem_vec = enveloppe_privee.enveloppe.get_pem_vec_extracted();
-//     certificat.extend(pem_vec.iter().map(|s| s.as_str()));
-//
-//     let generateur = MessageMilleGrillesBuilderDefault::new(
-//         millegrilles_cryptographie::messages_structs::MessageKind::Commande, contenu.as_str(), estampille, &signing_key)
-//         .certificat(certificat);
-//
-//     // Allouer un Vec et serialiser le message signe.
-//     let mut buffer = Vec::new();
-//     let message_ref = generateur.build_into_alloc(&mut buffer)?;
-//
-//     // Retourner le nouveau message
-//     Ok((MessageMilleGrillesBufferDefault::from(buffer), message_ref.id.to_owned()))
-// }
 
 #[async_trait]
 impl GenerateurMessages for GenerateurMessagesImpl {
@@ -408,10 +291,6 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     async fn transmettre_requete<R,M>(&self, routage: R, message: M) -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        // if self.get_mode_regeneration() {  // Rien a faire
-        //     return Ok(Some(TypeMessage::Regeneration))
-        // }
-
         let mut routage = routage.into();
 
         let blocking = routage.blocking.clone().unwrap_or_else(|| true);
@@ -441,11 +320,6 @@ impl GenerateurMessages for GenerateurMessagesImpl {
     async fn soumettre_transaction<R,M>(&self, routage: R, message: M) -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-
-        // if self.get_mode_regeneration() {  // Rien a faire
-        //     return Ok(Some(TypeMessage::Regeneration))
-        // }
-
         let mut routage = routage.into();
 
         let (message, message_id) = {
@@ -459,18 +333,12 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         let type_message = TypeMessageOut::Transaction(routage);
 
         self.emettre_message(type_message, message).await
-
-        // self.emettre_message_serializable(routage, message, blocking, TypeMessageOut::Transaction).await
     }
 
     async fn transmettre_commande<R,M>(&self, routage: R, message: M)
         -> Result<Option<TypeMessage>, crate::error::Error>
         where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        // if self.get_mode_regeneration() {  // Rien a faire
-        //     return Ok(Some(TypeMessage::Regeneration))
-        // }
-
         let mut routage = routage.into();
 
         let (message, message_id) = {
@@ -484,30 +352,11 @@ impl GenerateurMessages for GenerateurMessagesImpl {
         let type_message = TypeMessageOut::Commande(routage);
 
         self.emettre_message(type_message, message).await
-
-        // self.emettre_message_serializable(routage, message, blocking, TypeMessageOut::Commande).await
     }
 
     async fn repondre<R,M>(&self, routage: R, message: M) -> Result<(), crate::error::Error>
         where R: Into<RoutageMessageReponse> + Send, M: Serialize + Send + Sync
     {
-        // if self.get_mode_regeneration() {
-        //     // Rien a faire
-        //     return Ok(())
-        // }
-
-        // let routage = routage.into();
-        //
-        // let message_out = MessageOut::new_reply(
-        //     message,
-        //     routage.correlation_id.as_str(),
-        //     routage.reply_to.as_str()
-        // );
-        //
-        // self.rabbitmq.send_out(message_out).await?;
-        //
-        // Ok(())
-
         let (message, _message_id) = {
             let guard_enveloppe_privee = self.enveloppe_privee.lock().expect("lock");
             build_reponse(message, guard_enveloppe_privee.as_ref())?
@@ -548,14 +397,6 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             }
         };
 
-        // let attendre = match type_message_out {
-        //     TypeMessageOut::Requete => match routage.blocking {Some(b) => b || blocking, None => blocking},
-        //     TypeMessageOut::Commande => match routage.blocking {Some(b) => b || blocking, None => blocking},
-        //     TypeMessageOut::Transaction => match routage.blocking {Some(b) => b || blocking, None => blocking},
-        //     TypeMessageOut::Reponse => false,
-        //     TypeMessageOut::Evenement => false,
-        // };
-
         let attente_expiration = match attendre {
             true => {
                 let timeout_messages = timeout_blocking.unwrap_or_else(|| 15_000);
@@ -567,26 +408,10 @@ impl GenerateurMessages for GenerateurMessagesImpl {
             }
         };
 
-        // let replying_to = if routage.ajouter_reply_q {
-        //     self.rabbitmq.reply_q.lock().expect("lock").clone()
-        // } else {
-        //     routage.reply_to
-        // };
-
         let message_out = MessageOut::new(type_message, &correlation_id, message, attente_expiration);
 
-        // let message_out = MessageOut::new(
-        //     routage,
-        //     message,
-        //     type_message_out,
-        //     replying_to,
-        //     attente_expiration.clone(),
-        // );
-
         // Emettre la requete sur MQ
-        // let correlation = match &message_out.correlation_id {Some(c) => c.clone(), None => "placeholder".into()};
         debug!("emettre_message_millegrille Emettre requete correlation {}", correlation_id);
-        // if let Some(rx) = self.emettre(message_out).await? {
         if let Some(rx) = self.rabbitmq.send_out(message_out).await? {
             match rx.await {
                 Ok(r) => Ok(Some(r)),
@@ -641,108 +466,3 @@ impl FormatteurMessage for GenerateurMessagesImpl {
         *guard = enveloppe;
     }
 }
-
-// pub async fn transmettre_cle_attachee<M,V>(middleware: &M, cle: V) -> Result<Option<MessageMilleGrille>, Box<dyn Error>>
-//     where M: GenerateurMessages,
-//           V: Serialize
-// {
-//     let ser_value = serde_json::to_value(cle)?;
-//     debug!("Reception commande MaitreDesCles : {:?}", ser_value);
-//     let mut message_cle = MessageSerialise::from_serializable(ser_value)?;
-//
-//     // Extraire partition pour le routage
-//     let routage = match message_cle.parsed.attachements.take() {
-//         Some(mut attachments_cle) => match attachments_cle.remove("partition") {
-//             Some(partition) => match partition.as_str() {
-//                 Some(partition) => {
-//                     RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE)
-//                         .exchanges(vec![Securite::L3Protege])
-//                         .partition(partition)
-//                         .build()
-//                 },
-//                 None => {
-//                     error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : partition n'est pas str");
-//                     return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (1)"}), None)?));
-//                 }
-//             },
-//             None => {
-//                 error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : partition manquante");
-//                 return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (2)"}), None)?));
-//             }
-//         },
-//         None => {
-//             error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : attachements.partition manquant");
-//             return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (3)"}), None)?));
-//         }
-//     };
-//
-//     // match middleware.transmettre_commande(routage, &message_cle.parsed, true).await {
-//     match middleware.emettre_message_millegrille(routage, true, TypeMessageOut::Commande, message_cle.parsed).await {
-//         Ok(inner) => {
-//             if let Some(TypeMessage::Valide(reponse)) = inner {
-//                 let reponse_contenu: MessageReponse = reponse.message.parsed.map_contenu()?;
-//                 if let Some(true) = reponse_contenu.ok {
-//                     debug!("Cle sauvegardee OK");
-//                 } else {
-//                     error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : reponse ok == false");
-//                     return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (4)"}), None)?));
-//                 }
-//             } else {
-//                 error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : mauvais type reponse");
-//                 return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (5)"}), None)?));
-//             }
-//         },
-//         Err(e) => {
-//             error!("traiter_commande_configurer_consignation Erreur sauvegarde cle : {:?}", e);
-//             return Ok(Some(middleware.formatter_reponse(json!({"ok": false, "err": "Erreur sauvegarde cle (6)"}), None)?));
-//         }
-//     }
-//
-//     Ok(None)
-// }
-
-// pub async fn sauvegarde_attachement_cle<M>(middleware: &M, cle: Value) -> Result<(), Box<dyn Error>>
-//     where M: GenerateurMessages
-// {
-//     match serde_json::from_value::<MessageMilleGrille>(cle) {
-//         Ok(mut commande) => {
-//             // Extraire champ partition en attachement
-//             let partition = match commande.attachements.take() {
-//                 Some(mut attachements) => {
-//                     match attachements.remove("partition") {
-//                         Some(partition) => match partition.as_str() {
-//                             Some(partition) => partition.to_owned(),
-//                             None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle : Partition absente (1)"))?
-//                         },
-//                         None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle : Partition absente (2)"))?
-//                     }
-//                 },
-//                 None => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle : Partition absente (3)"))?
-//             };
-//
-//             // Convertir la cle
-//             let cle: CommandeSauvegarderCle = commande.map_contenu()?;
-//             debug!("commande_conserver_configuration_notifications Sauvegarder cle SMTP : {:?}", cle);
-//             let routage = RoutageMessageAction::builder(DOMAINE_NOM_MAITREDESCLES, COMMANDE_SAUVEGARDER_CLE)
-//                 .exchanges(vec![Securite::L3Protege])
-//                 .partition(partition)
-//                 .build();
-//
-//             // Emettre la cle, verifier reponse (doit etre ok: true)
-//             match middleware.emettre_message_millegrille(routage, true , TypeMessageOut::Commande, commande).await? {
-//                 Some(TypeMessage::Valide(m)) => {
-//                     let reponse: MessageReponse = m.message.parsed.map_contenu()?;
-//                     if let Some(true) = reponse.ok {
-//                         // Ok
-//                     } else {
-//                         Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Reponse ok != true"))?
-//                     }
-//                 },
-//                 _ => Err(format!("generateur_messages.sauvegarde_attachement_cle Sauvegarder cle SMTP : Mauvais type reponse"))?
-//             }
-//         },
-//         Err(e) => Err(format!("generateur_messages.sauvegarde_attachement_cle Erreur mapping commande cle : {:?}", e))?
-//     }
-//
-//     Ok(())
-// }
