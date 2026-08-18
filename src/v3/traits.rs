@@ -1,11 +1,13 @@
-use async_trait::async_trait;
+use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error;
 use crate::generateur_messages::RoutageMessageAction;
+use crate::rabbitmq_dao::TypeMessageOut;
 use crate::recepteur_messages::TypeMessage;
-use crate::certificats::{EnveloppeCertificat, EnveloppePrivee};
-use crate::configuration::{ConfigurationMq, ConfigurationPki, ConfigurationNoeud};
-use mongodb::{bson::Document, Collection};
+use async_trait::async_trait;
+use mongodb::{Collection, bson::Document};
 use std::sync::Arc;
+use millegrilles_cryptographie::securite::Securite;
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 
 #[async_trait]
 pub trait DatabaseService: Send + Sync {
@@ -14,9 +16,35 @@ pub trait DatabaseService: Send + Sync {
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
-    async fn transmettre_requete_json(&self, routage: RoutageMessageAction, message_json: serde_json::Value) -> Result<Option<TypeMessage>, Error>;
-    async fn transmettre_commande_json(&self, routage: RoutageMessageAction, message_json: serde_json::Value) -> Result<Option<TypeMessage>, Error>;
+    async fn emettre_evenement(&self, routage: RoutageMessageAction, value: serde_json::Value) -> Result<(), Error>;
+
+    async fn transmettre_requete(&self, routage: RoutageMessageAction, value: serde_json::Value) -> Result<Option<TypeMessage>, Error>;
+
+    async fn soumettre_transaction(&self, routage: RoutageMessageAction, value: serde_json::Value) -> Result<Option<TypeMessage>, Error>;
+
+    async fn transmettre_commande(&self, routage: RoutageMessageAction, value: serde_json::Value) -> Result<Option<TypeMessage>, Error>;
+
+    async fn repondre(&self, routage: RoutageMessageAction, value: serde_json::Value) -> Result<(), Error>;
+
+    /// Emettre un message en str deja serialise
+    async fn emettre_message(&self, type_message: TypeMessageOut, value: serde_json::Value) -> Result<Option<TypeMessage>, Error>;
+
+    fn mq_disponible(&self) -> bool;
+
+    /// Active le mode regeneration
+    fn set_regeneration(&self);
+
+    /// Desactive le mode regeneration
+    fn reset_regeneration(&self);
+
+    /// Retourne l'etat du mode regeneration (true = actif)
+    fn get_mode_regeneration(&self) -> bool;
+
+    fn get_securite(&self) -> &Securite;
+
+    fn is_dev(&self) -> bool;
 }
+
 
 #[async_trait]
 pub trait SecurityService: Send + Sync {
