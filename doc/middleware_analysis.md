@@ -27,7 +27,7 @@ The goal is to move from a "Service Locator" pattern to "Explicit Dependency Inj
 Break the monolithic `Middleware` trait into smaller, functional traits. Instead of a single `Middleware` trait, use specific ones:
 * `DatabaseService` (for `MongoDao`)
 * `MessagingService` (for `RabbitMqTrait`)
-* `SecurityService` (for `ValidateurX509`)
+* `PkiService` (for `ValidateurX509`)
 
 ### 2. Transition from `Arc<T>` to References with Lifetimes
 For many services, the lifetime of the service matches the lifetime of the application. Instead of:

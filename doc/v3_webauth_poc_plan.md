@@ -27,7 +27,7 @@ We will implement the granular traits defined in `src/v3/traits.rs` using modern
     *   Implements `MessagingService`.
     *   Dependency: `lapin::Channel`.
 *   **`security_service.rs`**: 
-    *   Implements `SecurityService` and `ChiffrageService`.
+    *   Implements `PkiService` and `ChiffrageService`.
     *   Dependency: `CleChiffrageHandlerImpl` and `ValidateurX509Impl`.
 
 ### 2. PoC Composition Root (`src/v3/composition_root_poc.rs`)

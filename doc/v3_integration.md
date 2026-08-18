@@ -104,7 +104,7 @@ This ensures:
 | :--- | :--- |
 | `DatabaseService` | Database collection access |
 | `MessagingService` | JSON request/command transmission |
-| `SecurityService` | Public key retrieval for encryption |
+| `PkiService` | Public key retrieval for encryption |
 | `CertificatService` | Certificate issuance and management |
 | `ChiffrageService` | Key rotation and certificate management for encryption |
 | `ConfigService` | Access to MQ, PKI, and Node configurations |

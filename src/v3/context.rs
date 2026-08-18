@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub struct MiddlewareContext {
     pub messaging: Arc<dyn MessagingService>,
-    pub security: Arc<dyn SecurityService>,
+    pub security: Arc<dyn PkiService>,
     pub encryption: Arc<dyn ChiffrageService>,
     pub config: Arc<dyn ConfigService>,
     pub format: Arc<dyn FormatService>,
@@ -16,7 +16,7 @@ pub struct MiddlewareContext {
 impl MiddlewareContext {
     pub fn from_services(
         messaging: Arc<dyn MessagingService>,
-        security: Arc<dyn SecurityService>,
+        security: Arc<dyn PkiService>,
         encryption: Arc<dyn ChiffrageService>,
         config: Arc<dyn ConfigService>,
         format: Arc<dyn FormatService>,

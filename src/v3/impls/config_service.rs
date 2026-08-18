@@ -20,7 +20,7 @@ impl ConfigService for ConfigServiceImpl {
     fn get_configuration_pki(&self) -> &crate::configuration::ConfigurationPki {
         self.config.get_configuration_pki()
     }
-    fn get_configuration_noeud(&self) -> &crate::configuration::ConfigurationNoeud {
+    fn get_configuration_instance(&self) -> &crate::configuration::ConfigurationNoeud {
         self.config.get_configuration_noeud()
     }
 }
