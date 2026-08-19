@@ -13,12 +13,12 @@ use tokio::sync::mpsc::Receiver;
 #[async_trait]
 pub trait MessagingService: Send + Sync {
     /// Emits a message, does not wait for a response (i.e. supported types are Event, Response, non-blocking Commands)
-    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>)
-        -> Result<(), Error>;
+    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction)
+                  -> Result<(), Error>;
 
     /// Sends a message and waits for a response. Used for requests and blocking commands only.
-    async fn send(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>)
-        -> Result<MessageMilleGrillesBufferDefault, Error>;
+    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction)
+                  -> Result<MessageMilleGrillesBufferDefault, Error>;
 
     fn get_reply_q_name(&self) -> Option<String>;
 

@@ -251,6 +251,8 @@ impl Into<String> for RolesCertificats {
     }
 }
 
+pub const DEFAULT_MESSAGE_TIMEOUT: u64 = 15_000;
+
 // Delegations
 pub const DELEGATION_GLOBALE_PROPRIETAIRE: &str = "proprietaire";
 

@@ -6,7 +6,7 @@ use crate::v3::{ConfigService, MessagingService};
 use chrono::{DateTime, Utc};
 use lapin::{Channel, Connection, ConnectionProperties, tcp::OwnedIdentity, tcp::OwnedTLSConfig};
 use log::{debug, error, info, warn};
-use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
 use millegrilles_cryptographie::securite::Securite;
 use std::collections::HashMap;
 use std::error::Error as StdError;
@@ -15,7 +15,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::{sync::{Notify, mpsc, oneshot}, task::{self}};
 use url::Url;
-
+use crate::constantes::DEFAULT_MESSAGE_TIMEOUT;
+use crate::generateur_messages::RoutageMessageAction;
+use crate::recepteur_messages::TypeMessage;
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
@@ -182,98 +184,181 @@ async fn emettre_certificat_compte_internal(
     Err("Echec creation de compte avec certificat sur MQ".into())
 }
 
+struct OutgoingMessage {
+    message_kind: MessageKind,
+    routing: RoutageMessageAction,
+    message: MessageMilleGrillesBufferDefault,
+}
+
 pub struct RabbitMessageDispatcher {
+    connection: Arc<RabbitConnectionManager>,
     registry: Arc<RabbitQueueRegistry>,
     consumer: Arc<RabbitConsumerManager>,
-    tx_out: mpsc::Sender<MessageOut>,
-    rx_out: Mutex<Option<mpsc::Receiver<MessageOut>>>,
-    tx_reply: mpsc::Sender<MessageInterne>,
-    rx_reply: Mutex<Option<mpsc::Receiver<MessageInterne>>>,
+    tx_out: Sender<OutgoingMessage>,
+    rx_out: Mutex<Option<Receiver<OutgoingMessage>>>,
     securite: Securite,
 }
 
 impl RabbitMessageDispatcher {
-    pub fn new(registry: Arc<RabbitQueueRegistry>, consumer: Arc<RabbitConsumerManager>, securite: Securite) -> Self {
-        let (tx_out, rx_out) = mpsc::channel(3);
-        let (tx_reply, rx_reply) = mpsc::channel(1);
+    pub fn new(connection: Arc<RabbitConnectionManager>, registry: Arc<RabbitQueueRegistry>, consumer: Arc<RabbitConsumerManager>, securite: Securite) -> Self {
+        let (tx_out, rx_out) = mpsc::channel(5);
         Self {
+            connection,
             registry,
             consumer,
             tx_out,
             rx_out: Mutex::new(Some(rx_out)),
-            tx_reply,
-            rx_reply: Mutex::new(Some(rx_reply)),
             securite,
         }
     }
 
-    async fn send_out(&self, message: MessageOut) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
-        let sender = self.tx_out.clone();
-        let attente_correlation_id = match &message.type_message {
-            TypeMessageOut::Requete(r) |
-            TypeMessageOut::Commande(r) |
-            TypeMessageOut::Transaction(r) => {
-                match &r.correlation_id {
-                    Some(c) => Some(c.clone()),
-                    None => Some(message.message_id.clone())
-                }
-            }
-            TypeMessageOut::Reponse(_) => { None }
-            TypeMessageOut::Evenement(_) => { None }
+    pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+        let message_kind = {
+            let message_ref = message.parse()?;
+            message_ref.kind
+        };
+        let outgoing_message = OutgoingMessage {
+            message_kind,
+            routing,
+            message
+        };
+        self.send_out(outgoing_message).await
+    }
+
+    async fn send_out(&self, message: OutgoingMessage) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+        let receiver = match message.routing.correlation_id.as_ref() {
+            Some(correlation_id) => {
+                // We have a message with correlation, add expiration information
+                let timeout_messages = message.routing.timeout_blocking.unwrap_or_else(|| DEFAULT_MESSAGE_TIMEOUT);
+                let expiration = Utc::now() + chrono::Duration::milliseconds(timeout_messages as i64);
+
+                // Create correlation waiter for the response (to be put on the tx)
+                let (tx, rx) = oneshot::channel();
+                let response_waiter = ResponseWaiter {
+                    correlation: correlation_id.clone().into(),
+                    sender: tx,
+                    expiration,
+                };
+                self.consumer.add_response(correlation_id.to_owned(), response_waiter)?;
+
+                // Return receiver
+                Some(rx)
+            },
+            None => None
         };
 
-        let attente_expiration = message.attente_expiration.clone();
-        match sender.send(message).await {
-            Ok(_) => {
-                if let Some(expiration) = attente_expiration {
-                    if let Some(c) = attente_correlation_id {
-                        let (tx, rx) = oneshot::channel();
-                        let response_waiter = ResponseWaiter {
-                            correlation: c.clone().into(),
-                            sender: tx,
-                            expiration: expiration.to_owned(),
-                        };
-                        self.consumer.add_response(c.clone(), response_waiter)?;
-                        Ok(Some(rx))
-                    } else {
-                        Ok(None)
-                    }
-                } else {
-                    Ok(None)
+        self.tx_out.send(message).await?;
+
+        Ok(receiver)
+    }
+
+    pub async fn run(&self) {
+        // Extract the receiver
+        let mut rx = self.rx_out.lock().unwrap().take().unwrap();
+
+        // Channel holder for this thread
+        let mut channel: Option<Channel> = None;
+
+        loop {
+            let message = rx.recv().await;
+
+            if let Some(channel_inner) = &channel {
+                if ! channel_inner.status().connected() {
+                    channel = None;
                 }
-            },
-            Err(e) => Err(CommonError::String(format!("Erreur send {:?}", e)))
+            }
+
+            while channel.is_none() {
+                // Channel maintenance
+                todo!()
+            }
+
+            todo!()
         }
     }
 
-    pub fn spawn_workers(
-        self: Arc<Self>,
-        connection_manager: Arc<RabbitConnectionManager>,
-        messaging_service: Arc<dyn MessagingService>,
-    ) {
-        // Outbound worker: Sends messages from the dispatcher channel to RabbitMQ
-        let dispatcher_out = self.clone();
-        let conn_manager_out = connection_manager.clone();
-        task::spawn(async move {
-            let mut rx = {
-                let mut guard = dispatcher_out.rx_out.lock().unwrap();
-                guard.take().expect("Dispatcher rx_out not available")
-            };
+    // async fn process(&self, message: OutgoingMessage) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+    //     let sender = self.tx_out.clone();
+    //
+    //     let correlation_id = message.routing.correlation_id;
+    //
+    //     match message.message_type {
+    //         MessageKind::Requete => {}
+    //         MessageKind::Commande => {}
+    //         MessageKind::Reponse => {}
+    //         MessageKind::Evenement => {}
+    //         MessageKind::ReponseChiffree => {}
+    //         _ => {
+    //             return Err(CommonError::Str("Unsupported message type"))
+    //         }
+    //     }
+    //
+    //
+    //     let attente_correlation_id = match &message.type_message {
+    //         TypeMessageOut::Requete(r) |
+    //         TypeMessageOut::Commande(r) |
+    //         TypeMessageOut::Transaction(r) => {
+    //             match &r.correlation_id {
+    //                 Some(c) => Some(c.clone()),
+    //                 None => Some(message.message_id.clone())
+    //             }
+    //         }
+    //         TypeMessageOut::Reponse(_) => { None }
+    //         TypeMessageOut::Evenement(_) => { None }
+    //     };
+    //
+    //     let attente_expiration = message.attente_expiration.clone();
+    //     match sender.send(message).await {
+    //         Ok(_) => {
+    //             if let Some(expiration) = attente_expiration {
+    //                 if let Some(c) = attente_correlation_id {
+    //                     let (tx, rx) = oneshot::channel();
+    //                     let response_waiter = ResponseWaiter {
+    //                         correlation: c.clone().into(),
+    //                         sender: tx,
+    //                         expiration: expiration.to_owned(),
+    //                     };
+    //                     self.consumer.add_response(c.clone(), response_waiter)?;
+    //                     Ok(Some(rx))
+    //                 } else {
+    //                     Ok(None)
+    //                 }
+    //             } else {
+    //                 Ok(None)
+    //             }
+    //         },
+    //         Err(e) => Err(CommonError::String(format!("Erreur send {:?}", e)))
+    //     }
+    // }
 
-            while let Some(message) = rx.recv().await {
-                match conn_manager_out.get_channel().await {
-                    Ok(_channel) => {
-                        // TODO: Implement actual AMQP publish logic here using the channel
-                        info!("Dispatcher task_emettre_messages: processing message");
-                        drop(_channel);
-                    }
-                    Err(e) => {
-                        error!("Dispatcher task_emettre_messages Erreur creation channel: {:?}", e);
-                    }
-                }
-            }
-        });
-    }
+    // pub fn spawn_workers(
+    //     self: Arc<Self>,
+    //     connection_manager: Arc<RabbitConnectionManager>,
+    //     messaging_service: Arc<dyn MessagingService>,
+    // ) {
+    //     // Outbound worker: Sends messages from the dispatcher channel to RabbitMQ
+    //     let dispatcher_out = self.clone();
+    //     let conn_manager_out = connection_manager.clone();
+    //     task::spawn(async move {
+    //         let mut rx = {
+    //             let mut guard = dispatcher_out.rx_out.lock().unwrap();
+    //             guard.take().expect("Dispatcher rx_out not available")
+    //         };
+    //
+    //         while let Some(message) = rx.recv().await {
+    //             match conn_manager_out.get_channel().await {
+    //                 Ok(_channel) => {
+    //                     // TODO: Implement actual AMQP publish logic here using the channel
+    //                     info!("Dispatcher task_emettre_messages: processing message");
+    //                     drop(_channel);
+    //                 }
+    //                 Err(e) => {
+    //                     error!("Dispatcher task_emettre_messages Erreur creation channel: {:?}", e);
+    //                 }
+    //             }
+    //         }
+    //     });
+    // }
 
 }
 
@@ -348,7 +433,7 @@ struct NamedQueue {
 
 impl NamedQueue {
     fn new(config: ConfigQueue) -> Self {
-        let (tx, rx) = mpsc::channel(3);
+        let (tx, rx) = mpsc::channel(1);
         Self {
             queue: config,
             tx,
@@ -369,7 +454,7 @@ struct TriggerQueue {
 impl TriggerQueue {
     fn new(app_name: &str) -> Self {
         let q_name = format!("{}/triggers", app_name);
-        let (tx, rx) = mpsc::channel(3);
+        let (tx, rx) = mpsc::channel(5);
         Self {
             q_name,
             tx,
@@ -389,7 +474,7 @@ struct ReplyQueue {
 
 impl ReplyQueue {
     fn new() -> Self {
-        let (tx, rx) = mpsc::channel(3);
+        let (tx, rx) = mpsc::channel(2);
         Self {
             q_name: Mutex::new(None),
             tx,

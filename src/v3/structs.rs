@@ -1,13 +1,4 @@
 use lapin::message::Delivery;
-use crate::recepteur_messages::MessageValide;
-
-pub enum IncomingMessage {
-    Verified(MessageValide)
-}
-
-pub enum OutgoingMessage {
-
-}
 
 pub struct NamedQueueDelivery {
     /// Queue name

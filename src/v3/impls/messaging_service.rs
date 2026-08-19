@@ -14,10 +14,10 @@ use tokio::sync::mpsc::Receiver;
 use crate::rabbitmq_dao::ConfigQueue;
 
 pub struct MessagingServiceImpl {
-    connection_manager: RabbitConnectionManager,
-    message_dispatcher: RabbitMessageDispatcher,
+    connection_manager: Arc<RabbitConnectionManager>,
     consumer_manager: Arc<RabbitConsumerManager>,
     queue_registry: Arc<RabbitQueueRegistry>,
+    message_dispatcher: RabbitMessageDispatcher,
 }
 
 impl MessagingServiceImpl {
@@ -36,14 +36,14 @@ impl MessagingServiceImpl {
 
         let queue_registry = Arc::new(RabbitQueueRegistry::new(app_name));
         let consumer_manager = Arc::new(RabbitConsumerManager::new());
-        let connection_manager = RabbitConnectionManager::new(config);
-        let message_dispatcher = RabbitMessageDispatcher::new(queue_registry.clone(), consumer_manager.clone(), security_level);
+        let connection_manager = Arc::new(RabbitConnectionManager::new(config));
+        let message_dispatcher = RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone(), security_level);
 
         Self {
             connection_manager,
-            message_dispatcher,
             consumer_manager,
             queue_registry,
+            message_dispatcher,
         }
     }
 
@@ -63,12 +63,22 @@ impl MessagingServiceImpl {
 
 #[async_trait]
 impl MessagingService for MessagingServiceImpl {
-    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>) -> Result<(), Error> {
-        todo!()
+    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<(), Error> {
+        if let Some(_rx) = self.message_dispatcher.send_message(message, routing).await? {
+            return Err(CommonError::Str("MessagingServiceImpl Unexpected waiter produced on emit message"))
+        }
+        Ok(())
     }
 
-    async fn send(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>) -> Result<MessageMilleGrillesBufferDefault, Error> {
-        todo!()
+    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesBufferDefault, Error> {
+        match self.message_dispatcher.send_message(message, routing).await? {
+            Some(rx) => {
+                let val = rx.await
+                    .map_err(|e| CommonError::String(format!("MessagingServiceImpl Waiting for response: {:?}", e)))?;
+                val
+            },
+            None => Err(CommonError::Str("No message waiter was generated"))
+        }
     }
 
     fn get_reply_q_name(&self) -> Option<String> {
