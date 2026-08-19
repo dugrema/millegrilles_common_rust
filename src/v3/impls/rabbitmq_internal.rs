@@ -436,42 +436,21 @@ impl RabbitConsumerManager {
                         } else {
                             match create_named_queue(self.queue_registry.as_ref(), &channel_inner, &config).await {
                                 Ok(q) => {
-                                    // Add all routing keys
-                                    let mut rk_ok = true;
-                                    for rk in &config.routing_keys {
-                                        let routing_key = rk.routing_key.as_str();
-                                        let exchange = rk.exchange.get_str();
-                                        debug!("named_queue_thread queue_bind rk {} on queue {}, exchange {}", routing_key, q_name, exchange);
-                                        if let Err(e) = channel_inner.queue_bind(
-                                            q_name.as_str(),
-                                            exchange,
-                                            routing_key,
-                                            QueueBindOptions::default(),
-                                            FieldTable::default()
-                                        ).await {
-                                            error!("Error creating rk {} on queue {}: {:?}", routing_key, q_name, e);
-                                            rk_ok = false;
-                                            break;
+                                    // Create consumer
+                                    let mq_consumer_result = channel_inner
+                                        .basic_consume(
+                                            q.name().as_str(),
+                                            "".into(),
+                                            BasicConsumeOptions::default(),
+                                            FieldTable::default(),
+                                        ).await;
+                                    match mq_consumer_result {
+                                        Ok(mq_consumer) => {
+                                            debug!("named_queue_thread consumer pret {}", q.name());
+                                            consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer: mq_consumer });
+                                            break
                                         }
-                                    }
-
-                                    if rk_ok {
-                                        // Create consumer
-                                        let mq_consumer_result = channel_inner
-                                            .basic_consume(
-                                                q.name().as_str(),
-                                                "".into(),
-                                                BasicConsumeOptions::default(),
-                                                FieldTable::default(),
-                                            ).await;
-                                        match mq_consumer_result {
-                                            Ok(mq_consumer) => {
-                                                debug!("named_queue_thread consumer pret {}", q.name());
-                                                consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer: mq_consumer });
-                                                break
-                                            }
-                                            Err(e) => error!("named_queue_thread Error creating message consumer: {:?}", e)
-                                        }
+                                        Err(e) => error!("named_queue_thread Error creating message consumer: {:?}", e)
                                     }
                                 },
                                 Err(e) => error!("named_queue_thread Error creating reply queue: {:?}", e)
@@ -756,7 +735,7 @@ impl RabbitQueueRegistry {
         Ok(())
     }
 
-    pub fn get_queue_names(&self) -> Vec<String> {
+    fn get_queue_names(&self) -> Vec<String> {
         let guard = self.named_queues.lock()
             .expect("RabbitQueueRegistry.get_queue_names Lock failed");
         guard.keys().cloned().collect()
@@ -849,6 +828,19 @@ async fn create_named_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
 
     let exchanges: Vec<&str> = vec![SECURITE_1_PUBLIC];
     debug!("create_reply_queue Binding on exchanges : {:?}", exchanges);
+
+    for rk in &config.routing_keys {
+        let routing_key = rk.routing_key.as_str();
+        let exchange = rk.exchange.get_str();
+        debug!("named_queue_thread queue_bind rk {} on queue {}, exchange {}", routing_key, queue_name, exchange);
+        channel.queue_bind(
+            queue_name,
+            exchange,
+            routing_key,
+            QueueBindOptions::default(),
+            FieldTable::default()
+        ).await?;
+    }
 
     Ok(reply_queue)
 }
