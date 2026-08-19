@@ -26,9 +26,6 @@ pub trait MessagingService: Send + Sync {
     /// Take the message receiver from the queue registry for a named queue.
     fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, Error>;
 
-    /// Take a trigger message receiver from the queue registry.
-    fn take_trigger_q_rx(&self) -> Result<Receiver<MessageMilleGrillesBufferDefault>, Error>;
-
     /// Returns true if the connection is not currently processing messages (e.g. not connected).
     fn is_paused(&self) -> bool;
 

@@ -4,7 +4,7 @@ use crate::error::Error as CommonError;
 use crate::rabbitmq_dao::{ConfigQueue, MessageInterne, MessageOut, TypeMessageOut};
 use crate::v3::{ConfigService, MessagingService};
 use chrono::{DateTime, Utc};
-use lapin::{tcp::OwnedIdentity, tcp::OwnedTLSConfig, BasicProperties, Channel, Connection, ConnectionProperties};
+use lapin::{tcp::OwnedIdentity, tcp::OwnedTLSConfig, BasicProperties, Channel, Connection, ConnectionProperties, Queue};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
 use millegrilles_cryptographie::securite::Securite;
@@ -12,11 +12,13 @@ use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use lapin::options::BasicPublishOptions;
+use dryoc::sign::Message;
+use lapin::options::{BasicPublishOptions, QueueBindOptions, QueueDeclareOptions};
+use lapin::types::FieldTable;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::{sync::{Notify, mpsc, oneshot}, task::{self}};
 use url::Url;
-use crate::constantes::DEFAULT_MESSAGE_TIMEOUT;
+use crate::constantes::{COMMANDE_CERT_MAITREDESCLES, COMMANDE_DECLENCHER_BACKUP, COMMANDE_GLOBAL_DECLENCHER_BACKUP, COMMANDE_GLOBAL_REGENERER, COMMANDE_REGENERER, DEFAULT_MESSAGE_TIMEOUT, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_CEDULEUR_PING, EVENEMENT_TRANSACTION_PERSISTEE, REQUETE_DOMAIN_PING, REQUETE_NOMBRE_TRANSACTIONS, SECURITE_2_PRIVE, SECURITE_3_PROTEGE, SECURITE_4_SECURE};
 use crate::generateur_messages::RoutageMessageAction;
 use crate::recepteur_messages::TypeMessage;
 
@@ -25,6 +27,7 @@ use crate::recepteur_messages::TypeMessage;
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(1500);
 const FLAG_TTL: &str = "x-message-ttl";
+const DEFAULT_TTL: u64 = 300_000;
 
 // --- Internal Types ---
 
@@ -38,16 +41,16 @@ struct ResponseWaiter {
 // --- Internal Components ---
 
 pub struct RabbitConnectionManager {
-    connexion: Mutex<Option<Arc<Connection>>>,
-    notify_connexion_ready: Arc<Notify>,
+    connection: Mutex<Option<Arc<Connection>>>,
+    notify_connection_ready: Arc<Notify>,
     config: Arc<dyn ConfigService>,
 }
 
 impl RabbitConnectionManager {
     pub fn new(config: Arc<dyn ConfigService>) -> Self {
         Self {
-            connexion: Mutex::new(None),
-            notify_connexion_ready: Arc::new(Notify::new()),
+            connection: Mutex::new(None),
+            notify_connection_ready: Arc::new(Notify::new()),
             config,
         }
     }
@@ -66,7 +69,7 @@ impl RabbitConnectionManager {
         let connection = Arc::new(Connection::connect_with_config(&addr, ConnectionProperties::default(), tls_config).await?);
 
         {
-            let mut guard = self.connexion.lock().unwrap();
+            let mut guard = self.connection.lock().unwrap();
             *guard = Some(connection.clone());
         }
 
@@ -92,25 +95,24 @@ impl RabbitConnectionManager {
     }
 
     async fn get_channel(&self) -> Result<Channel, String> {
-        let connexion = self.get_connexion().await.ok_or_else(|| "Aucune connexion établie".to_string())?;
+        let connexion = self.get_connection().ok_or_else(|| "Aucune connexion établie".to_string())?;
         connexion.create_channel().await.map_err(|e| format!("Erreur création channel: {:?}", e))
     }
 
-    async fn get_connexion(&self) -> Option<Arc<Connection>> {
-        let guard = self.connexion.lock().unwrap();
-        guard.clone()
+    fn get_connection(&self) -> Option<Arc<Connection>> {
+        self.connection.lock().expect("connexion lock").clone()
     }
 
     fn notify_ready(&self) {
-        self.notify_connexion_ready.notify_waiters();
+        self.notify_connection_ready.notify_waiters();
     }
 
     async fn wait_for_ready(&self) {
-        self.notify_connexion_ready.notified().await;
+        self.notify_connection_ready.notified().await;
     }
 
     fn cleanup(&self) {
-        let mut guard = self.connexion.lock().unwrap();
+        let mut guard = self.connection.lock().unwrap();
         *guard = None;
     }
 }
@@ -202,7 +204,8 @@ impl RabbitMessageDispatcher {
         }
     }
 
-    pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+    pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>)
+        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
         let message_kind = {
             let message_ref = message.parse()?;
             message_ref.kind
@@ -405,7 +408,42 @@ impl RabbitConsumerManager {
         Ok(())
     }
 
-    async fn run(&self) {
+    async fn run(self: Arc<Self>) {
+        let self_clone = self.clone();
+        self_clone.start_named_queue_threads().await.expect("Error starting queue threads");
+        let self_clone = self.clone();
+        tokio::spawn(async move { self_clone.reply_q_thread().await });
+        let self_clone = self.clone();
+        tokio::spawn(async move { self_clone.maintenance_thread().await });
+    }
+
+    async fn start_named_queue_threads(self: Arc<Self>) -> Result<(), CommonError> {
+        let queue_names = self.queue_registry.get_queue_names();
+        for q_name in queue_names {
+            // Load internal queue Sender on which the received message will be put
+            let tx = match self.queue_registry.get_named_queue_tx(q_name.as_str()) {
+                Ok(r) => r,
+                Err(e) => return Err(CommonError::String(format!("Unable to start consumer thread on {}, rx already taken: {:?}", q_name, e)))
+            };
+            todo!("Spawn consumer thread")
+        }
+
+        Ok(())
+    }
+
+    async fn named_queue_thread(self: Arc<Self>, mut rx: Receiver<MessageMilleGrillesBufferDefault>) {
+        loop {
+            let message = rx.recv().await;
+            todo!()
+        }
+    }
+
+    async fn reply_q_thread(self: Arc<Self>) -> Result<(), CommonError> {
+        let tx = self.queue_registry.reply_queue.tx.clone();
+        todo!()
+    }
+
+    async fn maintenance_thread(&self) {
         loop {
             self.cleanup_waiters();
             // For now, we just wait for the next notification.
@@ -464,27 +502,6 @@ impl NamedQueue {
     }
 }
 
-/// Single hard-coded queue (by domain name). Receives standard MilleGrille triggers, can be
-/// consumed by application when applicable (optional).
-struct TriggerQueue {
-    q_name: String,
-    tx: Sender<MessageMilleGrillesBufferDefault>,
-    /// Holds rx until a consumer process takes it
-    rx: Mutex<Option<Receiver<MessageMilleGrillesBufferDefault>>>,
-}
-
-impl TriggerQueue {
-    fn new(app_name: &str) -> Self {
-        let q_name = format!("{}/triggers", app_name);
-        let (tx, rx) = mpsc::channel(5);
-        Self {
-            q_name,
-            tx,
-            rx: Mutex::new(Some(rx)),
-        }
-    }
-}
-
 /// Internal queue, correlation is done with the messages that used send().
 struct ReplyQueue {
     /// The reply_q name is re-generated on each connection
@@ -507,15 +524,13 @@ impl ReplyQueue {
 
 pub struct RabbitQueueRegistry {
     named_queues: Mutex<HashMap<String, NamedQueue>>,
-    triggers: TriggerQueue,
     reply_queue: ReplyQueue,
 }
 
 impl RabbitQueueRegistry {
-    pub fn new(app_name: &str) -> Self {
+    pub fn new() -> Self {
         Self {
             named_queues: Mutex::new(HashMap::new()),
-            triggers: TriggerQueue::new(app_name),
             reply_queue: ReplyQueue::new(),
         }
     }
@@ -533,6 +548,12 @@ impl RabbitQueueRegistry {
         Ok(())
     }
 
+    pub fn get_queue_names(&self) -> Vec<String> {
+        let guard = self.named_queues.lock()
+            .expect("RabbitQueueRegistry.get_queue_names Lock failed");
+        guard.keys().cloned().collect()
+    }
+
     fn set_reply_q_name(&self, q_name: Option<String>) {
         let mut guard = self.reply_queue.q_name.lock()
             .expect("RabbitQueueRegistry.get_reply_q_name Lock failed");
@@ -543,9 +564,18 @@ impl RabbitQueueRegistry {
         self.reply_queue.q_name.lock().expect("RabbitQueueRegistry.get_reply_q_name Lock failed").clone()
     }
 
+    fn get_named_queue_tx(&self, q_name: &str) -> Result<Sender<MessageMilleGrillesBufferDefault>, CommonError> {
+        let mut guard = self.named_queues.lock()
+            .expect("RabbitQueueRegistry.get_named_queue_tx Lock failed");
+        match guard.get_mut(q_name) {
+            Some(named_queue) => Ok(named_queue.tx.clone()),
+            None => Err(CommonError::String(format!("RabbitQueueRegistry.get_named_queue_tx Name {} unknown", q_name)))
+        }
+    }
+
     pub fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
         let mut guard = self.named_queues.lock()
-            .expect("RabbitQueueRegistry.add_named_queue Lock failed");
+            .expect("RabbitQueueRegistry.take_named_q_rx Lock failed");
 
         let mut named_queue = match guard.get_mut(q_name) {
             Some(named_queue) => named_queue,
@@ -557,15 +587,6 @@ impl RabbitQueueRegistry {
         match named_queue.rx.take() {
             Some(rx) => Ok(rx),
             None => Err(CommonError::String(format!("RabbitQueueRegistry.take_named_q_rx Receiver for name {} already taken", q_name)))
-        }
-    }
-
-    pub fn take_trigger_rx(&self) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
-        let mut guard = self.triggers.rx.lock()
-            .expect("RabbitQueueRegistry.take_trigger_rx Lock failed");
-        match guard.take() {
-            Some(rx) => Ok(rx),
-            None => Err(CommonError::Str("RabbitQueueRegistry.take_named_q_rx Trigger receiver already taken"))
         }
     }
 }

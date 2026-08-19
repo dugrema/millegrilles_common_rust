@@ -25,7 +25,6 @@ impl MessagingServiceImpl {
     /// Creates a new messaging service.
     /// Note: app_name must either be in the Domaines or Roles of the certificate or the server will reject the connection.
     pub fn new(
-        app_name: &str,
         config: Arc<dyn ConfigService>,
     ) -> Self {
         // Extract security level from certificate
@@ -35,7 +34,7 @@ impl MessagingServiceImpl {
         let security_level: Securite = securite_str.as_str().try_into().expect("MessagingServiceImpl: Security not supported");
 
         let connection_manager = Arc::new(RabbitConnectionManager::new(config));
-        let queue_registry = Arc::new(RabbitQueueRegistry::new(app_name));
+        let queue_registry = Arc::new(RabbitQueueRegistry::new());
         let consumer_manager = Arc::new(RabbitConsumerManager::new(queue_registry.clone()));
         let message_dispatcher = RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone(), security_level);
 
@@ -87,10 +86,6 @@ impl MessagingService for MessagingServiceImpl {
 
     fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
         self.queue_registry.take_named_q_rx(q_name)
-    }
-
-    fn take_trigger_q_rx(&self) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
-        self.queue_registry.take_trigger_rx()
     }
 
     fn is_paused(&self) -> bool {
