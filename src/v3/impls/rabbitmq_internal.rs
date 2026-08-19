@@ -19,6 +19,7 @@ use url::Url;
 use crate::constantes::DEFAULT_MESSAGE_TIMEOUT;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::recepteur_messages::TypeMessage;
+
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
@@ -51,7 +52,7 @@ impl RabbitConnectionManager {
         }
     }
 
-    pub async fn connecter(&self) -> Result<Arc<Connection>, Box<dyn StdError>> {
+    pub async fn connect(&self) -> Result<Arc<Connection>, Box<dyn StdError>> {
         let config_mq = self.config.get_configuration_mq();
         let idmg = self.config.get_configuration_pki().get_validateur().idmg().to_owned();
         let addr = format!(
@@ -62,28 +63,16 @@ impl RabbitConnectionManager {
         );
 
         let tls_config = self.get_tls_config();
-        let resultat = Connection::connect_with_config(&addr, ConnectionProperties::default(), tls_config).await;
-        if let Ok(c) = resultat {
-            let conn = Arc::new(c);
+        let connection = Arc::new(Connection::connect_with_config(&addr, ConnectionProperties::default(), tls_config).await?);
+
+        {
             let mut guard = self.connexion.lock().unwrap();
-            *guard = Some(conn.clone());
-
-            let attente = match emettre_certificat_compte_internal(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await {
-                Ok(()) => true,
-                Err(e) => {
-                    error!("Erreur creation compte MQ: {:?}", e);
-                    false
-                }
-            };
-
-            if attente {
-                tokio::time::sleep(ATTENTE_RECONNEXION).await;
-            }
-
-            Ok(conn)
-        } else {
-            Err(format!("Erreur de connexion MQ après tentative: {:?}", resultat).into())
+            *guard = Some(connection.clone());
         }
+
+        emit_certificate(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await?;
+
+        Ok(connection)
     }
 
     fn get_tls_config(&self) -> OwnedTLSConfig {
@@ -126,7 +115,7 @@ impl RabbitConnectionManager {
     }
 }
 
-async fn emettre_certificat_compte_internal(
+async fn emit_certificate(
     mq: &ConfigurationMq,
     pki: &ConfigurationPki,
 ) -> Result<(), Box<dyn StdError>> {
@@ -292,9 +281,7 @@ impl RabbitMessageDispatcher {
             while channel.is_none() {
                 match self.connection.get_channel().await {
                     Ok(channel_inner) => {
-                        if channel_inner.status().connected() {
-                            channel = Some(channel_inner);
-                        }
+                        channel = Some(channel_inner);
                     },
                     Err(e) => {
                         error!("Error getting channel, will sleep: {}", e);

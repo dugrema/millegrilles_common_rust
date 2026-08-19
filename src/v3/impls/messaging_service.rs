@@ -54,8 +54,8 @@ impl MessagingServiceImpl {
 
     /// Starts the messaging service background threads including the connection to the server.
     pub async fn start(&self) {
-        self.connection_manager.connecter().await.ok();
-        todo!("Rewrite without middleware: Arc<M>, rabbitmq: RabbitMqExecutor")
+        self.connection_manager.connect().await.expect("Error connection to RabbitMQ server");
+
         // self.message_dispatcher.spawn_workers(rabbitmq.clone());
         // In a real implementation, we'd also spawn the consumer manager's worker here
     }
