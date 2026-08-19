@@ -71,7 +71,7 @@ impl RabbitConnectionManager {
             *guard = Some(connection.clone());
         }
 
-        emit_certificate(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await?;
+        register_mq_account(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await?;
 
         Ok(connection)
     }
@@ -111,6 +111,13 @@ impl RabbitConnectionManager {
         self.notify_connection_ready.notified().await;
     }
 
+    pub async fn run(self: Arc<Self>) {
+        loop {
+            // TODO - maintain connection, attempt to reconnect when needed
+            tokio::time::sleep(ATTENTE_RECONNEXION).await;
+        }
+    }
+
     async fn close(&self) {
         let connection = {
             let mut guard = self.connection.lock().unwrap();
@@ -122,7 +129,7 @@ impl RabbitConnectionManager {
     }
 }
 
-async fn emit_certificate(
+async fn register_mq_account(
     mq: &ConfigurationMq,
     pki: &ConfigurationPki,
 ) -> Result<(), Box<dyn StdError>> {
@@ -405,7 +412,7 @@ impl RabbitConsumerManager {
         Ok(())
     }
 
-    async fn run(self: Arc<Self>) {
+    pub async fn run(self: Arc<Self>) {
         let self_clone = self.clone();
         self_clone.start_named_queue_threads().await.expect("Error starting queue threads");
         let self_clone = self.clone();

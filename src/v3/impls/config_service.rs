@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use crate::configuration::{ConfigMessages, ConfigurationMessages, ConfigurationMongo, IsConfigNoeud};
 use crate::v3::traits::ConfigService;
-use crate::configuration::{ConfigurationMessagesDb, ConfigMessages, IsConfigNoeud, ConfigurationMongo, ConfigurationMessages};
+use std::sync::Arc;
 
 pub struct ConfigServiceImpl {
     config: Arc<ConfigurationMessages>,

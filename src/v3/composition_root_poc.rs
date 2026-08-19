@@ -11,7 +11,7 @@ use log::info;
 use std::sync::Arc;
 
 /// Sample context from V3 services, customize as needed.
-struct MiddlewareContext {
+pub struct MiddlewareContext {
     pub messaging: Arc<dyn MessagingService>,
     pub security: Arc<dyn PkiService>,
     pub encryption: Arc<dyn ChiffrageService>,

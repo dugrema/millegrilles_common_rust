@@ -1,27 +1,23 @@
 use crate::error::Error;
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
+use crate::rabbitmq_dao::ConfigQueue;
+use crate::v3::ConfigService;
 use crate::v3::impls::rabbitmq_internal::{
     RabbitConnectionManager, RabbitConsumerManager, RabbitMessageDispatcher, RabbitQueueRegistry,
 };
 use crate::v3::traits::MessagingService;
-use crate::v3::ConfigService;
 use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use std::sync::Arc;
-use lapin::{Channel, Queue};
-use lapin::options::{QueueBindOptions, QueueDeclareOptions};
-use lapin::types::FieldTable;
-use log::debug;
 use millegrilles_cryptographie::securite::Securite;
+use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
-use crate::rabbitmq_dao::{ConfigQueue, RabbitMqExecutor, ReplyQueue};
 
 pub struct MessagingServiceImpl {
     connection_manager: Arc<RabbitConnectionManager>,
     queue_registry: Arc<RabbitQueueRegistry>,
     consumer_manager: Arc<RabbitConsumerManager>,
-    message_dispatcher: RabbitMessageDispatcher,
+    message_dispatcher: Arc<RabbitMessageDispatcher>,
 }
 
 impl MessagingServiceImpl {
@@ -40,7 +36,7 @@ impl MessagingServiceImpl {
         let connection_manager = Arc::new(RabbitConnectionManager::new(config));
         let queue_registry = Arc::new(RabbitQueueRegistry::new());
         let consumer_manager = Arc::new(RabbitConsumerManager::new(connection_manager.clone(), queue_registry.clone()));
-        let message_dispatcher = RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone(), security_level);
+        let message_dispatcher = Arc::new(RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone(), security_level));
 
         Self {
             connection_manager,
@@ -56,11 +52,17 @@ impl MessagingServiceImpl {
     }
 
     /// Starts the messaging service background threads including the connection to the server.
-    pub async fn start(&self) {
+    pub async fn run(&self) {
+        // Connect synchronously, the application should fail fast if a working connection cannot be made.
         self.connection_manager.connect().await.expect("Error connection to RabbitMQ server");
 
-        // self.message_dispatcher.spawn_workers(rabbitmq.clone());
-        // In a real implementation, we'd also spawn the consumer manager's worker here
+        // Start all other threads
+        let connection_clone = self.connection_manager.clone();
+        tokio::spawn(async move { connection_clone.run().await });
+        let consumer_clone = self.consumer_manager.clone();
+        tokio::spawn(async move { consumer_clone.run().await });
+        let dispatcher_clone = self.message_dispatcher.clone();
+        tokio::spawn(async move { dispatcher_clone.run().await });
     }
 }
 
@@ -90,13 +92,5 @@ impl MessagingService for MessagingServiceImpl {
 
     fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
         self.queue_registry.take_named_q_rx(q_name)
-    }
-
-    fn is_paused(&self) -> bool {
-        todo!()
-    }
-
-    async fn wait_for_resume(&self, timeout: Option<u32>) -> Result<(), Error> {
-        todo!()
     }
 }
