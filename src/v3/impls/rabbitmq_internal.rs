@@ -2,7 +2,6 @@ use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigurationMq, ConfigurationPki};
 use crate::error::Error as CommonError;
 use crate::rabbitmq_dao::{ConfigQueue, MessageInterne, MessageOut, TypeMessageOut};
-use crate::recepteur_messages::TypeMessage;
 use crate::v3::{ConfigService, MessagingService};
 use chrono::{DateTime, Utc};
 use lapin::{Channel, Connection, ConnectionProperties, tcp::OwnedIdentity, tcp::OwnedTLSConfig};
@@ -20,7 +19,7 @@ use url::Url;
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
-const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(3000);
+const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(1500);
 const FLAG_TTL: &str = "x-message-ttl";
 
 // --- Internal Types ---
@@ -28,7 +27,7 @@ const FLAG_TTL: &str = "x-message-ttl";
 #[derive(Debug)]
 struct ResponseWaiter {
     correlation: String,
-    sender: oneshot::Sender<TypeMessage>,
+    sender: oneshot::Sender<Result<MessageMilleGrillesBufferDefault, CommonError>>,
     expiration: DateTime<Utc>,
 }
 
@@ -208,7 +207,7 @@ impl RabbitMessageDispatcher {
         }
     }
 
-    async fn send_out(&self, message: MessageOut) -> Result<Option<oneshot::Receiver<TypeMessage>>, CommonError> {
+    async fn send_out(&self, message: MessageOut) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
         let sender = self.tx_out.clone();
         let attente_correlation_id = match &message.type_message {
             TypeMessageOut::Requete(r) |
@@ -309,9 +308,33 @@ impl RabbitConsumerManager {
 
     fn cleanup_waiters(&self) {
         let date_now = Utc::now();
-        let mut guard = self.waiting_responses.lock()
-            .expect("RabbitConsumerManager.cleanup_waiters Error locking mutex");
-        guard.retain(|_, attente| attente.expiration > date_now);
+        let mut expired_senders = Vec::new();
+
+        {
+            let mut guard = self.waiting_responses.lock()
+                .expect("RabbitConsumerManager.cleanup_waiters Error locking mutex");
+
+            if guard.is_empty() {
+                return;
+            }
+
+            // Collect keys of expired waiters to avoid borrow checker issues while removing
+            let expired_keys: Vec<String> = guard.iter()
+                .filter(|(_, attente)| attente.expiration <= date_now)
+                .map(|(k, _)| k.clone())
+                .collect();
+
+            for key in expired_keys {
+                if let Some(waiter) = guard.remove(&key) {
+                    expired_senders.push(waiter.sender);
+                }
+            }
+        }
+
+        // Send the error responses after dropping the lock to minimize contention
+        for sender in expired_senders {
+            let _ = sender.send(Err(CommonError::Str("Timeout")));
+        }
     }
 }
 
@@ -359,9 +382,9 @@ impl TriggerQueue {
 struct ReplyQueue {
     /// The reply_q name is re-generated on each connection
     q_name: Mutex<Option<String>>,
-    tx: Sender<MessageMilleGrillesBufferDefault>,
+    tx: Sender<Result<MessageMilleGrillesBufferDefault, CommonError>>,
     /// Holds rx until a consumer process takes it
-    rx: Mutex<Option<Receiver<MessageMilleGrillesBufferDefault>>>,
+    rx: Mutex<Option<Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>>,
 }
 
 impl ReplyQueue {
