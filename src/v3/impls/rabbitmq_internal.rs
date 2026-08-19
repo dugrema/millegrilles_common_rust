@@ -435,23 +435,9 @@ impl RabbitConsumerManager {
                             error!("named_queue_consume Error configuring channel for queue {:?}, {:?}", q_name, e);
                         } else {
                             match create_named_queue(self.queue_registry.as_ref(), &channel_inner, &config).await {
-                                Ok(q) => {
-                                    // Create consumer
-                                    let mq_consumer_result = channel_inner
-                                        .basic_consume(
-                                            q.name().as_str(),
-                                            "".into(),
-                                            BasicConsumeOptions::default(),
-                                            FieldTable::default(),
-                                        ).await;
-                                    match mq_consumer_result {
-                                        Ok(mq_consumer) => {
-                                            debug!("named_queue_thread consumer pret {}", q.name());
-                                            consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer: mq_consumer });
-                                            break
-                                        }
-                                        Err(e) => error!("named_queue_thread Error creating message consumer: {:?}", e)
-                                    }
+                                Ok((q, consumer)) => {
+                                    consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer });
+                                    break
                                 },
                                 Err(e) => error!("named_queue_thread Error creating reply queue: {:?}", e)
                             }
@@ -522,23 +508,11 @@ impl RabbitConsumerManager {
                 match self.connection.get_channel().await {
                     Ok(channel_inner) => {
                         match create_reply_queue(self.queue_registry.as_ref(), &channel_inner).await {
-                            Ok(q) => {
+                            Ok((q, consumer)) => {
                                 // Create consumer
-                                let mq_consumer_result = channel_inner
-                                    .basic_consume(
-                                        q.name().as_str(),
-                                        "".into(),
-                                        BasicConsumeOptions::default(),
-                                        FieldTable::default(),
-                                    ).await;
-                                match mq_consumer_result {
-                                    Ok(mq_consumer) => {
-                                        debug!("task_traitement_reponses consumer pret {}", q.name());
-                                        consumer_holder = Some(RabbitMqConsumer {queue: q, channel: channel_inner, consumer: mq_consumer});
-                                        break
-                                    }
-                                    Err(e) => error!("Error consuming message: {:?}", e)
-                                }
+                                debug!("task_traitement_reponses consumer pret {}", q.name());
+                                consumer_holder = Some(RabbitMqConsumer {queue: q, channel: channel_inner, consumer});
+                                break
                             },
                             Err(e) => error!("Error creating reply queue: {:?}", e)
                         }
@@ -807,7 +781,7 @@ fn concatenate_routing_key(message_kind: MessageKind, routing: Option<&RoutageMe
 }
 
 async fn create_named_queue(queue_registry: &RabbitQueueRegistry, channel: &Channel, config: &ConfigQueue)
-                            -> Result<Queue, CommonError> {
+                            -> Result<(Queue, Consumer), CommonError> {
     let options = QueueDeclareOptions {
         passive: false,
         durable: config.durable,
@@ -842,11 +816,15 @@ async fn create_named_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
         ).await?;
     }
 
-    Ok(reply_queue)
+    // Create consumer
+    let consumer = channel
+        .basic_consume(queue_name, "".into(), BasicConsumeOptions::default(), FieldTable::default()).await?;
+
+    Ok((reply_queue, consumer))
 }
 
 async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Channel)
-    -> Result<Queue, CommonError> {
+    -> Result<(Queue, Consumer), CommonError> {
     let options = QueueDeclareOptions {
         passive: false,
         durable: false,
@@ -867,7 +845,15 @@ async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
     let exchanges: Vec<&str> = vec![SECURITE_1_PUBLIC];
     debug!("create_reply_queue Binding on exchanges : {:?}", exchanges);
 
-    Ok(reply_queue)
+    let consumer = channel
+        .basic_consume(
+            queue_name,
+            "".into(),
+            BasicConsumeOptions::default(),
+            FieldTable::default(),
+        ).await?;
+
+    Ok((reply_queue, consumer))
 }
 
 struct RabbitMqConsumer {
