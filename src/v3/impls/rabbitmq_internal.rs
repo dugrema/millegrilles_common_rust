@@ -92,9 +92,11 @@ impl RabbitConnectionManager {
         }
     }
 
-    async fn get_channel(&self) -> Result<Channel, String> {
-        let connexion = self.get_connection().ok_or_else(|| "Aucune connexion établie".to_string())?;
-        connexion.create_channel().await.map_err(|e| format!("Erreur création channel: {:?}", e))
+    async fn get_channel(&self) -> Result<Channel, CommonError> {
+        match self.get_connection() {
+            Some(connection) => Ok(connection.create_channel().await?),
+            None => Err(CommonError::Str("Not connected"))
+        }
     }
 
     fn get_connection(&self) -> Option<Arc<Connection>> {
@@ -109,9 +111,14 @@ impl RabbitConnectionManager {
         self.notify_connection_ready.notified().await;
     }
 
-    fn cleanup(&self) {
-        let mut guard = self.connection.lock().unwrap();
-        *guard = None;
+    async fn close(&self) {
+        let connection = {
+            let mut guard = self.connection.lock().unwrap();
+            guard.take()
+        };
+        if let Some(connection) = connection {
+            connection.close(200, "Closing").await.ok();
+        }
     }
 }
 
