@@ -4,7 +4,7 @@ use crate::error::Error as CommonError;
 use crate::rabbitmq_dao::{ConfigQueue, MessageInterne, MessageOut, TypeMessageOut};
 use crate::v3::{ConfigService, MessagingService};
 use chrono::{DateTime, Utc};
-use lapin::{Channel, Connection, ConnectionProperties, tcp::OwnedIdentity, tcp::OwnedTLSConfig};
+use lapin::{tcp::OwnedIdentity, tcp::OwnedTLSConfig, BasicProperties, Channel, Connection, ConnectionProperties};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
 use millegrilles_cryptographie::securite::Securite;
@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use lapin::options::BasicPublishOptions;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::{sync::{Notify, mpsc, oneshot}, task::{self}};
 use url::Url;
@@ -186,7 +187,7 @@ async fn emettre_certificat_compte_internal(
 
 struct OutgoingMessage {
     message_kind: MessageKind,
-    routing: RoutageMessageAction,
+    routing: Option<RoutageMessageAction>,
     message: MessageMilleGrillesBufferDefault,
 }
 
@@ -212,11 +213,22 @@ impl RabbitMessageDispatcher {
         }
     }
 
-    pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+    pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
         let message_kind = {
             let message_ref = message.parse()?;
             message_ref.kind
         };
+
+        // Ensure the proper information for routing is available
+        match message_kind {
+            MessageKind::Requete | MessageKind::Commande | MessageKind::Evenement => {
+                if routing.is_none() {
+                    return Err(CommonError::Str("Message types requete, commande and evenement require routing information for the exchanges"))
+                }
+            }
+            _ => ()
+        }
+
         let outgoing_message = OutgoingMessage {
             message_kind,
             routing,
@@ -225,11 +237,16 @@ impl RabbitMessageDispatcher {
         self.send_out(outgoing_message).await
     }
 
-    async fn send_out(&self, message: OutgoingMessage) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
-        let receiver = match message.routing.correlation_id.as_ref() {
+    async fn send_out(&self, message: OutgoingMessage)
+        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+        let (correlation_id, timeout_blocking) = match message.routing.as_ref() {
+            Some(r) => (r.correlation_id.as_ref(), r.timeout_blocking.clone()),
+            None => (None, None)
+        };
+        let receiver = match correlation_id {
             Some(correlation_id) => {
                 // We have a message with correlation, add expiration information
-                let timeout_messages = message.routing.timeout_blocking.unwrap_or_else(|| DEFAULT_MESSAGE_TIMEOUT);
+                let timeout_messages = timeout_blocking.unwrap_or_else(|| DEFAULT_MESSAGE_TIMEOUT);
                 let expiration = Utc::now() + chrono::Duration::milliseconds(timeout_messages as i64);
 
                 // Create correlation waiter for the response (to be put on the tx)
@@ -260,8 +277,12 @@ impl RabbitMessageDispatcher {
         let mut channel: Option<Channel> = None;
 
         loop {
-            let message = rx.recv().await;
+            let message = match rx.recv().await {
+                Some(message) => message,
+                None => return  // Stopping
+            };
 
+            // Channel maintenance
             if let Some(channel_inner) = &channel {
                 if ! channel_inner.status().connected() {
                     channel = None;
@@ -269,108 +290,122 @@ impl RabbitMessageDispatcher {
             }
 
             while channel.is_none() {
-                // Channel maintenance
-                todo!()
+                match self.connection.get_channel().await {
+                    Ok(channel_inner) => {
+                        if channel_inner.status().connected() {
+                            channel = Some(channel_inner);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error getting channel, will sleep: {}", e);
+                        tokio::time::sleep(ATTENTE_RECONNEXION).await;
+                    },
+                }
             }
 
-            todo!()
+            let channel_inner = channel.as_ref().expect("Unable to get channel");
+            let reply_q_name = self.registry.get_reply_q_name();
+            if let Err(e) = publish_message(channel_inner, message, reply_q_name).await {
+                error!("Error publishing message: {:?}", e);
+            }
         }
     }
+}
 
-    // async fn process(&self, message: OutgoingMessage) -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
-    //     let sender = self.tx_out.clone();
-    //
-    //     let correlation_id = message.routing.correlation_id;
-    //
-    //     match message.message_type {
-    //         MessageKind::Requete => {}
-    //         MessageKind::Commande => {}
-    //         MessageKind::Reponse => {}
-    //         MessageKind::Evenement => {}
-    //         MessageKind::ReponseChiffree => {}
-    //         _ => {
-    //             return Err(CommonError::Str("Unsupported message type"))
-    //         }
-    //     }
-    //
-    //
-    //     let attente_correlation_id = match &message.type_message {
-    //         TypeMessageOut::Requete(r) |
-    //         TypeMessageOut::Commande(r) |
-    //         TypeMessageOut::Transaction(r) => {
-    //             match &r.correlation_id {
-    //                 Some(c) => Some(c.clone()),
-    //                 None => Some(message.message_id.clone())
-    //             }
-    //         }
-    //         TypeMessageOut::Reponse(_) => { None }
-    //         TypeMessageOut::Evenement(_) => { None }
-    //     };
-    //
-    //     let attente_expiration = message.attente_expiration.clone();
-    //     match sender.send(message).await {
-    //         Ok(_) => {
-    //             if let Some(expiration) = attente_expiration {
-    //                 if let Some(c) = attente_correlation_id {
-    //                     let (tx, rx) = oneshot::channel();
-    //                     let response_waiter = ResponseWaiter {
-    //                         correlation: c.clone().into(),
-    //                         sender: tx,
-    //                         expiration: expiration.to_owned(),
-    //                     };
-    //                     self.consumer.add_response(c.clone(), response_waiter)?;
-    //                     Ok(Some(rx))
-    //                 } else {
-    //                     Ok(None)
-    //                 }
-    //             } else {
-    //                 Ok(None)
-    //             }
-    //         },
-    //         Err(e) => Err(CommonError::String(format!("Erreur send {:?}", e)))
-    //     }
-    // }
+async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: Option<String>) -> Result<(), CommonError> {
+    let options = BasicPublishOptions::default();
+    let payload = message.message.buffer;
+    let (correlation_id, reply_to) = match message.routing.as_ref() {
+        Some(r) => (r.correlation_id.clone(), r.reply_to.clone()),
+        None => (None, None)
+    };
 
-    // pub fn spawn_workers(
-    //     self: Arc<Self>,
-    //     connection_manager: Arc<RabbitConnectionManager>,
-    //     messaging_service: Arc<dyn MessagingService>,
-    // ) {
-    //     // Outbound worker: Sends messages from the dispatcher channel to RabbitMQ
-    //     let dispatcher_out = self.clone();
-    //     let conn_manager_out = connection_manager.clone();
-    //     task::spawn(async move {
-    //         let mut rx = {
-    //             let mut guard = dispatcher_out.rx_out.lock().unwrap();
-    //             guard.take().expect("Dispatcher rx_out not available")
-    //         };
-    //
-    //         while let Some(message) = rx.recv().await {
-    //             match conn_manager_out.get_channel().await {
-    //                 Ok(_channel) => {
-    //                     // TODO: Implement actual AMQP publish logic here using the channel
-    //                     info!("Dispatcher task_emettre_messages: processing message");
-    //                     drop(_channel);
-    //                 }
-    //                 Err(e) => {
-    //                     error!("Dispatcher task_emettre_messages Erreur creation channel: {:?}", e);
-    //                 }
-    //             }
-    //         }
-    //     });
-    // }
+    let (properties, reply_to) = {
+        let mut properties = BasicProperties::default();
+        if let Some(correlation_id) = correlation_id.clone() {
+            properties = properties.with_correlation_id(correlation_id.into());
+        }
 
+        let reply_to = match message.message_kind {
+            MessageKind::Requete | MessageKind::Commande => {
+                let reply_to = match reply_to {
+                    Some(reply_to) => reply_to,
+                    None => match reply_q {
+                        Some(q) => q.to_owned(),
+                        None => return Err(CommonError::Str("No reply_q provided for response"))
+                    }
+                };
+                debug!("task_emettre_messages Emission message, reply_q en parametre : {:?}", reply_to);
+                properties = properties.with_reply_to(reply_to.as_str().into());
+
+                Some(reply_to)
+            },
+            _ => None
+        };
+
+        (properties, reply_to)
+    };
+
+    match message.message_kind {
+        MessageKind::Reponse | MessageKind::ReponseChiffree => {
+            let reply_to_inner = match reply_to {
+                Some(reply_to) => reply_to,
+                None => return Err(CommonError::Str("No reply_q provided for response"))
+            };
+            debug!("publish_message Replying to reply_q {} with correlation_id {:?}", reply_to_inner, correlation_id);
+
+            let resultat = channel.basic_publish(
+                "",
+                reply_to_inner.as_str(),
+                options,
+                payload.to_vec().as_slice(),
+                properties
+            ).await;
+            if resultat.is_err() {
+                error!("publish_message Error emitting message {:?}", resultat);
+                return Err(CommonError::Str("No reply_q provided for response"))
+            } else {
+                debug!("publish_message Response {:?} to {:?} sent", correlation_id, reply_to_inner);
+            }
+        },
+        MessageKind::Requete | MessageKind::Commande | MessageKind::Evenement => {
+            let routing_key = concatenate_routing_key(message.message_kind, message.routing.as_ref())?;
+            let routing = match message.routing {
+                Some(r) => r,
+                None => return Err(CommonError::Str("No routing provided for requete/commande/evenement"))
+            };
+
+            for exchange in routing.exchanges {
+                let resultat = channel.basic_publish(
+                    exchange.get_str(),
+                    &routing_key,
+                    options,
+                    payload.clone().as_slice(),
+                    properties.clone()
+                ).await;
+                match resultat {
+                    Ok(_) => debug!("task_emettre_messages Message {}/{:?} emis sur {:?}", routing_key, properties, exchange),
+                    Err(e) => error!("task_emettre_messages Erreur emission message {:?}", e)
+                }
+            }
+        }
+        _ => return Err(CommonError::String(format!("Kind not supported: {:?}", message.message_kind))),
+    }
+
+    Ok(())
 }
 
 pub struct RabbitConsumerManager {
+    queue_registry: Arc<RabbitQueueRegistry>,
     notify_queues_changed: Arc<Notify>,
     /// Responses waiting by correlation id
     waiting_responses: Mutex<HashMap<String, ResponseWaiter>>,
 }
 
 impl RabbitConsumerManager {
-    pub fn new() -> Self {
+    pub fn new(queue_registry: Arc<RabbitQueueRegistry>) -> Self {
         Self {
+            queue_registry,
             notify_queues_changed: Arc::new(Notify::new()),
             waiting_responses: Mutex::new(HashMap::with_capacity(50)),
         }
@@ -545,5 +580,33 @@ impl RabbitQueueRegistry {
             Some(rx) => Ok(rx),
             None => Err(CommonError::Str("RabbitQueueRegistry.take_named_q_rx Trigger receiver already taken"))
         }
+    }
+}
+
+fn concatenate_routing_key_action_message(kind: &str, routage: &RoutageMessageAction) -> String {
+    let mut vec_rk = vec![kind];
+    vec_rk.push(routage.domaine.as_str());
+    if let Some(partition) = routage.partition.as_ref() {
+        vec_rk.push(partition.as_str());
+    }
+    vec_rk.push(routage.action.as_str());
+    vec_rk.join(".")
+}
+
+fn concatenate_routing_key(message_kind: MessageKind, routing: Option<&RoutageMessageAction>) -> Result<String, CommonError> {
+    let routing = match routing {
+        Some(r) => r,
+        None => return Err(CommonError::Str("concatenate_routing_key No routing information provided"))
+    };
+    match message_kind {
+        MessageKind::Requete => Ok(concatenate_routing_key_action_message("requete", routing)),
+        MessageKind::Commande => Ok(concatenate_routing_key_action_message("commande", routing)),
+        MessageKind::Evenement => Ok(concatenate_routing_key_action_message("evenement", routing)),
+        MessageKind::Reponse |
+        MessageKind::ReponseChiffree |
+        MessageKind::Document |
+        MessageKind::Transaction |
+        MessageKind::TransactionMigree |
+        MessageKind::CommandeInterMillegrille => Err(CommonError::Str("Unsupported OutgoingMessage type"))
     }
 }

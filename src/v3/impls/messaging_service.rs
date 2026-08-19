@@ -15,8 +15,8 @@ use crate::rabbitmq_dao::ConfigQueue;
 
 pub struct MessagingServiceImpl {
     connection_manager: Arc<RabbitConnectionManager>,
-    consumer_manager: Arc<RabbitConsumerManager>,
     queue_registry: Arc<RabbitQueueRegistry>,
+    consumer_manager: Arc<RabbitConsumerManager>,
     message_dispatcher: RabbitMessageDispatcher,
 }
 
@@ -34,15 +34,15 @@ impl MessagingServiceImpl {
             .exchanges.expect("MessagingServiceImpl: No exchanges found on certificate")[0].clone();
         let security_level: Securite = securite_str.as_str().try_into().expect("MessagingServiceImpl: Security not supported");
 
-        let queue_registry = Arc::new(RabbitQueueRegistry::new(app_name));
-        let consumer_manager = Arc::new(RabbitConsumerManager::new());
         let connection_manager = Arc::new(RabbitConnectionManager::new(config));
+        let queue_registry = Arc::new(RabbitQueueRegistry::new(app_name));
+        let consumer_manager = Arc::new(RabbitConsumerManager::new(queue_registry.clone()));
         let message_dispatcher = RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone(), security_level);
 
         Self {
             connection_manager,
-            consumer_manager,
             queue_registry,
+            consumer_manager,
             message_dispatcher,
         }
     }
@@ -63,7 +63,7 @@ impl MessagingServiceImpl {
 
 #[async_trait]
 impl MessagingService for MessagingServiceImpl {
-    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<(), Error> {
+    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>) -> Result<(), Error> {
         if let Some(_rx) = self.message_dispatcher.send_message(message, routing).await? {
             return Err(CommonError::Str("MessagingServiceImpl Unexpected waiter produced on emit message"))
         }
@@ -71,7 +71,7 @@ impl MessagingService for MessagingServiceImpl {
     }
 
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesBufferDefault, Error> {
-        match self.message_dispatcher.send_message(message, routing).await? {
+        match self.message_dispatcher.send_message(message, Some(routing)).await? {
             Some(rx) => {
                 let val = rx.await
                     .map_err(|e| CommonError::String(format!("MessagingServiceImpl Waiting for response: {:?}", e)))?;
