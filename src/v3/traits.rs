@@ -20,11 +20,11 @@ pub trait MessagingService: Send + Sync {
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>)
         -> Result<MessageMilleGrillesBufferDefault, Error>;
 
-    /// Take the message receiver from the queue registry for a named queue. Panics if already taken.
-    async fn take_named_q_rx(&self, q_name: &str) -> Receiver<MessageMilleGrillesBufferDefault>;
+    /// Take the message receiver from the queue registry for a named queue.
+    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, Error>;
 
-    /// Take a trigger message receiver from the queue registry. Panics if already taken.
-    async fn take_trigger_q_rx(&self, trigger_name: &str) -> Receiver<MessageMilleGrillesBufferDefault>;
+    /// Take a trigger message receiver from the queue registry.
+    fn take_trigger_q_rx(&self) -> Result<Receiver<MessageMilleGrillesBufferDefault>, Error>;
 
     /// Returns true if the connection is not currently processing messages (e.g. not connected).
     fn is_paused(&self) -> bool;

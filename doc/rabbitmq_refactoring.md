@@ -29,7 +29,7 @@ The refactored implementation will reside in `src/v3/` and implement the `Messag
 3.  **`RabbitMessageDispatcher`** (`src/v3/impls/rabbitmq_internal.rs`):
     - Manages outbound message emission (`tx_out`).
     - Manages inbound response handling (`tx_reply`).
-    - Manages the `map_attente` for correlation-based request-response patterns.
+    - Manages the `reply_correlation_map` for correlation-based request-response patterns.
     - Handles message routing and payload preparation.
 
 4.  **`RabbitConsumerManager`** (`src/v3/impls/rabbitmq_internal.rs`):

@@ -66,7 +66,7 @@ impl PocCompositionRoot {
         ));
 
         // Messaging (RabbitMQ)
-        let messaging_impl = Arc::new(MessagingServiceImpl::new(config_impl.clone()));
+        let messaging_impl = Arc::new(MessagingServiceImpl::new("REPLACE_ME", config_impl.clone()));
 
         // Redis (optional)
         let redis_dao = if config_impl.get_configuration_instance().redis_password.is_some() {

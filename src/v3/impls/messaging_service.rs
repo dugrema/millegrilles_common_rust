@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::v3::impls::rabbitmq_internal::{
     RabbitConnectionManager, RabbitConsumerManager, RabbitMessageDispatcher, RabbitQueueRegistry,
@@ -10,6 +11,7 @@ use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefau
 use std::sync::Arc;
 use millegrilles_cryptographie::securite::Securite;
 use tokio::sync::mpsc::Receiver;
+use crate::rabbitmq_dao::ConfigQueue;
 
 pub struct MessagingServiceImpl {
     connection_manager: RabbitConnectionManager,
@@ -19,7 +21,11 @@ pub struct MessagingServiceImpl {
 }
 
 impl MessagingServiceImpl {
+
+    /// Creates a new messaging service.
+    /// Note: app_name must either be in the Domaines or Roles of the certificate or the server will reject the connection.
     pub fn new(
+        app_name: &str,
         config: Arc<dyn ConfigService>,
     ) -> Self {
         // Extract security level from certificate
@@ -31,7 +37,7 @@ impl MessagingServiceImpl {
         let connection_manager = RabbitConnectionManager::new(config);
         let message_dispatcher = RabbitMessageDispatcher::new(security_level);
         let consumer_manager = RabbitConsumerManager::new();
-        let queue_registry = RabbitQueueRegistry::new();
+        let queue_registry = RabbitQueueRegistry::new(app_name);
 
         Self {
             connection_manager,
@@ -41,7 +47,13 @@ impl MessagingServiceImpl {
         }
     }
 
-    pub async fn init(&self) {
+    /// Allows dynamically adding a named queue configuration. Does not start processing.
+    pub fn add_named_queue(&self, queue: ConfigQueue) -> Result<(), CommonError> {
+        self.queue_registry.add_named_queue(queue)
+    }
+
+    /// Starts the messaging service background threads including the connection to the server.
+    pub async fn start(&self) {
         self.connection_manager.connecter().await.ok();
         todo!("Rewrite without middleware: Arc<M>, rabbitmq: RabbitMqExecutor")
         // self.message_dispatcher.spawn_workers(rabbitmq.clone());
@@ -59,12 +71,12 @@ impl MessagingService for MessagingServiceImpl {
         todo!()
     }
 
-    async fn take_named_q_rx(&self, q_name: &str) -> Receiver<MessageMilleGrillesBufferDefault> {
-        todo!()
+    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
+        self.queue_registry.take_named_q_rx(q_name)
     }
 
-    async fn take_trigger_q_rx(&self, trigger_name: &str) -> Receiver<MessageMilleGrillesBufferDefault> {
-        todo!()
+    fn take_trigger_q_rx(&self) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
+        self.queue_registry.take_trigger_rx()
     }
 
     fn is_paused(&self) -> bool {
