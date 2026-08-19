@@ -1,7 +1,6 @@
 use crate::certificats::build_store_path_v2;
 use crate::chiffrage_cle::CleChiffrageHandlerImpl;
-use crate::configuration::{ConfigMessages, ConfigurationMessages, IsConfigNoeud, charger_configuration};
-use crate::rabbitmq_dao::RabbitMqExecutor;
+use crate::configuration::{ConfigurationMessages, charger_configuration};
 use crate::redis_dao::RedisDao;
 use crate::v3::impls::config_service::ConfigServiceImpl;
 use crate::v3::impls::format_service::FormatServiceImpl;
@@ -9,11 +8,40 @@ use crate::v3::impls::messaging_service::MessagingServiceImpl;
 use crate::v3::impls::security_service::SecurityServiceImpl;
 use crate::v3::traits::*;
 use log::info;
-use millegrilles_cryptographie::x509::EnveloppePrivee;
 use std::sync::Arc;
 
+/// Sample context from V3 services, customize as needed.
+struct MiddlewareContext {
+    pub messaging: Arc<dyn MessagingService>,
+    pub security: Arc<dyn PkiService>,
+    pub encryption: Arc<dyn ChiffrageService>,
+    pub config: Arc<dyn ConfigService>,
+    pub format: Arc<dyn FormatService>,
+    pub redis: Option<Arc<RedisDao>>,
+}
+
+impl MiddlewareContext {
+    fn from_services(
+        messaging: Arc<dyn MessagingService>,
+        security: Arc<dyn PkiService>,
+        encryption: Arc<dyn ChiffrageService>,
+        config: Arc<dyn ConfigService>,
+        format: Arc<dyn FormatService>,
+        redis: Option<Arc<RedisDao>>,
+    ) -> Self {
+        Self {
+            messaging,
+            security,
+            encryption,
+            config,
+            format,
+            redis,
+        }
+    }
+}
+
 pub struct PocCompositionRoot {
-    pub context: crate::v3::context::MiddlewareContext,
+    pub context: MiddlewareContext,
 }
 
 impl PocCompositionRoot {
@@ -53,7 +81,7 @@ impl PocCompositionRoot {
         let format_impl = Arc::new(FormatServiceImpl {});
 
         // Context
-        let context = crate::v3::context::MiddlewareContext::from_services(
+        let context = MiddlewareContext::from_services(
             messaging_impl,
             security_impl.clone(),
             security_impl.clone(),
