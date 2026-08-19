@@ -1,26 +1,27 @@
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigurationMq, ConfigurationPki};
 use crate::error::Error as CommonError;
-use crate::rabbitmq_dao::{ConfigQueue, MessageInterne, MessageOut, TypeMessageOut};
+use crate::rabbitmq_dao::{ConfigQueue, MessageInterne, MessageOut, QueueType, TypeMessageOut};
 use crate::v3::{ConfigService, MessagingService};
 use chrono::{DateTime, Utc};
-use lapin::{tcp::OwnedIdentity, tcp::OwnedTLSConfig, BasicProperties, Channel, Connection, ConnectionProperties, Queue};
+use lapin::{tcp::OwnedIdentity, tcp::OwnedTLSConfig, BasicProperties, Channel, Connection, ConnectionProperties, Queue, Consumer};
 use log::{debug, error, info, warn};
-use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageValidable};
 use millegrilles_cryptographie::securite::Securite;
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use dryoc::sign::Message;
-use lapin::options::{BasicPublishOptions, QueueBindOptions, QueueDeclareOptions};
+use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, QueueBindOptions, QueueDeclareOptions};
 use lapin::types::FieldTable;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::{sync::{Notify, mpsc, oneshot}, task::{self}};
 use url::Url;
-use crate::constantes::{COMMANDE_CERT_MAITREDESCLES, COMMANDE_DECLENCHER_BACKUP, COMMANDE_GLOBAL_DECLENCHER_BACKUP, COMMANDE_GLOBAL_REGENERER, COMMANDE_REGENERER, DEFAULT_MESSAGE_TIMEOUT, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_CEDULEUR_PING, EVENEMENT_TRANSACTION_PERSISTEE, REQUETE_DOMAIN_PING, REQUETE_NOMBRE_TRANSACTIONS, SECURITE_2_PRIVE, SECURITE_3_PROTEGE, SECURITE_4_SECURE};
+use crate::constantes::{COMMANDE_CERT_MAITREDESCLES, COMMANDE_DECLENCHER_BACKUP, COMMANDE_GLOBAL_DECLENCHER_BACKUP, COMMANDE_GLOBAL_REGENERER, COMMANDE_REGENERER, DEFAULT_MESSAGE_TIMEOUT, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_CEDULEUR_PING, EVENEMENT_TRANSACTION_PERSISTEE, REQUETE_DOMAIN_PING, REQUETE_NOMBRE_TRANSACTIONS, SECURITE_1_PUBLIC, SECURITE_2_PRIVE, SECURITE_3_PROTEGE, SECURITE_4_SECURE};
 use crate::generateur_messages::RoutageMessageAction;
 use crate::recepteur_messages::TypeMessage;
+use tokio_stream::StreamExt;
 
 // --- Constants ---
 
@@ -268,12 +269,8 @@ impl RabbitMessageDispatcher {
         // Channel holder for this thread
         let mut channel: Option<Channel> = None;
 
-        loop {
-            let message = match rx.recv().await {
-                Some(message) => message,
-                None => return  // Stopping
-            };
-
+        // Loop while the receiver does not return None.
+        while let Some(message) = rx.recv().await {
             // Channel maintenance
             if let Some(channel_inner) = &channel {
                 if ! channel_inner.status().connected() {
@@ -386,6 +383,7 @@ async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: O
 }
 
 pub struct RabbitConsumerManager {
+    connection: Arc<RabbitConnectionManager>,
     queue_registry: Arc<RabbitQueueRegistry>,
     notify_queues_changed: Arc<Notify>,
     /// Responses waiting by correlation id
@@ -393,8 +391,9 @@ pub struct RabbitConsumerManager {
 }
 
 impl RabbitConsumerManager {
-    pub fn new(queue_registry: Arc<RabbitQueueRegistry>) -> Self {
+    pub fn new(connection: Arc<RabbitConnectionManager>, queue_registry: Arc<RabbitQueueRegistry>) -> Self {
         Self {
+            connection,
             queue_registry,
             notify_queues_changed: Arc::new(Notify::new()),
             waiting_responses: Mutex::new(HashMap::with_capacity(50)),
@@ -438,9 +437,127 @@ impl RabbitConsumerManager {
         }
     }
 
-    async fn reply_q_thread(self: Arc<Self>) -> Result<(), CommonError> {
-        let tx = self.queue_registry.reply_queue.tx.clone();
-        todo!()
+    async fn reply_q_thread(self: Arc<Self>) -> () {
+        loop {
+            // RabbitMQ struct holder for this thread
+            let mut consumer_holder: Option<RabbitMqConsumer> = None;
+
+            while consumer_holder.is_none() {
+                match self.connection.get_channel().await {
+                    Ok(channel_inner) => {
+                        match create_reply_queue(self.queue_registry.as_ref(), &channel_inner).await {
+                            Ok(q) => {
+                                // Create consumer
+                                let mq_consumer_result = channel_inner
+                                    .basic_consume(
+                                        q.name().as_str(),
+                                        "".into(),
+                                        BasicConsumeOptions::default(),
+                                        FieldTable::default(),
+                                    ).await;
+                                match mq_consumer_result {
+                                    Ok(mq_consumer) => {
+                                        debug!("task_traitement_reponses consumer pret {}", q.name());
+                                        consumer_holder = Some(RabbitMqConsumer {queue: q, channel: channel_inner, consumer: mq_consumer});
+                                        break
+                                    }
+                                    Err(e) => error!("Error consuming message: {:?}", e)
+                                }
+                            },
+                            Err(e) => error!("Error creating reply queue: {:?}", e)
+                        }
+                    },
+                    Err(e) => error!("Error getting channel, will sleep: {}", e)
+                }
+                tokio::time::sleep(ATTENTE_RECONNEXION).await;
+            }
+            let mut consumer_holder = consumer_holder.expect("reply_q_thread Error getting consumer struct");
+
+            while let Some(delivery) = consumer_holder.consumer.next().await {
+                let reply_q_name = consumer_holder.queue.name().as_str();
+                debug!("reply_q_thread({}): Reception nouveau message {}", reply_q_name, reply_q_name);
+
+                let delivery = match delivery {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!("reply_q_thread Error message delivery : {:?}", e);
+                        break;
+                    }
+                };
+
+                // Find correlation for message
+                let correlation_id = match delivery.properties.correlation_id() {
+                    Some(correlation_id) => correlation_id.to_string(),
+                    None => {
+                        // No correlation_id at all - ACK and move on
+                        debug!("Received uncorrelated message on reply_q, dropping");
+                        delivery.acker.ack(BasicAckOptions::default()).await.ok();
+                        continue;
+                    }
+                };
+
+                // Retrieve the response waiter
+                let response_waiter = self.waiting_responses
+                    .lock().expect("reply_q_thread Error locking waiters")
+                    .remove(&correlation_id);
+
+                let response_waiter = match response_waiter {
+                    Some(waiter) => waiter,
+                    None => {
+                        // No matching correlation_id - ACK and move on
+                        debug!("Received uncorrelated message on reply_q, dropping: correlation_id = {}", correlation_id);
+                        delivery.acker.ack(BasicAckOptions::default()).await.ok();
+                        continue;
+                    }
+                };
+
+                // Something is waiting for this message - continue processing
+                // Take the buffer into MilleGrilles message structure (no parsing yet)
+                let message: MessageMilleGrillesBufferDefault = delivery.data.into();
+
+                // Do basic message internal validation for quick rejection (no certificate check)
+                let mut valid = false;
+                // Verify structure
+                match message.parse() {
+                    Ok(mut m) => {
+                        // Structure ok, verify signature
+                        if let Err(e) = m.verifier_signature() {
+                            error!("reply_q_thread Invalid signature in received message : {:?}", e);
+                        } else {
+                            // The message has a valid signature
+                            valid = true;
+                        }
+                    }
+                    Err(e) => {
+                        error!("reply_q_thread Invalid message received : {:?}", e);
+                    }
+                }
+
+                if valid {
+                    // Send message for further processing
+                    if let Err(e) = response_waiter.sender.send(Ok(message)) {
+                        error!("reply_q_thread Error message delivery : {:?}", e);
+                    }
+                } else {
+                    if let Err(e) = response_waiter.sender
+                        .send(Err(CommonError::Str("The response to this message was invalid (structure/signature)")))
+                    {
+                        error!("reply_q_thread Error delivery or invalid message response : {:?}", e);
+                    }
+                    // // Message not valid, put the waiter back in the map (no change to expiry)
+                    // self.waiting_responses
+                    //     .lock().expect("reply_q_thread Error locking waiters (2)")
+                    //     .insert(correlation_id, response_waiter);
+                }
+
+                // Always send ack
+                delivery.acker.ack(BasicAckOptions::default()).await.ok();
+            }
+
+            // Exclusive reply queue is lost with the connection being closed
+            consumer_holder.channel.close(200, "Closing").await.ok();
+            self.queue_registry.set_reply_q_name(None);
+        }
     }
 
     async fn maintenance_thread(&self) {
@@ -506,18 +623,12 @@ impl NamedQueue {
 struct ReplyQueue {
     /// The reply_q name is re-generated on each connection
     q_name: Mutex<Option<String>>,
-    tx: Sender<Result<MessageMilleGrillesBufferDefault, CommonError>>,
-    /// Holds rx until a consumer process takes it
-    rx: Mutex<Option<Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>>,
 }
 
 impl ReplyQueue {
     fn new() -> Self {
-        let (tx, rx) = mpsc::channel(2);
         Self {
             q_name: Mutex::new(None),
-            tx,
-            rx: Mutex::new(Some(rx)),
         }
     }
 }
@@ -617,4 +728,35 @@ fn concatenate_routing_key(message_kind: MessageKind, routing: Option<&RoutageMe
         MessageKind::TransactionMigree |
         MessageKind::CommandeInterMillegrille => Err(CommonError::Str("Unsupported OutgoingMessage type"))
     }
+}
+
+async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Channel)
+    -> Result<Queue, CommonError> {
+    let options = QueueDeclareOptions {
+        passive: false,
+        durable: false,
+        exclusive: true,
+        auto_delete: true,
+        nowait: false,
+    };
+
+    let mut params = FieldTable::default();
+    params.insert(FLAG_TTL.into(), DEFAULT_TTL.into());
+
+    let reply_queue = channel.queue_declare("", options, params).await?;
+
+    let queue_name = reply_queue.name().as_str();
+    info!("create_reply_queue Setting reply Q name: {}", queue_name);
+    queue_registry.set_reply_q_name(Some(queue_name.to_owned()));
+
+    let exchanges: Vec<&str> = vec![SECURITE_1_PUBLIC];
+    debug!("create_reply_queue Binding on exchanges : {:?}", exchanges);
+
+    Ok(reply_queue)
+}
+
+struct RabbitMqConsumer {
+    channel: Channel,
+    queue: Queue,
+    consumer: Consumer,
 }

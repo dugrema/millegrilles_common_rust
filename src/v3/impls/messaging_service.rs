@@ -9,9 +9,13 @@ use crate::v3::ConfigService;
 use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use std::sync::Arc;
+use lapin::{Channel, Queue};
+use lapin::options::{QueueBindOptions, QueueDeclareOptions};
+use lapin::types::FieldTable;
+use log::debug;
 use millegrilles_cryptographie::securite::Securite;
 use tokio::sync::mpsc::Receiver;
-use crate::rabbitmq_dao::ConfigQueue;
+use crate::rabbitmq_dao::{ConfigQueue, RabbitMqExecutor, ReplyQueue};
 
 pub struct MessagingServiceImpl {
     connection_manager: Arc<RabbitConnectionManager>,
@@ -35,7 +39,7 @@ impl MessagingServiceImpl {
 
         let connection_manager = Arc::new(RabbitConnectionManager::new(config));
         let queue_registry = Arc::new(RabbitQueueRegistry::new());
-        let consumer_manager = Arc::new(RabbitConsumerManager::new(queue_registry.clone()));
+        let consumer_manager = Arc::new(RabbitConsumerManager::new(connection_manager.clone(), queue_registry.clone()));
         let message_dispatcher = RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone(), security_level);
 
         Self {

@@ -24,6 +24,7 @@ pub enum Error {
     ErreurVerification(ErreurVerification),
     Redis(RedisError),
     MongDb(mongodb::error::Error),
+    Lapin(lapin::Error),
     BsonValueAccessError(bson::document::ValueAccessError),
     Reqwest(reqwest::Error),
     HexFrom(hex::FromHexError),
@@ -98,6 +99,12 @@ impl From<dryoc::Error> for Error {
 impl From<mongodb::error::Error> for Error {
     fn from(value: mongodb::error::Error) -> Self {
         Self::MongDb(value)
+    }
+}
+
+impl From<lapin::Error> for Error {
+    fn from(value: lapin::Error) -> Self {
+        Self::Lapin(value)
     }
 }
 
