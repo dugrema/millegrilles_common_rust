@@ -1,51 +1,44 @@
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error;
-use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
-use crate::rabbitmq_dao::TypeMessageOut;
-use crate::recepteur_messages::TypeMessage;
+use crate::generateur_messages::RoutageMessageAction;
 use async_trait::async_trait;
-use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
-use millegrilles_cryptographie::securite::Securite;
+use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
-use millegrilles_cryptographie::x509_store::ValidateurX509;
+use tokio::sync::mpsc::Receiver;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
-    async fn emit_event(&self, routage: RoutageMessageAction, value: Value) -> Result<(), Error>;
+    /// Emits a message, does not wait for a response (i.e. supported types are Event, Response, non-blocking Commands)
+    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>)
+        -> Result<(), Error>;
 
-    async fn send_request(&self, routage: RoutageMessageAction, value: Value) -> Result<Option<TypeMessage>, Error>;
+    /// Sends a message and waits for a response. Used for requests and blocking commands only.
+    async fn send(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>)
+        -> Result<MessageMilleGrillesBufferDefault, Error>;
 
-    // Transactions as messages should be obsolete (use command instead)
-    // async fn send_transaction(&self, routage: RoutageMessageAction, value: Value) -> Result<Option<TypeMessage>, Error>;
+    /// Take the message receiver from the queue registry for a named queue. Panics if already taken.
+    async fn take_named_q_rx(&self, q_name: &str) -> Receiver<MessageMilleGrillesBufferDefault>;
 
-    async fn send_command(&self, routage: RoutageMessageAction, value: Value) -> Result<Option<TypeMessage>, Error>;
+    /// Take a trigger message receiver from the queue registry. Panics if already taken.
+    async fn take_trigger_q_rx(&self, trigger_name: &str) -> Receiver<MessageMilleGrillesBufferDefault>;
 
-    async fn respond(&self, routage: RoutageMessageReponse, value: Value) -> Result<(), Error>;
+    /// Returns true if the connection is not currently processing messages (e.g. not connected).
+    fn is_paused(&self) -> bool;
 
-    /// Emettre un message en str deja serialise
-    async fn emit_message(&self, type_message: TypeMessageOut, value: MessageMilleGrillesBufferDefault) -> Result<Option<TypeMessage>, Error>;
-
-    fn mq_available(&self) -> bool;
-
-    /// Active le mode regeneration
-    fn set_regeneration(&self);
-
-    /// Desactive le mode regeneration
-    fn reset_regeneration(&self);
-
-    /// Retourne l'etat du mode regeneration (true = actif)
-    fn get_regeneration_mode(&self) -> bool;
-
-    fn get_security(&self) -> &Securite;
-
-    fn is_dev(&self) -> bool;
+    /// Waits for the connection to resume.
+    async fn wait_for_resume(&self, timeout: Option<u32>) -> Result<(), Error>;
 }
 
 #[async_trait]
-pub trait PkiService: ValidateurX509 + Send + Sync {}
+pub trait PkiService: ValidateurX509 + Send + Sync {
+    /// Verifies all security components of the message. Returns the parsed certificate.
+    /// Fails with an Error on any issue.
+    async fn validate_message(&self, m: &MessageMilleGrillesRefDefault, current: bool) -> Result<Arc<EnveloppeCertificat>, Error>;
+}
 
 #[async_trait]
 pub trait ChiffrageService: Send + Sync {

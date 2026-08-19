@@ -1,31 +1,20 @@
-use crate::configuration::{ConfigurationMq, ConfigurationPki, ConfigMessages};
-use crate::error::Error;
-use crate::generateur_messages::RoutageMessageAction;
-use crate::rabbitmq_dao::{MessageInterne, MessageOut, TypeMessageOut, NamedQueue, QueueType, ConfigRoutingExchange, ConfigQueue, ReplyQueue};
-use crate::recepteur_messages::{intercepter_message, traiter_delivery, TypeMessage};
-use async_trait::async_trait;
+use crate::certificats::ValidateurX509;
+use crate::configuration::{ConfigurationMq, ConfigurationPki};
+use crate::rabbitmq_dao::{MessageInterne, MessageOut, TypeMessageOut};
+use crate::recepteur_messages::TypeMessage;
+use crate::v3::{ConfigService, MessagingService, PkiService};
 use chrono::{DateTime, Utc};
-use lapin::{
-    message::Delivery,
-    options::*,
-    protocol::{AMQPErrorKind, AMQPSoftError},
-    types::FieldTable,
-    BasicProperties, Channel, Connection, ConnectionProperties, Queue, tcp::OwnedIdentity,
-    tcp::OwnedTLSConfig,
+use lapin::{Channel, Connection, ConnectionProperties, tcp::OwnedIdentity,
+            tcp::OwnedTLSConfig,
 };
-use log::{debug, error, info, log_enabled, trace, warn};
+use log::{debug, error, info, warn};
 use millegrilles_cryptographie::securite::Securite;
-use millegrilles_cryptographie::x509::EnveloppePrivee;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::{sync::{mpsc, Notify, oneshot}, task::{self, JoinHandle}};
-use tokio_stream::StreamExt;
+use tokio::{sync::{Notify, mpsc, oneshot}, task::{self}};
 use url::Url;
-use crate::certificats::ValidateurX509;
-use crate::v3::ConfigService;
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
@@ -134,8 +123,8 @@ impl RabbitConnectionManager {
 }
 
 async fn emettre_certificat_compte_internal(
-    mq: &crate::configuration::ConfigurationMq,
-    pki: &crate::configuration::ConfigurationPki,
+    mq: &ConfigurationMq,
+    pki: &ConfigurationPki,
 ) -> Result<(), Box<dyn StdError>> {
     const MTLS_PORT: u16 = 444;
     const COMMANDE: &str = "administration/ajouterCompte";
@@ -261,43 +250,54 @@ impl RabbitMessageDispatcher {
         self.reply_q.lock().unwrap().clone()
     }
 
-    pub fn spawn_workers(&self) {
-        todo!("Rewrite without rabbitmq: RabbitMqExecutor")
+    pub fn spawn_workers(
+        self: Arc<Self>,
+        connection_manager: Arc<RabbitConnectionManager>,
+        messaging_service: Arc<dyn MessagingService>,
+    ) {
+        // Outbound worker: Sends messages from the dispatcher channel to RabbitMQ
+        let dispatcher_out = self.clone();
+        let conn_manager_out = connection_manager.clone();
+        task::spawn(async move {
+            let mut rx = {
+                let mut guard = dispatcher_out.rx_out.lock().unwrap();
+                guard.take().expect("Dispatcher rx_out not available")
+            };
 
-        // let rabbitmq_out = rabbitmq.clone();
-        // let tx_reply = self.tx_reply.clone();
-        // task::spawn(async move {
-        //     let mut rx = {
-        //         let mut guard = rabbitmq_out.rx_out.lock().unwrap();
-        //         match guard.take() {
-        //             Some(rx) => rx,
-        //             None => panic!("RabbitMessageDispatcher rx_out not available")
-        //         }
-        //     };
-        //
-        //     loop {
-        //         if let Some(message) = rx.recv().await {
-        //             let channel = match rabbitmq_out.create_channel().await {
-        //                 Ok(c) => c,
-        //                 Err(e) => {
-        //                     error!("Dispatcher task_emettre_messages Erreur creation channel: {:?}", e);
-        //                     continue;
-        //                 }
-        //             };
-        //
-        //             info!("Dispatcher task_emettre_messages: processing message");
-        //             drop(channel);
-        //         } else {
-        //             break;
-        //         }
-        //     }
-        // });
-        //
-        // let rabbitmq_reply = rabbitmq.clone();
-        // let mut futures = FuturesUnordered::new();
-        // futures.push(task::spawn(thread_traiter_reply_q(rabbitmq_reply.clone(), rabbitmq.clone())));
-        // futures.push(task::spawn(thread_entretien_attente(rabbitmq.clone())));
+            while let Some(message) = rx.recv().await {
+                match conn_manager_out.get_channel().await {
+                    Ok(_channel) => {
+                        // TODO: Implement actual AMQP publish logic here using the channel
+                        info!("Dispatcher task_emettre_messages: processing message");
+                        drop(_channel);
+                    }
+                    Err(e) => {
+                        error!("Dispatcher task_emettre_messages Erreur creation channel: {:?}", e);
+                    }
+                }
+            }
+        });
+
+        // Inbound worker: Receives replies and handles correlation/interception
+        let dispatcher_in = self.clone();
+
+        // Expiration worker: Cleans up expired correlation requests
+        let dispatcher_exp = self.clone();
+        task::spawn(async move {
+            loop {
+                tokio::time::sleep(INTERVALLE_ENTRETIEN_ATTENTE).await;
+                let mut guard = dispatcher_exp.map_attente.lock().unwrap();
+                if guard.is_empty() {
+                    continue;
+                }
+                let date_now = Utc::now();
+                debug!("Attentes de reponse pre-cleanup: {}", guard.len());
+                guard.retain(|_, attente| attente.expiration > date_now);
+                debug!("Attentes de reponse post-cleanup: {}", guard.len());
+            }
+        });
     }
+
 }
 
 pub struct RabbitConsumerManager {
@@ -311,30 +311,19 @@ impl RabbitConsumerManager {
         }
     }
 
-    pub async fn run(&self) {
-        todo!("Rewrite without middleware: Arc<M>, rabbitmq: RabbitMqExecutor")
+    pub async fn run(
+        self: Arc<Self>,
+        notify: Arc<Notify>,
+    ) {
+        loop {
+            notify.notified().await;
+            // In a real implementation, we would manage the lifecycle of consumers here.
 
-        // let mut futures = FuturesUnordered::new();
-        // loop {
-        //     {
-        //         let named_queues = rabbitmq.as_ref().named_queues.lock().expect("lock");
-        //         for (_, named_queue) in named_queues.iter() {
-        //             if ! named_queue.is_running() {
-        //                 if let Ok(f_nq) = named_queue.get_futures(middleware.clone(), rabbitmq.clone()) {
-        //                     futures.extend(f_nq);
-        //                 }
-        //             }
-        //         }
-        //     }
-        //
-        //     futures.push(task::spawn(notify_wait_thread(rabbitmq.clone())));
-        //
-        //     if let Some(result) = futures.next().await {
-        //         if let Err(e) = result {
-        //             error!("Error in named queue consumer task: {:?}", e);
-        //         }
-        //     }
-        // }
+            // Old code in rabbitmq_executor: guard.retain(|_, attente| attente.expiration > date_now);
+
+            // For now, we just wait for the next notification.
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
     }
 }
 
@@ -353,95 +342,4 @@ impl RabbitQueueRegistry {
 pub async fn notify_wait_thread(notify: Arc<Notify>) {
     let notify = notify.clone();
     notify.notified().await;
-}
-
-async fn thread_traiter_reply_q() {
-    todo!("Rewrite without middleware: Arc<M>, rabbitmq: RabbitMqExecutor")
-
-    // let mut rx = {
-    //     let mut guard = rabbitmq.rx_reply.lock().expect("lock");
-    //     match guard.take() {
-    //         Some(rx) => rx,
-    //         None => panic!("thread_traiter_reply_q rx reply non disponible")
-    //     }
-    // };
-    //
-    // while let Some(message) = rx.recv().await {
-    //     let resultat = match message {
-    //         MessageInterne::Delivery(delivery, _routing) => {
-    //             let nom_queue = match rabbitmq.reply_q.lock().expect("lock").clone() {
-    //                 Some(q) => q,
-    //                 None => "_reply".into()
-    //             };
-    //             match traiter_delivery(
-    //                 middleware.as_ref(),
-    //                 nom_queue.as_str(),
-    //                 delivery
-    //             ).await {
-    //                 Ok(m) => m,
-    //                 Err(e) => {
-    //                     error!("thread_traiter_reply_q Erreur traitement message : {:?}", e);
-    //                     None
-    //                 }
-    //             }
-    //         },
-    //         _ => {
-    //             debug!("thread_traiter_reply_q Type de message non-supporte, on l'ignore");
-    //             None
-    //         }
-    //     };
-    //
-    //     if let Some(message_traite) = resultat {
-    //         let attente_reponse = match &message_traite {
-    //             TypeMessage::Valide(message) => {
-    //                 match &message.type_message {
-    //                     TypeMessageOut::Reponse(r) => {
-    //                         let correlation_id = r.correlation_id.as_str();
-    //                         let mut guard = rabbitmq.map_attente.lock().expect("lock");
-    //                         if let Some(attente_reponse) = guard.remove(correlation_id) {
-    //                             debug!("thread_traiter_reply_q Reponse pour correlation_id {} recue, traiter", correlation_id);
-    //                             Some(attente_reponse)
-    //                         } else {
-    //                             info!("thread_traiter_reply_q Message recu sans attente sur correlation_id {}, skip", correlation_id);
-    //                             None
-    //                         }
-    //                     },
-    //                     _ => None
-    //                 }
-    //             },
-    //             _ => None
-    //         };
-    //
-    //         match attente_reponse {
-    //             Some(a) => {
-    //                 debug!("thread_traiter_reply_q Traiter reponse correlation_id: {}", a.correlation);
-    //                 if let Err(e) = a.sender.send(message_traite) {
-    //                     error!("thread_traiter_reply_q Erreur transmission reponse attente correlation {} : {:?}", a.correlation, e);
-    //                 }
-    //             },
-    //             None => {
-    //                 if intercepter_message(middleware.as_ref(), &message_traite).await == false {
-    //                     info!("Message sur reply_q sans attente et non intercepte, on skip");
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
-    //
-    // info!("thread_consumer_reply_queue Fin thread");
-}
-
-async fn thread_entretien_attente() {
-    todo!("Rewrite without rabbitmq: RabbitMqExecutor")
-    // loop {
-    //     tokio::time::sleep(INTERVALLE_ENTRETIEN_ATTENTE).await;
-    //     let mut guard = rabbitmq.map_attente.lock().expect("lock");
-    //     if guard.is_empty() {
-    //         continue;
-    //     }
-    //     let date_now = Utc::now();
-    //     debug!("Attentes de reponse pre-cleanup: {}", guard.len());
-    //     guard.retain(|_, attente| attente.expiration > date_now);
-    //     debug!("Attentes de reponse post-cleanup: {}", guard.len());
-    // }
 }

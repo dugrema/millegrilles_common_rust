@@ -4,6 +4,7 @@ use crate::error::Error;
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
+use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRefDefault;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl};
 use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
@@ -33,7 +34,11 @@ impl ValidateurX509 for SecurityServiceImpl {
 }
 
 #[async_trait]
-impl PkiService for SecurityServiceImpl {}
+impl PkiService for SecurityServiceImpl {
+    async fn validate_message(&self, m: &MessageMilleGrillesRefDefault, current: bool) -> Result<Arc<EnveloppeCertificat>, Error> {
+        todo!()
+    }
+}
 
 #[async_trait]
 impl ChiffrageService for SecurityServiceImpl {
