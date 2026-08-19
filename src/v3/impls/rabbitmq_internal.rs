@@ -1,10 +1,14 @@
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigurationMq, ConfigurationPki};
+use crate::constantes::{DEFAULT_MESSAGE_TIMEOUT, SECURITE_1_PUBLIC};
 use crate::error::Error as CommonError;
-use crate::rabbitmq_dao::{ConfigQueue, MessageInterne, MessageOut, QueueType, TypeMessageOut};
-use crate::v3::{ConfigService, MessagingService};
+use crate::generateur_messages::RoutageMessageAction;
+use crate::rabbitmq_dao::ConfigQueue;
+use crate::v3::ConfigService;
 use chrono::{DateTime, Utc};
-use lapin::{tcp::OwnedIdentity, tcp::OwnedTLSConfig, BasicProperties, Channel, Connection, ConnectionProperties, Queue, Consumer};
+use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, BasicQosOptions, QueueBindOptions, QueueDeclareOptions};
+use lapin::types::FieldTable;
+use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Consumer, Queue, tcp::OwnedIdentity, tcp::OwnedTLSConfig};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageValidable};
 use millegrilles_cryptographie::securite::Securite;
@@ -12,16 +16,10 @@ use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use dryoc::sign::Message;
-use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicPublishOptions, QueueBindOptions, QueueDeclareOptions};
-use lapin::types::FieldTable;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::{sync::{Notify, mpsc, oneshot}, task::{self}};
-use url::Url;
-use crate::constantes::{COMMANDE_CERT_MAITREDESCLES, COMMANDE_DECLENCHER_BACKUP, COMMANDE_GLOBAL_DECLENCHER_BACKUP, COMMANDE_GLOBAL_REGENERER, COMMANDE_REGENERER, DEFAULT_MESSAGE_TIMEOUT, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_CEDULEUR_PING, EVENEMENT_TRANSACTION_PERSISTEE, REQUETE_DOMAIN_PING, REQUETE_NOMBRE_TRANSACTIONS, SECURITE_1_PUBLIC, SECURITE_2_PRIVE, SECURITE_3_PROTEGE, SECURITE_4_SECURE};
-use crate::generateur_messages::RoutageMessageAction;
-use crate::recepteur_messages::TypeMessage;
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio_stream::StreamExt;
+use url::Url;
 
 // --- Constants ---
 
@@ -34,7 +32,6 @@ const DEFAULT_TTL: u64 = 300_000;
 
 #[derive(Debug)]
 struct ResponseWaiter {
-    correlation: String,
     sender: oneshot::Sender<Result<MessageMilleGrillesBufferDefault, CommonError>>,
     expiration: DateTime<Utc>,
 }
@@ -244,11 +241,7 @@ impl RabbitMessageDispatcher {
 
                 // Create correlation waiter for the response (to be put on the tx)
                 let (tx, rx) = oneshot::channel();
-                let response_waiter = ResponseWaiter {
-                    correlation: correlation_id.clone().into(),
-                    sender: tx,
-                    expiration,
-                };
+                let response_waiter = ResponseWaiter { sender: tx, expiration };
                 self.consumer.add_response(correlation_id.to_owned(), response_waiter)?;
 
                 // Return receiver
@@ -419,21 +412,125 @@ impl RabbitConsumerManager {
     async fn start_named_queue_threads(self: Arc<Self>) -> Result<(), CommonError> {
         let queue_names = self.queue_registry.get_queue_names();
         for q_name in queue_names {
-            // Load internal queue Sender on which the received message will be put
-            let tx = match self.queue_registry.get_named_queue_tx(q_name.as_str()) {
-                Ok(r) => r,
-                Err(e) => return Err(CommonError::String(format!("Unable to start consumer thread on {}, rx already taken: {:?}", q_name, e)))
-            };
-            todo!("Spawn consumer thread")
+            let self_clone = self.clone();
+            tokio::spawn(async move { self_clone.named_queue_thread(q_name).await });
         }
-
         Ok(())
     }
 
-    async fn named_queue_thread(self: Arc<Self>, mut rx: Receiver<MessageMilleGrillesBufferDefault>) {
+    async fn named_queue_thread(self: Arc<Self>, q_name: String) -> () {
+        // Get queue config and Sender
+        let (config, tx) = self.queue_registry
+            .get_named_queue(q_name.as_str()).expect("unknown queue name");
+
         loop {
-            let message = rx.recv().await;
-            todo!()
+            // RabbitMQ struct holder for this thread
+            let mut consumer_holder: Option<RabbitMqConsumer> = None;
+
+            while consumer_holder.is_none() {
+                match self.connection.get_channel().await {
+                    Ok(channel_inner) => {
+                        let qos_options_reponses = BasicQosOptions { global: false };
+                        if let Err(e) = channel_inner.basic_qos(1, qos_options_reponses).await {
+                            error!("named_queue_consume Error configuring channel for queue {:?}, {:?}", q_name, e);
+                        } else {
+                            match create_named_queue(self.queue_registry.as_ref(), &channel_inner, &config).await {
+                                Ok(q) => {
+                                    // Add all routing keys
+                                    let mut rk_ok = true;
+                                    for rk in &config.routing_keys {
+                                        let routing_key = rk.routing_key.as_str();
+                                        let exchange = rk.exchange.get_str();
+                                        debug!("named_queue_thread queue_bind rk {} on queue {}, exchange {}", routing_key, q_name, exchange);
+                                        if let Err(e) = channel_inner.queue_bind(
+                                            q_name.as_str(),
+                                            exchange,
+                                            routing_key,
+                                            QueueBindOptions::default(),
+                                            FieldTable::default()
+                                        ).await {
+                                            error!("Error creating rk {} on queue {}: {:?}", routing_key, q_name, e);
+                                            rk_ok = false;
+                                            break;
+                                        }
+                                    }
+
+                                    if rk_ok {
+                                        // Create consumer
+                                        let mq_consumer_result = channel_inner
+                                            .basic_consume(
+                                                q.name().as_str(),
+                                                "".into(),
+                                                BasicConsumeOptions::default(),
+                                                FieldTable::default(),
+                                            ).await;
+                                        match mq_consumer_result {
+                                            Ok(mq_consumer) => {
+                                                debug!("named_queue_thread consumer pret {}", q.name());
+                                                consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer: mq_consumer });
+                                                break
+                                            }
+                                            Err(e) => error!("named_queue_thread Error creating message consumer: {:?}", e)
+                                        }
+                                    }
+                                },
+                                Err(e) => error!("named_queue_thread Error creating reply queue: {:?}", e)
+                            }
+                        }
+                    },
+                    Err(e) => error!("named_queue_thread Error getting channel, will sleep: {}", e)
+                }
+                tokio::time::sleep(ATTENTE_RECONNEXION).await;
+            }
+            let mut consumer_holder = consumer_holder.expect("named_queue_thread Error getting consumer struct");
+
+            while let Some(delivery) = consumer_holder.consumer.next().await {
+                let reply_q_name = consumer_holder.queue.name().as_str();
+                debug!("named_queue_thread({}): Reception nouveau message {}", reply_q_name, reply_q_name);
+
+                let delivery = match delivery {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!("named_queue_thread Error message delivery : {:?}", e);
+                        break;
+                    }
+                };
+
+                // Take the buffer into MilleGrilles message structure (no parsing yet)
+                let message: MessageMilleGrillesBufferDefault = delivery.data.into();
+
+                // Do basic message internal validation for quick rejection (no certificate check)
+                let mut valid = false;
+                // Verify structure
+                match message.parse() {
+                    Ok(mut m) => {
+                        // Structure ok, verify signature
+                        if let Err(e) = m.verifier_signature() {
+                            error!("named_queue_thread Invalid signature in received message : {:?}", e);
+                        } else {
+                            // The message has a valid signature
+                            valid = true;
+                        }
+                    }
+                    Err(e) => {
+                        error!("named_queue_thread Invalid message received : {:?}", e);
+                    }
+                }
+
+                if valid {
+                    // Send message for further processing
+                    if let Err(e) = tx.send(message).await {
+                        error!("named_queue_thread Error message delivery : {:?}", e);
+                    }
+                }
+
+                // Always send ack
+                delivery.acker.ack(BasicAckOptions::default()).await.ok();
+            }
+
+            // Exclusive reply queue is lost with the connection being closed
+            consumer_holder.channel.close(200, "Closing").await.ok();
+            self.queue_registry.set_reply_q_name(None);
         }
     }
 
@@ -675,11 +772,11 @@ impl RabbitQueueRegistry {
         self.reply_queue.q_name.lock().expect("RabbitQueueRegistry.get_reply_q_name Lock failed").clone()
     }
 
-    fn get_named_queue_tx(&self, q_name: &str) -> Result<Sender<MessageMilleGrillesBufferDefault>, CommonError> {
+    fn get_named_queue(&self, q_name: &str) -> Result<(ConfigQueue, Sender<MessageMilleGrillesBufferDefault>), CommonError> {
         let mut guard = self.named_queues.lock()
             .expect("RabbitQueueRegistry.get_named_queue_tx Lock failed");
         match guard.get_mut(q_name) {
-            Some(named_queue) => Ok(named_queue.tx.clone()),
+            Some(named_queue) => Ok((named_queue.queue.clone(), named_queue.tx.clone())),
             None => Err(CommonError::String(format!("RabbitQueueRegistry.get_named_queue_tx Name {} unknown", q_name)))
         }
     }
@@ -688,7 +785,7 @@ impl RabbitQueueRegistry {
         let mut guard = self.named_queues.lock()
             .expect("RabbitQueueRegistry.take_named_q_rx Lock failed");
 
-        let mut named_queue = match guard.get_mut(q_name) {
+        let named_queue = match guard.get_mut(q_name) {
             Some(named_queue) => named_queue,
             None => {
                 return Err(CommonError::String(format!("RabbitQueueRegistry.take_named_q_rx Name {} unknown", q_name)));
@@ -728,6 +825,32 @@ fn concatenate_routing_key(message_kind: MessageKind, routing: Option<&RoutageMe
         MessageKind::TransactionMigree |
         MessageKind::CommandeInterMillegrille => Err(CommonError::Str("Unsupported OutgoingMessage type"))
     }
+}
+
+async fn create_named_queue(queue_registry: &RabbitQueueRegistry, channel: &Channel, config: &ConfigQueue)
+                            -> Result<Queue, CommonError> {
+    let options = QueueDeclareOptions {
+        passive: false,
+        durable: config.durable,
+        exclusive: ! config.durable,
+        auto_delete: config.autodelete,
+        nowait: false,
+    };
+
+    let mut params = FieldTable::default();
+    let ttl = config.ttl.unwrap_or_else(|| DEFAULT_TTL as u32);
+    params.insert(FLAG_TTL.into(), ttl.into());
+
+    let reply_queue = channel.queue_declare("", options, params).await?;
+
+    let queue_name = reply_queue.name().as_str();
+    info!("create_reply_queue Setting reply Q name: {}", queue_name);
+    queue_registry.set_reply_q_name(Some(queue_name.to_owned()));
+
+    let exchanges: Vec<&str> = vec![SECURITE_1_PUBLIC];
+    debug!("create_reply_queue Binding on exchanges : {:?}", exchanges);
+
+    Ok(reply_queue)
 }
 
 async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Channel)
