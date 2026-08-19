@@ -134,14 +134,14 @@ async fn emit_certificate(
     hosts.push(Url::parse(format!("https://{}:{}", mq.host, MTLS_PORT).as_str())?);
     hosts.push(Url::parse(format!("https://nginx:{}", MTLS_PORT).as_str())?);
 
-    debug!("Tenter creer compte MQ avec hosts {:?}", hosts);
+    info!("Attempt creating MQ account with hosts {:?}", hosts);
 
     let enveloppe = pki.get_enveloppe_privee().clone();
     let ca_cert_pem = enveloppe.ca_pem.as_str();
     let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
 
     for host in hosts {
-        debug!("Creation compte MQ avec host : {}", host);
+        debug!("MQ account creation with host : {}", host);
 
         let pem_cert = enveloppe.chaine_pem.join("\n");
         let pem_cle = enveloppe.cle_privee_pem.as_str();
@@ -158,22 +158,20 @@ async fn emit_certificate(
             .build()?;
 
         let url = format!("{}{}", host, COMMANDE);
-        info!("Utiliser URL de creation de compte MQ : {:?}", url);
         match client.post(url).send().await {
             Ok(r) => {
                 let status_code = r.status().as_u16();
                 if r.status().is_success() {
                     if status_code == 201 {
-                        debug!("emettre_certificat_compte Reponse OK : {:?}", r);
+                        debug!("Account created : {:?}", r);
                         return Ok(())
                     } else {
-                        info!("Compte cree (reponse {}), on poursuit", status_code);
+                        info!("Account crated (status:{})", status_code);
                     }
                 }
-                warn!("emettre_certificat_compte Response creation compte MQ status {:?} error : {:?}", r.status(), r);
             },
             Err(e) => {
-                warn!("emettre_certificat_compte Response creation compte MQ error : {:?}", e);
+                warn!("Error attempting to create MQ account : {:?}", e);
             }
         }
     }
