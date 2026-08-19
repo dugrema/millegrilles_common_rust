@@ -20,6 +20,8 @@ pub trait MessagingService: Send + Sync {
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routage: Option<RoutageMessageAction>)
         -> Result<MessageMilleGrillesBufferDefault, Error>;
 
+    fn get_reply_q_name(&self) -> Option<String>;
+
     /// Take the message receiver from the queue registry for a named queue.
     fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, Error>;
 

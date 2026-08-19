@@ -71,6 +71,10 @@ impl MessagingService for MessagingServiceImpl {
         todo!()
     }
 
+    fn get_reply_q_name(&self) -> Option<String> {
+        self.queue_registry.get_reply_q_name()
+    }
+
     fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
         self.queue_registry.take_named_q_rx(q_name)
     }

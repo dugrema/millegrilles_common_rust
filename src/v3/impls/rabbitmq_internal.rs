@@ -5,9 +5,7 @@ use crate::rabbitmq_dao::{ConfigQueue, MessageInterne, MessageOut, TypeMessageOu
 use crate::recepteur_messages::TypeMessage;
 use crate::v3::{ConfigService, MessagingService};
 use chrono::{DateTime, Utc};
-use lapin::{Channel, Connection, ConnectionProperties, tcp::OwnedIdentity,
-            tcp::OwnedTLSConfig,
-};
+use lapin::{Channel, Connection, ConnectionProperties, tcp::OwnedIdentity, tcp::OwnedTLSConfig};
 use log::{debug, error, info, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_cryptographie::securite::Securite;
@@ -417,6 +415,16 @@ impl RabbitQueueRegistry {
         }
         guard.insert(q_name, queue);
         Ok(())
+    }
+
+    fn set_reply_q_name(&self, q_name: Option<String>) {
+        let mut guard = self.reply_queue.q_name.lock()
+            .expect("RabbitQueueRegistry.get_reply_q_name Lock failed");
+        *guard = q_name;
+    }
+
+    pub fn get_reply_q_name(&self) -> Option<String> {
+        self.reply_queue.q_name.lock().expect("RabbitQueueRegistry.get_reply_q_name Lock failed").clone()
     }
 
     pub fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
