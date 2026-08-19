@@ -20,7 +20,7 @@ use url::Url;
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
-const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(400);
+const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(3000);
 const FLAG_TTL: &str = "x-message-ttl";
 
 // --- Internal Types ---
@@ -184,31 +184,31 @@ async fn emettre_certificat_compte_internal(
 }
 
 pub struct RabbitMessageDispatcher {
+    registry: Arc<RabbitQueueRegistry>,
+    consumer: Arc<RabbitConsumerManager>,
     tx_out: mpsc::Sender<MessageOut>,
     rx_out: Mutex<Option<mpsc::Receiver<MessageOut>>>,
     tx_reply: mpsc::Sender<MessageInterne>,
     rx_reply: Mutex<Option<mpsc::Receiver<MessageInterne>>>,
-    reply_correlation_map: Mutex<HashMap<String, ResponseWaiter>>,
-    reply_q: Arc<Mutex<Option<String>>>,
     securite: Securite,
 }
 
 impl RabbitMessageDispatcher {
-    pub fn new(securite: Securite) -> Self {
+    pub fn new(registry: Arc<RabbitQueueRegistry>, consumer: Arc<RabbitConsumerManager>, securite: Securite) -> Self {
         let (tx_out, rx_out) = mpsc::channel(3);
         let (tx_reply, rx_reply) = mpsc::channel(1);
         Self {
+            registry,
+            consumer,
             tx_out,
             rx_out: Mutex::new(Some(rx_out)),
             tx_reply,
             rx_reply: Mutex::new(Some(rx_reply)),
-            reply_correlation_map: Mutex::new(HashMap::new()),
-            reply_q: Arc::new(Mutex::new(None)),
             securite,
         }
     }
 
-    async fn send_out(&self, message: MessageOut) -> Result<Option<oneshot::Receiver<TypeMessage>>, String> {
+    async fn send_out(&self, message: MessageOut) -> Result<Option<oneshot::Receiver<TypeMessage>>, CommonError> {
         let sender = self.tx_out.clone();
         let attente_correlation_id = match &message.type_message {
             TypeMessageOut::Requete(r) |
@@ -229,13 +229,12 @@ impl RabbitMessageDispatcher {
                 if let Some(expiration) = attente_expiration {
                     if let Some(c) = attente_correlation_id {
                         let (tx, rx) = oneshot::channel();
-                        let attente = ResponseWaiter {
+                        let response_waiter = ResponseWaiter {
                             correlation: c.clone().into(),
                             sender: tx,
                             expiration: expiration.to_owned(),
                         };
-                        let mut guard = self.reply_correlation_map.lock().unwrap();
-                        guard.insert(c, attente);
+                        self.consumer.add_response(c.clone(), response_waiter)?;
                         Ok(Some(rx))
                     } else {
                         Ok(None)
@@ -244,12 +243,8 @@ impl RabbitMessageDispatcher {
                     Ok(None)
                 }
             },
-            Err(e) => Err(format!("Erreur send {:?}", e)),
+            Err(e) => Err(CommonError::String(format!("Erreur send {:?}", e)))
         }
-    }
-
-    fn get_reqly_q_name(&self) -> Option<String> {
-        self.reply_q.lock().unwrap().clone()
     }
 
     pub fn spawn_workers(
@@ -279,53 +274,44 @@ impl RabbitMessageDispatcher {
                 }
             }
         });
-
-        // Inbound worker: Receives replies and handles correlation/interception
-        let dispatcher_in = self.clone();
-
-        // Expiration worker: Cleans up expired correlation requests
-        let dispatcher_exp = self.clone();
-        task::spawn(async move {
-            loop {
-                tokio::time::sleep(INTERVALLE_ENTRETIEN_ATTENTE).await;
-                let mut guard = dispatcher_exp.reply_correlation_map.lock().unwrap();
-                if guard.is_empty() {
-                    continue;
-                }
-                let date_now = Utc::now();
-                debug!("Attentes de reponse pre-cleanup: {}", guard.len());
-                guard.retain(|_, attente| attente.expiration > date_now);
-                debug!("Attentes de reponse post-cleanup: {}", guard.len());
-            }
-        });
     }
 
 }
 
 pub struct RabbitConsumerManager {
     notify_queues_changed: Arc<Notify>,
+    /// Responses waiting by correlation id
+    waiting_responses: Mutex<HashMap<String, ResponseWaiter>>,
 }
 
 impl RabbitConsumerManager {
     pub fn new() -> Self {
         Self {
             notify_queues_changed: Arc::new(Notify::new()),
+            waiting_responses: Mutex::new(HashMap::with_capacity(50)),
         }
     }
 
-    pub async fn run(
-        self: Arc<Self>,
-        notify: Arc<Notify>,
-    ) {
+    fn add_response(&self, correlation_id: String, waiter: ResponseWaiter) -> Result<(), CommonError> {
+        let mut guard = self.waiting_responses.lock()
+            .expect("RabbitConsumerManager.add_correlation Error locking mutex");
+        guard.insert(correlation_id, waiter);
+        Ok(())
+    }
+
+    async fn run(&self) {
         loop {
-            notify.notified().await;
-            // In a real implementation, we would manage the lifecycle of consumers here.
-
-            // Old code in rabbitmq_executor: guard.retain(|_, attente| attente.expiration > date_now);
-
+            self.cleanup_waiters();
             // For now, we just wait for the next notification.
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(INTERVALLE_ENTRETIEN_ATTENTE).await;
         }
+    }
+
+    fn cleanup_waiters(&self) {
+        let date_now = Utc::now();
+        let mut guard = self.waiting_responses.lock()
+            .expect("RabbitConsumerManager.cleanup_waiters Error locking mutex");
+        guard.retain(|_, attente| attente.expiration > date_now);
     }
 }
 

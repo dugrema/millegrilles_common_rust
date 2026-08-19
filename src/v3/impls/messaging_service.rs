@@ -16,8 +16,8 @@ use crate::rabbitmq_dao::ConfigQueue;
 pub struct MessagingServiceImpl {
     connection_manager: RabbitConnectionManager,
     message_dispatcher: RabbitMessageDispatcher,
-    consumer_manager: RabbitConsumerManager,
-    queue_registry: RabbitQueueRegistry,
+    consumer_manager: Arc<RabbitConsumerManager>,
+    queue_registry: Arc<RabbitQueueRegistry>,
 }
 
 impl MessagingServiceImpl {
@@ -34,10 +34,10 @@ impl MessagingServiceImpl {
             .exchanges.expect("MessagingServiceImpl: No exchanges found on certificate")[0].clone();
         let security_level: Securite = securite_str.as_str().try_into().expect("MessagingServiceImpl: Security not supported");
 
+        let queue_registry = Arc::new(RabbitQueueRegistry::new(app_name));
+        let consumer_manager = Arc::new(RabbitConsumerManager::new());
         let connection_manager = RabbitConnectionManager::new(config);
-        let message_dispatcher = RabbitMessageDispatcher::new(security_level);
-        let consumer_manager = RabbitConsumerManager::new();
-        let queue_registry = RabbitQueueRegistry::new(app_name);
+        let message_dispatcher = RabbitMessageDispatcher::new(queue_registry.clone(), consumer_manager.clone(), security_level);
 
         Self {
             connection_manager,
