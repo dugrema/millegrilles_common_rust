@@ -5,7 +5,7 @@ use crate::v3::traits::{ChiffrageService, PkiService};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
-use millegrilles_cryptographie::messages_structs::MessageMilleGrillesRefDefault;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl};
 use openssl::x509::X509;
@@ -89,7 +89,42 @@ impl PkiService for SecurityServiceImpl {
         Ok(Arc::new(enveloppe))
     }
 
-    async fn validate_message(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, Error> {
+    async fn validate_message(&self, message: &MessageMilleGrillesOwned) -> Result<Arc<EnveloppeCertificat>, Error> {
+        // Internal cryptographic verification of the message must have been done already.
+        // This will have checked the id with hash of content and the signature (sig) using pubkey and id.
+        if message.contenu_valide != Some((true, true)) {
+            return Err(Error::Str("Message internal cryptographic validation must be done before this step"))
+        }
+
+        // Retrieve the properly formatted certificate
+        let pem_chain = match &message.certificat {
+            Some(chain) => {
+                let mut chain_string = String::with_capacity(5000);
+                for cert in chain {
+                    cert.extend_into(&mut chain_string);
+                }
+                chain_string
+            },
+            None => return Err(Error::Str("No certificate in message"))
+        };
+
+        // Load and validate the certificate - throws an Error when invalid.
+        let enveloppe = self.validate_pem(pem_chain.as_str(), None, None)?;
+
+        // Ensure the attached certificate matches the message's pubkey value.
+        let fingerprint = enveloppe.fingerprint_pk()?;
+        if message.pubkey != fingerprint {
+            return Err(Error::Str("Mismatch between certificate and message pubkey"));
+        }
+
+        // We checked the certificate for current date - also ensure the message timestamp
+        // overlaps the certificate's date range. Throws error if range is wrong.
+        valider_pour_date(enveloppe.as_ref(), &message.estampille)?;
+
+        Ok(enveloppe)
+    }
+
+    async fn validate_message_ref(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, Error> {
         // Internal cryptographic verification of the message must have been done already.
         // This will have checked the id with hash of content and the signature (sig) using pubkey and id.
         if message.contenu_valide != Some((true, true)) {

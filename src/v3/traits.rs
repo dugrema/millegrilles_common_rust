@@ -2,7 +2,7 @@ use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki
 use crate::error::Error;
 use crate::generateur_messages::RoutageMessageAction;
 use async_trait::async_trait;
-use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesRefDefault};
+use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
@@ -35,7 +35,10 @@ pub trait PkiService: ValidateurX509 + Send + Sync {
 
     /// Verifies all security components of the message. Returns the parsed certificate.
     /// Fails with an Error on any issue.
-    async fn validate_message(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, Error>;
+    async fn validate_message(&self, message: &MessageMilleGrillesOwned) -> Result<Arc<EnveloppeCertificat>, Error>;
+
+    async fn validate_message_ref(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, Error>;
+
 
     /// A cached public key implies the corresponding certificate has been verified and is currently valid.
     fn is_cached_pk_valid(&self, public_key: &str) -> bool;
