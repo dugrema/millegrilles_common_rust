@@ -31,18 +31,18 @@ impl FormatService for FormatServiceImpl {
         build_reponse_chiffree(message, enveloppe_privee.as_ref(), certificat_demandeur)
     }
 
-    fn build_action_message(&self, type_message: MessageKind, routage: RoutageMessageAction, message: Value)
+    fn build_action_message(&self, type_message: MessageKind, routage: &RoutageMessageAction, message: Value)
         -> Result<(MessageMilleGrillesBufferDefault, String), Error>
     {
         let enveloppe_privee = self.config.get_configuration_pki().get_enveloppe_privee();
-        build_message_action(type_message, routage, message, enveloppe_privee.as_ref())
+        build_message_action(type_message, routage.clone(), message, enveloppe_privee.as_ref())
     }
 
-    fn build_encrypted_action_message(&self, type_message: MessageKind, routage: RoutageMessageAction,
+    fn build_encrypted_action_message(&self, type_message: MessageKind, routage: &RoutageMessageAction,
                                       message: Value, keys: Vec<&EnveloppeCertificat>)
         -> Result<(MessageMilleGrillesBufferDefault, String), Error>
     {
         let enveloppe_privee = self.config.get_configuration_pki().get_enveloppe_privee();
-        build_message_action_chiffre(type_message, routage, message, enveloppe_privee.as_ref(), keys)
+        build_message_action_chiffre(type_message, routage.clone(), message, enveloppe_privee.as_ref(), keys)
     }
 }

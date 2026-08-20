@@ -59,9 +59,9 @@ pub trait FormatService: Send + Sync {
     fn build_response(&self, message: Value) -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
     fn build_encrypted_response(&self, message: Value, certificat_demandeur: &EnveloppeCertificat)
                                 -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
-    fn build_action_message(&self, type_message: MessageKind, routage: RoutageMessageAction, message: Value)
+    fn build_action_message(&self, type_message: MessageKind, routage: &RoutageMessageAction, message: Value)
                             -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
-    fn build_encrypted_action_message(&self, type_message: MessageKind, routage: RoutageMessageAction, 
+    fn build_encrypted_action_message(&self, type_message: MessageKind, routage: &RoutageMessageAction, 
                                       message: Value, keys: Vec<&EnveloppeCertificat>) 
         -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
 }
