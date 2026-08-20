@@ -3,13 +3,13 @@ use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::rabbitmq_dao::ConfigQueue;
 use crate::v3::ConfigService;
-use crate::v3::impls::rabbitmq_internal::{
-    RabbitConnectionManager, RabbitConsumerManager, RabbitMessageDispatcher, RabbitQueueRegistry,
-};
+use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
+use crate::v3::impls::rabbitmq_consumer::RabbitConsumerManager;
+use crate::v3::impls::rabbitmq_dispatcher::RabbitMessageDispatcher;
+use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use crate::v3::traits::MessagingService;
 use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use millegrilles_cryptographie::securite::Securite;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 
@@ -27,16 +27,10 @@ impl MessagingServiceImpl {
     pub fn new(
         config: Arc<dyn ConfigService>,
     ) -> Self {
-        // Extract security level from certificate
-        let securite_str = config.get_configuration_pki().get_enveloppe_privee()
-            .enveloppe_pub.extensions().expect("MessagingServiceImpl: No extensions found on Certificate")
-            .exchanges.expect("MessagingServiceImpl: No exchanges found on certificate")[0].clone();
-        let security_level: Securite = securite_str.as_str().try_into().expect("MessagingServiceImpl: Security not supported");
-
         let connection_manager = Arc::new(RabbitConnectionManager::new(config));
         let queue_registry = Arc::new(RabbitQueueRegistry::new());
         let consumer_manager = Arc::new(RabbitConsumerManager::new(connection_manager.clone(), queue_registry.clone()));
-        let message_dispatcher = Arc::new(RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone(), security_level));
+        let message_dispatcher = Arc::new(RabbitMessageDispatcher::new(connection_manager.clone(), queue_registry.clone(), consumer_manager.clone()));
 
         Self {
             connection_manager,

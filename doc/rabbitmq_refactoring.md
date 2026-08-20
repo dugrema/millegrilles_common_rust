@@ -21,28 +21,28 @@ The refactored implementation will reside in `src/v3/` and implement the `Messag
     - The public entry point implementing `MessagingService`.
     - Orchestrates the lifecycle of all internal components.
 
-2.  **`RabbitConnectionManager`** (`src/v3/impls/rabbitmq_internal.rs`):
+2.  **`RabbitConnectionManager`** (`../src/v3/impls/rabbitmq_dispatcher.rs`):
     - Manages the `lapin::Connection`.
     - Handles connection establishment and automatic reconnection.
     - Provides available `lapin::Channel` instances.
 
-3.  **`RabbitMessageDispatcher`** (`src/v3/impls/rabbitmq_internal.rs`):
+3.  **`RabbitMessageDispatcher`** (`../src/v3/impls/rabbitmq_dispatcher.rs`):
     - Manages outbound message emission (`tx_out`).
     - Manages inbound response handling (`tx_reply`).
     - Manages the `reply_correlation_map` for correlation-based request-response patterns.
     - Handles message routing and payload preparation.
 
-4.  **`RabbitConsumerManager`** (`src/v3/impls/rabbitmq_internal.rs`):
+4.  **`RabbitConsumerManager`** (`../src/v3/impls/rabbitmq_dispatcher.rs`):
     - Manages the lifecycle of message consumers.
     - Handles both standard consumers and named queue consumers.
 
-5.  **`RabbitQueueRegistry`** (`src/v3/impls/rabbitmq_internal.rs`):
+5.  **`RabbitQueueRegistry`** (`../src/v3/impls/rabbitmq_dispatcher.rs`):
     - Maintains the state of the reply queue.
     - Keeps track of registered named queues and their status.
 
 ## Implementation Strategy
 
-1.  **Create `src/v3/impls/rabbitmq_internal.rs`**: This will serve as the private implementation layer.
+1.  **Create `../src/v3/impls/rabbitmq_dispatcher.rs`**: This will serve as the private implementation layer.
 2.  **Implement Specialized Components**: Port logic from `RabbitMqExecutor` into the new componentized structure.
 3.  **Implement `MessagingServiceImpl`**: Connect the components to fulfill the `MessagingService` contract.
 4.  **Verification**: Ensure the new implementation correctly handles the core RabbitMQ workflows:
