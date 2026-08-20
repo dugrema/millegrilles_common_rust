@@ -1,10 +1,10 @@
 use crate::certificats::ValidateurX509;
 use crate::configuration::{ConfigurationMq, ConfigurationPki};
+use crate::error::Error as CommonError;
 use crate::v3::ConfigService;
 use lapin::tcp::{OwnedIdentity, OwnedTLSConfig};
 use lapin::{Channel, Connection, ConnectionProperties};
 use log::{debug, info, warn};
-use serde::de::StdError;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use url::Url;
@@ -30,7 +30,7 @@ impl RabbitConnectionManager {
         }
     }
 
-    pub async fn connect(&self) -> Result<Arc<Connection>, Box<dyn StdError>> {
+    pub async fn connect(&self) -> Result<Arc<Connection>, CommonError> {
         let config_mq = self.config.get_configuration_mq();
         let idmg = self.config.get_configuration_pki().get_validateur().idmg().to_owned();
         let addr = format!(
@@ -109,7 +109,7 @@ impl RabbitConnectionManager {
 async fn register_mq_account(
     mq: &ConfigurationMq,
     pki: &ConfigurationPki,
-) -> Result<(), Box<dyn StdError>> {
+) -> Result<(), CommonError> {
     const MTLS_PORT: u16 = 444;
     const COMMANDE: &str = "administration/ajouterCompte";
 

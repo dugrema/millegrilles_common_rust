@@ -1,4 +1,3 @@
-use crate::error::Error;
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::rabbitmq_dao::ConfigQueue;
@@ -46,9 +45,10 @@ impl MessagingServiceImpl {
     }
 
     /// Starts the messaging service background threads including the connection to the server.
-    pub async fn run(&self) {
+    /// Returns when all threads have been started
+    pub async fn start(&self) -> Result<(), CommonError> {
         // Connect synchronously, the application should fail fast if a working connection cannot be made.
-        self.connection_manager.connect().await.expect("Error connection to RabbitMQ server");
+        self.connection_manager.connect().await?;
 
         // Start all other threads
         let connection_clone = self.connection_manager.clone();
@@ -57,19 +57,21 @@ impl MessagingServiceImpl {
         tokio::spawn(async move { consumer_clone.run().await });
         let dispatcher_clone = self.message_dispatcher.clone();
         tokio::spawn(async move { dispatcher_clone.run().await });
+
+        Ok(())
     }
 }
 
 #[async_trait]
 impl MessagingService for MessagingServiceImpl {
-    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>) -> Result<(), Error> {
+    async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>) -> Result<(), CommonError> {
         if let Some(_rx) = self.message_dispatcher.send_message(message, routing).await? {
             return Err(CommonError::Str("MessagingServiceImpl Unexpected waiter produced on emit message"))
         }
         Ok(())
     }
 
-    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesBufferDefault, Error> {
+    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesBufferDefault, CommonError> {
         match self.message_dispatcher.send_message(message, Some(routing)).await? {
             Some(rx) => {
                 let val = rx.await
