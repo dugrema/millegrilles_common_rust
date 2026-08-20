@@ -7,7 +7,7 @@ use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use chrono::Utc;
 use lapin::options::BasicPublishOptions;
 use lapin::{BasicProperties, Channel};
-use log::{debug, error};
+use tracing::{debug, error};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

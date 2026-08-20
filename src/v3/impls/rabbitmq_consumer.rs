@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicQosOptions, QueueBindOptions, QueueDeclareOptions};
 use lapin::types::FieldTable;
 use lapin::{Channel, Consumer, Queue};
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageValidable};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

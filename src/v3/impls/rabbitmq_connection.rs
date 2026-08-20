@@ -4,9 +4,9 @@ use crate::error::Error as CommonError;
 use crate::v3::ConfigService;
 use lapin::tcp::{OwnedIdentity, OwnedTLSConfig};
 use lapin::{Channel, Connection, ConnectionProperties};
-use log::{debug, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tracing::{debug, info, warn};
 use url::Url;
 
 // --- Constants ---
@@ -39,6 +39,8 @@ impl RabbitConnectionManager {
             config_mq.port,
             idmg
         );
+
+        debug!("Connecting to AMQP server at {}", &addr);
 
         let tls_config = self.get_tls_config();
         let connection = Arc::new(Connection::connect_with_config(&addr, ConnectionProperties::default(), tls_config).await?);
