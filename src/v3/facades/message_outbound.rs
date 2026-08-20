@@ -37,10 +37,16 @@ impl MessageOutboundFacade {
         -> Result<MessageMilleGrillesBufferDefault, crate::error::Error>
     where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        let routing = routing.into();
+        let mut routing = routing.into();
         let value = serde_json::to_value(message)?;
-        let (message, _id) = self.format.build_action_message(
+        let (message, id) = self.format.build_action_message(
             MessageKind::Requete, &routing, value)?;
+
+        if routing.blocking != Some(false) && routing.correlation_id.is_none() {
+            // Set message id as correlation_id to allow for a reply
+            routing.correlation_id = Some(id)
+        }
+
         self.messaging.send(message, routing).await
     }
 
@@ -48,15 +54,19 @@ impl MessageOutboundFacade {
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
-        let routing = routing.into();
+        let mut routing = routing.into();
         let value = serde_json::to_value(message)?;
-        let (message, _id) = self.format.build_action_message(
+        let (message, id) = self.format.build_action_message(
             MessageKind::Commande, &routing, value)?;
 
         // By default, a command is blocking, we use non-blocking when explicitly requested.
         let blocking = routing.blocking != Some(false);
 
         if blocking {
+            if routing.correlation_id.is_none() {
+                // Set message id as correlation_id to allow for a reply
+                routing.correlation_id = Some(id)
+            }
             Ok(Some(self.messaging.send(message, routing).await?))
         } else {
             self.messaging.emit(message, Some(routing)).await?;

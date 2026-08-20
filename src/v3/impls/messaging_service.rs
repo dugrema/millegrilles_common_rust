@@ -72,6 +72,11 @@ impl MessagingService for MessagingServiceImpl {
     }
 
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesBufferDefault, CommonError> {
+        // Check requirements to produce a waiter
+        if routing.blocking == Some(false) || routing.correlation_id.is_none() {
+            return Err(CommonError::Str("MessagingService.send Unable to wait for reply, needs a correlation_id and blocking != false"));
+        }
+
         match self.message_dispatcher.send_message(message, Some(routing)).await? {
             Some(rx) => {
                 let val = rx.await
