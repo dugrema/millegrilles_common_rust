@@ -372,7 +372,7 @@ async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
     };
 
     let mut params = FieldTable::default();
-    params.insert(FLAG_TTL.into(), DEFAULT_TTL.into());
+    params.insert(FLAG_TTL.into(), (DEFAULT_TTL as u32).into());
 
     let reply_queue = channel.queue_declare("", options, params).await?;
 
