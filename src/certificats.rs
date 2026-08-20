@@ -597,10 +597,9 @@ pub trait ValidateurX509: Send + Sync {
     async fn entretien_validateur(&self);
 
     fn valider_chaine(&self, enveloppe: &EnveloppeCertificat, certificat_millegrille: Option<&EnveloppeCertificat>, verifier_date_courante: bool)
-        -> Result<bool, crate::error::Error>
+        -> Result<bool, Error>
     {
         let certificat = &enveloppe.certificat;
-        let chaine = &enveloppe.intermediaire_stack()?;
         match certificat_millegrille {
             Some(cm) => {
                 debug!("Idmg tiers, on bati un store on the fly : CA {:?}", cm.chaine);
@@ -610,27 +609,14 @@ pub trait ValidateurX509: Send + Sync {
                     Ok(s) => s,
                     Err(_e) => Err(format!("certificats.valider_chaine Erreur preparation store pour certificat {:?}", certificat))?
                 };
-                match verifier_certificat(certificat, chaine, &store) {
-                    Ok(b) => {
-                        debug!("Verifier certificat result : valide = {}, cert {:?}", b, certificat);
-                        Ok(b)
-                    },
-                    Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat idmg {:?} : {:?}", certificat, e))?,
-                }
+                x509_validate_chain(enveloppe, &store)
             },
             None => {
                 let store = match verifier_date_courante {
                     true => self.store(),
                     false => self.store_notime()
                 };
-
-                match verifier_certificat(certificat, chaine, store) {
-                    Ok(b) => {
-                        debug!("Verifier certificat result apres check date OK : {}", b);
-                        Ok(b)
-                    },
-                    Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat avec no time : {:?}", e))?,
-                }
+                x509_validate_chain(enveloppe, store)
             }
         }
     }
@@ -1142,5 +1128,18 @@ pub async fn emettre_commande_certificat_maitredescles<G>(middleware: &G)
             info!("Timeout transmettre_commande maitredescles (OK, reponse en evenement) : {}", e);
             None
         }
+    }
+}
+
+pub fn x509_validate_chain(enveloppe: &EnveloppeCertificat, store: &X509Store) -> Result<bool, Error>
+{
+    let certificat = &enveloppe.certificat;
+    let chaine = &enveloppe.intermediaire_stack()?;
+    match verifier_certificat(certificat, chaine, store) {
+        Ok(b) => {
+            debug!("Verifier certificat result apres check date OK : {}", b);
+            Ok(b)
+        },
+        Err(e) => Err(format!("certificats.valider_chaine Erreur verification certificat avec no time : {:?}", e))?,
     }
 }

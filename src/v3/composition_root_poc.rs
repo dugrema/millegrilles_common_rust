@@ -56,7 +56,7 @@ impl PocCompositionRoot {
         };
 
         // Config
-        let config_impl = Arc::new(ConfigServiceImpl::new(config, None));
+        let config_impl = Arc::new(ConfigServiceImpl::new(config));
 
         // Security
         let validator = Arc::new(build_store_path_v2(&config_impl.get_configuration_pki().ca_certfile)?);

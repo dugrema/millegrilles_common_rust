@@ -8,6 +8,7 @@ use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
+use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::Receiver;
 
 #[async_trait]
@@ -27,9 +28,17 @@ pub trait MessagingService: Send + Sync {
 
 #[async_trait]
 pub trait PkiService: ValidateurX509 + Send + Sync {
+    /// Loads and validates a PEm file. ca_pem is optional (only required for loading from different system)
+    /// date=None means current date
+    fn validate_pem(&self, pem_chain: &str, ca_pem: Option<&str>, date: Option<&DateTime<Utc>>)
+        -> Result<Arc<EnveloppeCertificat>, Error>;
+
     /// Verifies all security components of the message. Returns the parsed certificate.
     /// Fails with an Error on any issue.
-    async fn validate_message(&self, m: &MessageMilleGrillesRefDefault, current: bool) -> Result<Arc<EnveloppeCertificat>, Error>;
+    async fn validate_message(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, Error>;
+
+    /// A cached public key implies the corresponding certificate has been verified and is currently valid.
+    fn is_cached_pk_valid(&self, public_key: &str) -> bool;
 }
 
 #[async_trait]

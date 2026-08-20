@@ -1,15 +1,22 @@
-use crate::configuration::{ConfigMessages, ConfigurationMessages, ConfigurationMongo, IsConfigNoeud};
+use crate::configuration::{ConfigMessages, ConfigurationMessages, IsConfigNoeud};
 use crate::v3::traits::ConfigService;
 use std::sync::Arc;
 
 pub struct ConfigServiceImpl {
     config: Arc<ConfigurationMessages>,
-    mongo: Option<Arc<ConfigurationMongo>>,
+    // mongo: Option<Arc<ConfigurationMongo>>,
 }
 
 impl ConfigServiceImpl {
-    pub fn new(config: Arc<ConfigurationMessages>, mongo: Option<Arc<ConfigurationMongo>>) -> Self {
-        Self { config, mongo }
+    pub fn new(
+        config: Arc<ConfigurationMessages>,
+        // mongo: Option<Arc<ConfigurationMongo>>
+    ) -> Self
+    {
+        Self {
+            config,
+            // mongo
+        }
     }
 }
 
