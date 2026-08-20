@@ -9,6 +9,8 @@ use crate::v3::impls::security_service::SecurityServiceImpl;
 use crate::v3::traits::*;
 use log::info;
 use std::sync::Arc;
+use crate::v3::facades::message_inbound::MessageInboundValidator;
+use crate::v3::facades::message_outbound::MessageOutboundFacade;
 
 /// Sample context from V3 services, customize as needed.
 pub struct MiddlewareContext {
@@ -18,6 +20,8 @@ pub struct MiddlewareContext {
     pub config: Arc<dyn ConfigService>,
     pub format: Arc<dyn FormatService>,
     pub redis: Option<Arc<RedisDao>>,
+    pub outbound: Arc<MessageOutboundFacade>,
+    pub inbound: Arc<MessageInboundValidator>,
 }
 
 impl MiddlewareContext {
@@ -28,6 +32,8 @@ impl MiddlewareContext {
         config: Arc<dyn ConfigService>,
         format: Arc<dyn FormatService>,
         redis: Option<Arc<RedisDao>>,
+        outbound: Arc<MessageOutboundFacade>,
+        inbound: Arc<MessageInboundValidator>,
     ) -> Self {
         Self {
             messaging,
@@ -36,6 +42,8 @@ impl MiddlewareContext {
             config,
             format,
             redis,
+            outbound,
+            inbound,
         }
     }
 }
@@ -80,14 +88,20 @@ impl PocCompositionRoot {
         // Format
         let format_impl = Arc::new(FormatServiceImpl::new(config_impl.clone()));
 
+        // Helper facades
+        let message_outbound_facade = Arc::new(MessageOutboundFacade::new(messaging_impl.clone(), format_impl.clone()));
+        let message_inbound_validator = Arc::new(MessageInboundValidator::new(messaging_impl.clone(), security_impl.clone()));
+
         // Context
         let context = MiddlewareContext::from_services(
-            messaging_impl,
+            messaging_impl.clone(),
             security_impl.clone(),
             security_impl.clone(),
             config_impl,
-            format_impl,
+            format_impl.clone(),
             redis_dao,
+            message_outbound_facade,
+            message_inbound_validator,
         );
 
         Ok(Self {context})
