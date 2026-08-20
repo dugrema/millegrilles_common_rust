@@ -78,7 +78,7 @@ impl PocCompositionRoot {
         };
 
         // Format
-        let format_impl = Arc::new(FormatServiceImpl {});
+        let format_impl = Arc::new(FormatServiceImpl::new(config_impl.clone()));
 
         // Context
         let context = MiddlewareContext::from_services(
