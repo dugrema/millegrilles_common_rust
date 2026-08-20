@@ -3,6 +3,7 @@ use crate::v3::{FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
 use std::sync::Arc;
+use crate::error::Error;
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
@@ -22,7 +23,7 @@ impl MessageOutboundFacade {
     }
 
     pub async fn emit_event<R,M>(&self, routing: R, message: M)
-        -> Result<(), crate::error::Error>
+        -> Result<(), Error>
     where R: Into<RoutageMessageAction>, M: Serialize
     {
         let routing = routing.into();
