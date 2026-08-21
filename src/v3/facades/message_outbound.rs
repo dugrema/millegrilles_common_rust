@@ -1,9 +1,9 @@
+use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::v3::{FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
-use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesOwned};
 use std::sync::Arc;
-use crate::error::Error;
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
@@ -23,7 +23,7 @@ impl MessageOutboundFacade {
     }
 
     pub async fn emit_event<R,M>(&self, routing: R, message: M)
-        -> Result<(), Error>
+        -> Result<(), CommonError>
     where R: Into<RoutageMessageAction>, M: Serialize
     {
         let routing = routing.into();
@@ -34,7 +34,7 @@ impl MessageOutboundFacade {
     }
 
     pub async fn send_request<R,M>(&self, routing: R, message: M)
-        -> Result<MessageMilleGrillesBufferDefault, crate::error::Error>
+        -> Result<MessageMilleGrillesOwned, CommonError>
     where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         let mut routing = routing.into();
@@ -51,7 +51,7 @@ impl MessageOutboundFacade {
     }
 
     pub async fn send_command<R,M>(&self, routing: R, message: M)
-        -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
+        -> Result<Option<MessageMilleGrillesOwned>, CommonError>
     where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         let mut routing = routing.into();
@@ -75,7 +75,7 @@ impl MessageOutboundFacade {
     }
 
     pub async fn respond<R,M>(&self, routing: R, message: M)
-        -> Result<(), crate::error::Error>
+        -> Result<(), CommonError>
     where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         let routing = routing.into();

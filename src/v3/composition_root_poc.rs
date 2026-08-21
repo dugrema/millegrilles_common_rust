@@ -90,7 +90,7 @@ impl PocCompositionRoot {
 
         // Helper facades
         let message_outbound_facade = Arc::new(MessageOutboundFacade::new(messaging_impl.clone(), format_impl.clone()));
-        let message_inbound_validator = Arc::new(MessageInboundValidator::new(messaging_impl.clone(), security_impl.clone()));
+        let message_inbound_validator = Arc::new(MessageInboundValidator::new(config_impl.clone(), messaging_impl.clone(), security_impl.clone()));
 
         // Context
         let context = MiddlewareContext::from_services(

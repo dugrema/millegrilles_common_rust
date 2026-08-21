@@ -20,10 +20,10 @@ pub trait MessagingService: Send + Sync {
 
     /// Sends a message and waits for a response. Used for requests and blocking commands only.
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction)
-                  -> Result<MessageMilleGrillesBufferDefault, Error>;
+                  -> Result<MessageMilleGrillesOwned, Error>;
 
     /// Take the message receiver from the queue registry for a named queue.
-    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, Error>;
+    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesOwned>, Error>;
 }
 
 #[async_trait]
@@ -38,7 +38,6 @@ pub trait PkiService: ValidateurX509 + Send + Sync {
     async fn validate_message(&self, message: &MessageMilleGrillesOwned) -> Result<Arc<EnveloppeCertificat>, Error>;
 
     async fn validate_message_ref(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, Error>;
-
 
     /// A cached public key implies the corresponding certificate has been verified and is currently valid.
     fn is_cached_pk_valid(&self, public_key: &str) -> bool;

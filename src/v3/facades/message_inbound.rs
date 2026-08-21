@@ -1,28 +1,33 @@
 use crate::error::Error as CommonError;
-use crate::v3::{MessagingService, PkiService};
+use crate::v3::{ConfigService, MessagingService, PkiService};
 use futures::Stream;
 use futures::StreamExt;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageValidable};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use serde_json::Value;
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
 
 pub struct MessageValidated {
     pub message: MessageMilleGrillesOwned,
     pub certificate: Arc<EnveloppeCertificat>,
+    pub content: Option<Value>,
 }
 
 pub struct MessageInboundValidator {
+    config: Arc<dyn ConfigService>,
     messaging: Arc<dyn MessagingService>,
     pki: Arc<dyn PkiService>,
 }
 
 impl MessageInboundValidator {
     pub fn new(
+        config: Arc<dyn ConfigService>,
         messaging: Arc<dyn MessagingService>,
         pki: Arc<dyn PkiService>,
     ) -> Self {
         Self {
+            config,
             messaging,
             pki,
         }
@@ -42,16 +47,30 @@ impl MessageInboundValidator {
     }
 
     /// Placeholder for the actual processing logic (validation -> decryption -> deserialization).
-    async fn process_single_message(&self, msg: MessageMilleGrillesBufferDefault) -> Result<MessageValidated, CommonError>
+    async fn process_single_message(&self, mut message: MessageMilleGrillesOwned) -> Result<MessageValidated, CommonError>
     {
-        let mut message_owned: MessageMilleGrillesOwned = msg.parse_to_owned()?;
-
         // Internal validation, ensures the hash (id) matches content and the pubkey/id match the signature.
-        message_owned.verifier_signature()?;
+        if message.contenu_valide != Some((true, true)) {
+            message.verifier_signature()?;
+        }
 
         // Certificate validation
-        let enveloppe = self.pki.validate_message(&message_owned).await?;
+        let enveloppe = self.pki.validate_message(&message).await?;
 
-        Ok(MessageValidated { message: message_owned, certificate: enveloppe })
+        // Decrypt message when appropriate
+        let decrypted_value: Option<Value> = match message.dechiffrage.as_ref() {
+            Some(_inner) => {
+                // Decrypt message when appropriate
+                if message.dechiffrage.is_some() {
+                    let enveloppe_privee = self.config.get_configuration_pki().get_enveloppe_privee();
+                    Some(message.dechiffrer(enveloppe_privee.as_ref())?)
+                } else {
+                    None
+                }
+            },
+            None => None
+        };
+
+        Ok(MessageValidated { message, certificate: enveloppe, content: decrypted_value })
     }
 }

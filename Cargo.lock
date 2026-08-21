@@ -1036,15 +1036,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
-name = "core2"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b49ba7ef1ad6107f8824dbe97de947cbaac53c44e7f9756a1fba0d37c1eec505"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2717,8 +2708,8 @@ dependencies = [
 
 [[package]]
 name = "millegrilles_cryptographie"
-version = "2026.4.1"
-source = "git+https://github.com/dugrema/millegrilles_cryptographie.git?branch=master#886c6d0a5c4f205889b40760ce6aef4a1d7543b5"
+version = "2026.4.2"
+source = "git+https://github.com/dugrema/millegrilles_cryptographie.git?branch=master#0793ad099376f89ded8945237edd353a6e5b5db3"
 dependencies = [
  "base64 0.22.1",
  "blake2",
@@ -2729,9 +2720,8 @@ dependencies = [
  "flate2",
  "heapless 0.8.0",
  "hex",
- "log",
  "multibase",
- "multihash 0.19.3",
+ "multihash 0.19.5",
  "openssl",
  "rand 0.9.2",
  "serde",
@@ -2739,6 +2729,7 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "sha2 0.10.9",
+ "tracing",
  "x509-parser 0.18.1",
  "zeroize",
 ]
@@ -2875,11 +2866,10 @@ dependencies = [
 
 [[package]]
 name = "multihash"
-version = "0.19.3"
+version = "0.19.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b430e7953c29dd6a09afc29ff0bb69c6e306329ee6794700aee27b76a1aea8d"
+checksum = "577c63b00ad74d57e8c9aa870b5fccebf2fd64a308a5aee9f1bb88e4aea19447"
 dependencies = [
- "core2",
  "unsigned-varint 0.8.0",
 ]
 
@@ -4212,13 +4202,13 @@ dependencies = [
 
 [[package]]
 name = "serde_repr"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
+checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.117",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -4497,6 +4487,17 @@ name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
 dependencies = [
  "proc-macro2",
  "quote",

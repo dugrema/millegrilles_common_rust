@@ -8,7 +8,7 @@ use crate::v3::impls::rabbitmq_dispatcher::RabbitMessageDispatcher;
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use crate::v3::traits::MessagingService;
 use async_trait::async_trait;
-use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesBufferDefault};
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 
@@ -71,7 +71,7 @@ impl MessagingService for MessagingServiceImpl {
         Ok(())
     }
 
-    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesBufferDefault, CommonError> {
+    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesOwned, CommonError> {
         // Check requirements to produce a waiter
         if routing.blocking == Some(false) || routing.correlation_id.is_none() {
             return Err(CommonError::Str("MessagingService.send Unable to wait for reply, needs a correlation_id and blocking != false"));
@@ -87,7 +87,7 @@ impl MessagingService for MessagingServiceImpl {
         }
     }
 
-    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesBufferDefault>, CommonError> {
+    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesOwned>, CommonError> {
         self.queue_registry.take_named_q_rx(q_name)
     }
 }

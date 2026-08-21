@@ -8,7 +8,7 @@ use chrono::Utc;
 use lapin::options::BasicPublishOptions;
 use lapin::{BasicProperties, Channel};
 use tracing::{debug, error};
-use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -49,7 +49,7 @@ impl RabbitMessageDispatcher {
     }
 
     pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>)
-        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesOwned, CommonError>>>, CommonError> {
         let message_kind = {
             let message_ref = message.parse()?;
             message_ref.kind
@@ -74,7 +74,7 @@ impl RabbitMessageDispatcher {
     }
 
     async fn send_out(&self, message: OutgoingMessage)
-        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesBufferDefault, CommonError>>>, CommonError> {
+        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesOwned, CommonError>>>, CommonError> {
         let (correlation_id, timeout_blocking) = match message.routing.as_ref() {
             Some(r) => (r.correlation_id.as_ref(), r.timeout_blocking.clone()),
             None => (None, None)

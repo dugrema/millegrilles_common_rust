@@ -9,7 +9,7 @@ use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicQosOptions, Queu
 use lapin::types::FieldTable;
 use lapin::{Channel, Consumer, Queue};
 use tracing::{debug, error, info};
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageValidable};
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageValidable};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -30,14 +30,13 @@ struct RabbitMqConsumer {
     consumer: Consumer,
 }
 
-#[derive(Debug)]
 pub struct ResponseWaiter {
-    sender: oneshot::Sender<Result<MessageMilleGrillesBufferDefault, CommonError>>,
+    sender: oneshot::Sender<Result<MessageMilleGrillesOwned, CommonError>>,
     expiration: DateTime<Utc>,
 }
 
 impl ResponseWaiter {
-    pub fn new(sender: oneshot::Sender<Result<MessageMilleGrillesBufferDefault, CommonError>>, expiration: DateTime<Utc>) -> Self {
+    pub fn new(sender: oneshot::Sender<Result<MessageMilleGrillesOwned, CommonError>>, expiration: DateTime<Utc>) -> Self {
         Self { sender, expiration }
     }
 }
@@ -133,24 +132,25 @@ impl RabbitConsumerManager {
                 let message: MessageMilleGrillesBufferDefault = delivery.data.into();
 
                 // Do basic message internal validation for quick rejection (no certificate check)
-                let mut valid = false;
                 // Verify structure
-                match message.parse() {
+                let message = match message.parse_to_owned() {
                     Ok(mut m) => {
                         // Structure ok, verify signature
                         if let Err(e) = m.verifier_signature() {
                             error!("named_queue_thread Invalid signature in received message : {:?}", e);
+                            None
                         } else {
                             // The message has a valid signature
-                            valid = true;
+                            Some(m)
                         }
                     }
                     Err(e) => {
                         error!("named_queue_thread Invalid message received : {:?}", e);
+                        None
                     }
-                }
+                };
 
-                if valid {
+                if let Some(message) = message {
                     // Send message for further processing
                     if let Err(e) = tx.send(message).await {
                         error!("named_queue_thread Error message delivery : {:?}", e);
@@ -234,33 +234,45 @@ impl RabbitConsumerManager {
                 let message: MessageMilleGrillesBufferDefault = delivery.data.into();
 
                 // Do basic message internal validation for quick rejection (no certificate check)
-                let mut valid = false;
+                // let mut valid = false;
                 // Verify structure
-                match message.parse() {
-                    Ok(mut m) => {
+                // match message.parse() {
+                let message: Option<MessageMilleGrillesOwned> = match message.parse_to_owned() {
+                    Ok(mut inner) => {
                         // Structure ok, verify signature
-                        if let Err(e) = m.verifier_signature() {
+                        if let Err(e) = inner.verifier_signature() {
                             error!("reply_q_thread Invalid signature in received message : {:?}", e);
+                            None
                         } else {
-                            // The message has a valid signature
-                            valid = true;
+                            Some(inner)
                         }
-                    }
+                    },
                     Err(e) => {
                         error!("reply_q_thread Invalid message received : {:?}", e);
+                        None
                     }
-                }
+                };
 
-                if valid {
+                if let Some(message) = message {
+                    let message_id = message.id.clone();
+
                     // Send message for further processing
                     if let Err(e) = response_waiter.sender.send(Ok(message)) {
-                        error!("reply_q_thread Error message delivery : {:?}", e);
+                        if let Err(e) = e {
+                            error!("reply_q_thread Error tx message delivery on correlation id {} : {:?}", message_id, e);
+                        } else {
+                            error!("Message could not be processed, id: {}", message_id);
+                        }
                     }
                 } else {
                     if let Err(e) = response_waiter.sender
                         .send(Err(crate::error::Error::Str("The response to this message was invalid (structure/signature)")))
                     {
-                        error!("reply_q_thread Error delivery or invalid message response : {:?}", e);
+                        if let Err(e) = e {
+                            error!("reply_q_thread Error delivery or invalid message response : {:?}", e);
+                        } else {
+                            error!("reply_q_thread Error on delivery of response message");
+                        }
                     }
                     // // Message not valid, put the waiter back in the map (no change to expiry)
                     // self.waiting_responses
