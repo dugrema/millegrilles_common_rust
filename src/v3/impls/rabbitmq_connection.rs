@@ -6,6 +6,7 @@ use lapin::tcp::{OwnedIdentity, OwnedTLSConfig};
 use lapin::{Channel, Connection, ConnectionProperties};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use log::error;
 use tracing::{debug, info, warn};
 use url::Url;
 
@@ -40,8 +41,10 @@ impl RabbitConnectionManager {
             idmg
         );
 
-        debug!("Connecting to AMQP server at {}", &addr);
+        // Ensure MQ account is available
+        register_mq_account(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await?;
 
+        debug!("Connecting to AMQP server at {}", &addr);
         let tls_config = self.get_tls_config();
         let connection = Arc::new(Connection::connect_with_config(&addr, ConnectionProperties::default(), tls_config).await?);
 
@@ -49,8 +52,6 @@ impl RabbitConnectionManager {
             let mut guard = self.connection.lock().unwrap();
             *guard = Some(connection.clone());
         }
-
-        register_mq_account(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await?;
 
         Ok(connection)
     }
@@ -92,20 +93,34 @@ impl RabbitConnectionManager {
 
     pub async fn run(self: Arc<Self>) {
         loop {
-            // TODO - maintain connection, attempt to reconnect when needed
+            {
+                let must_reconnect = match self.get_connection() {
+                    Some(connection) => {
+                        ! connection.status().connected()
+                    },
+                    None => true
+                };
+                if must_reconnect {
+                    self.close().await;
+                    if let Err(e) = self.connect().await {
+                        error!("Error reconnecting to MQ: {:?}", e);
+                    }
+                }
+            }
+
             tokio::time::sleep(ATTENTE_RECONNEXION).await;
         }
     }
 
-    // async fn close(&self) {
-    //     let connection = {
-    //         let mut guard = self.connection.lock().unwrap();
-    //         guard.take()
-    //     };
-    //     if let Some(connection) = connection {
-    //         connection.close(200, "Closing").await.ok();
-    //     }
-    // }
+    pub async fn close(&self) {
+        let connection = {
+            let mut guard = self.connection.lock().unwrap();
+            guard.take()
+        };
+        if let Some(connection) = connection {
+            connection.close(200, "Closing").await.ok();
+        }
+    }
 }
 
 async fn register_mq_account(
