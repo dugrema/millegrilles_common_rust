@@ -161,16 +161,16 @@ async fn register_mq_account(
             .build()?;
 
         let url = format!("{}{}", host, COMMANDE);
-        match client.post(url).send().await {
+        match client.post(&url).send().await {
             Ok(r) => {
                 let status_code = r.status().as_u16();
                 if r.status().is_success() {
                     if status_code == 201 {
-                        debug!("Account created : {:?}", r);
-                        return Ok(())
+                        info!("Account created using {} : {:?}", url, r);
                     } else {
-                        info!("Account crated (status:{})", status_code);
+                        info!("Account created using {} (status:{})", url, status_code);
                     }
+                    return Ok(())
                 }
             },
             Err(e) => {
