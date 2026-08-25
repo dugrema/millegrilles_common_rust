@@ -42,7 +42,9 @@ impl RabbitConnectionManager {
         );
 
         // Ensure MQ account is available
-        register_mq_account(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await?;
+        if let Err(e) = register_mq_account(self.config.get_configuration_mq(), self.config.get_configuration_pki()).await {
+            warn!("Error creating MQ account with midcompte, will still try to connect: {}", e);
+        }
 
         debug!("Connecting to AMQP server at {}", &addr);
         let tls_config = self.get_tls_config();
