@@ -33,7 +33,7 @@ impl ConfigService for ConfigServiceImpl {
 }
 
 pub struct ConfigServiceDbImpl {
-    config: Arc<ConfigurationMessages>,
+    pub config: Arc<ConfigurationMessages>,  // pub for legacy support
     mongo: Arc<ConfigurationMongo>,
 }
 
