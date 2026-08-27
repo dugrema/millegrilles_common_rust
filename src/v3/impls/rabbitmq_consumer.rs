@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tokio::sync::oneshot;
-
+use tokio::task::JoinSet;
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
@@ -68,23 +68,23 @@ impl RabbitConsumerManager {
         Ok(())
     }
 
-    pub async fn run(self: Arc<Self>, cancellation_token: CancellationToken) {
+    pub async fn run(self: Arc<Self>, join_set: &mut JoinSet<()>, cancellation_token: CancellationToken) {
         let self_clone = self.clone();
-        self_clone.start_named_queue_threads(cancellation_token.clone()).await.expect("Error starting queue threads");
-        let self_clone = self.clone();
-        let cancellation_token_clone = cancellation_token.clone();
-        tokio::spawn(async move { self_clone.reply_q_thread(cancellation_token_clone).await });
+        self_clone.start_named_queue_threads(join_set, cancellation_token.clone()).await.expect("Error starting queue threads");
         let self_clone = self.clone();
         let cancellation_token_clone = cancellation_token.clone();
-        tokio::spawn(async move { self_clone.maintenance_thread(cancellation_token_clone).await });
+        join_set.spawn(async move { self_clone.reply_q_thread(cancellation_token_clone).await });
+        let self_clone = self.clone();
+        let cancellation_token_clone = cancellation_token.clone();
+        join_set.spawn(async move { self_clone.maintenance_thread(cancellation_token_clone).await });
     }
 
-    async fn start_named_queue_threads(self: Arc<Self>, cancellation_token: CancellationToken) -> Result<(), crate::error::Error> {
+    async fn start_named_queue_threads(self: Arc<Self>, join_set: &mut JoinSet<()>, cancellation_token: CancellationToken) -> Result<(), crate::error::Error> {
         let queue_names = self.queue_registry.get_queue_names();
         for q_name in queue_names {
             let self_clone = self.clone();
             let cancellation_token_clone = cancellation_token.clone();
-            tokio::spawn(async move { self_clone.named_queue_thread(q_name, cancellation_token_clone).await });
+            join_set.spawn(async move { self_clone.named_queue_thread(q_name, cancellation_token_clone).await });
         }
         Ok(())
     }
@@ -133,6 +133,7 @@ impl RabbitConsumerManager {
                 let maybe_delivery = tokio::select! {
                     _ = cancellation_token.cancelled() => {
                         consumer_holder.channel.close(200, "Closing").await.ok();
+                        debug!("named_queue_thread Consumer {} cancelled, stopping", q_name);
                         return; // Exit loop gracefully
                     }
                     delivery_res = consumer_holder.consumer.next() => {
@@ -220,6 +221,7 @@ impl RabbitConsumerManager {
                 let maybe_delivery = tokio::select! {
                     _ = cancellation_token.cancelled() => {
                         consumer_holder.channel.close(200, "Closing").await.ok();
+                        debug!("reply_q_thread Consumer cancelled, stopping");
                         return; // Exit loop gracefully
                     }
                     delivery_res = consumer_holder.consumer.next() => {

@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesBufferDefault};
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
+use tokio::task::JoinSet;
 
 pub struct MessagingServiceImpl {
     connection_manager: Arc<RabbitConnectionManager>,
@@ -47,22 +48,21 @@ impl MessagingServiceImpl {
 
     /// Starts the messaging service background threads including the connection to the server.
     /// Returns when all threads have been started
-    pub async fn start(&self, cancellation_token: CancellationToken) -> Result<(), CommonError> {
+    pub async fn start(&self, join_set: &mut JoinSet<()>, cancellation_token: CancellationToken) -> Result<(), CommonError> {
         // Connect synchronously, the application should fail fast if a working connection cannot be made.
         self.connection_manager.connect().await?;
 
         // Start all other threads
         let connection_clone = self.connection_manager.clone();
         let token_clone = cancellation_token.clone();
-        tokio::spawn(async move { connection_clone.run(token_clone).await });
+        join_set.spawn(async move { connection_clone.run(token_clone).await });
         
         let consumer_clone = self.consumer_manager.clone();
-        let token_clone = cancellation_token.clone();
-        tokio::spawn(async move { consumer_clone.run(token_clone).await });
+        consumer_clone.run(join_set, cancellation_token.clone()).await;
         
         let dispatcher_clone = self.message_dispatcher.clone();
         let token_clone = cancellation_token.clone();
-        tokio::spawn(async move { dispatcher_clone.run(token_clone).await });
+        join_set.spawn(async move { dispatcher_clone.run(token_clone).await });
 
         Ok(())
     }
