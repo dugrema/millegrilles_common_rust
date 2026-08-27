@@ -9,6 +9,7 @@ use crate::v3::impls::security_service::SecurityServiceImpl;
 use crate::v3::traits::*;
 use tracing::info;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use crate::v3::facades::message_inbound::MessageInboundValidator;
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 
@@ -89,8 +90,13 @@ impl PocCompositionRoot {
         let format_impl = Arc::new(FormatServiceImpl::new(config_impl.clone()));
 
         // Helper facades
-        let message_outbound_facade = Arc::new(MessageOutboundFacade::new(messaging_impl.clone(), format_impl.clone()));
-        let message_inbound_validator = Arc::new(MessageInboundValidator::new(config_impl.clone(), messaging_impl.clone(), security_impl.clone()));
+        let shutdown_token = CancellationToken::new();
+        let message_outbound_facade = Arc::new(
+            MessageOutboundFacade::new(messaging_impl.clone(), format_impl.clone())
+        );
+        let message_inbound_validator = Arc::new(
+            MessageInboundValidator::new(config_impl.clone(), messaging_impl.clone(), security_impl.clone(), shutdown_token)
+        );
 
         // Context
         let context = MiddlewareContext::from_services(

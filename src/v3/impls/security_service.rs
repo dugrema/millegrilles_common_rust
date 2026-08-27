@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use x509_parser::nom::ExtendInto;
 
 // --- Constants ---
@@ -45,6 +46,7 @@ impl SecurityServiceImpl {
         loop {
             tokio::select! {
                 _ = cancellation_token.cancelled() => {
+                    debug!("SecurityServiceImpl stopping");
                     break;
                 }
                 _ = async {

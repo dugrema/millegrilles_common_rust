@@ -113,7 +113,8 @@ impl RabbitMessageDispatcher {
         loop {
             tokio::select! {
                 _ = cancellation_token.cancelled() => {
-                    break;
+                    debug!("RabbitMessageDispatcher Stopping");
+                    return;
                 }
                 maybe_message = rx.recv() => {
                     let message = match maybe_message {
