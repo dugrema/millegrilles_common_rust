@@ -118,6 +118,8 @@ impl MongoDao for MongoDaoImpl {
     }
 }
 
+impl MongoDaoTyped for MongoDaoImpl {}
+
 pub fn initialiser(config_pki: &ConfigurationPki, config_db: &ConfigurationMongo) -> Result<MongoDaoImpl, String> {
     debug!("Initialiser connexion a MongoDB");
 
