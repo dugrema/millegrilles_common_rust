@@ -112,6 +112,7 @@ impl PkiService for SecurityServiceImpl {
                 let mut chain_string = String::with_capacity(5000);
                 for cert in chain {
                     cert.extend_into(&mut chain_string);
+                    chain_string.push_str("\n");
                 }
                 chain_string
             },
@@ -148,7 +149,6 @@ impl PkiService for SecurityServiceImpl {
                 for cert in chain {
                     let certificat: String = serde_json::from_str(format!("\"{}\"", cert).as_str())?;
                     certificat.extend_into(&mut chain_string);
-                    chain_string.push_str("\n");
                 }
                 chain_string
             },
