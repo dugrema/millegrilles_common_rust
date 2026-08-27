@@ -35,10 +35,7 @@ impl MessageInboundValidator {
 
     /// Converts a Receiver into a Stream of processed messages.
     /// The caller can use `while let Some(result) = stream.next().await` to consume it.
-    pub fn consume_named_queue<'a, T>(&'a self, q_name: &str) -> Result<impl Stream<Item = Result<MessageValidated, CommonError>> + 'a, CommonError>
-    where
-        T: serde::de::DeserializeOwned + Send + 'static,
-    {
+    pub fn consume_named_queue<'a>(&'a self, q_name: &str) -> Result<impl Stream<Item = Result<MessageValidated, CommonError>> + 'a, CommonError> {
         let rx = self.messaging.take_named_q_rx(q_name)?;
 
         Ok(ReceiverStream::new(rx).then(move |msg| async move {
