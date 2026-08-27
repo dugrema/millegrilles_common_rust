@@ -12,6 +12,7 @@ use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGril
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio_util::sync::CancellationToken;
 use tokio::sync::{mpsc, oneshot};
 
 // --- Constants ---
@@ -101,38 +102,50 @@ impl RabbitMessageDispatcher {
         Ok(receiver)
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&self, cancellation_token: CancellationToken) {
         // Extract the receiver
         let mut rx = self.rx_out.lock().unwrap().take().unwrap();
 
         // Channel holder for this thread
         let mut channel: Option<Channel> = None;
 
-        // Loop while the receiver does not return None.
-        while let Some(message) = rx.recv().await {
-            // Channel maintenance
-            if let Some(channel_inner) = &channel {
-                if ! channel_inner.status().connected() {
-                    channel = None;
+        // Loop while the receiver does not return None and cancellation_token is not cancelled.
+        loop {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    break;
                 }
-            }
+                maybe_message = rx.recv() => {
+                    let message = match maybe_message {
+                        Some(m) => m,
+                        None => break,
+                    };
 
-            while channel.is_none() {
-                match self.connection.get_channel().await {
-                    Ok(channel_inner) => {
-                        channel = Some(channel_inner);
-                    },
-                    Err(e) => {
-                        error!("Error getting channel, will sleep: {}", e);
-                        tokio::time::sleep(ATTENTE_RECONNEXION).await;
-                    },
+                    // Channel maintenance
+                    if let Some(channel_inner) = &channel {
+                        if ! channel_inner.status().connected() {
+                            channel = None;
+                        }
+                    }
+
+                    while channel.is_none() {
+                        match self.connection.get_channel().await {
+                            Ok(channel_inner) => {
+                                channel = Some(channel_inner);
+                            },
+                            Err(e) => {
+                                error!("Error getting channel, will sleep: {}", e);
+                                tokio::time::sleep(ATTENTE_RECONNEXION).await;
+                            },
+                        }
+                    }
+
+                    let channel_inner = channel.as_ref().expect("Unable to get channel");
+                    let reply_q_name = self.registry.get_reply_q_name();
+                    if let Err(e) = publish_message(channel_inner, message, reply_q_name).await {
+                        error!("Error publishing message: {:?}", e);
+                    }
                 }
-            }
-
-            let channel_inner = channel.as_ref().expect("Unable to get channel");
-            let reply_q_name = self.registry.get_reply_q_name();
-            if let Err(e) = publish_message(channel_inner, message, reply_q_name).await {
-                error!("Error publishing message: {:?}", e);
             }
         }
     }

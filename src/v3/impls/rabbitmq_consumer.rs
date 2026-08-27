@@ -13,6 +13,7 @@ use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefa
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 use tokio::sync::oneshot;
 
 // --- Constants ---
@@ -67,98 +68,117 @@ impl RabbitConsumerManager {
         Ok(())
     }
 
-    pub async fn run(self: Arc<Self>) {
+    pub async fn run(self: Arc<Self>, cancellation_token: CancellationToken) {
         let self_clone = self.clone();
-        self_clone.start_named_queue_threads().await.expect("Error starting queue threads");
+        self_clone.start_named_queue_threads(cancellation_token.clone()).await.expect("Error starting queue threads");
         let self_clone = self.clone();
-        tokio::spawn(async move { self_clone.reply_q_thread().await });
+        let cancellation_token_clone = cancellation_token.clone();
+        tokio::spawn(async move { self_clone.reply_q_thread(cancellation_token_clone).await });
         let self_clone = self.clone();
-        tokio::spawn(async move { self_clone.maintenance_thread().await });
+        let cancellation_token_clone = cancellation_token.clone();
+        tokio::spawn(async move { self_clone.maintenance_thread(cancellation_token_clone).await });
     }
 
-    async fn start_named_queue_threads(self: Arc<Self>) -> Result<(), crate::error::Error> {
+    async fn start_named_queue_threads(self: Arc<Self>, cancellation_token: CancellationToken) -> Result<(), crate::error::Error> {
         let queue_names = self.queue_registry.get_queue_names();
         for q_name in queue_names {
             let self_clone = self.clone();
-            tokio::spawn(async move { self_clone.named_queue_thread(q_name).await });
+            let cancellation_token_clone = cancellation_token.clone();
+            tokio::spawn(async move { self_clone.named_queue_thread(q_name, cancellation_token_clone).await });
         }
         Ok(())
     }
 
-    async fn named_queue_thread(self: Arc<Self>, q_name: String) -> () {
+    async fn named_queue_thread(self: Arc<Self>, q_name: String, cancellation_token: CancellationToken) -> () {
         // Get queue config and Sender
         let (config, tx) = self.queue_registry
             .get_named_queue(q_name.as_str()).expect("unknown queue name");
-
+        
         loop {
             // RabbitMQ struct holder for this thread
             let mut consumer_holder: Option<RabbitMqConsumer> = None;
 
             while consumer_holder.is_none() {
-                match self.connection.get_channel().await {
-                    Ok(channel_inner) => {
-                        let qos_options_reponses = BasicQosOptions { global: false };
-                        if let Err(e) = channel_inner.basic_qos(1, qos_options_reponses).await {
-                            error!("named_queue_consume Error configuring channel for queue {:?}, {:?}", q_name, e);
-                        } else {
-                            match create_named_queue(self.queue_registry.as_ref(), &channel_inner, &config).await {
-                                Ok((q, consumer)) => {
-                                    consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer });
-                                    break
-                                },
-                                Err(e) => error!("named_queue_thread Error creating reply queue: {:?}", e)
-                            }
+                tokio::select! {
+                    _ = cancellation_token.cancelled() => {
+                        return;
+                    }
+                    _ = async {
+                        match self.connection.get_channel().await {
+                            Ok(channel_inner) => {
+                                let qos_options_reponses = BasicQosOptions { global: false };
+                                if let Err(e) = channel_inner.basic_qos(1, qos_options_reponses).await {
+                                    error!("named_queue_consume Error configuring channel for queue {:?}, {:?}", q_name, e);
+                                } else {
+                                    match create_named_queue(self.queue_registry.as_ref(), &channel_inner, &config).await {
+                                        Ok((q, consumer)) => {
+                                            consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer });
+                                        },
+                                        Err(e) => error!("named_queue_thread Error creating reply queue: {:?}", e)
+                                    }
+                                }
+                            },
+                            Err(e) => error!("named_queue_thread Error getting channel, will sleep: {}", e)
                         }
-                    },
-                    Err(e) => error!("named_queue_thread Error getting channel, will sleep: {}", e)
+                    } => {}
                 }
-                tokio::time::sleep(ATTENTE_RECONNEXION).await;
+                if consumer_holder.is_none() {
+                    tokio::time::sleep(ATTENTE_RECONNEXION).await;
+                }
             }
             let mut consumer_holder = consumer_holder.expect("named_queue_thread Error getting consumer struct");
 
-            while let Some(delivery) = consumer_holder.consumer.next().await {
-                let reply_q_name = consumer_holder.queue.name().as_str();
-                debug!("named_queue_thread({}): Reception nouveau message {}", reply_q_name, reply_q_name);
-
-                let delivery = match delivery {
-                    Ok(r) => r,
-                    Err(e) => {
-                        error!("named_queue_thread Error message delivery : {:?}", e);
-                        break;
+            loop {
+                tokio::select! {
+                    _ = cancellation_token.cancelled() => {
+                        return;
                     }
-                };
+                    maybe_delivery = consumer_holder.consumer.next() => {
+                        let delivery = match maybe_delivery {
+                            Some(Ok(r)) => r,
+                            Some(Err(e)) => {
+                                error!("named_queue_thread Error message delivery : {:?}", e);
+                                break;
+                            }
+                            None => break,
+                        };
 
-                // Take the buffer into MilleGrilles message structure (no parsing yet)
-                let message: MessageMilleGrillesBufferDefault = delivery.data.into();
+                        let reply_q_name = consumer_holder.queue.name().as_str();
+                        debug!("named_queue_thread({}): Reception nouveau message {}", reply_q_name, reply_q_name);
 
-                // Do basic message internal validation for quick rejection (no certificate check)
-                // Verify structure
-                let message = match message.parse_to_owned() {
-                    Ok(mut m) => {
-                        // Structure ok, verify signature
-                        if let Err(e) = m.verifier_signature() {
-                            error!("named_queue_thread Invalid signature in received message : {:?}", e);
-                            None
-                        } else {
-                            // The message has a valid signature
-                            Some(m)
+                        // Take the buffer into MilleGrilles message structure (no parsing yet)
+                        let message: MessageMilleGrillesBufferDefault = delivery.data.into();
+
+                        // Do basic message internal validation for quick rejection (no certificate check)
+                        // Verify structure
+                        let message = match message.parse_to_owned() {
+                            Ok(mut m) => {
+                                // Structure ok, verify signature
+                                if let Err(e) = m.verifier_signature() {
+                                    error!("named_queue_thread Invalid signature in received message : {:?}", e);
+                                    None
+                                } else {
+                                    // The message has a valid signature
+                                    Some(m)
+                                }
+                            }
+                            Err(e) => {
+                                error!("named_queue_thread Invalid message received : {:?}", e);
+                                None
+                            }
+                        };
+
+                        if let Some(message) = message {
+                            // Send message for further processing
+                            if let Err(e) = tx.send(message).await {
+                                error!("named_queue_thread Error message delivery : {:?}", e);
+                            }
                         }
-                    }
-                    Err(e) => {
-                        error!("named_queue_thread Invalid message received : {:?}", e);
-                        None
-                    }
-                };
 
-                if let Some(message) = message {
-                    // Send message for further processing
-                    if let Err(e) = tx.send(message).await {
-                        error!("named_queue_thread Error message delivery : {:?}", e);
+                        // Always send ack
+                        delivery.acker.ack(BasicAckOptions::default()).await.ok();
                     }
                 }
-
-                // Always send ack
-                delivery.acker.ack(BasicAckOptions::default()).await.ok();
             }
 
             // Exclusive reply queue is lost with the connection being closed
@@ -167,7 +187,7 @@ impl RabbitConsumerManager {
         }
     }
 
-    async fn reply_q_thread(self: Arc<Self>) -> () {
+    async fn reply_q_thread(self: Arc<Self>, cancellation_token: CancellationToken) -> () {
         loop {
             // RabbitMQ struct holder for this thread
             let mut consumer_holder: Option<RabbitMqConsumer> = None;
@@ -191,97 +211,98 @@ impl RabbitConsumerManager {
             }
             let mut consumer_holder = consumer_holder.expect("reply_q_thread Error getting consumer struct");
 
-            while let Some(delivery) = consumer_holder.consumer.next().await {
-                let reply_q_name = consumer_holder.queue.name().as_str();
-                debug!("reply_q_thread({}): Reception nouveau message {}", reply_q_name, reply_q_name);
-
-                let delivery = match delivery {
-                    Ok(r) => r,
-                    Err(e) => {
-                        error!("reply_q_thread Error message delivery : {:?}", e);
+            loop {
+                tokio::select! {
+                    _ = cancellation_token.cancelled() => {
                         break;
                     }
-                };
+                    maybe_delivery = consumer_holder.consumer.next() => {
+                        let delivery = match maybe_delivery {
+                            Some(Ok(r)) => r,
+                            Some(Err(e)) => {
+                                error!("reply_q_thread Error message delivery : {:?}", e);
+                                break;
+                            }
+                            None => break,
+                        };
 
-                // Find correlation for message
-                let correlation_id = match delivery.properties.correlation_id() {
-                    Some(correlation_id) => correlation_id.to_string(),
-                    None => {
-                        // No correlation_id at all - ACK and move on
-                        debug!("Received uncorrelated message on reply_q, dropping");
+                        // Find correlation for message
+                        let correlation_id = match delivery.properties.correlation_id() {
+                            Some(correlation_id) => correlation_id.to_string(),
+                            None => {
+                                // No correlation_id at all - ACK and move on
+                                debug!("Received uncorrelated message on reply_q, dropping");
+                                delivery.acker.ack(BasicAckOptions::default()).await.ok();
+                                continue;
+                            }
+                        };
+
+                        // Retrieve the response waiter
+                        let response_waiter = self.waiting_responses
+                            .lock().expect("reply_q_thread Error locking waiters")
+                            .remove(&correlation_id);
+
+                        let response_waiter = match response_waiter {
+                            Some(waiter) => waiter,
+                            None => {
+                                // No matching correlation_id - ACK and move on
+                                debug!("Received uncorrelated message on reply_q, dropping: correlation_id = {}", correlation_id);
+                                delivery.acker.ack(BasicAckOptions::default()).await.ok();
+                                continue;
+                            }
+                        };
+
+                        // Something is waiting for this message - continue processing
+                        // Take the buffer into MilleGrilles message structure (no parsing yet)
+                        let message: MessageMilleGrillesBufferDefault = delivery.data.into();
+
+                        // Do basic message internal validation for quick rejection (no certificate check)
+                        // let mut valid = false;
+                        // Verify structure
+                        // match message.parse() {
+                        let message: Option<MessageMilleGrillesOwned> = match message.parse_to_owned() {
+                            Ok(mut inner) => {
+                                // Structure ok, verify signature
+                                if let Err(e) = inner.verifier_signature() {
+                                    error!("reply_q_thread Invalid signature in received message : {:?}", e);
+                                    None
+                                } else {
+                                    Some(inner)
+                                }
+                            },
+                            Err(e) => {
+                                error!("reply_q_thread Invalid message received : {:?}", e);
+                                None
+                            }
+                        };
+
+                        if let Some(message) = message {
+                            let message_id = message.id.clone();
+
+                            // Send message for further processing
+                            if let Err(e) = response_waiter.sender.send(Ok(message)) {
+                                if let Err(e) = e {
+                                    error!("reply_q_thread Error tx message delivery on correlation id {} : {:?}", message_id, e);
+                                } else {
+                                    error!("Message could not be processed, id: {}", message_id);
+                                }
+                            }
+                        } else {
+                            if let Err(e) = response_waiter.sender
+                                .send(Err(crate::error::Error::Str("The response to this message was invalid (structure/signature)")))
+                            {
+                                if let Err(e) = e {
+                                    error!("reply_q_thread Error delivery or invalid message response : {:?}", e);
+                                } else {
+                                    error!("reply_q_thread Error on delivery of response message");
+                                }
+                            }
+                        }
+
+                        // Always send ack
                         delivery.acker.ack(BasicAckOptions::default()).await.ok();
-                        continue;
                     }
-                };
-
-                // Retrieve the response waiter
-                let response_waiter = self.waiting_responses
-                    .lock().expect("reply_q_thread Error locking waiters")
-                    .remove(&correlation_id);
-
-                let response_waiter = match response_waiter {
-                    Some(waiter) => waiter,
-                    None => {
-                        // No matching correlation_id - ACK and move on
-                        debug!("Received uncorrelated message on reply_q, dropping: correlation_id = {}", correlation_id);
-                        delivery.acker.ack(BasicAckOptions::default()).await.ok();
-                        continue;
-                    }
-                };
-
-                // Something is waiting for this message - continue processing
-                // Take the buffer into MilleGrilles message structure (no parsing yet)
-                let message: MessageMilleGrillesBufferDefault = delivery.data.into();
-
-                // Do basic message internal validation for quick rejection (no certificate check)
-                // let mut valid = false;
-                // Verify structure
-                // match message.parse() {
-                let message: Option<MessageMilleGrillesOwned> = match message.parse_to_owned() {
-                    Ok(mut inner) => {
-                        // Structure ok, verify signature
-                        if let Err(e) = inner.verifier_signature() {
-                            error!("reply_q_thread Invalid signature in received message : {:?}", e);
-                            None
-                        } else {
-                            Some(inner)
-                        }
-                    },
-                    Err(e) => {
-                        error!("reply_q_thread Invalid message received : {:?}", e);
-                        None
-                    }
-                };
-
-                if let Some(message) = message {
-                    let message_id = message.id.clone();
-
-                    // Send message for further processing
-                    if let Err(e) = response_waiter.sender.send(Ok(message)) {
-                        if let Err(e) = e {
-                            error!("reply_q_thread Error tx message delivery on correlation id {} : {:?}", message_id, e);
-                        } else {
-                            error!("Message could not be processed, id: {}", message_id);
-                        }
-                    }
-                } else {
-                    if let Err(e) = response_waiter.sender
-                        .send(Err(crate::error::Error::Str("The response to this message was invalid (structure/signature)")))
-                    {
-                        if let Err(e) = e {
-                            error!("reply_q_thread Error delivery or invalid message response : {:?}", e);
-                        } else {
-                            error!("reply_q_thread Error on delivery of response message");
-                        }
-                    }
-                    // // Message not valid, put the waiter back in the map (no change to expiry)
-                    // self.waiting_responses
-                    //     .lock().expect("reply_q_thread Error locking waiters (2)")
-                    //     .insert(correlation_id, response_waiter);
                 }
-
-                // Always send ack
-                delivery.acker.ack(BasicAckOptions::default()).await.ok();
             }
 
             // Exclusive reply queue is lost with the connection being closed
@@ -290,11 +311,16 @@ impl RabbitConsumerManager {
         }
     }
 
-    async fn maintenance_thread(&self) {
+    async fn maintenance_thread(&self, cancellation_token: CancellationToken) {
         loop {
-            self.cleanup_waiters();
-            // For now, we just wait for the next notification.
-            tokio::time::sleep(INTERVALLE_ENTRETIEN_ATTENTE).await;
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    break;
+                }
+                _ = tokio::time::sleep(INTERVALLE_ENTRETIEN_ATTENTE) => {
+                    self.cleanup_waiters();
+                }
+            }
         }
     }
 

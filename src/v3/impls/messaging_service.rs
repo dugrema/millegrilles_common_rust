@@ -5,6 +5,7 @@ use crate::v3::ConfigService;
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
 use crate::v3::impls::rabbitmq_consumer::RabbitConsumerManager;
 use crate::v3::impls::rabbitmq_dispatcher::RabbitMessageDispatcher;
+use tokio_util::sync::CancellationToken;
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use crate::v3::traits::MessagingService;
 use async_trait::async_trait;
@@ -46,17 +47,22 @@ impl MessagingServiceImpl {
 
     /// Starts the messaging service background threads including the connection to the server.
     /// Returns when all threads have been started
-    pub async fn start(&self) -> Result<(), CommonError> {
+    pub async fn start(&self, cancellation_token: CancellationToken) -> Result<(), CommonError> {
         // Connect synchronously, the application should fail fast if a working connection cannot be made.
         self.connection_manager.connect().await?;
 
         // Start all other threads
         let connection_clone = self.connection_manager.clone();
-        tokio::spawn(async move { connection_clone.run().await });
+        let token_clone = cancellation_token.clone();
+        tokio::spawn(async move { connection_clone.run(token_clone).await });
+        
         let consumer_clone = self.consumer_manager.clone();
-        tokio::spawn(async move { consumer_clone.run().await });
+        let token_clone = cancellation_token.clone();
+        tokio::spawn(async move { consumer_clone.run(token_clone).await });
+        
         let dispatcher_clone = self.message_dispatcher.clone();
-        tokio::spawn(async move { dispatcher_clone.run().await });
+        let token_clone = cancellation_token.clone();
+        tokio::spawn(async move { dispatcher_clone.run(token_clone).await });
 
         Ok(())
     }

@@ -12,6 +12,7 @@ use openssl::x509::X509;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 use x509_parser::nom::ExtendInto;
 
 // --- Constants ---
@@ -40,11 +41,18 @@ impl SecurityServiceImpl {
         }
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&self, cancellation_token: CancellationToken) {
         loop {
-            // Reset cache
-            self.cache_verified_pk.lock().expect("validate_pem Error locking cache").clear();
-            tokio::time::sleep(Duration::from_secs(CACHE_RESET_INTERVAL_SEC)).await;
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    break;
+                }
+                _ = async {
+                    // Reset cache
+                    self.cache_verified_pk.lock().expect("validate_pem Error locking cache").clear();
+                    tokio::time::sleep(Duration::from_secs(CACHE_RESET_INTERVAL_SEC)).await;
+                } => {}
+            }
         }
     }
 }

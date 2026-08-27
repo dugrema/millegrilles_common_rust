@@ -9,6 +9,7 @@ use std::time::Duration;
 use tracing::error;
 use tracing::{debug, info, warn};
 use url::Url;
+use tokio_util::sync::CancellationToken;
 
 // --- Constants ---
 
@@ -93,24 +94,31 @@ impl RabbitConnectionManager {
     //     self.notify_connection_ready.notified().await;
     // }
 
-    pub async fn run(self: Arc<Self>) {
+    pub async fn run(self: Arc<Self>, cancellation_token: CancellationToken) {
         loop {
-            {
-                let must_reconnect = match self.get_connection() {
-                    Some(connection) => {
-                        ! connection.status().connected()
-                    },
-                    None => true
-                };
-                if must_reconnect {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    info!("RabbitConnectionManager: Shutdown signal received, closing connection.");
                     self.close().await;
-                    if let Err(e) = self.connect().await {
-                        error!("Error reconnecting to MQ: {:?}", e);
+                    break;
+                }
+                _ = tokio::time::sleep(ATTENTE_RECONNEXION) => {
+                    {
+                        let must_reconnect = match self.get_connection() {
+                            Some(connection) => {
+                                ! connection.status().connected()
+                            },
+                            None => true
+                        };
+                        if must_reconnect {
+                            self.close().await;
+                            if let Err(e) = self.connect().await {
+                                error!("Error reconnecting to MQ: {:?}", e);
+                            }
+                        }
                     }
                 }
             }
-
-            tokio::time::sleep(ATTENTE_RECONNEXION).await;
         }
     }
 
