@@ -71,6 +71,8 @@ pub use chacha20poly1305;
 pub use url;
 pub use flate2;
 pub use jwt_simple;
+pub use tracing;
+pub use tracing_subscriber;
 
 #[cfg(test)]
 mod test_setup {
