@@ -74,6 +74,8 @@ impl MessageInboundValidator {
     /// Placeholder for the actual processing logic (validation -> decryption -> deserialization).
     async fn process_single_message(&self, mut message: MessageMilleGrillesOwned) -> Result<MessageValidated, CommonError>
     {
+        debug!("Process message, certificat {:?}", message.certificat);
+
         // Internal validation, ensures the hash (id) matches content and the pubkey/id match the signature.
         if message.contenu_valide != Some((true, true)) {
             message.verifier_signature()?;
