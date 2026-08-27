@@ -23,7 +23,7 @@ use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::{CommandeRegenerer, MessageCedule};
 use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_charger_certificats_chiffrage, thread_entretien_validateur};
-use crate::mongo_dao::{start_transaction_regular, ChampIndex, IndexOptions, MongoDao};
+use crate::mongo_dao::{start_transaction_regular, ChampIndex, IndexOptions, MongoDao, MongoDaoTyped};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, TriggerTransaction, resoumettre_transactions};
@@ -282,7 +282,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     async fn traiter_transaction<M>(&self, middleware: &M, m: MessageValide)
                                     -> Result<Option<MessageMilleGrillesBufferDefault>, Error>
     where
-        M: ValidateurX509 + GenerateurMessages + MongoDao
+        M: ValidateurX509 + GenerateurMessages + MongoDaoTyped
     {
         let message_ref = match m.message.parse() {
             Ok(inner) => inner,
@@ -358,7 +358,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     async fn traiter_cedule_base<M>(&self, middleware: &M, trigger: &MessageCedule)
                                     -> Result<(), Error>
     where
-        M: MiddlewareMessages + BackupStarter + MongoDao
+        M: MiddlewareMessages + BackupStarter + MongoDaoTyped
     {
         // Emettre presence meme si on fait une regeneration
         let dt = trigger.get_date();
@@ -412,7 +412,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     async fn traiter_cedule<M>(&self, _middleware: &M, _trigger: &MessageCedule)
                                -> Result<(), Error>
     where
-        M: MiddlewareMessages + BackupStarter + MongoDao
+        M: MiddlewareMessages + BackupStarter + MongoDaoTyped
     {
         Ok(())
     }
@@ -584,7 +584,7 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
     /// Tente de traiter les transactions en erreur a nouveau.
     async fn resoumettre_transactions<M>(&self, middleware: &M) -> Result<(), Error>
     where
-        M: GenerateurMessages + MongoDao
+        M: GenerateurMessages + MongoDaoTyped
     {
         if let Some(nom_collection_transactions) = self.get_collection_transactions() {
             resoumettre_transactions(middleware, &vec![nom_collection_transactions]).await?;

@@ -20,7 +20,7 @@ use crate::db_structs::{TransactionOwned, TransactionValide};
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
 use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
-use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao};
+use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao, MongoDaoTyped};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation};
@@ -454,7 +454,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
     /// Traite une transaction en la chargeant, dirigeant vers l'aiguillage puis la marque comme traitee
     async fn traiter_transaction<M>(self: &'static Self, middleware: &M, m: MessageValide)
         -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
-        where M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/
+        where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped /*+ VerificateurMessage*/
     {
         // let trigger = match serde_json::from_value::<TriggerTransaction>(Value::Object(m.message.get_msg().contenu.clone())) {
         //     Ok(t) => t,

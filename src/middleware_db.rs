@@ -3,29 +3,29 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
-use tracing::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use mongodb::{ClientSession, Database};
-use openssl::x509::store::X509Store;
 use openssl::x509::X509;
+use openssl::x509::store::X509Store;
 use serde::Serialize;
-use tokio::sync::{mpsc, mpsc::Sender, Notify};
+use tokio::sync::{Notify, mpsc, mpsc::Sender};
 use tokio::task::JoinHandle;
+use tracing::{debug, error, info, warn};
 
 use crate::backup::{BackupStarter, CommandeBackup, thread_backup};
 use crate::certificats::ValidateurX509;
 use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
-use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
+use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
 use crate::constantes::*;
 use crate::error::Error as CommonError;
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::middleware::{charger_certificat_redis, configurer as configurer_messages, EmetteurCertificat, EmetteurNotificationsTrait, formatter_message_certificat, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, requete_certificat, verifier_expiration_certs};
-use crate::mongo_dao::{initialiser as initialiser_mongodb, MongoDao, MongoDaoImpl};
+use crate::middleware::{EmetteurCertificat, EmetteurNotificationsTrait, IsConfigurationPki, Middleware, MiddlewareMessages, MiddlewareRessources, RabbitMqTrait, RedisTrait, charger_certificat_redis, configurer as configurer_messages, formatter_message_certificat, requete_certificat, verifier_expiration_certs};
+use crate::mongo_dao::{initialiser as initialiser_mongodb, ChampIndex, IndexOptions, MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::notifications::NotificationMessageInterne;
-use crate::rabbitmq_dao::{NamedQueue, run_rabbitmq, TypeMessageOut};
+use crate::rabbitmq_dao::{NamedQueue, TypeMessageOut, run_rabbitmq};
 use crate::recepteur_messages::TypeMessage;
 use crate::redis_dao::RedisDao;
 
@@ -38,6 +38,9 @@ pub struct MiddlewareDb {
 }
 
 impl MiddlewareMessages for MiddlewareDb {}
+
+impl MongoDaoTyped for MiddlewareDb {}
+
 impl Middleware for MiddlewareDb {}
 
 impl CleChiffrageHandler for MiddlewareDb {
@@ -136,6 +139,16 @@ impl MongoDao for MiddlewareDb {
 
     async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError> {
         self.ressources.mongo.get_session_rebuild().await
+    }
+
+    async fn create_index(
+        &self,
+        configuration: &dyn ConfigMessages,
+        nom_collection: &str,
+        champs_index: Vec<ChampIndex>,
+        options: Option<IndexOptions>
+    ) -> Result<(), CommonError> {
+        self.ressources.mongo.create_index(configuration, nom_collection, champs_index, options).await
     }
 }
 
@@ -382,7 +395,9 @@ pub fn configurer() -> MiddlewareDbRessources
     let configuration = middeware_ressources.configuration.as_ref().as_ref();
 
     // Connecter au middleware mongo et MQ
-    let mongo= Arc::new(initialiser_mongodb(configuration).expect("initialiser_mongodb"));
+    let mongo= Arc::new(initialiser_mongodb(
+        configuration.get_configuration_pki(), configuration.get_configuraiton_mongo()
+    ).expect("initialiser_mongodb"));
 
     MiddlewareDbRessources { ressources: middeware_ressources, mongo }
 }

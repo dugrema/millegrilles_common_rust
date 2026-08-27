@@ -19,7 +19,7 @@ use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
 use crate::domaines_v2::GestionnaireDomaineSimple;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{start_transaction_regeneration, MongoDao};
+use crate::mongo_dao::{start_transaction_regeneration, MongoDao, MongoDaoTyped};
 use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
 use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
@@ -30,7 +30,7 @@ pub async fn regenerer_v2<M,G,D,T>(
 )
     -> Result<(), crate::error::Error>
 where
-    M: GenerateurMessages + MongoDao + ValidateurX509 + ConfigMessages /*+ VerificateurMessage*/,
+    M: GenerateurMessages + MongoDaoTyped + ValidateurX509 + ConfigMessages /*+ VerificateurMessage*/,
     G: GestionnaireDomaineSimple,
     D: AsRef<str>,
     T: AiguillageTransactions,
@@ -542,7 +542,8 @@ where
         },
     };
     let options = UpdateOptions::builder().upsert(true).build();
-    let collection_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()))?;
+    let collection_traitees = middleware
+        .get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()).as_str())?;
     collection_traitees.update_one(filtre_transactions_traitees, ops_transactions_traitees, options).await?;
 
     Ok(())
@@ -602,7 +603,8 @@ where
     let options = UpdateOptions::builder().upsert(true).build();
 
     let collection = middleware.get_collection(nom_collection.as_ref())?;
-    let collection_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()))?;
+    let collection_traitees = middleware
+        .get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()).as_str())?;
 
     // Executer les deux operations
     match collection.update_one_with_session(filtre, ops, None, session).await {

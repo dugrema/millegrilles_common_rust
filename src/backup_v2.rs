@@ -38,7 +38,7 @@ use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}};
 use url::Url;
 
 use crate::backup::CommandeBackup;
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{MongoDao, MongoDaoTyped};
 use crate::certificats::ValidateurX509;
 use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2, CommandeAjouterCleDomaine};
 use crate::common_messages::{BackupEvent, FilehostForInstanceRequest, RequestFilehostForInstanceResponse, RequeteFilehostItem};
@@ -64,7 +64,7 @@ enum TypeArchive {
 }
 
 pub async fn thread_backup_v2<M>(middleware: &M, mut rx: Receiver<CommandeBackup>)
-where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
+where M: MongoDaoTyped + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
 {
     // Verifier que le path de backup est disponible
     fs::create_dir_all(middleware.get_path_backup()).unwrap();
@@ -301,7 +301,7 @@ pub async fn get_serveur_consignation<M>(middleware: &M) -> Result<RequeteFileho
 /// S'assure que tous les certificats sont sauvegardés dans CorePki.
 async fn backup_incremental<M>(middleware: &M, commande: &CommandeBackup, cle_backup_domaine: &CleBackupDomaine, path_backup: &Path)
     -> Result<(), CommonError>
-    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
+    where M: MongoDaoTyped + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
 {
     let domaine_backup = commande.nom_domaine.as_str();
     info!("Debut backup incremental sur {}", domaine_backup);
@@ -659,7 +659,7 @@ async fn traiter_transactions_incremental<M>(
     domaine: &str, idmg: &str
 )
     -> Result<(), CommonError>
-    where M: MongoDao + ValidateurX509 + GenerateurMessages
+    where M: MongoDaoTyped + ValidateurX509 + GenerateurMessages
 {
     debug!("traiter_transactions_incremental Debut");
     let debut_traitement = Utc::now();
@@ -704,7 +704,7 @@ async fn traiter_transactions_incremental<M>(
 async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: &CommandeBackup,
                                                tx: Sender<TokioResult<Bytes>>, tx_info_transactions: Sender<InfoTransactions>)
     -> Result<InfoTransactions, CommonError>
-    where M: MongoDao + ValidateurX509 + GenerateurMessages
+    where M: MongoDaoTyped + ValidateurX509 + GenerateurMessages
 {
     let nom_collection_transactions = commande_backup.nom_collection_transactions.as_str();
 

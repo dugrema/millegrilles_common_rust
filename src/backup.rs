@@ -39,7 +39,7 @@ use crate::db_structs::TransactionOwned;
 use crate::error::Error as CommonError;
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{convertir_bson_deserializable, MongoDao};
+use crate::mongo_dao::{convertir_bson_deserializable, MongoDao, MongoDaoTyped};
 use crate::recepteur_messages::TypeMessage;
 
 // Max size des transactions, on tente de limiter la taille finale du message
@@ -56,7 +56,7 @@ const CONST_EVENEMENT_KEEPALIVE: &str = "keepAlive";
 
 /// Handler de backup qui ecoute sur un mpsc. Lance un backup a la fois dans une thread separee.
 pub async fn thread_backup<M>(middleware: Arc<M>, mut rx: Receiver<CommandeBackup>)
-    where M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
+    where M: MongoDaoTyped + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler + 'static
 {
     while let Some(commande) = rx.recv().await {
         let mut abandonner_backup = false;
@@ -151,7 +151,7 @@ pub trait BackupStarter {
 pub async fn backup<M>(middleware: &M, commande: &CommandeBackup)
     -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
     where
-        M: MongoDao + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
+        M: MongoDaoTyped + ValidateurX509 + GenerateurMessages + ConfigMessages + CleChiffrageHandler
 {
     let nom_coll_str = commande.nom_collection_transactions.as_str();
     let nom_domaine_str = commande.nom_domaine.as_str();
@@ -1010,7 +1010,7 @@ async fn serialiser_catalogue<M>(
 
 async fn requete_transactions<M>(middleware: &M, info: &BackupInformation)
     -> Result<Cursor<TransactionOwned>, crate::error::Error>
-    where M: MongoDao
+    where M: MongoDaoTyped
 {
     let nom_collection = &info.nom_collection_transactions;
     let collection = middleware.get_collection_typed::<TransactionOwned>(nom_collection)?;

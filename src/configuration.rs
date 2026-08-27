@@ -103,7 +103,7 @@ fn charger_configuration_mq(pki: &ConfigurationPki) -> Result<ConfigurationMq, S
     })
 }
 
-fn charger_configuration_mongo(pki: &ConfigurationPki) -> Result<ConfigurationMongo, String> {
+pub fn charger_configuration_mongo(pki: &ConfigurationPki) -> Result<ConfigurationMongo, String> {
 
     let port: u16 = match std::env::var("MG_MONGO_PORT") {
         Ok(p) => p.parse().unwrap(),

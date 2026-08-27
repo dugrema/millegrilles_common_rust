@@ -24,7 +24,7 @@ use crate::error::Error as CommonError;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::messages_generiques::CommandeUsager;
 use crate::middleware::requete_certificat;
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{MongoDao, MongoDaoTyped};
 
 pub async fn transmettre_evenement_persistance<S>(
     middleware: &impl GenerateurMessages,
@@ -89,7 +89,7 @@ impl TriggerTransaction {
 
 pub async fn charger_transaction<M>(middleware: &M, nom_collection: &str, trigger: &TriggerTransaction) -> Result<TransactionValide, CommonError>
 where
-    M: ValidateurX509 + MongoDao,
+    M: ValidateurX509 + MongoDaoTyped,
 {
     debug!("Traitement d'une transaction : {:?}", trigger);
     // let trigger = &m.message;
@@ -180,7 +180,7 @@ pub async fn marquer_transaction<'a, M, S, T>(middleware: &M, nom_collection: S,
 }
 
 /// Resoumet une batch de transaction non completee pour chaque collection.
-pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDao), collections_transactions: &Vec<String>) -> Result<(), CommonError> {
+pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + MongoDaoTyped), collections_transactions: &Vec<String>) -> Result<(), CommonError> {
 
     debug!("Resoumettre transactions incompletes pour {:?}", collections_transactions);
     if middleware.mq_disponible() == false {

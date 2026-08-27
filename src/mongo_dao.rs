@@ -1,10 +1,9 @@
 use crate::bson::Array;
 use crate::certificats::ValidateurX509;
-use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, ConfigurationPki};
+use crate::configuration::{ConfigMessages, ConfigurationMongo, ConfigurationPki};
 use crate::error::Error as CommonError;
 use crate::rabbitmq_dao::emettre_certificat_compte;
 use async_trait::async_trait;
-use tracing::{debug, error, info};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
@@ -17,6 +16,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::vec::IntoIter;
 use tokio_stream::StreamExt;
+use tracing::{debug, error, info};
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
@@ -27,33 +27,24 @@ pub trait MongoDao: Send + Sync {
     async fn get_session(&self) -> Result<ClientSession, CommonError>;
     async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError>;
 
-    fn get_collection<S>(&self, nom_collection: S) -> Result<Collection<Document>, CommonError>
-        where S: AsRef<str>
-    {
+    fn get_collection(&self, nom_collection: &str) -> Result<Collection<Document>, CommonError> {
         let database = self.get_database()?;
         Ok(database.collection(nom_collection.as_ref()))
     }
 
-    fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, CommonError> {
-        let database = self.get_database()?;
-        Ok(database.collection::<T>(nom_collection))
-    }
+    async fn create_index(
+        &self,
+        configuration: &dyn ConfigMessages,
+        nom_collection: &str,
+        champs_index: Vec<ChampIndex>,
+        options: Option<IndexOptions>
+    ) -> Result<(), CommonError>;
 
-    async fn create_index<C>(&self, configuration: &C, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>)
-        -> Result<(), CommonError>
-        where C: ConfigMessages
-    {
-        let database = self.get_database()?;
-        create_index(configuration, &database, nom_collection, champs_index, options).await
-    }
-
-    async fn rename_collection<S,D>(&self, source: S, destination: D, drop_target: bool) -> Result<(), CommonError>
-        where S: AsRef<str> + Send, D: AsRef<str> + Send
-    {
+    async fn rename_collection(&self, source: &str, destination: &str, drop_target: bool) -> Result<(), CommonError> {
         let db_name = self.get_db_name();
         let command = doc!{
-            "renameCollection": format!("{}.{}", db_name, source.as_ref()),
-            "to": format!("{}.{}", db_name, destination.as_ref()),
+            "renameCollection": format!("{}.{}", db_name, source),
+            "to": format!("{}.{}", db_name, destination),
             "dropTarget": drop_target,
         };
         let database = self.get_admin_database()?;
@@ -61,6 +52,14 @@ pub trait MongoDao: Send + Sync {
             Ok(_) => Ok(()),
             Err(e) => Err(CommonError::String(format!("rename_collection Error {:?}", e))),
         }
+    }
+
+}
+
+pub trait MongoDaoTyped: MongoDao {
+    fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, CommonError> {
+        let database = self.get_database()?;
+        Ok(database.collection::<T>(nom_collection))
     }
 }
 
@@ -112,28 +111,28 @@ impl MongoDao for MongoDaoImpl {
         let options = SessionOptions::builder().default_transaction_options(transaction_options).build();
         Ok(self.client.start_session(options).await?)
     }
+
+    async fn create_index(&self, configuration: &dyn ConfigMessages, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>) -> Result<(), CommonError> {
+        let database = self.get_database()?;
+        create_index(configuration, &database, nom_collection, champs_index, options).await
+    }
 }
 
-pub fn initialiser<C>(configuration: &C) -> Result<MongoDaoImpl, String>
-    where C: ConfigMessages + ConfigDb
-{
+pub fn initialiser(config_pki: &ConfigurationPki, config_db: &ConfigurationMongo) -> Result<MongoDaoImpl, String> {
     debug!("Initialiser connexion a MongoDB");
-
-    let pki = configuration.get_configuration_pki();
-    let mongo = configuration.get_configuraiton_mongo();
 
     // let (pki, mongo): (&ConfigurationPki, &ConfigurationMongo) = match configuration.as_ref() {
     //     ConfigurationMessages{mq: _mq, pki: _pki} => return Err("Mauvais type de configuration (MQ seulement)".into()),
     //     ConfigurationMessagesDb{mq: _mq, mongo, pki} => (pki, mongo),
     // };
 
-    let client: Client = connecter(pki, mongo).expect("Erreur connexion a MongoDB");
-    let idmg: String = pki.get_validateur().idmg().to_owned();
+    let client: Client = connecter(config_pki, config_db).expect("Erreur connexion a MongoDB");
+    let idmg: String = config_pki.get_validateur().idmg().to_owned();
 
     Ok(MongoDaoImpl{
         client,
         db_name: idmg.to_owned(),
-        path_backup: mongo.path_backup.to_owned(),
+        path_backup: config_db.path_backup.to_owned(),
     })
 }
 
@@ -167,11 +166,13 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
     Client::with_options(options)
 }
 
-async fn create_index<C>(configuration: &C, database: &Database, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>)
-    -> Result<(), CommonError>
-    where C: ConfigMessages
-{
-
+async fn create_index(
+    configuration: &dyn ConfigMessages,
+    database: &Database,
+    nom_collection: &str,
+    champs_index: Vec<ChampIndex>,
+    options: Option<IndexOptions>
+) -> Result<(), CommonError> {
     let mut champs = doc! {};
     for champ in champs_index {
         champs.insert(champ.nom_champ, Bson::Int32(champ.direction));

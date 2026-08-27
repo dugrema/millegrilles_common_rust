@@ -29,7 +29,7 @@ use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error as CommonError;
 use crate::formatteur_messages::{build_message_action, FormatteurMessage};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{MongoDao, verifier_erreur_duplication_mongo};
+use crate::mongo_dao::{verifier_erreur_duplication_mongo, MongoDao, MongoDaoTyped};
 use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
 use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
@@ -86,7 +86,7 @@ pub trait MiddlewareMessages:
 {}
 
 pub trait Middleware:
-    MiddlewareMessages + MongoDao + BackupStarter
+    MiddlewareMessages + MongoDaoTyped + BackupStarter
 {}
 
 pub trait IsConfigurationPki {
@@ -956,7 +956,8 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
         "date_traitement": None::<&str>,
         "ok": None::<bool>,
     };
-    let collection_transactions_traitees = middleware.get_collection(format!("{}/transactions_traitees", nom_collection_transactions))?;
+    let collection_transactions_traitees = middleware
+        .get_collection(format!("{}/transactions_traitees", nom_collection_transactions).as_str())?;
     if let Err(e) = collection_transactions_traitees.insert_one_with_session(doc_transaction_traitee, None, session).await {
         if verifier_erreur_duplication_mongo(&e.kind) {
             // Transaction dupliquee deja recu. On repond Ok immediatement avec code duplication.
