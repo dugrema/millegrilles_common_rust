@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use futures::pin_mut;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResultVec, CleChiffrageHandler};
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use blake2::{Blake2s256, Digest};
 use chrono::DateTime;
 use chrono::prelude::*;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use multibase::{Base, encode};
 use multicodec::Codec::Blake2s_256;
 use multihash::Multihash;

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
-use log::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use mongodb::options::{CountOptions, Hint};
 use serde::{Serialize, Deserialize};

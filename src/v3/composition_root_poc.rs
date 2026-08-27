@@ -7,7 +7,7 @@ use crate::v3::impls::format_service::FormatServiceImpl;
 use crate::v3::impls::messaging_service::MessagingServiceImpl;
 use crate::v3::impls::security_service::SecurityServiceImpl;
 use crate::v3::traits::*;
-use log::info;
+use tracing::info;
 use std::sync::Arc;
 use crate::v3::facades::message_inbound::MessageInboundValidator;
 use crate::v3::facades::message_outbound::MessageOutboundFacade;

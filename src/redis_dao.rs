@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use log::{debug, info};
+use tracing::{debug, info};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use redis::aio::MultiplexedConnection;
 use redis::Client;

@@ -74,10 +74,14 @@ pub use jwt_simple;
 
 #[cfg(test)]
 mod test_setup {
-    use log::{debug};
+    use tracing::{debug};
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
     pub fn setup(nom: &str) {
-        let _ = env_logger::builder().is_test(true).try_init();
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("warn,millegrilles_common_rust=debug"))
+            .with(tracing_subscriber::fmt::layer())
+            .init();
         debug!("Running {}", nom);
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
-use log::debug;
+use tracing::debug;
 use openssl::pkey::{PKey, Public};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt::{Debug, Formatter};
 
 use aead::NewAead;
-use log::debug;
+use tracing::debug;
 use multibase::{Base, decode, encode};
 use multihash::Code;
 use openssl::pkey::{PKey, Private};

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::debug;
+use tracing::debug;
 
 
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, RoutageMessage};

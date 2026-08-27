@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use chrono::{DateTime, Utc};
-use log::{error, info};
+use tracing::{error, info};
 use millegrilles_cryptographie::chiffrage::{FormatChiffrage, formatchiffragestr};
 use millegrilles_cryptographie::chiffrage_cles::{CleChiffrageHandler, CleDechiffrageX25519Impl};
 use millegrilles_cryptographie::heapless;
@@ -578,7 +578,7 @@ pub async fn get_cles_rechiffrees_v2<M,D,C>(middleware: &M, domaine: D, cle_ids:
 // mod test {
 //     use std::error::Error;
 //
-//     use log::debug;
+//     use tracing::debug;
 //
 //     use crate::test_setup::setup;
 //

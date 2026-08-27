@@ -5,7 +5,7 @@ use std::str::from_utf8;
 use std::sync::Arc;
 
 use lapin::message::Delivery;
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use TypeMessageOut as TypeMessageIn;

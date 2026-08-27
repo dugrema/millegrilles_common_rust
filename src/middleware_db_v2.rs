@@ -1,6 +1,6 @@
 
 use futures_util::stream::FuturesUnordered;
-use log::info;
+use tracing::info;
 use static_cell::StaticCell;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;

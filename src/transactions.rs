@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, RoutageMessage};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::bson as bson;

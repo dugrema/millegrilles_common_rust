@@ -4,7 +4,7 @@ use crate::configuration::{ConfigDb, ConfigMessages, ConfigurationMongo, Configu
 use crate::error::Error as CommonError;
 use crate::rabbitmq_dao::emettre_certificat_compte;
 use async_trait::async_trait;
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};

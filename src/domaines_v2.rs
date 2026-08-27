@@ -2,7 +2,7 @@ use std::fs;
 use async_trait::async_trait;
 use chrono::{Datelike, Timelike, Utc, Weekday};
 use futures_util::stream::FuturesUnordered;
-use log::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use mongodb::options::{CountOptions, Hint};

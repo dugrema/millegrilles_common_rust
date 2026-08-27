@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use log::debug;
+use tracing::debug;
 use multibase::{Base, Base::Base64, decode, encode};
 use multihash::Code;
 use openssl::error::ErrorStack;

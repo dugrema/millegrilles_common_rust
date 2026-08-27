@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
-use log::{debug, error, warn};
+use tracing::{debug, error, warn};
 use serde::{Serialize, Deserialize};
 
 use std::str::from_utf8;
@@ -501,7 +501,7 @@ impl EmetteurNotifications {
 // mod test {
 //     use std::path::PathBuf;
 //     use std::sync::Arc;
-//     use log::debug;
+//     use tracing::debug;
 //     use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 //     use openssl::x509::store::X509Store;
 //     use openssl::x509::X509;

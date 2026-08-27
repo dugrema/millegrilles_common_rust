@@ -6,7 +6,7 @@ use lapin::tcp::{OwnedIdentity, OwnedTLSConfig};
 use lapin::{Channel, Connection, ConnectionProperties};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use log::error;
+use tracing::error;
 use tracing::{debug, info, warn};
 use url::Url;
 

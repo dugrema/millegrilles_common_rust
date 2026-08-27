@@ -10,7 +10,7 @@
 //     CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL,
 //     CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE
 // };
-// use log::debug;
+// use tracing::debug;
 // use millegrilles_cryptographie::messages_structs::DechiffrageInterMillegrilleOwned;
 // use millegrilles_cryptographie::x509::EnveloppeCertificat;
 // use multibase::{Base, decode, encode};
@@ -584,7 +584,7 @@
 //
 // #[cfg(test)]
 // mod test {
-//     use log::debug;
+//     use tracing::debug;
 //     use openssl::pkey::{Id, PKey};
 //     use x509_parser::signature_algorithm::SignatureAlgorithm::ED25519;
 //

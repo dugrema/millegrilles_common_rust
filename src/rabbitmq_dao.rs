@@ -10,8 +10,7 @@ use futures::stream::FuturesUnordered;
 use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, Queue, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
 use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
-use log::{debug, error, info, log_enabled, trace, warn};
-use log::Level::Trace;
+use tracing::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use tokio::{sync, task};
 use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
@@ -1068,7 +1067,7 @@ async fn named_queue_traiter_messages_v2<M>(
         // debug!("NamedQueue.run Message recu : {:?}", message);
         let resultat = match message {
             MessageInterne::Delivery(delivery, _routing) => {
-                if log_enabled!(Trace) {
+                if tracing::enabled!(tracing::Level::TRACE) {
                     if let Ok(data_str) = from_utf8(&delivery.data) {
                         trace!("NamedQueue.run Delivery Message recu : {}\n{}", delivery.routing_key, data_str);
                     } else {
@@ -1088,7 +1087,7 @@ async fn named_queue_traiter_messages_v2<M>(
                 }
             },
             MessageInterne::Trigger(delivery, nom_queue) => {
-                if log_enabled!(Trace) {
+                if tracing::enabled!(tracing::Level::TRACE) {
                     if let Ok(data_str) = from_utf8(&delivery.data) {
                         trace!("NamedQueue.run Trigger Message recu : {}\n{}", delivery.routing_key, data_str);
                     } else {

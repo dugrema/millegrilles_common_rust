@@ -3,7 +3,7 @@ use std::error::Error;
 use std::sync::{Arc, Mutex};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Utc};
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use mongodb::bson::{doc, Bson};
 use mongodb::{bson, ClientSession, Cursor};
 use mongodb::options::{FindOptions, Hint, UpdateOptions};

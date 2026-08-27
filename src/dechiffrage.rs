@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use jwt_simple::prelude::{Deserialize, Serialize};
-use log::debug;
+use tracing::debug;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519, CleDechiffrageX25519Impl, Decipher};
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
@@ -320,7 +320,7 @@ pub fn decrypt_document<M,D>(middleware: &M, document: EncryptedDocument) -> Res
 // #[cfg(test)]
 // mod test {
 //     use dryoc::constants::CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_ABYTES;
-//     use log::debug;
+//     use tracing::debug;
 //     use multibase::{Base, encode};
 //     use openssl::pkey::{Id, PKey, Private};
 //     use crate::certificats::FingerprintCertPublicKey;

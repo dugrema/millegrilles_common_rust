@@ -1,4 +1,4 @@
-use log::{error};
+use tracing::{error};
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};

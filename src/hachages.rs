@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-use log::debug;
+use tracing::debug;
 use multibase::{Base, decode, encode};
 use multihash::{Code, Multihash, MultihashDigest, Sha2_256, Sha2_512, Blake2b512, Blake2s256, StatefulHasher};
 use serde::Serialize;
