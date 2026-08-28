@@ -11,6 +11,7 @@ use crate::v3::traits::MessagingService;
 use async_trait::async_trait;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesBufferDefault};
 use std::sync::Arc;
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinSet;
 

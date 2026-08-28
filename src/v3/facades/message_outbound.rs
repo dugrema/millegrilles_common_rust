@@ -4,6 +4,7 @@ use crate::v3::{FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesOwned};
 use std::sync::Arc;
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
 
 /// Facade that exposes methods to easily send different types of messages
@@ -103,4 +104,36 @@ impl MessageOutboundFacade {
         self.messaging.respond(response, routing).await
     }
 
+    pub async fn respond_encrypted<M>(
+        &self,
+        delivery_info: DeliveryInfo,
+        message: M,
+        certificate: &EnveloppeCertificat
+    ) -> Result<(), CommonError> where M: Serialize + Send + Sync {
+        // Prepare routing from delivery information
+        let correlation_id = match delivery_info.properties.correlation_id() {
+            Some(id) => id,
+            None => return Err(CommonError::Str("correlation_id missing for response")),
+        };
+        let reply_to = match delivery_info.properties.reply_to() {
+            Some(to) => to,
+            None => return Err(CommonError::Str("reply_to missing for response")),
+        };
+        let routing = RoutageMessageReponse::new(reply_to.as_str(), correlation_id.as_str());
+
+        // Send
+        self.respond_routed_encrypted(routing, message, certificate).await
+    }
+
+    pub async fn respond_routed_encrypted<R,M>(
+        &self,
+        routing: R,
+        message: M,
+        certificate: &EnveloppeCertificat
+    ) -> Result<(), CommonError> where R: Into<RoutageMessageReponse> + Send, M: Serialize + Send + Sync {
+        let routing = routing.into();
+        let value = serde_json::to_value(message)?;
+        let (response, _id) = self.format.build_encrypted_response(value, certificate)?;
+        self.messaging.respond(response, routing).await
+    }
 }
