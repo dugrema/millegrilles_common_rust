@@ -6,16 +6,16 @@ use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
 use lapin::options::{BasicAckOptions, BasicConsumeOptions, BasicQosOptions, QueueBindOptions, QueueDeclareOptions};
-use lapin::types::FieldTable;
-use lapin::{Channel, Consumer, Queue};
-use tracing::{debug, error, info};
+use lapin::types::{DeliveryTag, FieldTable, ShortString};
+use lapin::{BasicProperties, Channel, Consumer, Queue};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageValidable};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio_util::sync::CancellationToken;
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info};
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
@@ -29,6 +29,20 @@ struct RabbitMqConsumer {
     channel: Channel,
     queue: Queue,
     consumer: Consumer,
+}
+
+#[derive(Clone)]
+pub struct DeliveryInfo {
+    pub delivery_tag: DeliveryTag,
+    pub exchange: ShortString,
+    pub routing_key: ShortString,
+    pub properties: BasicProperties,
+}
+
+#[derive(Clone)]
+pub struct InboundMessage {
+    pub delivery: DeliveryInfo,
+    pub parsed: MessageMilleGrillesOwned,
 }
 
 pub struct ResponseWaiter {
@@ -177,7 +191,15 @@ impl RabbitConsumerManager {
 
                 if let Some(message) = message {
                     // Send message for further processing
-                    if let Err(e) = tx.send(message).await {
+                    let delivery_info = DeliveryInfo {
+                        delivery_tag: delivery.delivery_tag.clone(),
+                        exchange: delivery.exchange.clone(),
+                        routing_key: delivery.routing_key.clone(),
+                        properties: delivery.properties.clone(),
+                    };
+                    let inbound_message = InboundMessage { delivery: delivery_info, parsed: message };
+
+                    if let Err(e) = tx.send(inbound_message).await {
                         error!("named_queue_thread Error message delivery : {:?}", e);
                     }
                 }

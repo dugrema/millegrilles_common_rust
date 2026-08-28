@@ -1,15 +1,16 @@
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error;
-use crate::generateur_messages::RoutageMessageAction;
+use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
 use tokio::sync::mpsc::Receiver;
+use crate::v3::impls::rabbitmq_consumer::InboundMessage;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
@@ -22,8 +23,12 @@ pub trait MessagingService: Send + Sync {
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction)
                   -> Result<MessageMilleGrillesOwned, Error>;
 
+    /// Emits a response
+    async fn respond(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageReponse)
+                  -> Result<(), Error>;
+
     /// Take the message receiver from the queue registry for a named queue.
-    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesOwned>, Error>;
+    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<InboundMessage>, Error>;
 }
 
 #[async_trait]

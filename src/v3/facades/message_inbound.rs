@@ -9,8 +9,10 @@ use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
+use crate::v3::impls::rabbitmq_consumer::{DeliveryInfo, InboundMessage};
 
 pub struct MessageValidated {
+    pub delivery_info: DeliveryInfo,
     pub message: MessageMilleGrillesOwned,
     pub certificate: Arc<EnveloppeCertificat>,
     pub content: Option<Value>,
@@ -72,9 +74,10 @@ impl MessageInboundValidator {
     }
 
     /// Placeholder for the actual processing logic (validation -> decryption -> deserialization).
-    async fn process_single_message(&self, mut message: MessageMilleGrillesOwned) -> Result<MessageValidated, CommonError>
+    async fn process_single_message(&self, message_wrapper: InboundMessage) -> Result<MessageValidated, CommonError>
     {
         // Internal validation, ensures the hash (id) matches content and the pubkey/id match the signature.
+        let mut message = message_wrapper.parsed;
         if message.contenu_valide != Some((true, true)) {
             message.verifier_signature()?;
         }
@@ -96,6 +99,6 @@ impl MessageInboundValidator {
             None => None
         };
 
-        Ok(MessageValidated { message, certificate: enveloppe, content: decrypted_value })
+        Ok(MessageValidated { delivery_info: message_wrapper.delivery, message, certificate: enveloppe, content: decrypted_value })
     }
 }

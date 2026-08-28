@@ -1,9 +1,10 @@
 use crate::error::Error as CommonError;
-use crate::generateur_messages::RoutageMessageAction;
+use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::{FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesOwned};
 use std::sync::Arc;
+use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
@@ -74,14 +75,32 @@ impl MessageOutboundFacade {
         }
     }
 
-    pub async fn respond<R,M>(&self, routing: R, message: M)
+    pub async fn respond<M>(&self, delivery_info: DeliveryInfo, message: M) -> Result<(), CommonError>
+    where M: Serialize + Send + Sync
+    {
+        // Prepare routing from delivery information
+        let correlation_id = match delivery_info.properties.correlation_id() {
+            Some(id) => id,
+            None => return Err(CommonError::Str("correlation_id missing for response")),
+        };
+        let reply_to = match delivery_info.properties.reply_to() {
+            Some(to) => to,
+            None => return Err(CommonError::Str("reply_to missing for response")),
+        };
+        let routing = RoutageMessageReponse::new(reply_to.as_str(), correlation_id.as_str());
+
+        // Send
+        self.respond_routed(routing, message).await
+    }
+
+    pub async fn respond_routed<R,M>(&self, routing: R, message: M)
         -> Result<(), CommonError>
-    where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
+    where R: Into<RoutageMessageReponse> + Send, M: Serialize + Send + Sync
     {
         let routing = routing.into();
         let value = serde_json::to_value(message)?;
         let (response, _id) = self.format.build_response(value)?;
-        self.messaging.emit(response, Some(routing)).await
+        self.messaging.respond(response, routing).await
     }
 
 }

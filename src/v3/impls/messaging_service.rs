@@ -1,10 +1,10 @@
 use crate::error::Error as CommonError;
-use crate::generateur_messages::RoutageMessageAction;
+use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::rabbitmq_dao::ConfigQueue;
 use crate::v3::ConfigService;
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
-use crate::v3::impls::rabbitmq_consumer::RabbitConsumerManager;
-use crate::v3::impls::rabbitmq_dispatcher::RabbitMessageDispatcher;
+use crate::v3::impls::rabbitmq_consumer::{InboundMessage, RabbitConsumerManager};
+use crate::v3::impls::rabbitmq_dispatcher::{MessageRoutingEnum, RabbitMessageDispatcher};
 use tokio_util::sync::CancellationToken;
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use crate::v3::traits::MessagingService;
@@ -71,6 +71,10 @@ impl MessagingServiceImpl {
 #[async_trait]
 impl MessagingService for MessagingServiceImpl {
     async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>) -> Result<(), CommonError> {
+        let routing = match routing {
+            Some(r) => MessageRoutingEnum::Action(r),
+            None => MessageRoutingEnum::None,
+        };
         if let Some(_rx) = self.message_dispatcher.send_message(message, routing).await? {
             return Err(CommonError::Str("MessagingServiceImpl Unexpected waiter produced on emit message"))
         }
@@ -83,7 +87,8 @@ impl MessagingService for MessagingServiceImpl {
             return Err(CommonError::Str("MessagingService.send Unable to wait for reply, needs a correlation_id and blocking != false"));
         }
 
-        match self.message_dispatcher.send_message(message, Some(routing)).await? {
+        let routing = MessageRoutingEnum::Action(routing);
+        match self.message_dispatcher.send_message(message, routing).await? {
             Some(rx) => {
                 let val = rx.await
                     .map_err(|e| CommonError::String(format!("MessagingServiceImpl Waiting for response: {:?}", e)))?;
@@ -93,7 +98,15 @@ impl MessagingService for MessagingServiceImpl {
         }
     }
 
-    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesOwned>, CommonError> {
+    async fn respond(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageReponse) -> Result<(), CommonError> {
+        let routing = MessageRoutingEnum::Response(routing);
+        if let Some(_rx) = self.message_dispatcher.send_message(message, routing).await? {
+            return Err(CommonError::Str("MessagingServiceImpl Unexpected waiter produced on respond to message"))
+        }
+        Ok(())
+    }
+
+    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<InboundMessage>, CommonError> {
         self.queue_registry.take_named_q_rx(q_name)
     }
 }

@@ -1,19 +1,19 @@
 use crate::constantes::DEFAULT_MESSAGE_TIMEOUT;
 use crate::error::Error as CommonError;
-use crate::generateur_messages::RoutageMessageAction;
+use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
 use crate::v3::impls::rabbitmq_consumer::{RabbitConsumerManager, ResponseWaiter};
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use chrono::Utc;
 use lapin::options::BasicPublishOptions;
 use lapin::{BasicProperties, Channel};
-use tracing::{debug, error};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_util::sync::CancellationToken;
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error};
 
 // --- Constants ---
 
@@ -24,7 +24,7 @@ const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 
 struct OutgoingMessage {
     message_kind: MessageKind,
-    routing: Option<RoutageMessageAction>,
+    routing: MessageRoutingEnum,
     message: MessageMilleGrillesBufferDefault,
 }
 
@@ -35,6 +35,12 @@ pub struct RabbitMessageDispatcher {
     tx_out: Sender<OutgoingMessage>,
     rx_out: Mutex<Option<Receiver<OutgoingMessage>>>,
     // securite: Securite,
+}
+
+pub enum MessageRoutingEnum {
+    None,
+    Action(RoutageMessageAction),
+    Response(RoutageMessageReponse),
 }
 
 impl RabbitMessageDispatcher {
@@ -49,7 +55,7 @@ impl RabbitMessageDispatcher {
         }
     }
 
-    pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>)
+    pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: MessageRoutingEnum)
         -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesOwned, CommonError>>>, CommonError> {
         let message_kind = {
             let message_ref = message.parse()?;
@@ -59,8 +65,12 @@ impl RabbitMessageDispatcher {
         // Ensure the proper information for routing is available
         match message_kind {
             MessageKind::Requete | MessageKind::Commande | MessageKind::Evenement => {
-                if routing.is_none() {
-                    return Err(CommonError::Str("Message types requete, commande and evenement require routing information for the exchanges"))
+                match routing {
+                    MessageRoutingEnum::None => {
+                        return Err(CommonError::Str("Message types requete, commande and evenement require routing information for the exchanges"))
+                    },
+                    MessageRoutingEnum::Action(_) => {}
+                    MessageRoutingEnum::Response(_) => {}
                 }
             }
             _ => ()
@@ -76,9 +86,10 @@ impl RabbitMessageDispatcher {
 
     async fn send_out(&self, message: OutgoingMessage)
         -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesOwned, CommonError>>>, CommonError> {
-        let (correlation_id, timeout_blocking) = match message.routing.as_ref() {
-            Some(r) => (r.correlation_id.as_ref(), r.timeout_blocking.clone()),
-            None => (None, None)
+        let (correlation_id, timeout_blocking) = match &message.routing {
+            MessageRoutingEnum::None => {(None, None)}
+            MessageRoutingEnum::Action(r) => {(r.correlation_id.clone(), r.timeout_blocking.clone())}
+            MessageRoutingEnum::Response(_) => {(None, None)}
         };
         let receiver = match correlation_id {
             Some(correlation_id) => {
@@ -155,9 +166,10 @@ impl RabbitMessageDispatcher {
 async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: Option<String>) -> Result<(), CommonError> {
     let options = BasicPublishOptions::default();
     let payload = message.message.buffer;
-    let (correlation_id, reply_to) = match message.routing.as_ref() {
-        Some(r) => (r.correlation_id.clone(), r.reply_to.clone()),
-        None => (None, None)
+    let (correlation_id, reply_to) = match &message.routing {
+        MessageRoutingEnum::None => {(None, None)}
+        MessageRoutingEnum::Action(r) => {(r.correlation_id.clone(), r.reply_to.clone())}
+        MessageRoutingEnum::Response(r) => {(Some(r.correlation_id.clone()), Some(r.reply_to.clone()))}
     };
 
     let (properties, reply_to) = {
@@ -180,6 +192,7 @@ async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: O
 
                 Some(reply_to)
             },
+            MessageKind::Reponse | MessageKind::ReponseChiffree => reply_to,
             _ => None
         };
 
@@ -209,11 +222,11 @@ async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: O
             }
         },
         MessageKind::Requete | MessageKind::Commande | MessageKind::Evenement => {
-            let routing_key = concatenate_routing_key(message.message_kind, message.routing.as_ref())?;
             let routing = match message.routing {
-                Some(r) => r,
-                None => return Err(CommonError::Str("No routing provided for requete/commande/evenement"))
+                MessageRoutingEnum::Action(r) => r,
+                _ => return Err(CommonError::Str("No routing provided for requete/commande/evenement"))
             };
+            let routing_key = concatenate_routing_key(message.message_kind, Some(&routing))?;
 
             for exchange in routing.exchanges {
                 let resultat = channel.basic_publish(

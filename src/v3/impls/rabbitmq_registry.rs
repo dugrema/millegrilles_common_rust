@@ -1,6 +1,6 @@
 use crate::error::Error as CommonError;
 use crate::rabbitmq_dao::ConfigQueue;
-use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
+use crate::v3::impls::rabbitmq_consumer::InboundMessage;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
@@ -9,9 +9,9 @@ use tokio::sync::mpsc::{Receiver, Sender};
 /// Named queue for the registry
 struct NamedQueue {
     queue: ConfigQueue,
-    tx: Sender<MessageMilleGrillesOwned>,
+    tx: Sender<InboundMessage>,
     /// Holds rx until a consumer process takes it
-    rx: Option<Receiver<MessageMilleGrillesOwned>>,
+    rx: Option<Receiver<InboundMessage>>,
 }
 
 impl NamedQueue {
@@ -81,7 +81,7 @@ impl RabbitQueueRegistry {
         self.reply_queue.q_name.lock().expect("RabbitQueueRegistry.get_reply_q_name Lock failed").clone()
     }
 
-    pub fn get_named_queue(&self, q_name: &str) -> Result<(ConfigQueue, Sender<MessageMilleGrillesOwned>), crate::error::Error> {
+    pub fn get_named_queue(&self, q_name: &str) -> Result<(ConfigQueue, Sender<InboundMessage>), crate::error::Error> {
         let mut guard = self.named_queues.lock()
             .expect("RabbitQueueRegistry.get_named_queue_tx Lock failed");
         match guard.get_mut(q_name) {
@@ -90,7 +90,7 @@ impl RabbitQueueRegistry {
         }
     }
 
-    pub fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<MessageMilleGrillesOwned>, crate::error::Error> {
+    pub fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<InboundMessage>, crate::error::Error> {
         let mut guard = self.named_queues.lock()
             .expect("RabbitQueueRegistry.take_named_q_rx Lock failed");
 
