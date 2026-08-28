@@ -110,7 +110,7 @@ impl RabbitConsumerManager {
                                 if let Err(e) = channel_inner.basic_qos(1, qos_options_reponses).await {
                                     error!("named_queue_consume Error configuring channel for queue {:?}, {:?}", q_name, e);
                                 } else {
-                                    match create_named_queue(self.queue_registry.as_ref(), &channel_inner, &config).await {
+                                    match create_named_queue(&channel_inner, &config).await {
                                         Ok((q, consumer)) => {
                                             consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer });
                                         },
@@ -366,8 +366,7 @@ impl RabbitConsumerManager {
     }
 }
 
-async fn create_named_queue(queue_registry: &RabbitQueueRegistry, channel: &Channel, config: &ConfigQueue)
-                            -> Result<(Queue, Consumer), CommonError> {
+async fn create_named_queue(channel: &Channel, config: &ConfigQueue) -> Result<(Queue, Consumer), CommonError> {
     let options = QueueDeclareOptions {
         passive: false,
         durable: config.durable,
@@ -380,14 +379,9 @@ async fn create_named_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
     let ttl = config.ttl.unwrap_or_else(|| DEFAULT_TTL as u32);
     params.insert(FLAG_TTL.into(), ttl.into());
 
-    let reply_queue = channel.queue_declare("", options, params).await?;
-
-    let queue_name = reply_queue.name().as_str();
-    info!("create_reply_queue Setting reply Q name: {}", queue_name);
-    queue_registry.set_reply_q_name(Some(queue_name.to_owned()));
-
-    let exchanges: Vec<&str> = vec![SECURITE_1_PUBLIC];
-    debug!("create_reply_queue Binding on exchanges : {:?}", exchanges);
+    let queue_name = config.nom_queue.as_str();
+    let named_queue = channel.queue_declare(queue_name, options, params).await?;
+    info!("create_named_queue Created named Q: {}", queue_name);
 
     for rk in &config.routing_keys {
         let routing_key = rk.routing_key.as_str();
@@ -406,7 +400,7 @@ async fn create_named_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
     let consumer = channel
         .basic_consume(queue_name, "".into(), BasicConsumeOptions::default(), FieldTable::default()).await?;
 
-    Ok((reply_queue, consumer))
+    Ok((named_queue, consumer))
 }
 
 async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Channel)
