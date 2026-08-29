@@ -2,12 +2,12 @@ use crate::constantes::DEFAULT_MESSAGE_TIMEOUT;
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
-use crate::v3::impls::rabbitmq_consumer::{RabbitConsumerManager, ResponseWaiter};
+use crate::v3::impls::rabbitmq_consumer::{RabbitConsumerManager, ResponseMessage, ResponseWaiter};
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use chrono::Utc;
 use lapin::options::BasicPublishOptions;
 use lapin::{BasicProperties, Channel};
-use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
+use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -56,7 +56,7 @@ impl RabbitMessageDispatcher {
     }
 
     pub async fn send_message(&self, message: MessageMilleGrillesBufferDefault, routing: MessageRoutingEnum)
-        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesOwned, CommonError>>>, CommonError> {
+        -> Result<Option<oneshot::Receiver<Result<ResponseMessage, CommonError>>>, CommonError> {
         let message_kind = {
             let message_ref = message.parse()?;
             message_ref.kind
@@ -85,11 +85,21 @@ impl RabbitMessageDispatcher {
     }
 
     async fn send_out(&self, message: OutgoingMessage)
-        -> Result<Option<oneshot::Receiver<Result<MessageMilleGrillesOwned, CommonError>>>, CommonError> {
-        let (correlation_id, timeout_blocking) = match &message.routing {
-            MessageRoutingEnum::None => {(None, None)}
-            MessageRoutingEnum::Action(r) => {(r.correlation_id.clone(), r.timeout_blocking.clone())}
-            MessageRoutingEnum::Response(_) => {(None, None)}
+        -> Result<Option<oneshot::Receiver<Result<ResponseMessage, CommonError>>>, CommonError> {
+        let (
+            correlation_id,
+            timeout_blocking,
+            domains,
+            exchanges
+        ) = match &message.routing {
+            MessageRoutingEnum::None => {(None, None, None, None)}
+            MessageRoutingEnum::Action(r) => {(
+                r.correlation_id.clone(),
+                r.timeout_blocking.clone(),
+                Some(vec![r.domaine.clone()]),
+                Some(r.exchanges.clone())
+            )}
+            MessageRoutingEnum::Response(_) => {(None, None, None, None)}
         };
         let receiver = match correlation_id {
             Some(correlation_id) => {
@@ -99,7 +109,7 @@ impl RabbitMessageDispatcher {
 
                 // Create correlation waiter for the response (to be put on the tx)
                 let (tx, rx) = oneshot::channel();
-                let response_waiter = ResponseWaiter::new(tx, expiration);
+                let response_waiter = ResponseWaiter::new(tx, expiration, exchanges, domains, None);
                 self.consumer.add_response(correlation_id.to_owned(), response_waiter)?;
 
                 // Return receiver

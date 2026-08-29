@@ -2,16 +2,16 @@ use crate::certificats::build_store_path_v2;
 use crate::chiffrage_cle::CleChiffrageHandlerImpl;
 use crate::configuration::{ConfigurationMessages, charger_configuration};
 use crate::redis_dao::RedisDao;
+use crate::v3::facades::message_inbound::MessageInboundValidator;
+use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::config_service::ConfigServiceImpl;
 use crate::v3::impls::format_service::FormatServiceImpl;
 use crate::v3::impls::messaging_service::MessagingServiceImpl;
 use crate::v3::impls::security_service::SecurityServiceImpl;
 use crate::v3::traits::*;
-use tracing::info;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use crate::v3::facades::message_inbound::MessageInboundValidator;
-use crate::v3::facades::message_outbound::MessageOutboundFacade;
+use tracing::info;
 
 /// Sample context from V3 services, customize as needed.
 pub struct MiddlewareContext {
@@ -75,7 +75,7 @@ impl PocCompositionRoot {
         ));
 
         // Messaging (RabbitMQ)
-        let messaging_impl = Arc::new(MessagingServiceImpl::new(config_impl.clone()));
+        let messaging_impl = Arc::new(MessagingServiceImpl::new(config_impl.clone(), security_impl.clone()));
 
         // Redis (optional)
         let redis_dao = if config_impl.get_configuration_instance().redis_password.is_some() {

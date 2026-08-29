@@ -1,4 +1,4 @@
-use crate::constantes::SECURITE_1_PUBLIC;
+use crate::constantes::{SECURITE_1_PUBLIC, Securite};
 use crate::error::Error as CommonError;
 use crate::rabbitmq_dao::ConfigQueue;
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
@@ -45,14 +45,41 @@ pub struct InboundMessage {
     pub parsed: MessageMilleGrillesOwned,
 }
 
+#[derive(Clone)]
+pub struct ResponseMessage {
+    pub message: MessageMilleGrillesOwned,
+    /// Acceptable exchanges for the response certificate
+    pub security: Option<Vec<Securite>>,
+    /// Acceptable domains for the response certificate
+    pub domains: Option<Vec<String>>,
+    /// Acceptable roles for the response certificate
+    pub roles: Option<Vec<String>>,
+}
+
 pub struct ResponseWaiter {
-    sender: oneshot::Sender<Result<MessageMilleGrillesOwned, CommonError>>,
+    sender: oneshot::Sender<Result<ResponseMessage, CommonError>>,
     expiration: DateTime<Utc>,
+
+    // Response check options - RabbitMQ response queues are named exclusive queues.
+    // Anyone connected to the server can reply on the queue just by knowing the name.
+    // The following values allow a check on where the response came from.
+    /// Acceptable security levels for the response certificate
+    security: Option<Vec<Securite>>,
+    /// Acceptable domains for the response certificate
+    domains: Option<Vec<String>>,
+    /// Acceptable roles for the response certificate
+    roles: Option<Vec<String>>,
 }
 
 impl ResponseWaiter {
-    pub fn new(sender: oneshot::Sender<Result<MessageMilleGrillesOwned, CommonError>>, expiration: DateTime<Utc>) -> Self {
-        Self { sender, expiration }
+    pub fn new(
+        sender: oneshot::Sender<Result<ResponseMessage, CommonError>>,
+        expiration: DateTime<Utc>,
+        security: Option<Vec<Securite>>,
+        domains: Option<Vec<String>>,
+        roles: Option<Vec<String>>,
+    ) -> Self {
+        Self { sender, expiration, security, domains, roles }
     }
 }
 
@@ -313,8 +340,15 @@ impl RabbitConsumerManager {
                 if let Some(message) = message {
                     let message_id = message.id.clone();
 
+                    let reponse_message = ResponseMessage {
+                        message,
+                        security: response_waiter.security,
+                        domains: response_waiter.domains,
+                        roles: response_waiter.roles,
+                    };
+
                     // Send message for further processing
-                    if let Err(e) = response_waiter.sender.send(Ok(message)) {
+                    if let Err(e) = response_waiter.sender.send(Ok(reponse_message)) {
                         if let Err(e) = e {
                             error!("reply_q_thread Error tx message delivery on correlation id {} : {:?}", message_id, e);
                         } else {

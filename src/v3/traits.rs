@@ -1,6 +1,8 @@
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
+use crate::v3::impls::rabbitmq_consumer::InboundMessage;
+use crate::v3::models::VerifiedResponseMessage;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
@@ -10,7 +12,6 @@ use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
-use crate::v3::impls::rabbitmq_consumer::InboundMessage;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
@@ -21,7 +22,7 @@ pub trait MessagingService: Send + Sync {
 
     /// Sends a message and waits for a response. Used for requests and blocking commands only.
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction)
-                  -> Result<MessageMilleGrillesOwned, Error>;
+                  -> Result<VerifiedResponseMessage, Error>;
 
     /// Emits a response
     async fn respond(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageReponse)

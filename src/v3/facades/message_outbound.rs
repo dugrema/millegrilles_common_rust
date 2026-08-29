@@ -1,11 +1,12 @@
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
+use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
+use crate::v3::models::VerifiedResponseMessage;
 use crate::v3::{FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
-use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesOwned};
-use std::sync::Arc;
+use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
-use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
+use std::sync::Arc;
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
@@ -36,7 +37,7 @@ impl MessageOutboundFacade {
     }
 
     pub async fn send_request<R,M>(&self, routing: R, message: M)
-        -> Result<MessageMilleGrillesOwned, CommonError>
+        -> Result<VerifiedResponseMessage, CommonError>
     where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         let mut routing = routing.into();
@@ -53,7 +54,7 @@ impl MessageOutboundFacade {
     }
 
     pub async fn send_command<R,M>(&self, routing: R, message: M)
-        -> Result<Option<MessageMilleGrillesOwned>, CommonError>
+        -> Result<Option<VerifiedResponseMessage>, CommonError>
     where R: Into<RoutageMessageAction> + Send, M: Serialize + Send + Sync
     {
         let mut routing = routing.into();

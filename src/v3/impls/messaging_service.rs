@@ -1,25 +1,27 @@
+use crate::certificats::VerificateurPermissions;
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::rabbitmq_dao::ConfigQueue;
-use crate::v3::ConfigService;
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
 use crate::v3::impls::rabbitmq_consumer::{InboundMessage, RabbitConsumerManager};
 use crate::v3::impls::rabbitmq_dispatcher::{MessageRoutingEnum, RabbitMessageDispatcher};
-use tokio_util::sync::CancellationToken;
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
+use crate::v3::models::VerifiedResponseMessage;
 use crate::v3::traits::MessagingService;
+use crate::v3::{ConfigService, PkiService};
 use async_trait::async_trait;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use std::sync::Arc;
-use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 pub struct MessagingServiceImpl {
     connection_manager: Arc<RabbitConnectionManager>,
     queue_registry: Arc<RabbitQueueRegistry>,
     consumer_manager: Arc<RabbitConsumerManager>,
     message_dispatcher: Arc<RabbitMessageDispatcher>,
+    pki: Arc<dyn PkiService>,
 }
 
 impl MessagingServiceImpl {
@@ -28,6 +30,7 @@ impl MessagingServiceImpl {
     /// Note: app_name must either be in the Domaines or Roles of the certificate or the server will reject the connection.
     pub fn new(
         config: Arc<dyn ConfigService>,
+        pki: Arc<dyn PkiService>,
     ) -> Self {
         let connection_manager = Arc::new(RabbitConnectionManager::new(config));
         let queue_registry = Arc::new(RabbitQueueRegistry::new());
@@ -39,6 +42,7 @@ impl MessagingServiceImpl {
             queue_registry,
             consumer_manager,
             message_dispatcher,
+            pki,
         }
     }
 
@@ -82,7 +86,7 @@ impl MessagingService for MessagingServiceImpl {
         Ok(())
     }
 
-    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<MessageMilleGrillesOwned, CommonError> {
+    async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction) -> Result<VerifiedResponseMessage, CommonError> {
         // Check requirements to produce a waiter
         if routing.blocking == Some(false) || routing.correlation_id.is_none() {
             return Err(CommonError::Str("MessagingService.send Unable to wait for reply, needs a correlation_id and blocking != false"));
@@ -91,9 +95,35 @@ impl MessagingService for MessagingServiceImpl {
         let routing = MessageRoutingEnum::Action(routing);
         match self.message_dispatcher.send_message(message, routing).await? {
             Some(rx) => {
-                let val = rx.await
-                    .map_err(|e| CommonError::String(format!("MessagingServiceImpl Waiting for response: {:?}", e)))?;
-                val
+                match rx.await {
+                    Ok(Ok(response)) => {
+                        // Validate response certificate and apply validation rules
+                        let certificate = self.pki.validate_message(&response.message).await?;
+
+                        // Apply validation rules for certificate response
+                        if let Some(security) = response.security {
+                            if ! certificate.verifier_exchanges(security)? {
+                                return Err(CommonError::Str("MessagingServiceImpl Invalid response security (exchanges)"))
+                            }
+                        }
+
+                        if let Some(domains) = response.domains {
+                            if ! certificate.verifier_domaines(domains)? {
+                                return Err(CommonError::Str("MessagingServiceImpl Invalid response domains"))
+                            }
+                        }
+
+                        if let Some(roles) = response.roles {
+                            if ! certificate.verifier_roles_string(roles)? {
+                                return Err(CommonError::Str("MessagingServiceImpl Invalid response roles"))
+                            }
+                        }
+
+                        Ok(VerifiedResponseMessage { message: response.message, certificate })
+                    }
+                    Ok(Err(e)) => Err(CommonError::String(format!("MessagingServiceImpl Error response received : {:?}", e))),
+                    Err(e) => Err(CommonError::String(format!("MessagingServiceImpl Error when receiving responses : {:?}", e)))
+                }
             },
             None => Err(CommonError::Str("No message waiter was generated"))
         }
@@ -111,3 +141,4 @@ impl MessagingService for MessagingServiceImpl {
         self.queue_registry.take_named_q_rx(q_name)
     }
 }
+
