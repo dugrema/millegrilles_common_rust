@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 
 pub struct MessagingServiceImpl {
     connection_manager: Arc<RabbitConnectionManager>,
@@ -102,18 +103,21 @@ impl MessagingService for MessagingServiceImpl {
 
                         // Apply validation rules for certificate response
                         if let Some(security) = response.security {
+                            debug!("Checking response certificate with exchanges {:?}", security);
                             if ! certificate.verifier_exchanges(security)? {
                                 return Err(CommonError::Str("MessagingServiceImpl Invalid response security (exchanges)"))
                             }
                         }
 
                         if let Some(domains) = response.domains {
+                            debug!("Checking response certificate with domaines {:?}", domains);
                             if ! certificate.verifier_domaines(domains)? {
                                 return Err(CommonError::Str("MessagingServiceImpl Invalid response domains"))
                             }
                         }
 
                         if let Some(roles) = response.roles {
+                            debug!("Checking response certificate with roles {:?}", roles);
                             if ! certificate.verifier_roles_string(roles)? {
                                 return Err(CommonError::Str("MessagingServiceImpl Invalid response roles"))
                             }
