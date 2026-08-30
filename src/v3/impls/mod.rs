@@ -6,3 +6,4 @@ pub mod rabbitmq_dispatcher;
 mod rabbitmq_connection;
 mod rabbitmq_registry;
 pub mod rabbitmq_consumer;
+pub mod transaction_service;
