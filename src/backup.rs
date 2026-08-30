@@ -3,27 +3,27 @@ use std::error::Error;
 use std::io::Write;
 use std::path::PathBuf;
 use std::str::from_utf8;
-use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use futures::pin_mut;
 use tracing::{debug, error, info, warn};
 
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResultVec, CleChiffrageHandler};
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
-use millegrilles_cryptographie::messages_structs::{epochseconds, DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesBufferDefault, epochseconds};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
-use mongodb::bson::doc;
-use mongodb::options::{FindOptions, Hint};
 use mongodb::Cursor;
-use multibase::{encode, Base};
+use mongodb::bson::doc;
+use mongodb::options::Hint;
+use multibase::{Base, encode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::try_join;
 
@@ -39,7 +39,7 @@ use crate::db_structs::TransactionOwned;
 use crate::error::Error as CommonError;
 use crate::formatteur_messages::FormatteurMessage;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{convertir_bson_deserializable, MongoDao, MongoDaoTyped};
+use crate::mongo_dao::{MongoDao, MongoDaoTyped, convertir_bson_deserializable};
 use crate::recepteur_messages::TypeMessage;
 
 // Max size des transactions, on tente de limiter la taille finale du message
@@ -1025,13 +1025,17 @@ async fn requete_transactions<M>(middleware: &M, info: &BackupInformation)
     // code_name: "QueryExceededMemoryLimitNoDiskUseAllowed"
     // Executor error during find command :: caused by :: Sort exceeded memory limit of 104857600 bytes, but did not opt in to external sorting.
     // Fix -> Utiliser index backup_transactions
-    let find_options = FindOptions::builder()
-        .hint(Hint::Name(String::from("backup_transactions")))
-        .batch_size(50)
-        .build();
+    // let find_options = FindOptions::builder()
+    //     .hint(Hint::Name(String::from("backup_transactions")))
+    //     .batch_size(50)
+    //     .build();
 
     debug!("backup.requete_transactions Collection {}, filtre {:?}", nom_collection, filtre);
-    let curseur = collection.find(filtre, find_options).await?;
+    let curseur = collection
+        .find(filtre)
+        .hint(Hint::Name(String::from("backup_transactions")))
+        .batch_size(50)
+        .await?;
     Ok(curseur)
 }
 
@@ -1056,7 +1060,7 @@ async fn marquer_transaction_backup_complete<M,S,T>(middleware: &M, nom_collecti
         "$currentDate": {TRANSACTION_CHAMP_BACKUP_HORAIRE: true},
     };
 
-    let r = collection.update_many(filtre, ops, None).await?;
+    let r = collection.update_many(filtre, ops).await?;
     if r.matched_count as usize != uuid_transactions.len() {
         Err(format!(
             "Erreur mismatch nombre de transactions maj apres backup : {:?} dans le backup != {:?} mises a jour",
@@ -1498,7 +1502,7 @@ pub async fn reset_backup_flag<M>(middleware: &M, nom_collection_transactions: &
         },
     };
     debug!("reset_backup_flag Filtre update flags sur {} : {:?}, ops: {:?}", nom_collection_transactions, filtre, ops);
-    let (reponse, _) = match collection.update_many(filtre, ops, None).await {
+    let (reponse, _) = match collection.update_many(filtre, ops).await {
         Ok(r) => {
             debug!("reset_backup_flag Update result {} : {:?}", nom_collection_transactions, r);
             middleware.build_reponse(json!({"ok": true, "count": r.modified_count}))?
@@ -1522,11 +1526,14 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
     let mut curseur = {
         let filtre = doc! {"certificat": {"$exists": true}};
         let projection = doc! {"pubkey": 1, "certificat": 1};
-        let find_opts = FindOptions::builder()
-            .projection(projection)
-            .build();
+        // let find_opts = FindOptions::builder()
+        //     .projection(projection)
+        //     .build();
 
-        collection.find(filtre, Some(find_opts)).await?
+        collection
+            .find(filtre)
+            .projection(projection)
+            .await?
     };
 
     let mut fingerprint_traites_set = HashSet::new();
@@ -1577,7 +1584,7 @@ pub async fn persister_certificats<M>(middleware: &M, nom_collection_transaction
             "$unset": {"certificat": 1},
             "$currentDate": {CHAMP_MODIFICATION: true}
         };
-        collection.update_many(filtre, ops, None).await?;
+        collection.update_many(filtre, ops).await?;
     }
 
     debug!("persister_certificats Fin");

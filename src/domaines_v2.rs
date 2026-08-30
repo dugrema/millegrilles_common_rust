@@ -1,18 +1,18 @@
-use std::fs;
 use async_trait::async_trait;
+use bson::doc;
 use chrono::{Datelike, Timelike, Utc, Weekday};
 use futures_util::stream::FuturesUnordered;
-use tracing::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use mongodb::options::{CountOptions, Hint};
 use serde_json::json;
+use std::fs;
 use tokio::spawn;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinHandle;
+use tracing::{debug, error, info, trace, warn};
 
-use crate::backup::{emettre_evenement_backup, emettre_evenement_backup_catalogue, BackupInformation, BackupStarter};
+use crate::backup::{BackupInformation, BackupStarter, emettre_evenement_backup, emettre_evenement_backup_catalogue};
 use crate::backup_v2::{get_serveur_consignation, organiser_fichiers_backup, synchroniser_consignation};
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::configuration::ConfigMessages;
@@ -22,12 +22,12 @@ use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::{CommandeRegenerer, MessageCedule};
-use crate::middleware::{emettre_presence_domaine, Middleware, MiddlewareMessages, thread_charger_certificats_chiffrage, thread_entretien_validateur};
-use crate::mongo_dao::{start_transaction_regular, ChampIndex, IndexOptions, MongoDao, MongoDaoTyped};
+use crate::middleware::{Middleware, MiddlewareMessages, emettre_presence_domaine, thread_charger_certificats_chiffrage, thread_entretien_validateur};
+use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao, MongoDaoTyped, start_transaction_regular};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, TriggerTransaction, resoumettre_transactions};
-use crate::transactions_v2::{regenerer_v2, marquer_transaction_v2};
+use crate::transactions::{EtatTransaction, TriggerTransaction, charger_transaction, resoumettre_transactions};
+use crate::transactions_v2::{marquer_transaction_v2, regenerer_v2};
 
 #[async_trait]
 pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransactions {
@@ -449,8 +449,8 @@ pub trait GestionnaireDomaineSimple: GestionnaireDomaineV2 + AiguillageTransacti
         };
         let collection_transactions_traitees = format!("{}/transactions_traitees", nom_collection_transactions);
         let collection = middleware.get_collection(collection_transactions_traitees.as_str())?;
-        let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
-        let nombre_transactions = collection.count_documents(None, options).await? as i64;
+        // let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
+        let nombre_transactions = collection.count_documents(doc!{}).await? as i64;
 
         let mut info_backup = BackupInformation::new(domaine, self.get_collection_transactions().unwrap(), None)?;
         info_backup.uuid_backup = correlation_id.to_string();
@@ -738,8 +738,8 @@ async fn get_nombre_transactions<M,G>(gestionnaire: &G, middleware: &M)
 
     let collection_transactions_traitees = format!("{}/transactions_traitees", nom_collection_transactions);
     let collection = middleware.get_collection(collection_transactions_traitees.as_str())?;
-    let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
-    let nombre_transactions = collection.count_documents(None, options).await? as i64;
+    // let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
+    let nombre_transactions = collection.count_documents(doc!{}).await? as i64;
 
     let reponse = ReponseNombreTransactions { ok: true, domaine: gestionnaire.get_nom_domaine(), nombre_transactions };
     Ok(Some(middleware.build_reponse(reponse)?.0))

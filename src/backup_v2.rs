@@ -1,22 +1,22 @@
+use fs2::FileExt;
+use futures_util::{StreamExt, TryStreamExt};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::fs::File;
 use std::io::{ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
-use fs2::FileExt;
-use futures_util::{StreamExt, TryStreamExt};
 
-use chrono::{{TimeZone, Utc}, format::strftime::StrftimeItems};
-use tracing::{debug, error, info, warn};
+use async_compression::tokio::bufread::{DeflateDecoder, DeflateEncoder};
+use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as base64_nopad};
+use chrono::{format::strftime::StrftimeItems, {TimeZone, Utc}};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::x25519::CleSecreteX25519;
 use serde::{Deserialize, Serialize};
-use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
-use async_compression::tokio::bufread::{DeflateEncoder, DeflateDecoder};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{debug, error, info, warn};
 
 use millegrilles_cryptographie::chiffrage::CleSecrete;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
@@ -24,7 +24,7 @@ use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher, D
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use mongodb::bson::doc;
-use mongodb::options::{DeleteOptions, FindOneOptions, FindOptions, Hint};
+use mongodb::options::Hint;
 use multibase::Base;
 use multihash::Code;
 use reqwest::{Body, Client, Response};
@@ -38,19 +38,19 @@ use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}};
 use url::Url;
 
 use crate::backup::CommandeBackup;
-use crate::mongo_dao::{MongoDao, MongoDaoTyped};
 use crate::certificats::ValidateurX509;
-use crate::chiffrage_cle::{ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2, CommandeAjouterCleDomaine};
+use crate::chiffrage_cle::{CommandeAjouterCleDomaine, ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2};
 use crate::common_messages::{BackupEvent, FilehostForInstanceRequest, RequestFilehostForInstanceResponse, RequeteFilehostItem};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::db_structs::TransactionOwned;
 use crate::dechiffrage::decrypt_document;
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::error::{Error as CommonError, Error};
 use crate::fiche_systeme::{FichePublique, RequeteFicheMillegrille};
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::hachages::HacheurBuilder;
 use crate::messages_generiques::{CommandeSauvegarderCertificat, ReponseCommande};
+use crate::mongo_dao::{MongoDao, MongoDaoTyped};
 use crate::recepteur_messages::TypeMessage;
 
 pub const CONST_ARCHIVE_NEW_VERSION: &str = "NEW";
@@ -310,13 +310,17 @@ async fn backup_incremental<M>(middleware: &M, commande: &CommandeBackup, cle_ba
     let nom_collection = commande.nom_collection_transactions.as_str();
     let collection = middleware.get_collection_typed::<TransactionOwned>(nom_collection)?;
     let filtre = doc! { TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$exists": true}, TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true };
-    let find_options = FindOneOptions::builder()
-        .hint(Hint::Name(String::from("backup_transactions")))
-        .build();
+    // let find_options = FindOneOptions::builder()
+    //     .hint(Hint::Name(String::from("backup_transactions")))
+    //     .build();
 
     let idmg = middleware.get_enveloppe_signature().enveloppe_pub.idmg()?;
 
-    if collection.find_one(filtre, find_options).await?.is_some() {
+    if collection
+        .find_one(filtre)
+        .hint(Hint::Name(String::from("backup_transactions")))
+        .await?.is_some()
+    {
         debug!("backup_incremental Au moins une transaction a ajouter au backup incremental de {}", domaine_backup);
         traiter_transactions_incremental(
             middleware, path_backup, commande,
@@ -693,8 +697,11 @@ async fn traiter_transactions_incremental<M>(
         TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$lte": date_derniere_transaction},
         TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
     };
-    let options = DeleteOptions::builder().hint(Hint::Name(String::from("backup_transactions"))).build();
-    collection.delete_many(filtre, options).await?;
+    // let options = DeleteOptions::builder().hint(Hint::Name(String::from("backup_transactions"))).build();
+    collection
+        .delete_many(filtre)
+        .hint(Hint::Name(String::from("backup_transactions")))
+        .await?;
 
     let fin_traitement = Utc::now();
     debug!("traiter_transactions_incremental Fin, duree: {}", fin_traitement - debut_traitement);
@@ -718,14 +725,18 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
     // code_name: "QueryExceededMemoryLimitNoDiskUseAllowed"
     // Executor error during find command :: caused by :: Sort exceeded memory limit of 104857600 bytes, but did not opt in to external sorting.
     // Fix -> Utiliser index backup_transactions
-    let find_options = FindOptions::builder()
-        .hint(Hint::Name(String::from("backup_transactions")))
-        .batch_size(50)
-        .build();
+    // let find_options = FindOptions::builder()
+    //     .hint(Hint::Name(String::from("backup_transactions")))
+    //     .batch_size(50)
+    //     .build();
 
     debug!("backup.requete_transactions Collection {}, filtre {:?}", nom_collection_transactions, filtre);
     let collection = middleware.get_collection_typed::<TransactionOwned>(nom_collection_transactions)?;
-    let mut curseur = collection.find(filtre, find_options).await?;
+    let mut curseur = collection
+        .find(filtre)
+        .hint(Hint::Name(String::from("backup_transactions")))
+        .batch_size(50)
+        .await?;
 
     let mut nombre_transactions = 0u64;
     let mut date_premiere = 0u64;
@@ -1856,7 +1867,7 @@ pub async fn extraire_stats_backup<M>(middleware: &M, collection_transaction: &s
 
     let filtre = doc!{};
     let collection = middleware.get_collection(collection_transaction)?;
-    let transactions_non_traitees = collection.count_documents(filtre, None).await?;
+    let transactions_non_traitees = collection.count_documents(filtre).await?;
 
     let mut stats = StatsBackup {
         nombre_transactions: transactions_non_traitees,

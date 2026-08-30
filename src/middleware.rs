@@ -1,41 +1,41 @@
-use std::error::Error;
-use std::str::from_utf8;
-use std::sync::Arc;
-use async_trait::async_trait;
-use chrono::Utc;
-use futures::stream::FuturesUnordered;
-use tracing::{debug, error, info, warn};
-use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
-use millegrilles_cryptographie::deser_message_buffer;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
-use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
-use mongodb::{bson::{Bson, doc, Document, to_bson}, ClientSession, Collection};
-use mongodb::bson as bson;
-use mongodb::options::UpdateOptions;
-use openssl::x509::store::X509Store;
-use openssl::x509::X509;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
-use base64::{Engine as _, engine::general_purpose};
 use crate::backup::BackupStarter;
-use crate::certificats::{emettre_commande_certificat_maitredescles, ValidateurX509, ValidateurX509Impl, VerificateurPermissions};
+use crate::certificats::{ValidateurX509, ValidateurX509Impl, VerificateurPermissions, emettre_commande_certificat_maitredescles};
 use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
-use crate::configuration::{charger_configuration_avec_db, ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud};
+use crate::configuration::{ConfigMessages, ConfigurationMessagesDb, ConfigurationMq, ConfigurationNoeud, ConfigurationPki, IsConfigNoeud, charger_configuration_avec_db};
 use crate::constantes::*;
 use crate::domaines::GestionnaireDomaine;
 use crate::domaines_traits::{AiguillageTransactions, GestionnaireDomaineV2};
 use crate::error::Error as CommonError;
-use crate::formatteur_messages::{build_message_action, FormatteurMessage};
+use crate::formatteur_messages::{FormatteurMessage, build_message_action};
 use crate::generateur_messages::{GenerateurMessages, GenerateurMessagesImpl, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{verifier_erreur_duplication_mongo, MongoDao, MongoDaoTyped};
+use crate::mongo_dao::{MongoDao, MongoDaoTyped, verifier_erreur_duplication_mongo};
 use crate::notifications::{EmetteurNotifications, NotificationMessageInterne};
-use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, run_rabbitmq, TypeMessageOut};
+use crate::rabbitmq_dao::{NamedQueue, RabbitMqExecutor, TypeMessageOut, run_rabbitmq};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
 use crate::redis_dao::RedisDao;
 use crate::transactions::{EtatTransaction, marquer_transaction};
 use crate::transactions_v2::marquer_transaction_v2;
+use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose};
+use bson::serialize_to_bson;
+use chrono::Utc;
+use futures::stream::FuturesUnordered;
+use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
+use millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned};
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
+use mongodb::bson as bson;
+use mongodb::{ClientSession, Collection, bson::{Bson, Document, doc}};
+use openssl::x509::X509;
+use openssl::x509::store::X509Store;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::error::Error;
+use std::str::from_utf8;
+use std::sync::Arc;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, warn};
 
 /// Structure avec hooks interne de preparation du middleware
 pub struct MiddlewareHooks {
@@ -611,26 +611,26 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
     // Inserer extensions millegrilles
     if let Some(extensions) = enveloppe.get_extensions()? {
         if let Some(exchanges) = &extensions.exchanges {
-            set_on_insert.insert("exchanges", to_bson(exchanges).expect("Erreur conversion exchanges"));
+            set_on_insert.insert("exchanges", serialize_to_bson(exchanges).expect("Erreur conversion exchanges"));
         }
         if let Some(domaines) = &extensions.domaines {
-            set_on_insert.insert("domaines", to_bson(domaines).expect("Erreur conversion domaines"));
+            set_on_insert.insert("domaines", serialize_to_bson(domaines).expect("Erreur conversion domaines"));
         }
         if let Some(roles) = &extensions.roles {
-            set_on_insert.insert("roles", to_bson(roles).expect("Erreur conversion roles"));
+            set_on_insert.insert("roles", serialize_to_bson(roles).expect("Erreur conversion roles"));
         }
         if let Some(user_id) = &extensions.user_id {
-            set_on_insert.insert("user_id", to_bson(user_id).expect("Erreur conversion user_id"));
+            set_on_insert.insert("user_id", serialize_to_bson(user_id).expect("Erreur conversion user_id"));
         }
         if let Some(delegation_globale) = &extensions.delegation_globale {
-            set_on_insert.insert("delegation_globale", to_bson(delegation_globale).expect("Erreur conversion delegation_globale"));
+            set_on_insert.insert("delegation_globale", serialize_to_bson(delegation_globale).expect("Erreur conversion delegation_globale"));
         }
         if let Some(delegation_domaines) = &extensions.delegation_domaines {
-            set_on_insert.insert("delegation_domaines", to_bson(delegation_domaines).expect("Erreur conversion delegation_domaines"));
+            set_on_insert.insert("delegation_domaines", serialize_to_bson(delegation_domaines).expect("Erreur conversion delegation_domaines"));
         }
     }
     if let Some(c) = enveloppe.ca_pem()? {
-        set_on_insert.insert("ca", to_bson(&c).expect("Erreur conversion certificat CA"));
+        set_on_insert.insert("ca", serialize_to_bson(&c).expect("Erreur conversion certificat CA"));
     }
 
     let mut set = doc! {};
@@ -649,11 +649,14 @@ pub async fn upsert_certificat(enveloppe: &EnveloppeCertificat, collection: Coll
         "$setOnInsert": set_on_insert,
         "$currentDate": { "_mg-derniere-modification": true },
     };
-    let options = UpdateOptions::builder()
-        .upsert(true)
-        .build();
+    // let options = UpdateOptions::builder()
+    //     .upsert(true)
+    //     .build();
 
-    let update_result = collection.update_one(filtre, ops, options).await;
+    let update_result = collection
+        .update_one(filtre, ops)
+        .upsert(true)
+        .await;
     match update_result {
         Ok(r) => {
             debug!("Update result : {:?}", r);
@@ -958,7 +961,11 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
     };
     let collection_transactions_traitees = middleware
         .get_collection(format!("{}/transactions_traitees", nom_collection_transactions).as_str())?;
-    if let Err(e) = collection_transactions_traitees.insert_one_with_session(doc_transaction_traitee, None, session).await {
+    if let Err(e) = collection_transactions_traitees
+        .insert_one(doc_transaction_traitee)
+        .session(&mut *session)
+        .await
+    {
         if verifier_erreur_duplication_mongo(&e.kind) {
             // Transaction dupliquee deja recu. On repond Ok immediatement avec code duplication.
             return Ok(Some(middleware.reponse_ok(Some(1001), Some("Transaction dupliquee"))?))
@@ -979,7 +986,8 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
     };
 
     // Traiter transaction
-    let reponse = gestionnaire.aiguillage_transaction(middleware, message.try_into()?, session).await?;
+    let reponse = gestionnaire.aiguillage_transaction(
+        middleware, message.try_into()?, session).await?;
 
     debug!("middleware.sauvegarder_traiter_transaction_v2 Transaction {} traitee", message_id);
 
@@ -1045,7 +1053,7 @@ pub async fn sauvegarder_transaction<M>(middleware: &M, m: &MessageValide, nom_c
     debug!("sauvegarder_transaction Inserer nouvelle transaction\n:{:?}", contenu_doc);
 
     let collection = middleware.get_collection(nom_collection)?;
-    match collection.insert_one_with_session(&contenu_doc, None, session).await {
+    match collection.insert_one(&contenu_doc).session(session).await {
         Ok(_) => {
             debug!("sauvegarder_transaction Transaction sauvegardee dans collection de reception");
             Ok(())
@@ -1076,7 +1084,7 @@ pub fn map_msg_to_bson(msg: MessageMilleGrillesOwned) -> Result<Document, Box<dy
         Err(e) => Err(format!("Erreur sauvegarde transaction, conversion : {:?}", e))?,
     };
 
-    let contenu_doc = match Document::try_from(val) {
+    let contenu_doc = match bson::serialize_to_document(&val) {
         Ok(c) => Ok(c),
         Err(e) => {
             error!("Erreur conversion json -> bson\n{:?}", e.to_string());
@@ -1098,7 +1106,7 @@ pub fn map_serializable_to_bson<S>(val_serializable: &S) -> Result<Document, Box
         Err(e) => Err(format!("Erreur sauvegarde transaction, conversion : {:?}", e))?,
     };
 
-    let contenu_doc = match Document::try_from(val) {
+    let contenu_doc = match bson::serialize_to_document(&val) {
         Ok(c) => Ok(c),
         Err(e) => {
             error!("Erreur conversion json -> bson\n{:?}", e.to_string());

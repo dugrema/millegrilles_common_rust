@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
-use mongodb::options::{Acknowledgment, AuthMechanism, ClientOptions, Credential, ReadConcern, ServerAddress, SessionOptions, TlsOptions, TransactionOptions, WriteConcern};
+use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
 use mongodb::{Client, ClientSession, Collection, Cursor, Database, bson::doc};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -48,7 +48,7 @@ pub trait MongoDao: Send + Sync {
             "dropTarget": drop_target,
         };
         let database = self.get_admin_database()?;
-        match database.run_command(command, None).await {
+        match database.run_command(command).await {
             Ok(_) => Ok(()),
             Err(e) => Err(CommonError::String(format!("rename_collection Error {:?}", e))),
         }
@@ -57,7 +57,7 @@ pub trait MongoDao: Send + Sync {
 }
 
 pub trait MongoDaoTyped: MongoDao {
-    fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, CommonError> {
+    fn get_collection_typed<T>(&self, nom_collection: &str) -> Result<Collection<T>, CommonError> where T: Send + Sync {
         let database = self.get_database()?;
         Ok(database.collection::<T>(nom_collection))
     }
@@ -86,30 +86,32 @@ impl MongoDao for MongoDaoImpl {
     }
 
     async fn get_session(&self) -> Result<ClientSession, CommonError> {
-        let write_concern = WriteConcern::builder()
-            .journal(true)
-            .w(Acknowledgment::Majority)
-            .build();
-        let transaction_options = TransactionOptions::builder()
-            .read_concern(ReadConcern::MAJORITY)
-            .write_concern(write_concern)
-            .build();
-        let options = SessionOptions::builder()
-            .default_transaction_options(transaction_options).build();
-        Ok(self.client.start_session(options).await?)
+        // let write_concern = WriteConcern::builder()
+        //     .journal(true)
+        //     .w(Acknowledgment::Majority)
+        //     .build();
+        // let transaction_options = TransactionOptions::builder()
+        //     .read_concern(ReadConcern::majority())
+        //     .write_concern(write_concern)
+        //     .build();
+        // let options = SessionOptions::builder()
+        //     .default_transaction_options(transaction_options).build();
+        // Ok(self.client.start_session(options).await?)
+        Ok(self.client.start_session().await?)
     }
 
     async fn get_session_rebuild(&self) -> Result<ClientSession, CommonError> {
-        let write_concern = WriteConcern::builder()
-            .journal(true)
-            .w(Acknowledgment::Nodes(1))
-            .build();
-        let transaction_options = TransactionOptions::builder()
-            .read_concern(ReadConcern::LOCAL)
-            .write_concern(write_concern)
-            .build();
-        let options = SessionOptions::builder().default_transaction_options(transaction_options).build();
-        Ok(self.client.start_session(options).await?)
+        // let write_concern = WriteConcern::builder()
+        //     .journal(true)
+        //     .w(Acknowledgment::Nodes(1))
+        //     .build();
+        // let transaction_options = TransactionOptions::builder()
+        //     .read_concern(ReadConcern::LOCAL)
+        //     .write_concern(write_concern)
+        //     .build();
+        // let options = SessionOptions::builder().default_transaction_options(transaction_options).build();
+        // Ok(self.client.start_session(options).await?)
+        Ok(self.client.start_session().await?)
     }
 
     async fn create_index(&self, configuration: &dyn ConfigMessages, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>) -> Result<(), CommonError> {
@@ -196,7 +198,7 @@ async fn create_index(
         "indexes": [index],
     };
 
-    match database.run_command(commande_pki, None).await {
+    match database.run_command(commande_pki).await {
         Ok(_) => Ok(()),
         Err(e) => {
             info!("Erreur connexion Mongo DB, tenter l'inscription du compte");
@@ -314,159 +316,200 @@ impl CurseurStream for CurseurMongo {
 }
 
 // Source : https://github.com/mongodb/bson-rust/issues/303
-pub mod opt_chrono_datetime_as_bson_datetime {
-    use chrono::Utc;
-    use mongodb::bson;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+// pub mod opt_chrono_datetime_as_bson_datetime {
+//     use chrono::Utc;
+//     use mongodb::bson;
+//     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+//     use serde_with::serde_as;
+//     use bson::serde_helpers::datetime::FromChrono04DateTime;
+//
+//     #[serde_as]
+//     #[derive(Serialize, Deserialize)]
+//     struct Helper(
+//         // #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+//         #[serde_as(as = "FromChrono04DateTime")]
+//         chrono::DateTime<Utc>,
+//     );
+//
+//     pub fn serialize<S>(
+//         value: &Option<chrono::DateTime<Utc>>,
+//         serializer: S,
+//     ) -> Result<S::Ok, S::Error>
+//         where
+//             S: Serializer,
+//     {
+//         value.map(Helper).serialize(serializer)
+//     }
+//
+//     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<chrono::DateTime<Utc>>, D::Error>
+//         where
+//             D: Deserializer<'de>,
+//     {
+//         let helper: Option<Helper> = Option::deserialize(deserializer)?;
+//         Ok(helper.map(|Helper(external)| external))
+//     }
+// }
 
-    #[derive(Serialize, Deserialize)]
-    struct Helper(
-        #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
-        chrono::DateTime<Utc>,
-    );
+// pub mod map_chrono_datetime_as_bson_datetime {
+//     use chrono::Utc;
+//     use mongodb::bson;
+//     use serde::ser::SerializeMap;
+//     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+//     use std::collections::HashMap;
+//     use serde_with::serde_as;
+//     use bson::serde_helpers::datetime::FromChrono04DateTime;
+//
+//     #[serde_as]
+//     #[derive(Serialize, Deserialize)]
+//     struct Helper(
+//         // #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+//         #[serde_as(as = "FromChrono04DateTime")]
+//         chrono::DateTime<Utc>,
+//     );
+//
+//     // MOVE THIS HERE (Module level)
+//     impl From<Helper> for chrono::DateTime<Utc> {
+//         fn from(helper: Helper) -> Self {
+//             helper.0
+//         }
+//     }
+//
+//     pub fn serialize<S>(
+//         value: &HashMap<String, chrono::DateTime<Utc>>,
+//         serializer: S,
+//     ) -> Result<S::Ok, S::Error>
+//     where
+//         S: Serializer,
+//     {
+//         let mut map = serializer.serialize_map(Some(value.len()))?;
+//         for (k, v) in value.iter() {
+//             let helper = Helper(v.to_owned());
+//             map.serialize_entry(k, &helper)?;
+//         }
+//         map.end()
+//     }
+//
+//     pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<String, chrono::DateTime<Utc>>, D::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+//         #[derive(Deserialize)]
+//         struct MapHelper(
+//             HashMap<String, Helper>,
+//         );
+//
+//         let map_helper: MapHelper = MapHelper::deserialize(deserializer)?;
+//         let mut final_map: HashMap<String, chrono::DateTime<Utc>> = HashMap::new();
+//         for (k, v) in map_helper.0.into_iter() {
+//             final_map.insert(k, v.into());
+//         }
+//         Ok(final_map)
+//     }
+// }
 
-    pub fn serialize<S>(
-        value: &Option<chrono::DateTime<Utc>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-    {
-        value.map(Helper).serialize(serializer)
-    }
+// pub mod map_opt_chrono_datetime_as_bson_datetime {
+//     use chrono::Utc;
+//     use serde::ser::SerializeMap;
+//     use serde::{Deserialize, Deserializer, Serialize, Serializer};
+//     use std::collections::HashMap;
+//
+//     #[derive(Serialize, Deserialize)]
+//     struct Helper(
+//         #[serde(with = "crate::mongo_dao::opt_chrono_datetime_as_bson_datetime")]
+//         Option<chrono::DateTime<Utc>>,
+//     );
+//
+//     pub fn serialize<S>(
+//         value: &Option<HashMap<String, Option<chrono::DateTime<Utc>>>>,
+//         serializer: S,
+//     ) -> Result<S::Ok, S::Error>
+//     where
+//         S: Serializer,
+//     {
+//         match value {
+//             Some(inner ) => {
+//                 let mut map = serializer.serialize_map(Some(inner.len()))?;
+//                 for (k, v) in inner.iter() {
+//                     let helper = Helper(v.to_owned());
+//                     map.serialize_entry(k, &helper)?;
+//                 }
+//                 map.end()
+//             },
+//             None => None::<usize>.serialize(serializer)
+//         }
+//     }
+//
+//     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<HashMap<String, Option<chrono::DateTime<Utc>>>>, D::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+//
+//         #[derive(Deserialize)]
+//         struct OptionalDateHelper(
+//             #[serde(with = "crate::mongo_dao::opt_chrono_datetime_as_bson_datetime")]
+//             Option<chrono::DateTime<Utc>>,
+//         );
+//
+//         impl Into<Option<chrono::DateTime<Utc>>> for OptionalDateHelper {
+//             fn into(self) -> Option<chrono::DateTime<Utc>> {
+//                 match self.0 {
+//                     Some(inner) => Some(inner),
+//                     None => None
+//                 }
+//             }
+//         }
+//
+//         #[derive(Deserialize)]
+//         struct MapHelper(
+//             HashMap<String, OptionalDateHelper>,
+//         );
+//
+//         let map_helper: Option<MapHelper> = Option::deserialize(deserializer)?;
+//         match map_helper {
+//             Some(inner) => {
+//                 let mut final_map: HashMap<String, Option<chrono::DateTime<Utc>>> = HashMap::new();
+//                 for (k, v) in inner.0.into_iter() {
+//                     final_map.insert(k, v.into());
+//                 }
+//                 Ok(Some(final_map))
+//             },
+//             None => Ok(None),
+//         }
+//
+//     }
+// }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<chrono::DateTime<Utc>>, D::Error>
-        where
-            D: Deserializer<'de>,
-    {
-        let helper: Option<Helper> = Option::deserialize(deserializer)?;
-        Ok(helper.map(|Helper(external)| external))
-    }
+
+pub async fn start_transaction_regular(session: &mut ClientSession) -> Result<(), CommonError> {
+    // let options = TransactionOptions::builder()
+    //     .read_concern(ReadConcern::majority())
+    //     .write_concern(WriteConcern::builder()
+    //         .journal(true)
+    //         .w(Acknowledgment::Majority).build())
+    //     .build();
+    // session.start_transaction(options).await?;
+    // TODO - Put parameters back
+    session.commit_transaction().await?;
+    Ok(())
 }
 
-pub mod map_chrono_datetime_as_bson_datetime {
-    use chrono::Utc;
-    use mongodb::bson;
-    use serde::ser::SerializeMap;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::collections::HashMap;
+pub async fn start_transaction_regeneration(session: &mut ClientSession) -> Result<(), CommonError> {
+    // // Write concern requiring just 1 ACK, journalled
+    // let write_concern = WriteConcern::builder()
+    //     .journal(true)
+    //     // .w(Acknowledgment::Majority)
+    //     .w(Acknowledgment::Nodes(1))
+    //     .build();
+    //
+    // let options = TransactionOptions::builder()
+    //     .read_concern(ReadConcern::local())
+    //     .write_concern(write_concern)
+    //     .build();
 
-    #[derive(Serialize, Deserialize)]
-    struct Helper(
-        #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
-        chrono::DateTime<Utc>,
-    );
-
-    // MOVE THIS HERE (Module level)
-    impl From<Helper> for chrono::DateTime<Utc> {
-        fn from(helper: Helper) -> Self {
-            helper.0
-        }
-    }
-
-    pub fn serialize<S>(
-        value: &HashMap<String, chrono::DateTime<Utc>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(Some(value.len()))?;
-        for (k, v) in value.iter() {
-            let helper = Helper(v.to_owned());
-            map.serialize_entry(k, &helper)?;
-        }
-        map.end()
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<String, chrono::DateTime<Utc>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct MapHelper(
-            HashMap<String, Helper>,
-        );
-
-        let map_helper: MapHelper = MapHelper::deserialize(deserializer)?;
-        let mut final_map: HashMap<String, chrono::DateTime<Utc>> = HashMap::new();
-        for (k, v) in map_helper.0.into_iter() {
-            final_map.insert(k, v.into());
-        }
-        Ok(final_map)
-    }
-}
-
-pub mod map_opt_chrono_datetime_as_bson_datetime {
-    use chrono::Utc;
-    use serde::ser::SerializeMap;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use std::collections::HashMap;
-
-    #[derive(Serialize, Deserialize)]
-    struct Helper(
-        #[serde(with = "crate::mongo_dao::opt_chrono_datetime_as_bson_datetime")]
-        Option<chrono::DateTime<Utc>>,
-    );
-
-    pub fn serialize<S>(
-        value: &Option<HashMap<String, Option<chrono::DateTime<Utc>>>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(inner ) => {
-                let mut map = serializer.serialize_map(Some(inner.len()))?;
-                for (k, v) in inner.iter() {
-                    let helper = Helper(v.to_owned());
-                    map.serialize_entry(k, &helper)?;
-                }
-                map.end()
-            },
-            None => None::<usize>.serialize(serializer)
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<HashMap<String, Option<chrono::DateTime<Utc>>>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-
-        #[derive(Deserialize)]
-        struct OptionalDateHelper(
-            #[serde(with = "crate::mongo_dao::opt_chrono_datetime_as_bson_datetime")]
-            Option<chrono::DateTime<Utc>>,
-        );
-
-        impl Into<Option<chrono::DateTime<Utc>>> for OptionalDateHelper {
-            fn into(self) -> Option<chrono::DateTime<Utc>> {
-                match self.0 {
-                    Some(inner) => Some(inner),
-                    None => None
-                }
-            }
-        }
-
-        #[derive(Deserialize)]
-        struct MapHelper(
-            HashMap<String, OptionalDateHelper>,
-        );
-
-        let map_helper: Option<MapHelper> = Option::deserialize(deserializer)?;
-        match map_helper {
-            Some(inner) => {
-                let mut final_map: HashMap<String, Option<chrono::DateTime<Utc>>> = HashMap::new();
-                for (k, v) in inner.0.into_iter() {
-                    final_map.insert(k, v.into());
-                }
-                Ok(Some(final_map))
-            },
-            None => Ok(None),
-        }
-
-    }
+    // session.start_transaction(options).await?;
+    // TODO - Put parameters back
+    session.start_transaction().await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -478,7 +521,7 @@ mod test {
 
     #[derive(Serialize, Deserialize, Debug)]
     struct TestMap {
-        #[serde(with = "crate::mongo_dao::map_opt_chrono_datetime_as_bson_datetime")]
+        // #[serde(with = "crate::mongo_dao::map_opt_chrono_datetime_as_bson_datetime")]
         ma_map: Option<HashMap<String, Option<DateTime<Utc>>>>
     }
 
@@ -507,32 +550,4 @@ mod test {
         Ok(())
     }
 
-}
-
-pub async fn start_transaction_regular(session: &mut ClientSession) -> Result<(), CommonError> {
-    let options = TransactionOptions::builder()
-        .read_concern(ReadConcern::majority())
-        .write_concern(WriteConcern::builder()
-            .journal(true)
-            .w(Acknowledgment::Majority).build())
-        .build();
-    session.start_transaction(options).await?;
-    Ok(())
-}
-
-pub async fn start_transaction_regeneration(session: &mut ClientSession) -> Result<(), CommonError> {
-    // Write concern requiring just 1 ACK, journalled
-    let write_concern = WriteConcern::builder()
-        .journal(true)
-        // .w(Acknowledgment::Majority)
-        .w(Acknowledgment::Nodes(1))
-        .build();
-
-    let options = TransactionOptions::builder()
-        .read_concern(ReadConcern::local())
-        .write_concern(write_concern)
-        .build();
-
-    session.start_transaction(options).await?;
-    Ok(())
 }

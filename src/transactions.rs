@@ -4,17 +4,17 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use tracing::{debug, error, warn};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesBufferDefault, RoutageMessage};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::bson as bson;
 use mongodb::bson::Bson;
-use mongodb::error::{BulkWriteError, ErrorKind};
-use mongodb::options::{FindOptions, Hint, InsertManyOptions};
-use mongodb::{bson::doc, Cursor};
-use serde::de::DeserializeOwned;
+use mongodb::error::{ErrorKind, WriteError};
+use mongodb::options::Hint;
+use mongodb::{Cursor, bson::doc};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+use tracing::{debug, error, warn};
 
 use crate::certificats::{ValidateurX509, VerificateurPermissions};
 use crate::constantes::*;
@@ -102,7 +102,7 @@ where
 
     let filtre = doc! {TRANSACTION_CHAMP_ID: uuid_transaction};
 
-    match collection.find_one(filtre, None).await {
+    match collection.find_one(filtre).await {
         Ok(d) => match d {
             Some(d) => extraire_transaction(middleware, d).await,
             None => Err(CommonError::String(format!("Transaction introuvable : {}", uuid_transaction))),
@@ -167,7 +167,7 @@ pub async fn marquer_transaction<'a, M, S, T>(middleware: &M, nom_collection: S,
     };
 
     let collection = middleware.get_collection(nom_collection.as_ref())?;
-    match collection.update_one(filtre, ops, None).await {
+    match collection.update_one(filtre, ops).await {
         Ok(update_result) => {
             if update_result.matched_count == 1 {
                 Ok(())
@@ -209,7 +209,7 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
                 TRANSACTION_CHAMP_ERREUR_TRAITEMENT: true,
             }
         };
-        match collection.update_many(filtre_expiree, ops, None).await {
+        match collection.update_many(filtre_expiree, ops).await {
             Ok(r) => {
                 if r.modified_count == 0 {
                     debug!("Aucunes transactions marquees en erreur.");
@@ -230,13 +230,19 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
         //     TRANSACTION_CHAMP_ENTETE_UUID_TRANSACTION: 1,
         // };
         let hint_incomplets = Hint::Name("transaction_complete".into());
-        let options_incomplets = FindOptions::builder()
-            // .projection(projection_incomplets)
+        // let options_incomplets = FindOptions::builder()
+        //     // .projection(projection_incomplets)
+        //     .sort(sort_incomplets)
+        //     .hint(hint_incomplets)
+        //     .limit(1000)
+        //     .build();
+        let mut curseur = match collection
+            .find(filtre_incomplets)
             .sort(sort_incomplets)
             .hint(hint_incomplets)
             .limit(1000)
-            .build();
-        let mut curseur = match collection.find(filtre_incomplets, options_incomplets).await {
+            .await
+        {
             Ok(c) => c,
             Err(e) => {
                 error!("resoumettre_transactions: Erreur curseur transactions a resoumettre domaine {} : {:?}", nom_collection, e);
@@ -262,14 +268,14 @@ pub async fn resoumettre_transactions(middleware: &(impl GenerateurMessages + Mo
 
             match resultat {
                 Ok(_) => {
-                    let _ = collection.update_one(filtre_transaction_resoumise, ops.clone(), None).await;
+                    let _ = collection.update_one(filtre_transaction_resoumise, ops.clone()).await;
                 },
                 Err(e) => {
                     error!("resoumettre_transactions: Erreur emission trigger de resoumission : {:?}", e);
                     if ! e.recuperable {
                         // Erreur qui n'est pas necessairement recuperable (e.g. data, autre...)
                         // On marque l'essaie.
-                        let _ = collection.update_one(filtre_transaction_resoumise, ops.clone(), None).await;
+                        let _ = collection.update_one(filtre_transaction_resoumise, ops.clone()).await;
                     }
                 }
             }
@@ -391,7 +397,7 @@ pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut 
                 }
             }
 
-            let bson_doc = bson::to_document(&t).expect("serialiser bson");
+            let bson_doc = bson::serialize_to_document(&t).expect("serialiser bson");
             transactions_bson.push(bson_doc);
         }
 
@@ -405,12 +411,16 @@ pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut 
         return Ok(res_insert)
     }
 
-    let options = InsertManyOptions::builder()
-        .ordered(false)
-        .build();
+    // let options = InsertManyOptions::builder()
+    //     .ordered(false)
+    //     .build();
 
     let nombre_transactions = transactions_bson.len() as u32;
-    let resultat = match collection.insert_many(transactions_bson, Some(options)).await {
+    let resultat = match collection
+        .insert_many(transactions_bson)
+        .ordered(false)
+        .await
+    {
         Ok(r) => {
             let mut res_insert = ResultatBatchInsert::new();
             res_insert.inserted = r.inserted_ids.len() as u32;
@@ -422,29 +432,47 @@ pub async fn sauvegarder_batch<'a, M>(middleware: &M, nom_collection: &str, mut 
                 ErrorKind::BulkWrite(failure) => {
                     // Verifier si toutes les erreurs sont des duplicatas (code 11000)
                     debug!("Resultat bulk write : {:?}", failure);
-
-                    let autres_erreurs = match &failure.write_errors {
-                        Some(we) => {
-                            let mut res = Vec::new();
-                            for bwe in we {
-                                // Separer erreurs duplication (11000) des autres
-                                if bwe.code == 11000 {
-                                    // Erreur duplication, OK.
-                                    res_insert.duplicate += 1;
-                                } else {
-                                    res.push(bwe.to_owned());
-                                    res_insert.errors += 1;
-                                }
-                            }
-
-                            if res.len() > 0 {
-                                Some(res)
+                    let autres_erreurs = {
+                        let mut res = Vec::new();
+                        for (code, error) in &failure.write_errors {
+                            if *code == 11000usize {
+                                // Erreur duplication, OK.
+                                res_insert.duplicate += 1;
                             } else {
-                                None
+                                res.push(error.to_owned());
+                                res_insert.errors += 1;
                             }
-                        },
-                        None => None,
+                        }
+
+                        if res.len() > 0 {
+                            Some(res)
+                        } else {
+                            None
+                        }
                     };
+
+                    // let autres_erreurs = match &failure.write_errors {
+                    //     Some(we) => {
+                    //         let mut res = Vec::new();
+                    //         for bwe in we {
+                    //             // Separer erreurs duplication (11000) des autres
+                    //             if bwe.code == 11000 {
+                    //                 // Erreur duplication, OK.
+                    //                 res_insert.duplicate += 1;
+                    //             } else {
+                    //                 res.push(bwe.to_owned());
+                    //                 res_insert.errors += 1;
+                    //             }
+                    //         }
+                    //
+                    //         if res.len() > 0 {
+                    //             Some(res)
+                    //         } else {
+                    //             None
+                    //         }
+                    //     },
+                    //     None => None,
+                    // };
 
                     if autres_erreurs.is_some() {
                         Err(format!("Erreurs d'ecriture : {:?}", autres_erreurs))?;
@@ -484,7 +512,7 @@ pub struct ResultatBatchInsert {
     pub inserted: u32,
     pub duplicate: u32,
     pub errors: u32,
-    pub error_vec: Option<Vec<BulkWriteError>>,
+    pub error_vec: Option<Vec<WriteError>>,
 }
 
 impl ResultatBatchInsert {

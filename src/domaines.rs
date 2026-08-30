@@ -2,29 +2,29 @@ use std::str::from_utf8;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use bson::doc;
 use futures::stream::FuturesUnordered;
-use tracing::{debug, error, info, trace, warn};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use mongodb::options::{CountOptions, Hint};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tokio::spawn;
 use tokio::sync::{mpsc, mpsc::Receiver};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration as DurationTokio, sleep};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::backup::reset_backup_flag;
 use crate::certificats::ValidateurX509;
 use crate::certificats::VerificateurPermissions;
 use crate::constantes::*;
 use crate::db_structs::{TransactionOwned, TransactionValide};
+use crate::error::Error as CommonError;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageReponse};
 use crate::messages_generiques::MessageCedule;
 use crate::middleware::{Middleware, MiddlewareMessages, thread_emettre_presence_domaine};
 use crate::mongo_dao::{ChampIndex, IndexOptions, MongoDao, MongoDaoTyped};
 use crate::rabbitmq_dao::{NamedQueue, QueueType, TypeMessageOut};
 use crate::recepteur_messages::{MessageValide, TypeMessage};
-use crate::transactions::{charger_transaction, EtatTransaction, marquer_transaction, TriggerTransaction, TraiterTransaction, sauvegarder_batch, regenerer as regenerer_operation};
-use crate::error::Error as CommonError;
+use crate::transactions::{EtatTransaction, TraiterTransaction, TriggerTransaction, charger_transaction, marquer_transaction, regenerer as regenerer_operation, sauvegarder_batch};
 
 #[async_trait]
 pub trait GestionnaireMessages: Clone + Sized + Send + Sync {
@@ -708,8 +708,8 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
         };
 
         let collection = middleware.get_collection(nom_collection_transactions.as_str())?;
-        let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
-        let nombre_transactions = collection.count_documents(None, options).await? as i64;
+        // let options = CountOptions::builder().hint(Some(Hint::Name("_id_".to_string()))).build();
+        let nombre_transactions = collection.count_documents(doc!{}).await? as i64;
 
         let reponse = ReponseNombreTransactions { ok: true, domaine: self.get_nom_domaine(), nombre_transactions };
         Ok(Some(middleware.build_reponse(reponse)?.0))

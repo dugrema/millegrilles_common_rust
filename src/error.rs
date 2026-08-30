@@ -6,7 +6,6 @@ use openssl::error::ErrorStack;
 use redis::RedisError;
 use url::ParseError;
 use tokio::sync::mpsc::error::SendError;
-use crate::bson;
 use crate::recepteur_messages::ErreurVerification;
 
 #[derive(Debug)]
@@ -25,7 +24,7 @@ pub enum Error {
     Redis(RedisError),
     MongDb(mongodb::error::Error),
     Lapin(lapin::Error),
-    BsonValueAccessError(bson::document::ValueAccessError),
+    // BsonValueAccessError(bson::document::ValueAccessError),
     Reqwest(reqwest::Error),
     HexFrom(hex::FromHexError),
     UrlParse(url::ParseError),
@@ -108,11 +107,11 @@ impl From<lapin::Error> for Error {
     }
 }
 
-impl From<bson::document::ValueAccessError> for Error {
-    fn from(value: bson::document::ValueAccessError) -> Self {
-        Self::BsonValueAccessError(value)
-    }
-}
+// impl From<bson::document::ValueAccessError> for Error {
+//     fn from(value: bson::document::ValueAccessError) -> Self {
+//         Self::BsonValueAccessError(value)
+//     }
+// }
 
 impl From<reqwest::Error> for Error {
     fn from(value: reqwest::Error) -> Self {

@@ -1,19 +1,17 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::recepteur_messages::MessageValide;
 use chrono::{DateTime, Utc};
-use tracing::error;
 use millegrilles_cryptographie::ed25519::{MessageId, verifier};
 use millegrilles_cryptographie::ed25519_dalek::VerifyingKey;
 use millegrilles_cryptographie::error::Error;
 use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, MessageKind, MessageMilleGrillesRef, RoutageMessage, RoutageMessageOwned, epochseconds, HacheurMessage, PreMigrationOwned, PreMigration};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, HacheurMessage, MessageKind, MessageMilleGrillesRef, PreMigration, PreMigrationOwned, RoutageMessage, RoutageMessageOwned, epochseconds};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
-use crate::mongo_dao::opt_chrono_datetime_as_bson_datetime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use mongodb::bson;
-use crate::recepteur_messages::MessageValide;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::error;
 
 /// Mapping avec references des documents d'une table de Transactions.
 #[derive(Clone, Serialize, Deserialize)]
@@ -368,19 +366,23 @@ impl TryFrom<MessageValide> for TransactionValide {
     }
 }
 
+// #[serde_as]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EvenementsTransaction {
-    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    // #[serde(with = "serde_helpers::chrono_datetime_as_bson_datetime")]
     pub document_persiste: DateTime<Utc>,
-    #[serde(rename="_estampille", with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    #[serde(rename="_estampille")] //, with = "serde_helpers::chrono_datetime_as_bson_datetime")]
     pub estampille: DateTime<Utc>,
     pub transaction_complete: Option<bool>,
     pub backup_flag: Option<bool>,
-    #[serde(default, with = "opt_chrono_datetime_as_bson_datetime")]
+    #[serde(default)] //, with = "opt_chrono_datetime_as_bson_datetime")]
+    // #[serde_as(as = "Option<serde_helpers::chrono_datetime_as_bson_datetime>")]
     pub signature_verifiee: Option<DateTime<Utc>>,
-    #[serde(default, with = "opt_chrono_datetime_as_bson_datetime")]
+    #[serde(default)] //, with = "opt_chrono_datetime_as_bson_datetime")]
+    // #[serde_as(as = "Option<serde_helpers::chrono_datetime_as_bson_datetime>")]
     pub transaction_traitee: Option<DateTime<Utc>>,
-    #[serde(default, with = "opt_chrono_datetime_as_bson_datetime")]
+    #[serde(default)] //, with = "opt_chrono_datetime_as_bson_datetime")]
+    // #[serde_as(as = "Option<serde_helpers::chrono_datetime_as_bson_datetime>")]
     pub backup_horaire: Option<DateTime<Utc>>,
     #[serde(flatten)]
     pub extra: Option<HashMap<String, Value>>,

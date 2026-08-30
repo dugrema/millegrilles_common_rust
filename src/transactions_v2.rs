@@ -1,28 +1,28 @@
+use base64::{Engine as _, engine::general_purpose};
+use chrono::{DateTime, Utc};
+use mongodb::bson::{Bson, doc};
+use mongodb::options::Hint;
+use mongodb::{ClientSession, Cursor, bson};
 use std::borrow::Cow;
 use std::error::Error;
 use std::sync::{Arc, Mutex};
-use base64::{Engine as _, engine::general_purpose};
-use chrono::{DateTime, Utc};
-use tracing::{debug, error, info, warn};
-use mongodb::bson::{doc, Bson};
-use mongodb::{bson, ClientSession, Cursor};
-use mongodb::options::{FindOptions, Hint, UpdateOptions};
 use tokio::join;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
+use tracing::{debug, error, info, warn};
 
-use crate::backup_v2::{charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup, RegenerationBackup, StatsBackup, StatusRegeneration};
-use crate::certificats::{charger_enveloppe, ValidateurX509};
+use crate::backup_v2::{RegenerationBackup, StatsBackup, StatusRegeneration, charger_cles_backup, charger_cles_backup_message, extraire_stats_backup, lire_transactions_fichiers, organiser_fichiers_backup};
+use crate::certificats::{ValidateurX509, charger_enveloppe};
 use crate::configuration::ConfigMessages;
 use crate::constantes::*;
 use crate::db_structs::{TransactionOwned, TransactionRef, TransactionValide};
 use crate::domaines_traits::AiguillageTransactions;
 use crate::domaines_v2::GestionnaireDomaineSimple;
-use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
-use crate::mongo_dao::{start_transaction_regeneration, MongoDao, MongoDaoTyped};
-use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
-use crate::transactions::{regenerer_charger_certificats, EtatTransaction, TransactionCorePkiNouveauCertificat};
 use crate::error::Error as CommonError;
+use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
+use crate::messages_generiques::{CommandeRegenerer, EvenementRegeneration, ReponseCommande};
+use crate::mongo_dao::{MongoDao, MongoDaoTyped, start_transaction_regeneration};
+use crate::transactions::{EtatTransaction, TransactionCorePkiNouveauCertificat, regenerer_charger_certificats};
 
 pub async fn regenerer_v2<M,G,D,T>(
     middleware: &M, gestionnaire_domaine: &G, nom_domaine: D, nom_collection_transactions: &str,
@@ -44,7 +44,7 @@ where
     // Drop collections
     for nom_collection in noms_collections_docs {
         let collection = middleware.get_collection(nom_collection.as_str())?;
-        collection.drop(None).await?;
+        collection.drop().await?;
         debug!("regenerer_v2 Dropped collection {}", nom_collection);
     }
     // Recreate all indexes (idempotent)
@@ -100,20 +100,24 @@ where
             TRANSACTION_CHAMP_TRANSACTION_TRAITEE: 1,
         };
 
-        let options = FindOptions::builder()
-            .sort(sort)
-            .hint(Hint::Name(String::from("backup_transactions")))
-            .build();
+        // let options = FindOptions::builder()
+        //     .sort(sort)
+        //     .hint(Hint::Name(String::from("backup_transactions")))
+        //     .build();
 
         let collection_transactions = middleware.get_collection_typed::<TransactionRef>(nom_collection_transactions)?;
         if skip_certificats == false {
-            let curseur_certs = collection_transactions.find(filtre.clone(), None).await?;
+            let curseur_certs = collection_transactions.find(filtre.clone()).await?;
             regenerer_charger_certificats(middleware, curseur_certs, skip_certificats).await?;
         } else {
             info!("Regeneration CorePki - skip chargement certificats pour validation");
         }
 
-        collection_transactions.find(filtre, options).await
+        collection_transactions
+            .find(filtre)
+            .sort(sort)
+            .hint(Hint::Name(String::from("backup_transactions")))
+            .await
     }?;
 
     // Executer toutes les transactions du curseur en ordre
@@ -366,7 +370,7 @@ where
 
     // Session cleanup
     session.commit_transaction().await?;
-    session.start_transaction(None).await?;
+    session.start_transaction().await?;
 
     // while let Some(result) = curseur.next().await {
     while curseur.advance().await? {
@@ -541,10 +545,14 @@ where
             "ok": ok,
         },
     };
-    let options = UpdateOptions::builder().upsert(true).build();
+
     let collection_traitees = middleware
         .get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()).as_str())?;
-    collection_traitees.update_one(filtre_transactions_traitees, ops_transactions_traitees, options).await?;
+
+    collection_traitees
+        .update_one(filtre_transactions_traitees, ops_transactions_traitees)
+        .upsert(true)
+        .await?;
 
     Ok(())
 }
@@ -600,14 +608,13 @@ where
             "date_traitement": &date_now,
         },
     };
-    let options = UpdateOptions::builder().upsert(true).build();
 
     let collection = middleware.get_collection(nom_collection.as_ref())?;
     let collection_traitees = middleware
         .get_collection(format!("{}/transactions_traitees", nom_collection.as_ref()).as_str())?;
 
     // Executer les deux operations
-    match collection.update_one_with_session(filtre, ops, None, session).await {
+    match collection.update_one(filtre, ops).session(&mut *session).await {
         Ok(update_result) => {
             if update_result.matched_count == 1 {
                 ()
@@ -618,7 +625,11 @@ where
         Err(e) => Err(format!("Erreur maj etat transaction {} : {:?}", uuid_transaction_str, e))?,
     };
 
-    collection_traitees.update_one_with_session(filtre_transactions_traitees, ops_transactions_traitees, options, session).await?;
+    collection_traitees
+        .update_one(filtre_transactions_traitees, ops_transactions_traitees)
+        .upsert(true)
+        .session(session)
+        .await?;
 
     Ok(())
 }
