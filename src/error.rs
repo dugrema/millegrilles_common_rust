@@ -34,6 +34,7 @@ pub enum Error {
     Base64DecodeError(base64::DecodeError),
     /// Used to wrap an error response back to the user, params are (Code, Message, Error)
     ErrorResponse(Option<i64>, Option<String>, Option<String>),
+    BsonError(bson::error::Error),
 }
 
 impl fmt::Display for Error {
@@ -165,4 +166,8 @@ impl From<base64::DecodeError> for Error {
     fn from(value: base64::DecodeError) -> Self {
         Self::Base64DecodeError(value)
     }
+}
+
+impl From<bson::error::Error> for Error {
+    fn from(value: bson::error::Error) -> Self { Self::BsonError(value) }
 }
