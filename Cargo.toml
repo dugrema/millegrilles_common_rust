@@ -56,7 +56,7 @@ serde-helpers = { version = "0.1.0", features = ["serde_json"] }
 # Common formats
 chrono = { version = "0.4.44", features = ["serde", "alloc"] }
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.23", features = ["serde", "v4"] }
+uuid = { version = "1.23.0", features = ["serde", "v4"] }
 substring = { version = "1.4.5" }
 
 # MongoDB
@@ -65,7 +65,7 @@ mongodb = { version = "3.8.2", default-features = true, features = ["bson-3"] }
 bson = { version = "3.1.0", features = ["chrono-0_4"] }
 
 # RabbitMQ
-lapin = { version = "2.5" }
+lapin = { version = "4.10.0" }
 futures = { version = "0.3.32" }
 futures-util = { version = "0.3.32" }
 tokio-amqp = { version = "2.0" }

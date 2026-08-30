@@ -3,7 +3,7 @@ use crate::configuration::{ConfigurationMq, ConfigurationPki};
 use crate::error::Error as CommonError;
 use crate::v3::ConfigService;
 use lapin::tcp::{OwnedIdentity, OwnedTLSConfig};
-use lapin::{Channel, Connection, ConnectionProperties};
+use lapin::{runtime, Channel, Connection, ConnectionProperties};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::error;
@@ -49,7 +49,12 @@ impl RabbitConnectionManager {
 
         debug!("Connecting to AMQP server at {}", &addr);
         let tls_config = self.get_tls_config();
-        let connection = Arc::new(Connection::connect_with_config(&addr, ConnectionProperties::default(), tls_config).await?);
+        let connection = Arc::new(Connection::connect_with_config(
+            &addr,
+            ConnectionProperties::default(),
+            tls_config,
+            runtime::default_runtime()?
+        ).await?);
 
         {
             let mut guard = self.connection.lock().unwrap();
@@ -67,7 +72,7 @@ impl RabbitConnectionManager {
         let password = mq_config.p12_password.clone();
 
         OwnedTLSConfig {
-            identity: Some(OwnedIdentity {
+            identity: Some(OwnedIdentity::PKCS12 {
                 der,
                 password,
             }),
@@ -128,7 +133,7 @@ impl RabbitConnectionManager {
             guard.take()
         };
         if let Some(connection) = connection {
-            connection.close(200, "Closing").await.ok();
+            connection.close(200, "Closing".into()).await.ok();
         }
     }
 }

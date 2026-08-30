@@ -7,15 +7,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::stream::FuturesUnordered;
-use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, options::*, Queue, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use lapin::message::Delivery;
-use lapin::protocol::{AMQPErrorKind, AMQPSoftError};
-use tracing::{debug, error, info, trace, warn};
+use lapin::{BasicProperties, Channel, Connection, ConnectionProperties, Queue, options::*, runtime, tcp::{OwnedIdentity, OwnedTLSConfig}, types::FieldTable};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
-use tokio::{sync, task};
-use tokio::sync::{mpsc, mpsc::{Receiver, Sender}, Notify, oneshot::Sender as SenderOneshot};
+use tokio::sync::{Notify, mpsc, mpsc::{Receiver, Sender}, oneshot::Sender as SenderOneshot};
 use tokio::task::JoinHandle;
+use tokio::{sync, task};
 use tokio_stream::StreamExt;
+use tracing::{debug, error, info, trace, warn};
 use url::Url;
 
 use crate::certificats::ValidateurX509;
@@ -23,7 +22,7 @@ use crate::configuration::{ConfigMessages, ConfigurationMq, ConfigurationPki};
 use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::IsConfigurationPki;
-use crate::recepteur_messages::{intercepter_message, traiter_delivery, TypeMessage};
+use crate::recepteur_messages::{TypeMessage, intercepter_message, traiter_delivery};
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(400);
@@ -74,40 +73,41 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
             &addr,
             ConnectionProperties::default(),
             get_tls_config(pki, mq),
+            runtime::default_runtime()?,
         ).await;
 
         if let Ok(c) = resultat {
             return Ok(c)
         } else {
             match &resultat {
-                Ok(_) => panic!("resultat"),  // Ne doit pas arriver
+                Ok(_) => panic!("Connection error reports OK without connection"),  // Ne doit pas arriver
                 Err(e) => {
                     info!("Erreur de connexion MQ : {:?}", e);
                     // Tenter de determiner le type d'erreur, voir si on doit creer le compte usager
-                    match e {
-                        lapin::Error::ProtocolError(e) => {
-                            match e.kind() {
-                                AMQPErrorKind::Soft(s) => {
-                                    match s {
-                                        AMQPSoftError::ACCESSREFUSED => {
-                                            info!("MQ Erreur access refused, emettre certificat vers monitor");
-                                        },
-                                        _ => {
-                                            error!("rabbitmq_dao.connecter AMQPSoftError {:?}", resultat);
-                                            resultat?;
-                                        }  // Erreur non geree
-                                    }
-                                },
-                                _ => {
-                                    error!("rabbitmq_dao.connecter ProtocolError {:?}", resultat);
-                                    resultat?;
-                                }  // Erreur non geree
-                            }
+                    match e.kind() {
+                        lapin::ErrorKind::AuthProviderError(e) => {
+                            info!("MQ Erreur access refused, emettre certificat vers monitor, error: {}", e);
                         },
                         _ => {
-                            error!("rabbitmq_dao.connecter Erreur generique {:?}", resultat);
+                            error!("rabbitmq_dao.connecter Error {:?}", resultat);
                             resultat?;
                         }  // Erreur non geree
+
+                        // // AMQPErrorKind::Soft(s) => {
+                        //     match e {
+                        //         AMQPSoftError::ACCESSREFUSED => {
+                        //             info!("MQ Erreur access refused, emettre certificat vers monitor");
+                        //         },
+                        //         _ => {
+                        //             error!("rabbitmq_dao.connecter AMQPSoftError {:?}", resultat);
+                        //             resultat?;
+                        //         }  // Erreur non geree
+                        //     }
+                        // },
+                        // _ => {
+                        //     error!("rabbitmq_dao.connecter ProtocolError {:?}", resultat);
+                        //     resultat?;
+                        // }  // Erreur non geree
                     }
                 }
             };
@@ -132,6 +132,7 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
         &addr,
         ConnectionProperties::default(),
         get_tls_config(pki, mq),
+        runtime::default_runtime()?,
     ).await
 }
 
@@ -215,7 +216,7 @@ fn get_tls_config(pki: &ConfigurationPki, mq: &ConfigurationMq) -> OwnedTLSConfi
     let password: &String = &mq.p12_password;
 
     OwnedTLSConfig {
-        identity: Some(OwnedIdentity {der: der.to_owned(), password: password.to_owned()}),
+        identity: Some(OwnedIdentity::PKCS12 {der: der.to_owned(), password: password.to_owned()}),
         cert_chain: Some(cert_chain.to_owned()),
     }
 }
@@ -1133,13 +1134,15 @@ async fn creer_reply_q(rabbitmq: Arc<RabbitMqExecutor>, channel: &Channel, rq: &
 
     let mut params = FieldTable::default();
     match rq.ttl {
-        Some(v) => params.insert(FLAG_TTL.into(), v.into()),
+        Some(v) => {
+            params.insert(FLAG_TTL.into(), v.into());
+        },
         None => ()
     }
 
     let reply_queue = channel
         .queue_declare(
-            "",
+            "".into(),
             options,
             params,
         ).await.unwrap();
@@ -1167,9 +1170,9 @@ async fn creer_reply_q(rabbitmq: Arc<RabbitMqExecutor>, channel: &Channel, rq: &
         for exchange in &exchanges {
             debug!("creer_reply_q Mapping rk {} sur reply-Q {} exchange {}", rk, nom_queue, exchange);
             let _ = channel.queue_bind(
-                nom_queue,
-                *exchange,
-                &rk,
+                nom_queue.into(),
+                (*exchange).into(),
+                rk.as_str().into(),
                 QueueBindOptions::default(),
                 FieldTable::default()
             ).await.expect("Binding routing key");
@@ -1205,7 +1208,7 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
 
     let trigger_queue = channel
         .queue_declare(
-            nom_queue.as_str(),
+            nom_queue.as_str().into(),
             options,
             params,
         ).await.unwrap();
@@ -1226,9 +1229,9 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
         );
         for rk in routing_keys_secure {
             let _ = channel.queue_bind(
-                nom_queue,
-                SECURITE_4_SECURE,
-                &rk,
+                nom_queue.into(),
+                SECURITE_4_SECURE.into(),
+                rk.into(),
                 QueueBindOptions::default(),
                 FieldTable::default()
             ).await.expect("Binding routing key");
@@ -1248,9 +1251,9 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
         );
         for rk in routing_keys_protege {
             let _ = channel.queue_bind(
-                nom_queue,
-                SECURITE_3_PROTEGE,
-                &rk,
+                nom_queue.into(),
+                SECURITE_3_PROTEGE.into(),
+                rk.into(),
                 QueueBindOptions::default(),
                 FieldTable::default()
             ).await.expect("Binding routing key");
@@ -1265,9 +1268,9 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
         );
         for rk in routing_keys_prive {
             let _ = channel.queue_bind(
-                nom_queue,
-                SECURITE_2_PRIVE,
-                &rk,
+                nom_queue.into(),
+                SECURITE_2_PRIVE.into(),
+                rk.into(),
                 QueueBindOptions::default(),
                 FieldTable::default()
             ).await.expect("Binding routing key");
@@ -1282,9 +1285,9 @@ async fn creer_internal_q(nom_domaine: String, channel: &Channel, securite: &Sec
     );
     for rk in routing_keys_public {
         let _ = channel.queue_bind(
-            nom_queue,
-            Securite::L1Public.get_str(),
-            &rk,
+            nom_queue.into(),
+            Securite::L1Public.get_str().into(),
+            rk.into(),
             QueueBindOptions::default(),
             FieldTable::default()
         ).await.expect("Binding routing key");
@@ -1313,11 +1316,13 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
 
             let mut params = FieldTable::default();
             match c.ttl {
-                Some(v) => params.insert(FLAG_TTL.into(), v.into()),
+                Some(v) => {
+                    params.insert(FLAG_TTL.into(), v.into());
+                },
                 None => ()
             }
 
-            let queue = channel.queue_declare(&nom_queue, options, params).await.unwrap();
+            let queue = channel.queue_declare(nom_queue.as_str().into(), options, params).await.unwrap();
 
             // Ajouter tous les routing keys a la Q
             for rk in &c.routing_keys {
@@ -1325,9 +1330,9 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
                 let exchange = rk.exchange.get_str();
                 debug!("ecouter_consumer queue_bind rk {} sur queue {}, exchange {}", routing_key, nom_queue, exchange);
                 let _ = channel.queue_bind(
-                    nom_queue,
-                    exchange,
-                    routing_key,
+                    nom_queue.as_str().into(),
+                    exchange.into(),
+                    routing_key.into(),
                     QueueBindOptions::default(),
                     FieldTable::default()
                 ).await.unwrap();
@@ -1348,7 +1353,7 @@ async fn ecouter_consumer(rabbitmq: Arc<RabbitMqExecutor>, channel: Channel, que
 
     let consumer = channel
         .basic_consume(
-            nom_queue,
+            nom_queue.into(),
             "".into(),
             BasicConsumeOptions::default(),
             FieldTable::default(),
@@ -1583,8 +1588,8 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
 
                 // C'est une reponse (message direct)
                 let resultat = channel.basic_publish(
-                    "",
-                    reply_to,
+                    "".into(),
+                    reply_to.into(),
                     options,
                     payload.to_vec().as_slice(),
                     properties
@@ -1600,8 +1605,8 @@ async fn task_emettre_messages(rabbitmq: Arc<RabbitMqExecutor>) {
                     Some(inner) => {
                         for exchange in inner {
                             let resultat = channel.basic_publish(
-                                exchange.get_str(),
-                                &routing_key,
+                                exchange.get_str().into(),
+                                routing_key.as_str().into(),
                                 options,
                                 payload.clone().as_slice(),
                                 properties.clone()

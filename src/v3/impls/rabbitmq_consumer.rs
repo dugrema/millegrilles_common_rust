@@ -173,7 +173,7 @@ impl RabbitConsumerManager {
                 // The select! block ONLY handles the "waiting" for either a signal OR a message.
                 let maybe_delivery = tokio::select! {
                     _ = cancellation_token.cancelled() => {
-                        consumer_holder.channel.close(200, "Closing").await.ok();
+                        consumer_holder.channel.close(200, "Closing".into()).await.ok();
                         debug!("named_queue_thread Consumer {} cancelled, stopping", q_name);
                         return; // Exit loop gracefully
                     }
@@ -236,7 +236,7 @@ impl RabbitConsumerManager {
             }
 
             // Exclusive reply queue is lost with the connection being closed
-            consumer_holder.channel.close(200, "Closing").await.ok();
+            consumer_holder.channel.close(200, "Closing".into()).await.ok();
             self.queue_registry.set_reply_q_name(None);
         }
     }
@@ -269,7 +269,7 @@ impl RabbitConsumerManager {
                 // The select! block ONLY handles the "waiting" for either a signal OR a message.
                 let maybe_delivery = tokio::select! {
                     _ = cancellation_token.cancelled() => {
-                        consumer_holder.channel.close(200, "Closing").await.ok();
+                        consumer_holder.channel.close(200, "Closing".into()).await.ok();
                         debug!("reply_q_thread Consumer cancelled, stopping");
                         return; // Exit loop gracefully
                     }
@@ -372,7 +372,7 @@ impl RabbitConsumerManager {
             }
 
             // Exclusive reply queue is lost with the connection being closed
-            consumer_holder.channel.close(200, "Closing").await.ok();
+            consumer_holder.channel.close(200, "Closing".into()).await.ok();
             self.queue_registry.set_reply_q_name(None);
         }
     }
@@ -436,7 +436,7 @@ async fn create_named_queue(channel: &Channel, config: &ConfigQueue) -> Result<(
     params.insert(FLAG_TTL.into(), ttl.into());
 
     let queue_name = config.nom_queue.as_str();
-    let named_queue = channel.queue_declare(queue_name, options, params).await?;
+    let named_queue = channel.queue_declare(queue_name.into(), options, params).await?;
     info!("create_named_queue Created named Q: {}", queue_name);
 
     for rk in &config.routing_keys {
@@ -444,9 +444,9 @@ async fn create_named_queue(channel: &Channel, config: &ConfigQueue) -> Result<(
         let exchange = rk.exchange.get_str();
         debug!("named_queue_thread queue_bind rk {} on queue {}, exchange {}", routing_key, queue_name, exchange);
         channel.queue_bind(
-            queue_name,
-            exchange,
-            routing_key,
+            queue_name.into(),
+            exchange.into(),
+            routing_key.into(),
             QueueBindOptions::default(),
             FieldTable::default()
         ).await?;
@@ -454,7 +454,7 @@ async fn create_named_queue(channel: &Channel, config: &ConfigQueue) -> Result<(
 
     // Create consumer
     let consumer = channel
-        .basic_consume(queue_name, "".into(), BasicConsumeOptions::default(), FieldTable::default()).await?;
+        .basic_consume(queue_name.into(), "".into(), BasicConsumeOptions::default(), FieldTable::default()).await?;
 
     Ok((named_queue, consumer))
 }
@@ -472,7 +472,7 @@ async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
     let mut params = FieldTable::default();
     params.insert(FLAG_TTL.into(), (DEFAULT_TTL as u32).into());
 
-    let reply_queue = channel.queue_declare("", options, params).await?;
+    let reply_queue = channel.queue_declare("".into(), options, params).await?;
 
     let queue_name = reply_queue.name().as_str();
     info!("create_reply_queue Setting reply Q name: {}", queue_name);
@@ -483,7 +483,7 @@ async fn create_reply_queue(queue_registry: &RabbitQueueRegistry, channel: &Chan
 
     let consumer = channel
         .basic_consume(
-            queue_name,
+            queue_name.into(),
             "".into(),
             BasicConsumeOptions::default(),
             FieldTable::default(),

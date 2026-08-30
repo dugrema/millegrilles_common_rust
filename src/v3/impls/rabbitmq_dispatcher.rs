@@ -218,8 +218,8 @@ async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: O
             debug!("publish_message Replying to reply_q {} with correlation_id {:?}", reply_to_inner, correlation_id);
 
             let resultat = channel.basic_publish(
-                "",
-                reply_to_inner.as_str(),
+                "".into(),
+                reply_to_inner.as_str().into(),
                 options,
                 payload.to_vec().as_slice(),
                 properties
@@ -240,8 +240,8 @@ async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: O
 
             for exchange in routing.exchanges {
                 let resultat = channel.basic_publish(
-                    exchange.get_str(),
-                    &routing_key,
+                    exchange.get_str().into(),
+                    routing_key.as_str().into(),
                     options,
                     payload.clone().as_slice(),
                     properties.clone()
