@@ -85,6 +85,7 @@ pub trait DatabaseService: Send + Sync {
 #[async_trait]
 pub trait TransactionService: Send + Sync {
     async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), Error>;
+    async fn process_value(&self, domain: &str, action: &str, value: Value) -> Result<(), Error>;
 }
 
 #[async_trait]

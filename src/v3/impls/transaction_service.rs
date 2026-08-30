@@ -1,12 +1,17 @@
 use crate::error::Error as CommonError;
+use crate::generateur_messages::RoutageMessageAction;
 use crate::mongo_dao::MongoDao;
 use crate::v3::models::{TransactionOperationAggregator, TransactionWrapper};
-use mongodb::ClientSession;
-use std::sync::Arc;
+use crate::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
 use async_trait::async_trait;
-use crate::v3::{TransactionRouter, TransactionService};
+use millegrilles_cryptographie::messages_structs::MessageKind;
+use mongodb::ClientSession;
+use serde_json::Value;
+use std::sync::Arc;
 
 pub struct TransactionServiceImpl {
+    config: Arc<dyn ConfigService>,
+    format: Arc<dyn FormatService>,
     mongo: Arc<dyn MongoDao>,
     router: Box<dyn TransactionRouter>,
     redo_table: String,
@@ -15,12 +20,14 @@ pub struct TransactionServiceImpl {
 
 impl TransactionServiceImpl {
     pub fn new(
+        config: Arc<dyn ConfigService>,
+        format: Arc<dyn FormatService>,
         mongo: Arc<dyn MongoDao>,
         redo_table: String,
         tracking_table: String,
         router: Box<dyn TransactionRouter>
     ) -> Self {
-        Self { mongo, redo_table, tracking_table, router }
+        Self { config, format, mongo, redo_table, tracking_table, router }
     }
 }
 
@@ -34,6 +41,17 @@ impl TransactionService for TransactionServiceImpl {
             self.tracking_table.as_str(),
             wrapper
         ).await
+    }
+
+    async fn process_value(&self, domain: &str, action: &str, value: Value) -> Result<(), CommonError> {
+        let wrapper = build_transaction(
+            self.config.as_ref(),
+            self.format.as_ref(),
+            domain,
+            action,
+            value
+        )?;
+        self.process_transaction(wrapper).await
     }
 }
 
@@ -123,4 +141,25 @@ async fn run_transaction_aggregator(
     }
 
     Ok(())
+}
+
+fn build_transaction(
+    config: &dyn ConfigService,
+    formatter: &dyn FormatService,
+    domain: &str,
+    action: &str,
+    value: Value
+) -> Result<TransactionWrapper, CommonError> {
+    let routing = RoutageMessageAction::builder(domain, action, vec![]).build();
+    let (transaction, _id) = formatter.build_action_message(
+        MessageKind::Transaction,
+        &routing,
+        value,
+    )?;
+    let wrapper = TransactionWrapper {
+        message: transaction.parse_to_owned()?,
+        certificate: config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.clone(),
+        content: None,
+    };
+    Ok(wrapper)
 }
