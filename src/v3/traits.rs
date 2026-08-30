@@ -2,7 +2,7 @@ use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki
 use crate::error::Error;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::InboundMessage;
-use crate::v3::models::VerifiedResponseMessage;
+use crate::v3::models::{TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
@@ -80,4 +80,18 @@ pub trait BackupService: Send + Sync {}
 #[async_trait]
 pub trait DatabaseService: Send + Sync {
     async fn get_collection(&self, name: &str) -> Result<Collection<Document>, Error>;
+}
+
+#[async_trait]
+pub trait TransactionService: Send + Sync {
+    async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), Error>;
+}
+
+#[async_trait]
+pub trait TransactionRouter: Send + Sync {
+    async fn route(
+        &self,
+        action: String,
+        wrapper: TransactionWrapper
+    ) -> Result<TransactionOperationAggregator, Error>;
 }

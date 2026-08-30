@@ -3,51 +3,47 @@ use crate::mongo_dao::MongoDao;
 use crate::v3::models::{TransactionOperationAggregator, TransactionWrapper};
 use mongodb::ClientSession;
 use std::sync::Arc;
+use async_trait::async_trait;
+use crate::v3::{TransactionRouter, TransactionService};
 
-pub struct TransactionService<F> {
+pub struct TransactionServiceImpl {
     mongo: Arc<dyn MongoDao>,
+    router: Box<dyn TransactionRouter>,
     redo_table: String,
     tracking_table: String,
-    router: F
 }
 
-impl<F, Fut> TransactionService<F>
-where F: Fn(String, TransactionWrapper) -> Fut,
-  Fut: Future<Output = Result<TransactionOperationAggregator, CommonError>> + Send
-{
+impl TransactionServiceImpl {
     pub fn new(
         mongo: Arc<dyn MongoDao>,
         redo_table: String,
         tracking_table: String,
-        router: F
+        router: Box<dyn TransactionRouter>
     ) -> Self {
         Self { mongo, redo_table, tracking_table, router }
     }
+}
 
-    pub async fn process_transaction(
-        &self,
-        wrapper: TransactionWrapper,
-    ) -> Result<(), CommonError> {
+#[async_trait]
+impl TransactionService for TransactionServiceImpl {
+    async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), CommonError> {
         process_transaction(
             self.mongo.as_ref(),
-            self.redo_table.as_ref(),
-            self.tracking_table.as_ref(),
-            &self.router,
+            self.router.as_ref(),
+            self.redo_table.as_str(),
+            self.tracking_table.as_str(),
             wrapper
         ).await
     }
 }
 
-pub async fn process_transaction<F, Fut>(
+pub async fn process_transaction(
     mongo: &dyn MongoDao,
+    router: &dyn TransactionRouter,
     redo_table: &str,
     tracking_table: &str,
-    router: F,
     wrapper: TransactionWrapper,
-) -> Result<(), CommonError>
-where F: Fn(String, TransactionWrapper) -> Fut,
-      Fut: Future<Output = Result<TransactionOperationAggregator, CommonError>> + Send
-{
+) -> Result<(), CommonError> {
     // Start a session
     let mut session = mongo.get_session().await?;
 
@@ -63,17 +59,14 @@ where F: Fn(String, TransactionWrapper) -> Fut,
     }
 }
 
-async fn process_atomic_transaction<F, Fut>(
+async fn process_atomic_transaction(
     mongo: &dyn MongoDao,
     session: &mut ClientSession,
     redo_table: &str,
     tracking_table: &str,
-    router: F,
+    router: &dyn TransactionRouter,
     wrapper: TransactionWrapper
-) -> Result<(), CommonError>
-where F: Fn(String, TransactionWrapper) -> Fut,
-      Fut: Future<Output = Result<TransactionOperationAggregator, CommonError>> + Send
-{
+) -> Result<(), CommonError> {
     let action = match wrapper.message.routage.as_ref() {
         Some(r) => match r.action.as_ref() {
             Some(a) => a.to_string(),
@@ -87,7 +80,7 @@ where F: Fn(String, TransactionWrapper) -> Fut,
 
     // Run the domain router to generate MongoDB write operations
     // let operations = ca_transaction_router(action.as_str(), wrapper).await?;
-    let operations = router(action, wrapper).await?;
+    let operations = router.route(action, wrapper).await?;
 
     // Run the operations within a database session - will rollback everything on error
     run_transaction_aggregator(mongo, session, operations).await?;
