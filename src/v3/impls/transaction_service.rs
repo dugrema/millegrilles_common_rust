@@ -6,7 +6,7 @@ use crate::v3::{ConfigService, FormatService, TransactionRouter, TransactionServ
 use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose;
-use bson::Bson;
+use bson::{Bson, serde_helpers::datetime::FromChrono04DateTime};
 use chrono::Utc;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesOwned};
 use mongodb::ClientSession;
@@ -121,6 +121,7 @@ struct RowTransactionTracking {
     bid: Bson,
     ok: bool,
     id: String,
+    #[serde(with = "FromChrono04DateTime")]
     processed: chrono::DateTime<Utc>,
 }
 
