@@ -7,6 +7,7 @@ use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefault;
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use mongodb::{ClientSession, Database};
+use mongodb::options::WriteModel;
 use openssl::x509::X509;
 use openssl::x509::store::X509Store;
 use serde::Serialize;
@@ -149,6 +150,10 @@ impl MongoDao for MiddlewareDb {
         options: Option<IndexOptions>
     ) -> Result<(), CommonError> {
         self.ressources.mongo.create_index(configuration, nom_collection, champs_index, options).await
+    }
+
+    async fn bulk_write(&self, _models: Vec<WriteModel>, _session: Option<&mut ClientSession>, _ordered: bool) -> Result<(), CommonError> {
+        todo!()
     }
 }
 

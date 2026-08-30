@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
 use mongodb::error::{ErrorKind, Result as ResultMongo, WriteFailure};
-use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions};
+use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, TlsOptions, WriteModel};
 use mongodb::{Client, ClientSession, Collection, Cursor, Database, bson::doc};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -53,6 +53,8 @@ pub trait MongoDao: Send + Sync {
             Err(e) => Err(CommonError::String(format!("rename_collection Error {:?}", e))),
         }
     }
+
+    async fn bulk_write(&self, models: Vec<WriteModel>, session: Option<&mut ClientSession>, ordered: bool) -> Result<(), CommonError>;
 
 }
 
@@ -117,6 +119,22 @@ impl MongoDao for MongoDaoImpl {
     async fn create_index(&self, configuration: &dyn ConfigMessages, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>) -> Result<(), CommonError> {
         let database = self.get_database()?;
         create_index(configuration, &database, nom_collection, champs_index, options).await
+    }
+
+    async fn bulk_write(&self, models: Vec<WriteModel>, session: Option<&mut ClientSession>, ordered: bool) -> Result<(), CommonError> {
+        let mut writer = self.client
+            .bulk_write(models)
+            .ordered(ordered);
+
+        // Session is optional, e.g. on rebuild
+        if let Some(session) = session {
+            writer = writer.session(session)
+        }
+
+        // Run the operations
+        writer.await?;
+
+        Ok(())
     }
 }
 
