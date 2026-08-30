@@ -70,8 +70,9 @@ async fn process_transaction(
     tracking_table: &str,
     wrapper: TransactionWrapper,
 ) -> Result<(), CommonError> {
-    // Start a session
+    // Start a DB transaction
     let mut session = mongo.get_session().await?;
+    session.start_transaction().await?;
 
     match process_atomic_transaction(config, mongo, &mut session, redo_table, tracking_table, router, wrapper).await {
         Ok(()) => {
@@ -184,7 +185,7 @@ async fn run_transaction_aggregator(
     if let Some(batch_insertions) = ops_aggregator.batch_insertions {
         for batch_insertion in batch_insertions {
             let collection = mongo.get_collection(batch_insertion.collection_name.as_str())?;
-            collection.insert_many(batch_insertion.insertions).await?;
+            collection.insert_many(batch_insertion.insertions).session(&mut *session).await?;
         }
     }
 
