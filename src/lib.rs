@@ -73,6 +73,7 @@ pub use flate2;
 pub use jwt_simple;
 pub use tracing;
 pub use tracing_subscriber;
+pub use rustls;
 
 #[cfg(test)]
 mod test_setup {
