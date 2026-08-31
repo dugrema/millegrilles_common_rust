@@ -11,6 +11,7 @@ use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
+use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use tokio::sync::mpsc::Receiver;
 
 #[async_trait]
@@ -54,6 +55,7 @@ pub trait ChiffrageService: Send + Sync {
     fn get_encryption_publickeys(&self) -> Vec<Arc<EnveloppeCertificat>>;
     fn encryption_key_maintenance(&self);
     fn add_encryption_publickey(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), Error>;
+    fn decrypt_document(&self, value: EncryptedDocument) -> Result<Value, Error>;
 }
 
 pub trait ConfigService: Send + Sync {

@@ -6,15 +6,19 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
-use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl};
 use openssl::x509::X509;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
+use millegrilles_cryptographie::x25519::dechiffrer_asymmetrique_ed25519;
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use x509_parser::nom::ExtendInto;
+use base64::{engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 
 // --- Constants ---
 pub const CACHE_LIMIT: usize = 50;
@@ -24,6 +28,7 @@ pub const CACHE_RESET_INTERVAL_SEC: u64 = 3600 * 3;
 // --- Internal Components ---
 
 pub struct SecurityServiceImpl {
+    private_key: Arc<EnveloppePrivee>,
     validator: Arc<ValidateurX509Impl>,
     encryption_handler: CleChiffrageHandlerImpl,
     /// Cache for the certificates that are already verified (local CA/current date only)
@@ -32,10 +37,12 @@ pub struct SecurityServiceImpl {
 
 impl SecurityServiceImpl {
     pub fn new(
+        private_key: Arc<EnveloppePrivee>,
         validator: Arc<ValidateurX509Impl>,
         encryption_handler: CleChiffrageHandlerImpl,
     ) -> Self {
         Self {
+            private_key,
             validator,
             encryption_handler,
             cache_verified_pk: Mutex::new(HashSet::with_capacity(CACHE_LIMIT)),
@@ -189,5 +196,36 @@ impl ChiffrageService for SecurityServiceImpl {
     fn add_encryption_publickey(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), Error> {
         self.encryption_handler.ajouter_certificat_chiffrage(certificat).map_err(|e| Error::String(e.to_string()))
     }
+
+    fn decrypt_document(&self, value: EncryptedDocument) -> Result<Value, Error> {
+        decrypt_document(self.private_key.as_ref(), value)
+    }
 }
 
+fn decrypt_document(private_key: &EnveloppePrivee, value: EncryptedDocument) -> Result<Value, Error> {
+    let cle_secrete = match value.cle.as_ref() {
+        Some(inner) => match inner.cles.as_ref() {
+            Some(inner) => {
+                // Trouver la cle qui correspond au fingerprint de notre certificat
+                let fingerprint = private_key.fingerprint()?;
+                match inner.get(fingerprint.as_str()) {
+                    Some(cle_dechiffrage) => {
+                        // Decoder de base64, copier dans CleSecrete
+                        let cle_chiffree = match base64_nopad.decode(cle_dechiffrage) {
+                            Ok(inner) => inner,
+                            Err(_e) => base64.decode(cle_dechiffrage)?  // Try with padding
+                        };
+                        let cle_dechiffree = dechiffrer_asymmetrique_ed25519(cle_chiffree.as_slice(), &private_key.cle_privee)?;
+                        cle_dechiffree
+                    },
+                    None => Err("Aucunes cles de dechiffrage ne correspond a la cle privee locale")?
+                }
+            },
+            None => Err("Aucunes cles de dechiffrage du document fournies (1)")?
+        },
+        None => Err("Aucunes cles de dechiffrage du document fournies (2)")?
+    };
+
+    let document_cles = value.decrypt_with_secret(&cle_secrete)?;
+    Ok(serde_json::from_slice(document_cles.as_slice())?)
+}

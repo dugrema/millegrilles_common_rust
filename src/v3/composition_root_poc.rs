@@ -70,6 +70,7 @@ impl PocCompositionRoot {
         // Security
         let validator = Arc::new(build_store_path_v2(&config_impl.get_configuration_pki().ca_certfile)?);
         let security_impl = Arc::new(SecurityServiceImpl::new(
+            config_impl.get_configuration_pki().get_enveloppe_privee(),
             validator,
             CleChiffrageHandlerImpl::new(),
         ));
