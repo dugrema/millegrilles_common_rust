@@ -91,7 +91,7 @@ pub trait BackupService: Send + Sync {
         redolog_collection_name: String,
         concatenate: bool,
         correlation_id: String,
-    ) -> Result<InfoTransactions, CommonError>;
+    ) -> Result<(), CommonError>;
 }
 
 #[async_trait]

@@ -1,4 +1,4 @@
-use crate::backup_v2::organiser_fichiers_backup;
+use crate::backup_v2::{organiser_fichiers_backup, FichierArchiveBackup};
 use crate::error::Error as CommonError;
 use crate::mongo_dao::MongoDao;
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
@@ -16,9 +16,6 @@ pub async fn preflight_check(
     redolog_collection_name: &str,
     incremental: bool,
 ) -> Result<PreflightResult, CommonError> {
-    let domain_backup_path = mongo.get_path_backup().join(domain_name);
-    let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
-
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
 
@@ -28,6 +25,9 @@ pub async fn preflight_check(
         }
         None
     } else {
+        let domain_backup_path = mongo.get_path_backup().join(domain_name);
+        let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
+
         // Check if we have existing incremental backups to concatenate
         let files = organiser_fichiers_backup(
             domain_backup_path.as_path(),
@@ -56,4 +56,20 @@ pub async fn preflight_check(
 async fn check_redo_log_size(mongo: &dyn MongoDao, redolog_collection_name: &str) -> Result<u64, CommonError> {
     let collection = mongo.get_collection(redolog_collection_name)?;
     Ok(collection.count_documents(doc!{}).await?)
+}
+
+pub async fn promote_incremental_to_concatene() -> Result<FichierArchiveBackup, CommonError> {
+    todo!()
+}
+
+pub async fn promote_concatene_to_final() -> Result<FichierArchiveBackup, CommonError> {
+    todo!()
+}
+
+pub async fn produce_incremental_backup_file() -> Result<FichierArchiveBackup, CommonError> {
+    todo!()
+}
+
+pub async fn produce_concatene_backup_file() -> Result<FichierArchiveBackup, CommonError> {
+    todo!()
 }
