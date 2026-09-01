@@ -35,7 +35,7 @@ impl DomainBackupServiceImpl {
         correlation_id: String,
     ) -> Result<InfoTransactions, CommonError> {
         // Run a check to ensure we have all required information to start a backup (raises Error on issue)
-        preflight_check(
+        let domain_info = preflight_check(
             self.config.as_ref(),
             self.mongo.as_ref(),
             self.outbound.as_ref(),

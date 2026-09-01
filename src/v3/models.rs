@@ -1,12 +1,15 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::sync::Arc;
 use bson::Document;
+use millegrilles_cryptographie::maitredescles::SignatureDomaines;
+use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
 use mongodb::options::WriteModel;
 use serde_json::Value;
-use crate::backup_v2::FichierArchiveBackup;
+use crate::backup_v2::{CleBackupDomaine, FichierArchiveBackup};
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
 
@@ -100,10 +103,26 @@ pub struct LockFile {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PreflightResult {
     /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
     pub existing_files: Option<Vec<FichierArchiveBackup>>,
     // Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
+    pub key: CleBackupDomaine,
+}
+
+#[derive(Clone)]
+pub struct GeneratedSecretKey {
+    pub key_id: String,
+    secret_key: CleDerivee,
+    pub signature: SignatureDomaines,
+    pub encrypted_keys: HashMap<String, String>,
+}
+
+impl GeneratedSecretKey {
+    /// Make the secret value obvious
+    pub fn secret_key(&self) -> &CleSecreteX25519 {
+        &self.secret_key.secret
+    }
 }

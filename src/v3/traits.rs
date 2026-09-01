@@ -1,8 +1,8 @@
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
-use crate::error::Error;
+use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::InboundMessage;
-use crate::v3::models::{TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
+use crate::v3::models::{GeneratedSecretKey, TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
@@ -11,27 +11,29 @@ use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
+use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use tokio::sync::mpsc::Receiver;
 use crate::backup_v2::InfoTransactions;
+use crate::chiffrage_cle::CommandeAjouterCleDomaine;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
     /// Emits a message, does not wait for a response (i.e. supported types are Event, Response, non-blocking Commands)
     /// This is fire and forget (no confirmation expected)
     async fn emit(&self, message: MessageMilleGrillesBufferDefault, routing: Option<RoutageMessageAction>)
-                  -> Result<(), Error>;
+                  -> Result<(), CommonError>;
 
     /// Sends a message and waits for a response. Used for requests and blocking commands only.
     async fn send(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageAction)
-                  -> Result<VerifiedResponseMessage, Error>;
+                  -> Result<VerifiedResponseMessage, CommonError>;
 
     /// Emits a response
     async fn respond(&self, message: MessageMilleGrillesBufferDefault, routing: RoutageMessageReponse)
-                  -> Result<(), Error>;
+                  -> Result<(), CommonError>;
 
     /// Take the message receiver from the queue registry for a named queue.
-    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<InboundMessage>, Error>;
+    fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<InboundMessage>, CommonError>;
 }
 
 #[async_trait]
@@ -39,13 +41,13 @@ pub trait PkiService: ValidateurX509 + Send + Sync {
     /// Loads and validates a PEm file. ca_pem is optional (only required for loading from different system)
     /// date=None means current date
     fn validate_pem(&self, pem_chain: &str, ca_pem: Option<&str>, date: Option<&DateTime<Utc>>)
-        -> Result<Arc<EnveloppeCertificat>, Error>;
+        -> Result<Arc<EnveloppeCertificat>, CommonError>;
 
     /// Verifies all security components of the message. Returns the parsed certificate.
     /// Fails with an Error on any issue.
-    async fn validate_message(&self, message: &MessageMilleGrillesOwned) -> Result<Arc<EnveloppeCertificat>, Error>;
+    async fn validate_message(&self, message: &MessageMilleGrillesOwned) -> Result<Arc<EnveloppeCertificat>, CommonError>;
 
-    async fn validate_message_ref(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, Error>;
+    async fn validate_message_ref(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, CommonError>;
 
     /// A cached public key implies the corresponding certificate has been verified and is currently valid.
     fn is_cached_pk_valid(&self, public_key: &str) -> bool;
@@ -55,8 +57,14 @@ pub trait PkiService: ValidateurX509 + Send + Sync {
 pub trait ChiffrageService: Send + Sync {
     fn get_encryption_publickeys(&self) -> Vec<Arc<EnveloppeCertificat>>;
     fn encryption_key_maintenance(&self);
-    fn add_encryption_publickey(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), Error>;
-    fn decrypt_document(&self, value: EncryptedDocument) -> Result<Value, Error>;
+    fn add_encryption_publickey(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), CommonError>;
+    fn decrypt_document(&self, value: EncryptedDocument) -> Result<Value, CommonError>;
+    /// Fetches keys from the KeyMaster
+    async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<CleSecreteSerialisee>, CommonError>;
+    /// Generates a new key that can be decrypted by the CA master key
+    async fn generate_new_key(&self, domains: &Vec<String>) -> Result<GeneratedSecretKey, CommonError>;
+    /// Saves the generated keys with the KeyMaster
+    async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), CommonError>;
 }
 
 pub trait ConfigService: Send + Sync {
@@ -67,14 +75,14 @@ pub trait ConfigService: Send + Sync {
 
 /// Message and document formatting
 pub trait FormatService: Send + Sync {
-    fn build_response(&self, message: Value) -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
+    fn build_response(&self, message: Value) -> Result<(MessageMilleGrillesBufferDefault, String), CommonError>;
     fn build_encrypted_response(&self, message: Value, certificat_demandeur: &EnveloppeCertificat)
-                                -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
+                                -> Result<(MessageMilleGrillesBufferDefault, String), CommonError>;
     fn build_action_message(&self, type_message: MessageKind, routage: &RoutageMessageAction, message: Value)
-                            -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
+                            -> Result<(MessageMilleGrillesBufferDefault, String), CommonError>;
     fn build_encrypted_action_message(&self, type_message: MessageKind, routage: &RoutageMessageAction, 
                                       message: Value, keys: Vec<&EnveloppeCertificat>) 
-        -> Result<(MessageMilleGrillesBufferDefault, String), Error>;
+        -> Result<(MessageMilleGrillesBufferDefault, String), CommonError>;
 }
 
 #[async_trait]
@@ -85,18 +93,18 @@ pub trait BackupService: Send + Sync {
         redolog_collection_name: String,
         concatenate: bool,
         correlation_id: String,
-    ) -> Result<InfoTransactions, Error>;
+    ) -> Result<InfoTransactions, CommonError>;
 }
 
 #[async_trait]
 pub trait DatabaseService: Send + Sync {
-    async fn get_collection(&self, name: &str) -> Result<Collection<Document>, Error>;
+    async fn get_collection(&self, name: &str) -> Result<Collection<Document>, CommonError>;
 }
 
 #[async_trait]
 pub trait TransactionService: Send + Sync {
-    async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), Error>;
-    async fn process_value(&self, domain: &str, action: &str, value: Value) -> Result<(), Error>;
+    async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), CommonError>;
+    async fn process_value(&self, domain: &str, action: &str, value: Value) -> Result<(), CommonError>;
 }
 
 #[async_trait]
@@ -105,15 +113,15 @@ pub trait TransactionRouter: Send + Sync {
         &self,
         action: String,
         wrapper: TransactionWrapper
-    ) -> Result<TransactionOperationAggregator, Error>;
+    ) -> Result<TransactionOperationAggregator, CommonError>;
 }
 
 #[async_trait]
 pub trait FilehostClient: Send + Sync {
-    async fn connect() -> Result<(), Error>;
-    async fn put_file() -> Result<(), Error>;
-    async fn get_file() -> Result<(), Error>;
-    async fn get_backup_list() -> Result<(), Error>;
-    async fn get_backup_file() -> Result<(), Error>;
-    async fn put_backup_file() -> Result<(), Error>;
+    async fn connect() -> Result<(), CommonError>;
+    async fn put_file() -> Result<(), CommonError>;
+    async fn get_file() -> Result<(), CommonError>;
+    async fn get_backup_list() -> Result<(), CommonError>;
+    async fn get_backup_file() -> Result<(), CommonError>;
+    async fn put_backup_file() -> Result<(), CommonError>;
 }

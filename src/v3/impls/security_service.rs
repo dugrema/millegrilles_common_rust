@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::v3::traits::{ChiffrageService, PkiService};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
+use millegrilles_cryptographie::chiffrage_cles::{CleChiffrageHandler, CleSecreteSerialisee};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl};
@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use x509_parser::nom::ExtendInto;
 use base64::{engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
+use crate::v3::models::GeneratedSecretKey;
 
 // --- Constants ---
 pub const CACHE_LIMIT: usize = 50;
@@ -199,6 +200,18 @@ impl ChiffrageService for SecurityServiceImpl {
 
     fn decrypt_document(&self, value: EncryptedDocument) -> Result<Value, Error> {
         decrypt_document(self.private_key.as_ref(), value)
+    }
+
+    async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<CleSecreteSerialisee>, Error> {
+        todo!()
+    }
+
+    async fn generate_new_key(&self, domains: &Vec<String>) -> Result<GeneratedSecretKey, Error> {
+        todo!()
+    }
+
+    async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), Error> {
+        todo!()
     }
 }
 
