@@ -1,3 +1,4 @@
+use std::path::Path;
 use crate::backup_v2::InfoTransactions;
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error as CommonError;
@@ -13,6 +14,8 @@ use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
+use multibase::Base;
+use multihash::Code;
 use tokio::sync::mpsc::Receiver;
 
 #[async_trait]
@@ -63,6 +66,7 @@ pub trait ChiffrageService: Send + Sync {
     async fn generate_new_key(&self, domains: &Vec<String>) -> Result<GeneratedSecretKey, CommonError>;
     /// Saves the generated keys with the KeyMaster
     async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), CommonError>;
+    async fn digest_file(&self, path: &Path, code: Code, base: Base) -> Result<String, CommonError>;
 }
 
 pub trait ConfigService: Send + Sync {

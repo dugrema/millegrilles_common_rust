@@ -1,13 +1,13 @@
-use crate::backup_v2::{FichierArchiveBackup, InfoTransactions};
+use crate::backup_v2::FichierArchiveBackup;
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
-use crate::v3::impls::backup_filehandling::{create_lockfile, unlock_lockfile};
+use crate::v3::impls::backup_filehandling::{create_lockfile, promote_incremental_to_concatene, unlock_lockfile};
+use crate::v3::impls::backup_producer::{preflight_check, produce_concatene_backup_file, produce_incremental_backup_file};
 use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::debug;
-use crate::v3::impls::backup_producer::{preflight_check, produce_concatene_backup_file, produce_incremental_backup_file, promote_incremental_to_concatene};
 
 pub struct DomainBackupServiceImpl {
     config: Arc<dyn ConfigService>,

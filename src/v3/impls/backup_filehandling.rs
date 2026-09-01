@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use tracing::info;
+use crate::backup_v2::FichierArchiveBackup;
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
 /// Raises errors when lock is unsuccessful.
@@ -42,4 +43,12 @@ pub fn unlock_lockfile(file: LockFile) {
     if let Err(e) = fs::remove_file(file.path) {
         info!("unlock_lockfile Error deleting lock file: {:?}", e);
     };
+}
+
+pub async fn promote_incremental_to_concatene() -> Result<FichierArchiveBackup, CommonError> {
+    todo!()
+}
+
+pub async fn promote_concatene_to_final() -> Result<FichierArchiveBackup, CommonError> {
+    todo!()
 }
