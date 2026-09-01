@@ -6,7 +6,7 @@ use crate::v3::traits::{ChiffrageService, PkiService};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad};
 use chrono::{DateTime, Utc};
-use millegrilles_cryptographie::chiffrage_cles::{CleChiffrageHandler, CleSecreteSerialisee};
+use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x25519::dechiffrer_asymmetrique_ed25519;

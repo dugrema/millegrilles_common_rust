@@ -10,7 +10,7 @@ use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
 use mongodb::options::WriteModel;
 use serde_json::Value;
-use crate::backup_v2::{CleBackupDomaine, FichierArchiveBackup};
+use crate::backup_v2::FichierArchiveBackup;
 use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;

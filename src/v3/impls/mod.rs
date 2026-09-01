@@ -12,3 +12,4 @@ pub mod backup_filehandling;
 pub mod backup_service;
 pub mod backup_producer;
 pub mod backup_restorer;
+pub mod backup_encryption;

@@ -1,11 +1,11 @@
+use crate::error::Error as CommonError;
+use crate::v3::models::LockFile;
+use fs2::FileExt;
 use std::fs;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use fs2::FileExt;
-use tracing::{error, info, warn};
-use crate::error::Error as CommonError;
-use crate::v3::models::LockFile;
+use tracing::info;
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
 /// Raises errors when lock is unsuccessful.
