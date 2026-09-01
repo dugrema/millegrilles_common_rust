@@ -347,10 +347,10 @@ pub struct ReponseCleIdBackup {
 }
 
 #[derive(Serialize)]
-struct CommandeEnregistrerCleidBackup {
-    domaine: String,
-    cle_id: Option<String>,
-    reset: Option<bool>
+pub struct CommandeEnregistrerCleidBackup {
+    pub domaine: String,
+    pub cle_id: Option<String>,
+    pub reset: Option<bool>
 }
 
 #[derive(Clone)]

@@ -105,13 +105,12 @@ pub struct LockFile {
     pub path: PathBuf,
 }
 
-#[derive(Clone)]
 pub struct PreflightResult {
     /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
     pub existing_files: Option<Vec<FichierArchiveBackup>>,
     // Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
-    pub key: CleBackupDomaine,
+    pub key: DecryptedKey,
 }
 
 #[derive(Clone)]
@@ -144,5 +143,22 @@ impl TryFrom<ResponseRequestDechiffrageV2Cle> for DecryptedKey {
         let key: CleSecreteSerialisee = value.try_into()?;
         let secret: CleSecreteX25519 = key.cle_secrete()?;
         Ok(Self {signature, key, secret})
+    }
+}
+
+impl TryFrom<GeneratedSecretKey> for DecryptedKey {
+    type Error = CommonError;
+
+    fn try_from(value: GeneratedSecretKey) -> Result<Self, Self::Error> {
+        let serialized_key = CleSecreteSerialisee::from_cle_secrete(
+            value.secret_key.secret.clone(),
+            Some(value.key_id.clone()),
+            None, None::<&str>, None::<&str>,
+        )?;
+        Ok(Self {
+            signature: Some(value.signature),
+            key: serialized_key,
+            secret: value.secret_key.secret,
+        })
     }
 }
