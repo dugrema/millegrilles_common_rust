@@ -333,17 +333,17 @@ async fn backup_incremental<M>(middleware: &M, commande: &CommandeBackup, cle_ba
 }
 
 #[derive(Serialize)]
-struct RequeteCleIdBackup {
-    domaine: String,
+pub struct RequeteCleIdBackup {
+    pub domaine: String,
 }
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
-struct ReponseCleIdBackup {
-    ok: bool,
-    code: Option<usize>,
-    err: Option<String>,
-    cle_id: Option<String>,
+pub struct ReponseCleIdBackup {
+    pub ok: bool,
+    pub code: Option<usize>,
+    pub err: Option<String>,
+    pub cle_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -353,6 +353,7 @@ struct CommandeEnregistrerCleidBackup {
     reset: Option<bool>
 }
 
+#[derive(Clone)]
 pub struct CleBackupDomaine {
     pub cle: CleSecrete<32>,
     pub cle_id: String,
