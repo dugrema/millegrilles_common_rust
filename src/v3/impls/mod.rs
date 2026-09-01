@@ -7,3 +7,8 @@ mod rabbitmq_connection;
 mod rabbitmq_registry;
 pub mod rabbitmq_consumer;
 pub mod transaction_service;
+pub mod filehost_service;
+pub mod backup_filehandling;
+pub mod backup_service;
+pub mod backup_producer;
+pub mod backup_restorer;

@@ -13,6 +13,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use tokio::sync::mpsc::Receiver;
+use crate::backup_v2::InfoTransactions;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
@@ -77,7 +78,15 @@ pub trait FormatService: Send + Sync {
 }
 
 #[async_trait]
-pub trait BackupService: Send + Sync {}
+pub trait BackupService: Send + Sync {
+    async fn backup_domain(
+        &self,
+        domain_name: String,
+        redolog_collection_name: String,
+        concatenate: bool,
+        correlation_id: String,
+    ) -> Result<InfoTransactions, Error>;
+}
 
 #[async_trait]
 pub trait DatabaseService: Send + Sync {
@@ -97,4 +106,14 @@ pub trait TransactionRouter: Send + Sync {
         action: String,
         wrapper: TransactionWrapper
     ) -> Result<TransactionOperationAggregator, Error>;
+}
+
+#[async_trait]
+pub trait FilehostClient: Send + Sync {
+    async fn connect() -> Result<(), Error>;
+    async fn put_file() -> Result<(), Error>;
+    async fn get_file() -> Result<(), Error>;
+    async fn get_backup_list() -> Result<(), Error>;
+    async fn get_backup_file() -> Result<(), Error>;
+    async fn put_backup_file() -> Result<(), Error>;
 }

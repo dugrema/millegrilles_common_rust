@@ -424,7 +424,7 @@ async fn recuperer_cle_backup<M>(middleware: &M, domaine_backup: &str) -> Result
     Ok(cle_backup_domaine)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeaderFichierArchive {
     pub idmg: String,
     pub domaine: String,
@@ -886,7 +886,7 @@ async fn sauvegarder_certificats<M>(middleware: &M, certificats: &HashMap<String
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FichierArchiveBackup {
     pub path_fichier: PathBuf,
     pub header: HeaderFichierArchive,

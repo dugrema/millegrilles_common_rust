@@ -1,9 +1,12 @@
+use std::fs::File;
+use std::path::PathBuf;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::sync::Arc;
 use bson::Document;
 use mongodb::options::WriteModel;
 use serde_json::Value;
+use crate::backup_v2::FichierArchiveBackup;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
 
@@ -89,4 +92,18 @@ impl TransactionOperationAggregator {
         self
     }
 
+}
+
+#[derive(Debug)]
+pub struct LockFile {
+    pub file: File,
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreflightResult {
+    /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
+    pub existing_files: Option<Vec<FichierArchiveBackup>>,
+    // Number of transactions currently in the redo-log (not backed-up yet)
+    pub redolog_count: usize,
 }
