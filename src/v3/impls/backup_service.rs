@@ -3,7 +3,7 @@ use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::backup_filehandling::{create_lockfile, unlock_lockfile};
-use crate::v3::{BackupService, ConfigService};
+use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
 use std::sync::Arc;
 use crate::v3::impls::backup_producer::preflight_check;
@@ -11,6 +11,7 @@ use crate::v3::impls::backup_producer::preflight_check;
 pub struct DomainBackupServiceImpl {
     config: Arc<dyn ConfigService>,
     outbound: Arc<MessageOutboundFacade>,
+    chiffrage: Arc<dyn ChiffrageService>,
     mongo: Arc<MongoDaoImpl>,
 }
 
@@ -18,11 +19,13 @@ impl DomainBackupServiceImpl {
     pub fn new(
         config: Arc<dyn ConfigService>,
         outbound: Arc<MessageOutboundFacade>,
+        chiffrage: Arc<dyn ChiffrageService>,
         mongo: Arc<MongoDaoImpl>,
     ) -> Self {
         Self {
             config,
             outbound,
+            chiffrage,
             mongo,
         }
     }
@@ -39,6 +42,7 @@ impl DomainBackupServiceImpl {
             self.config.as_ref(),
             self.mongo.as_ref(),
             self.outbound.as_ref(),
+            self.chiffrage.as_ref(),
             domain_name.as_str(),
             redolog_collection_name.as_str(),
             incremental

@@ -5,11 +5,13 @@ use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::sync::Arc;
 use bson::Document;
+use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
 use mongodb::options::WriteModel;
 use serde_json::Value;
 use crate::backup_v2::{CleBackupDomaine, FichierArchiveBackup};
+use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
 
@@ -124,5 +126,23 @@ impl GeneratedSecretKey {
     /// Make the secret value obvious
     pub fn secret_key(&self) -> &CleSecreteX25519 {
         &self.secret_key.secret
+    }
+}
+
+/// Encapsulates a key response
+pub struct DecryptedKey {
+    pub signature: Option<SignatureDomaines>,
+    pub key: CleSecreteSerialisee,
+    pub secret: CleSecreteX25519,
+}
+
+impl TryFrom<ResponseRequestDechiffrageV2Cle> for DecryptedKey {
+    type Error = CommonError;
+
+    fn try_from(value: ResponseRequestDechiffrageV2Cle) -> Result<Self, Self::Error> {
+        let signature = value.signature.clone();
+        let key: CleSecreteSerialisee = value.try_into()?;
+        let secret: CleSecreteX25519 = key.cle_secrete()?;
+        Ok(Self {signature, key, secret})
     }
 }

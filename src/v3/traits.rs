@@ -1,21 +1,19 @@
+use crate::backup_v2::InfoTransactions;
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::InboundMessage;
-use crate::v3::models::{GeneratedSecretKey, TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
+use crate::v3::models::{DecryptedKey, GeneratedSecretKey, TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
-use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
-use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use tokio::sync::mpsc::Receiver;
-use crate::backup_v2::InfoTransactions;
-use crate::chiffrage_cle::CommandeAjouterCleDomaine;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
@@ -60,7 +58,7 @@ pub trait ChiffrageService: Send + Sync {
     fn add_encryption_publickey(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), CommonError>;
     fn decrypt_document(&self, value: EncryptedDocument) -> Result<Value, CommonError>;
     /// Fetches keys from the KeyMaster
-    async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<CleSecreteSerialisee>, CommonError>;
+    async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<DecryptedKey>, CommonError>;
     /// Generates a new key that can be decrypted by the CA master key
     async fn generate_new_key(&self, domains: &Vec<String>) -> Result<GeneratedSecretKey, CommonError>;
     /// Saves the generated keys with the KeyMaster

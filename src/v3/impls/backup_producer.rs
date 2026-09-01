@@ -3,7 +3,7 @@ use crate::constantes::{DOMAINE_TOPOLOGIE, Securite};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::mongo_dao::MongoDao;
-use crate::v3::ConfigService;
+use crate::v3::{ChiffrageService, ConfigService};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::models::PreflightResult;
 use bson::doc;
@@ -13,6 +13,7 @@ pub async fn preflight_check(
     config: &dyn ConfigService,
     mongo: &dyn MongoDao,
     outbound: &MessageOutboundFacade,
+    chiffrage: &dyn ChiffrageService,
     domain_name: &str,
     redolog_collection_name: &str,
     incremental: bool,
@@ -45,7 +46,7 @@ pub async fn preflight_check(
     };
 
     // Get encryption key for this domain
-    let decryption_key = get_domain_backup_key(outbound, domain_name).await?;
+    let decryption_key = get_domain_backup_key(outbound, chiffrage, domain_name).await?;
 
     Ok(PreflightResult {
         existing_files,
@@ -62,6 +63,7 @@ async fn check_redo_log_size(mongo: &dyn MongoDao, redolog_collection_name: &str
 /// Loads or generates a domain backup key
 async fn get_domain_backup_key(
     outbound: &MessageOutboundFacade,
+    chiffrage: &dyn ChiffrageService,
     domain_name: &str,
 ) -> Result<CleBackupDomaine, CommonError> {
 
@@ -76,7 +78,7 @@ async fn get_domain_backup_key(
     let key_information: ReponseCleIdBackup = response.message.deserialize()?;
     let backup_key = match key_information.cle_id {
         Some(key_id) => {
-            load_backup_key(key_id.as_str()).await?
+            load_backup_key(chiffrage, key_id.as_str()).await?
         },
         None => {
             warn!("Error requesting domain backup key, will generate a new one: {:?}", key_information.err);
@@ -87,7 +89,9 @@ async fn get_domain_backup_key(
     Ok(backup_key)
 }
 
-async fn load_backup_key(key_id: &str) -> Result<CleBackupDomaine, CommonError> {
+async fn load_backup_key(chiffrage: &dyn ChiffrageService, key_id: &str) -> Result<CleBackupDomaine, CommonError> {
+    let reponse = chiffrage.get_keys(vec![key_id.to_string()]).await?;
+
     todo!()
 
     //     let cle_backup_domaine = match reponse_cle_id {
