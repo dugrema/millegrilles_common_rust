@@ -200,7 +200,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         let mut temp_out = [0u8; 4096];
 
         let final_len = match cipher.finalize(&mut temp_out) {
-            Ok(res) => res.hachage_bytes.len(),
+            Ok(res) => res.len,
             Err(e) => {
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
