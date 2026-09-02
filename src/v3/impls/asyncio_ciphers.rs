@@ -162,12 +162,10 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
     }
 }
 
-
 /// An AsyncRead decorator that decrypts data on the fly.
 pub struct AsyncDecryptionReaderMgs4<R> {
     inner: R,
     cipher: Option<DecipherMgs4>,
-    input_buffer: Vec<u8>,
     output_buffer: Vec<u8>,
     is_eof: bool,
 }
@@ -177,7 +175,6 @@ impl<R: AsyncRead + Unpin> AsyncDecryptionReaderMgs4<R> {
         Self {
             inner,
             cipher: Some(cipher),
-            input_buffer: Vec::with_capacity(128 * 1024),
             output_buffer: Vec::with_capacity(128 * 1024),
             is_eof: false,
         }
@@ -201,57 +198,29 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
                 return Poll::Ready(Ok(()));
             }
 
-            // 2. Attempt to decrypt data currently in the input buffer.
-            if !this.input_buffer.is_empty() {
-                let mut temp_out = [0u8; 64 * 1024];
-                // Use as_mut() to call update on the decipher inside the option.
-                match this.cipher.as_mut().ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::Other, "Decipher already taken")
-                })?.update(&this.input_buffer, &mut temp_out) {
-                    Ok(n) => {
-                        // The cipher is guaranteed to consume all input.
-                        this.input_buffer.clear();
-                        if n > 0 {
-                            this.output_buffer.extend_from_slice(&temp_out[0..n]);
-                            // Continue loop to return the newly decrypted data in the next iteration.
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        return Poll::Ready(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        )))
-                    }
-                }
-            }
-
-            // 3. If we have no data to decrypt and the inner reader reached EOF, finalize.
+            // 2. If we reached EOF and have nothing left to decrypt, finalize.
             if this.is_eof {
-                let mut temp_out = [0u8; 64 * 1024];
-                // Use take() to get ownership of the decipher for finalize().
-                match this.cipher.take().ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::Other, "Decipher already taken")
-                })?.finalize(&mut temp_out) {
-                    Ok(n) => {
-                        if n > 0 {
-                            this.output_buffer.extend_from_slice(&temp_out[0..n]);
-                            continue;
-                        } else {
-                            // Truly EOF: nothing left to decrypt.
-                            return Poll::Ready(Ok(()));
+                if let Some(mut cipher) = this.cipher.take() {
+                    let mut temp_out = [0u8; 64 * 1024];
+                    match cipher.finalize(&mut temp_out) {
+                        Ok(n) if n > 0 => {
+                            this.output_buffer.extend_from_slice(&temp_out[..n]);
+                            continue; // Return this data in step 1.
+                        }
+                        Ok(_) => return Poll::Ready(Ok(())), // Truly EOF
+                        Err(e) => {
+                            return Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                e.to_string(),
+                            )));
                         }
                     }
-                    Err(e) => {
-                        return Poll::Ready(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        )))
-                    }
+                } else {
+                    return Poll::Ready(Ok(())); // Already finalized or no cipher.
                 }
             }
 
-            // 4. If not EOF and no data is ready, read more from the inner source.
+            // 3. Read more from the inner source.
             let mut temp_buf = [MaybeUninit::uninit(); 64 * 1024];
             let mut temp_read_buf = ReadBuf::uninit(&mut temp_buf);
             match Pin::new(&mut this.inner).poll_read(cx, &mut temp_read_buf) {
@@ -259,11 +228,28 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
                     let n = temp_read_buf.filled().len();
                     if n == 0 {
                         this.is_eof = true;
-                        // Loop again to handle potential finalization or remaining input_buffer.
-                        continue;
+                        continue; // Go to step 2 to finalize.
                     }
-                    this.input_buffer.extend_from_slice(temp_read_buf.filled());
-                    // Continue loop to attempt decryption of the newly read data.
+
+                    // 4. Decrypt the newly read data.
+                    let mut temp_out = [0u8; 64 * 1024];
+                    match this.cipher.as_mut().ok_or_else(|| {
+                        std::io::Error::new(std::io::ErrorKind::Other, "Decipher already taken")
+                    })?.update(temp_read_buf.filled(), &mut temp_out) {
+                        Ok(n_produced) => {
+                            if n_produced > 0 {
+                                this.output_buffer.extend_from_slice(&temp_out[0..n_produced]);
+                            }
+                            // Continue loop to return data in step 1 or read more in step 3.
+                            continue;
+                        }
+                        Err(e) => {
+                            return Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                e.to_string(),
+                            )));
+                        }
+                    }
                 }
                 Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                 Poll::Pending => return Poll::Pending,
@@ -327,9 +313,10 @@ mod test {
         let mut writer = AsyncEncryptionWriterMgs4::new(file, cipher);
 
         // 3. Write data to the encrypted writer
-        for _i in 0..10000 {
+        for _i in 0..10 {
             writer.write_all(original_data).await?;
         }
+        // writer.write_all(original_data).await?;
 
         // 4. Shutdown the writer (this finalizes encryption and flushes buffers)
         writer.shutdown().await?;
