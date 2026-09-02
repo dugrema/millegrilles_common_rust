@@ -346,45 +346,17 @@ mod test {
             verification: None,
         };
 
-        // 6. Read the file back
-        let mut file_content = Vec::new();
-        let mut file_reader = File::open(&path).await?;
-        file_reader.read_to_end(&mut file_content).await?;
+        // 6. Setup the Decryption Reader
+        let file = File::open(&path).await?;
+        let decipher = DecipherMgs4::new(&decipher_key).expect("Failed to create decipher");
+        let mut reader = AsyncDecryptionReaderMgs4::new(file, decipher);
 
-        // 7. Decrypt the data
+        // 7. Read the entire decrypted content
         let mut decrypted_data = Vec::new();
-        let mut read_buffer = [0u8; 8192];   // 8KB read buffer
-        let mut decrypt_buffer = [0u8; 64*1024]; // 8KB decryption buffer
-        let mut file = File::open(&path).await?;
-        let mut decipher = DecipherMgs4::new(&decipher_key).expect("Failed to create decipher");
-
-        loop {
-            let n_read = file.read(&mut read_buffer).await?;
-            if n_read == 0 {
-                break; // End of file reached
-            }
-
-            // Decrypt the chunk we just read.
-            // Note: update() may return 0 if it hasn't reached a block boundary.
-            let n_decrypted = decipher.update(&read_buffer[..n_read], &mut decrypt_buffer)
-                .expect("Decryption update failed");
-
-            if n_decrypted > 0 {
-                decrypted_data.extend_from_slice(&decrypt_buffer[..n_decrypted]);
-            }
-        }
-
-        // Finalize the cipher to capture the last remaining bytes (the "tail").
-        let n_final = decipher.finalize(&mut decrypt_buffer).expect("Decryption finalize failed");
-        if n_final > 0 {
-            decrypted_data.extend_from_slice(&decrypt_buffer[..n_final]);
-        }
+        reader.read_to_end(&mut decrypted_data).await?;
 
         // 8. Assert equality
-        let original_len = original_data.len();
-        let decrypted_data_len = decrypted_data.len();
-        assert_eq!(original_data.to_vec(), decrypted_data[0..original_len]);
-        assert_eq!(original_data.to_vec(), decrypted_data[decrypted_data_len-original_len..]);
+        assert_eq!(original_data.to_vec(), decrypted_data);
 
         // Cleanup
         std::fs::remove_file(path)?;
