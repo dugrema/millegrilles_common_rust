@@ -1,24 +1,26 @@
-use std::path::{Path, PathBuf};
-use async_compression::tokio::write::DeflateEncoder;
 use crate::backup_v2::{FichierArchiveBackup, organiser_fichiers_backup};
+use crate::constantes::NEW_LINE_BYTE;
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
+use crate::v3::impls::asyncio_ciphers::AsyncEncryptionWriterMgs4;
 use crate::v3::impls::backup_encryption::get_domain_backup_key;
-use crate::v3::models::PreflightResult;
+use crate::v3::models::{PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
-use bson::doc;
+use async_compression::tokio::write::DeflateEncoder;
+use bson::{Bson, doc, serde_helpers::datetime::FromChrono04DateTime};
+use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
 use mongodb::ClientSession;
 use mongodb::options::Hint;
+use serde::Deserialize;
+use std::path::{Path, PathBuf};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::pin;
-use tracing::{debug, error};
-use crate::constantes::NEW_LINE_BYTE;
-use crate::v3::impls::asyncio_ciphers::AsyncEncryptionWriterMgs4;
+use tracing::{debug, error, warn};
 
 pub async fn preflight_check(
     config: &dyn ConfigService,
@@ -124,7 +126,7 @@ async fn process_incremental_file_operations(
     let mut compressor = DeflateEncoder::new(&mut encryptor);
 
     // Produce backup file content
-    extract_redolog_content(mongo, &mut compressor, redolog_collection_name, session).await?;
+    extract_redolog_content(mongo, &mut compressor, domain_info, redolog_collection_name, session).await?;
 
     // Wind down pipeline
     compressor.shutdown().await?;
@@ -145,11 +147,11 @@ async fn process_incremental_file_operations(
 async fn extract_redolog_content(
     mongo: &MongoDaoImpl,
     writer: &mut DeflateEncoder<&mut AsyncEncryptionWriterMgs4<File>>,
+    domain_info: &PreflightResult,
     redolog_collection_name: &str,
     session: &mut ClientSession,
 ) -> Result<(), CommonError> {
-
-    let collection = mongo.get_collection_typed::<MessageMilleGrillesOwned>(
+    let collection = mongo.get_collection_typed::<TransactionProcessedRow>(
         redolog_collection_name
     )?;
 
@@ -159,18 +161,31 @@ async fn extract_redolog_content(
         .hint(Hint::Name("processed".into()))
         // .sort(bson::doc!{"_processed": 1})
         .session(&mut *session)
-        .batch_size(50)
+        .batch_size(20)
         .await?;
 
-    let mut transaction_ids: Vec<String> = Vec::with_capacity(100);
+    let mut transaction_ids: Vec<String> = Vec::with_capacity(domain_info.redolog_count);
+    let mut max_processed_date: Option<DateTime<Utc>> = None;
 
     let new_line_slice = [NEW_LINE_BYTE; 1];
+
     // Read all transactions in the mongo redolog collection
+    let mut unreadable_transactions = false;
     while let Some(transaction) = cursor.next(&mut *session).await {
         match transaction {
             Ok(transaction) => {
                 // Keep transaction id for cleanup at the end (delete)
-                transaction_ids.push(transaction.id.clone());
+                transaction_ids.push(transaction.message.id.clone());
+                max_processed_date = match max_processed_date {
+                    Some(date) => {
+                        if &date > &transaction.processed {
+                            return Err(CommonError::Str("Transaction processing dates are not sorted properly"));
+                        }
+                        Some(transaction.processed)
+                    }
+                    None => Some(transaction.processed)
+                };
+
                 let transaction_str = serde_json::to_string(&transaction)?;
                 writer.write_all(transaction_str.as_bytes().to_vec().as_slice()).await?;
                 // Add line feed (\n) to allow file to be read as "jsonl"
@@ -178,6 +193,7 @@ async fn extract_redolog_content(
             }
             Err(e) => {
                 error!("Error parsing redolog content: {}, will ignore and delete transaction", e);
+                unreadable_transactions = true;
             }
         }
     }
@@ -185,13 +201,49 @@ async fn extract_redolog_content(
     let value = [0x0u8; 16];
     writer.write_all(value.as_slice()).await?;
 
-    // Delete all transactions that were read sucessfully
-    collection
-        .delete_many(doc!{"id": {"$in": transaction_ids}})
-        .session(session)
-        .await?;
+    // Delete processed transactions
+    if ! transaction_ids.is_empty() {
+        collection
+            .delete_many(doc! {"id": {"$in": &transaction_ids}})
+            .session(&mut *session)
+            .await?;
+        transaction_ids.clear();
+    }
 
-    // TODO - cleanup all transactions not read properly (deserialize Err)
+    // Cleanup all transactions not read properly (deserialize Err) and copy them to another collection
+    if let Some(max_datetime) = max_processed_date && unreadable_transactions {
+        // We already deleted all successfully backed-up transactions by exact id.
+        // This is to remove "bad" rows that cannot be read at all with the proper structure.
+        let bson_max_date = bson::DateTime::from_chrono(max_datetime);
+        let collection = mongo.get_collection(redolog_collection_name)?;
+        let collection_bad = mongo.get_collection(format!("{}_BAD", redolog_collection_name).as_str())?;
+        let mut cursor = collection
+            .find(doc! {"processed": {"$lt": bson_max_date}})
+            .session(&mut *session)
+            .await?;
+
+        while let Some(result) = cursor.next(&mut *session).await {
+            match result {
+                Ok(mut doc_value) => {
+                    let doc_id = doc_value.remove("_id").expect("Cannot get doc _id");
+                    warn!("Transaction redo-log entry id:{} cannot be processed: {:?}", doc_id, doc_value);
+                    collection_bad.insert_one(doc_value).await?;
+                    transaction_ids.push(doc_id.to_string());
+                },
+                Err(e) => {
+                    error!("Unable to read collection content for cleanup: {:?}", e);
+                }
+            }
+        }
+
+        // Cleanup of bad transactions
+        if ! transaction_ids.is_empty() {
+            collection
+                .delete_many(doc! {"id": {"$in": transaction_ids}})
+                .session(&mut *session)
+                .await?;
+        }
+    }
 
     Ok(())
 }

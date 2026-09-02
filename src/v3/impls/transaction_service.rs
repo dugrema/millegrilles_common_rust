@@ -1,7 +1,7 @@
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::mongo_dao::MongoDao;
-use crate::v3::models::{TransactionOperationAggregator, TransactionWrapper};
+use crate::v3::models::{TransactionOperationAggregator, TransactionProcessedRow, TransactionWrapper};
 use crate::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
 use async_trait::async_trait;
 use base64::Engine;
@@ -41,7 +41,6 @@ impl TransactionServiceImpl {
 impl TransactionService for TransactionServiceImpl {
     async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), CommonError> {
         process_transaction(
-            self.config.as_ref(),
             self.mongo.as_ref(),
             self.router.as_ref(),
             self.redo_table.as_str(),
@@ -63,7 +62,6 @@ impl TransactionService for TransactionServiceImpl {
 }
 
 async fn process_transaction(
-    config: &dyn ConfigService,
     mongo: &dyn MongoDao,
     router: &dyn TransactionRouter,
     redo_table: &str,
@@ -74,7 +72,7 @@ async fn process_transaction(
     let mut session = mongo.get_session().await?;
     session.start_transaction().await?;
 
-    match process_atomic_transaction(config, mongo, &mut session, redo_table, tracking_table, router, wrapper).await {
+    match process_atomic_transaction(mongo, &mut session, redo_table, tracking_table, router, wrapper).await {
         Ok(()) => {
             session.commit_transaction().await?;
             Ok(())
@@ -87,7 +85,6 @@ async fn process_transaction(
 }
 
 async fn process_atomic_transaction(
-    config: &dyn ConfigService,
     mongo: &dyn MongoDao,
     session: &mut ClientSession,
     redo_table: &str,
@@ -104,7 +101,7 @@ async fn process_atomic_transaction(
     };
 
     // Save the transaction detail in the redo log (transaction table) for the domain
-    persist_transaction(config, mongo, session, redo_table, tracking_table, &wrapper).await?;
+    persist_transaction(mongo, session, redo_table, tracking_table, &wrapper).await?;
 
     // Run the domain router to generate MongoDB write operations
     // let operations = ca_transaction_router(action.as_str(), wrapper).await?;
@@ -143,20 +140,12 @@ impl TryFrom<&MessageMilleGrillesOwned> for RowTransactionTracking {
 }
 
 async fn persist_transaction(
-    config: &dyn ConfigService,
     mongo: &dyn MongoDao,
     session: &mut ClientSession,
     redo_table: &str,
     tracking_table: &str,
     wrapper: &TransactionWrapper
 ) -> Result<(), CommonError> {
-    // Check if the transaction is using the local certificate (no need to save, this is done at startup)
-    let local_fp = config.get_configuration_pki().get_enveloppe_privee().fingerprint()?;
-    if wrapper.certificate.fingerprint()?.as_str() != local_fp {
-        // Not the local certificate
-        todo!("Save certificate")
-    }
-
     // Insert into transaction tracking table (prevents duplicates)
     let tracking_row = RowTransactionTracking::try_from(&wrapper.message)?;
     let tracking_collection = mongo.get_collection(tracking_table)?;
@@ -171,8 +160,15 @@ async fn persist_transaction(
     } else {
         Cow::Borrowed(&wrapper.message)
     };
+    let message_processed = TransactionProcessedRow {
+        message: message.into_owned(),
+        processed: Utc::now(),
+    };
     let redo_collection = mongo.get_collection(redo_table)?;
-    redo_collection.insert_one(bson::serialize_to_document(&message)?).session(&mut *session).await?;
+    redo_collection
+        .insert_one(bson::serialize_to_document(&message_processed)?)
+        .session(&mut *session)
+        .await?;
 
     Ok(())
 }
