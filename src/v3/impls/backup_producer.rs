@@ -97,8 +97,14 @@ pub async fn produce_incremental_backup_file(
         &mut session,
     ).await {
         Ok(backup) => {
-            session.commit_transaction().await?;
-            Ok(backup)
+            match session.commit_transaction().await {
+                Ok(()) => Ok(backup),
+                Err(e) => {
+                    error!("Failed to commit transaction, we delete the incremental backup file: {:?}", e);
+                    tokio::fs::remove_file(path).await?;
+                    Err(e)?  // Raise the error again
+                }
+            }
         },
         Err(e) => {
             session.abort_transaction().await?;
@@ -159,8 +165,7 @@ async fn process_incremental_file_operations(
         }
     };
 
-    // TODO Update the backup header with metadata including decryption information
-
+    // Update the backup header with metadata including decryption information
     backup_header.debut_backup = backup_result.first_transaction;
     backup_header.fin_backup = backup_result.last_transaction;
     backup_header.nombre_transactions = backup_result.count;
@@ -182,7 +187,6 @@ async fn process_incremental_file_operations(
         backup_path,
         incremental_workfile_path.as_path()
     ).await?;
-
 
     // Position of first byte of data: 4 bytes (version u16, taille header u16) + header
     let position_data = (4 + header_size) as usize;
@@ -382,7 +386,7 @@ async fn end_backup_file(file_path: &Path, header: &HeaderFichierArchive, header
     Ok(())
 }
 
-pub async fn rename_work_file(
+async fn rename_work_file(
     chiffrage: &dyn ChiffrageService,
     archive_type: &TypeArchive,
     backup_result: &BackupResult,
@@ -418,10 +422,12 @@ pub async fn rename_work_file(
     debug!("rename_work_file Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
     let mut backup_file_path = backup_path.to_owned();
     backup_file_path.push(backup_file_name);
-    fs::rename(workfile_path, &backup_file_path)?;
 
     let metadata = workfile_path.metadata()?;
     let filesize = metadata.len();
+
+    // Last operation - rename. If this success
+    fs::rename(workfile_path, &backup_file_path)?;
 
     Ok((backup_file_path, digest_suffix, filesize))
 }
