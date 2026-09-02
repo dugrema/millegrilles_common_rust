@@ -53,7 +53,12 @@ impl DomainBackupServiceImpl {
         let incremental_file: Option<FichierArchiveBackup> = if domain_info.redolog_count > 0 {
             // Extract all transactions into an incremental file even when we do a full backup
             // On full backups, the incremental file gets rotated out with the old backup set.
-            let incremental_file = produce_incremental_backup_file().await?;
+            let incremental_file = produce_incremental_backup_file(
+                self.mongo.as_ref(),
+                self.chiffrage.as_ref(),
+                &domain_info,
+                redolog_collection_name.as_str(),
+            ).await?;
             Some(incremental_file)
         } else {
             None

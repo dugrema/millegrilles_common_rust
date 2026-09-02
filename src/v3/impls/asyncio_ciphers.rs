@@ -213,10 +213,9 @@ mod test {
         let mut writer = AsyncEncryptionWriterMgs4::new(file, cipher);
 
         // 3. Write data to the encrypted writer
-        for i in 0..10000 {
-            writer.write(original_data).await?;
+        for _i in 0..10000 {
+            writer.write_all(original_data).await?;
         }
-        writer.write_all(original_data).await?;
 
         // 4. Shutdown the writer (this finalizes encryption and flushes buffers)
         writer.shutdown().await?;

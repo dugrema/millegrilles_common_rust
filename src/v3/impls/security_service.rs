@@ -18,6 +18,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
 use multibase::Base;
 use multihash::Code;
 use tokio::io::AsyncReadExt;
@@ -221,6 +222,9 @@ impl ChiffrageService for SecurityServiceImpl {
 
     async fn digest_file(&self, path: &Path, code: Code, base: Base) -> Result<String, CommonError> {
         digest_file(path, code, base).await
+    }
+    fn get_cipher_mgs4(&self, key: &DecryptedKey) -> Result<CipherMgs4, CommonError> {
+        Ok(CipherMgs4::with_secret(CleSecreteCipher::CleSecrete(key.secret.clone()))?)
     }
 }
 

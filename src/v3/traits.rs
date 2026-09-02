@@ -14,6 +14,7 @@ use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use serde_json::Value;
 use std::sync::Arc;
+use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use multibase::Base;
 use multihash::Code;
 use tokio::sync::mpsc::Receiver;
@@ -67,6 +68,7 @@ pub trait ChiffrageService: Send + Sync {
     /// Saves the generated keys with the KeyMaster
     async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), CommonError>;
     async fn digest_file(&self, path: &Path, code: Code, base: Base) -> Result<String, CommonError>;
+    fn get_cipher_mgs4(&self, key: &DecryptedKey) -> Result<CipherMgs4, CommonError>;
 }
 
 pub trait ConfigService: Send + Sync {

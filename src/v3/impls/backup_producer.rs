@@ -1,12 +1,24 @@
-use crate::backup_v2::{organiser_fichiers_backup, FichierArchiveBackup};
+use std::path::{Path, PathBuf};
+use async_compression::tokio::write::DeflateEncoder;
+use crate::backup_v2::{FichierArchiveBackup, organiser_fichiers_backup};
 use crate::error::Error as CommonError;
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::backup_encryption::get_domain_backup_key;
 use crate::v3::models::PreflightResult;
 use crate::v3::{ChiffrageService, ConfigService};
 use bson::doc;
-use tracing::debug;
+use futures_util::TryStreamExt;
+use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
+use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
+use mongodb::ClientSession;
+use mongodb::options::Hint;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use tokio::pin;
+use tracing::{debug, error};
+use crate::constantes::NEW_LINE_BYTE;
+use crate::v3::impls::asyncio_ciphers::AsyncEncryptionWriterMgs4;
 
 pub async fn preflight_check(
     config: &dyn ConfigService,
@@ -59,53 +71,129 @@ async fn check_redo_log_size(mongo: &dyn MongoDao, redolog_collection_name: &str
     Ok(collection.count_documents(doc!{}).await?)
 }
 
-pub async fn produce_incremental_backup_file() -> Result<FichierArchiveBackup, CommonError> {
+pub async fn produce_incremental_backup_file(
+    mongo: &MongoDaoImpl,
+    chiffrage: &dyn ChiffrageService,
+    domain_info: &PreflightResult,
+    redolog_collection_name: &str,
+) -> Result<FichierArchiveBackup, CommonError> {
     debug!("Starting incremental backup");
 
+    let path = PathBuf::new();
 
+    // Start database transaction - will commit only once the file is completely flushed.
+    let mut session = mongo.get_session().await?;
+    session.start_transaction().await?;
 
-    todo!()
-    // debug!("traiter_transactions_incremental Debut");
-    //     let debut_traitement = Utc::now();
-    //
-    //     // Creer channels de communcation entre threads
-    //     let (tx_transactions, rx_transactions) = mpsc::channel(2);
-    //     let (tx_info_transactions, rx_info_transactions) = mpsc::channel(2);
-    //
-    //     // Preparer une thread de traitement du fichier
-    //     let type_archive = TypeArchive::Incremental;
-    //     let pipe = preparer_fichier_chiffrage(
-    //         path_backup, type_archive.clone(), rx_transactions, rx_info_transactions, cle_backup_domaine, domaine, idmg);
-    //
-    //     // Traiter les transactions en ordre sequentiel.
-    //     let transaction_process = traiter_transactions_incrementales(
-    //         middleware, commande_backup, tx_transactions, tx_info_transactions);
-    //
-    //     let (pipe_result, transaction_result) = join![pipe, transaction_process];
-    //
-    //     // Rename work file
-    //     let info_transactions = transaction_result?;
-    //     let (temp_file, _) = pipe_result?;
-    //     rename_work_file(&type_archive, &info_transactions, domaine, path_backup, temp_file.as_ref()).await?;
-    //
-    //     let date_derniere_transaction = Utc.timestamp_millis_opt(info_transactions.date_derniere_transaction as i64).unwrap();
-    //
-    //     // Supprimer les transactions traitees. On utilise la date de la plus recente transaction archivee
-    //     // pour s'assurer de ne pas effacer de nouvelles transactions non traitees.
-    //     let collection = middleware.get_collection(commande_backup.nom_collection_transactions.as_str())?;
-    //     let filtre = doc! {
-    //         TRANSACTION_CHAMP_TRANSACTION_TRAITEE: {"$lte": date_derniere_transaction},
-    //         TRANSACTION_CHAMP_EVENEMENT_COMPLETE: true,
-    //     };
-    //     // let options = DeleteOptions::builder().hint(Hint::Name(String::from("backup_transactions"))).build();
-    //     collection
-    //         .delete_many(filtre)
-    //         .hint(Hint::Name(String::from("backup_transactions")))
-    //         .await?;
-    //
-    //     let fin_traitement = Utc::now();
-    //     debug!("traiter_transactions_incremental Fin, duree: {}", fin_traitement - debut_traitement);
-    //     Ok(())
+    match process_incremental_file_operations(
+        mongo,
+        chiffrage,
+        domain_info,
+        redolog_collection_name,
+        path.as_path(),
+        &mut session,
+    ).await {
+        Ok(backup) => {
+            session.commit_transaction().await?;
+            Ok(backup)
+        },
+        Err(e) => {
+            session.abort_transaction().await?;
+            Err(e)
+        }
+    }
+}
+
+async fn process_incremental_file_operations(
+    mongo: &MongoDaoImpl,
+    chiffrage: &dyn ChiffrageService,
+    domain_info: &PreflightResult,
+    redolog_collection_name: &str,
+    path: &Path,
+    session: &mut ClientSession,
+) -> Result<FichierArchiveBackup, CommonError> {
+    let file = tokio::fs::File::create(path).await?;
+
+    // TODO Write the backup header to the file before starting the stream
+
+    // Create streaming compression -> encryption -> writing pipeline for backup file
+    let mut encryptor = AsyncEncryptionWriterMgs4::new(
+        file,
+        chiffrage.get_cipher_mgs4(&domain_info.key)?
+    );
+    let mut compressor = DeflateEncoder::new(&mut encryptor);
+
+    // Produce backup file content
+    extract_redolog_content(mongo, &mut compressor, redolog_collection_name, session).await?;
+
+    // Wind down pipeline
+    compressor.shutdown().await?;
+    encryptor.shutdown().await?;
+
+    let encryption_result = match encryptor.result {
+        Some(result) => result,
+        None => {
+            return Err(CommonError::Str("Encryption results were not available for backup, aborting"));
+        }
+    };
+
+    // TODO Update the backup header with metadata including decryption information
+
+    todo!();
+}
+
+async fn extract_redolog_content(
+    mongo: &MongoDaoImpl,
+    writer: &mut DeflateEncoder<&mut AsyncEncryptionWriterMgs4<File>>,
+    redolog_collection_name: &str,
+    session: &mut ClientSession,
+) -> Result<(), CommonError> {
+
+    let collection = mongo.get_collection_typed::<MessageMilleGrillesOwned>(
+        redolog_collection_name
+    )?;
+
+    // Make a cursor sorted by _processed time, this ensures all transactions are run in the same order.
+    let mut cursor = collection
+        .find(doc!{})
+        .hint(Hint::Name("processed".into()))
+        // .sort(bson::doc!{"_processed": 1})
+        .session(&mut *session)
+        .batch_size(50)
+        .await?;
+
+    let mut transaction_ids: Vec<String> = Vec::with_capacity(100);
+
+    let new_line_slice = [NEW_LINE_BYTE; 1];
+    // Read all transactions in the mongo redolog collection
+    while let Some(transaction) = cursor.next(&mut *session).await {
+        match transaction {
+            Ok(transaction) => {
+                // Keep transaction id for cleanup at the end (delete)
+                transaction_ids.push(transaction.id.clone());
+                let transaction_str = serde_json::to_string(&transaction)?;
+                writer.write_all(transaction_str.as_bytes().to_vec().as_slice()).await?;
+                // Add line feed (\n) to allow file to be read as "jsonl"
+                writer.write_all(&new_line_slice).await?;
+            }
+            Err(e) => {
+                error!("Error parsing redolog content: {}, will ignore and delete transaction", e);
+            }
+        }
+    }
+
+    let value = [0x0u8; 16];
+    writer.write_all(value.as_slice()).await?;
+
+    // Delete all transactions that were read sucessfully
+    collection
+        .delete_many(doc!{"id": {"$in": transaction_ids}})
+        .session(session)
+        .await?;
+
+    // TODO - cleanup all transactions not read properly (deserialize Err)
+
+    Ok(())
 }
 
 pub async fn produce_concatene_backup_file() -> Result<FichierArchiveBackup, CommonError> {
