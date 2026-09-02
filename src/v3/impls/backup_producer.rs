@@ -1,5 +1,5 @@
-use std::io::SeekFrom;
-use crate::backup_v2::{organiser_fichiers_backup, FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
+use std::fs;
+use crate::backup_v2::{organiser_fichiers_backup, FichierArchiveBackup, HeaderFichierArchive, TypeArchive, InfoTransactions};
 use crate::constantes::NEW_LINE_BYTE;
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
@@ -9,19 +9,16 @@ use crate::v3::impls::backup_encryption::get_domain_backup_key;
 use crate::v3::models::{BackupResult, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::write::DeflateEncoder;
-use bson::{Bson, doc, serde_helpers::datetime::FromChrono04DateTime};
-use chrono::{DateTime, Utc};
-use futures_util::TryStreamExt;
-use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
-use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
+use bson::doc;
+use chrono::{DateTime, TimeZone, Utc};
+use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use mongodb::ClientSession;
 use mongodb::options::Hint;
-use serde::Deserialize;
+use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use millegrilles_cryptographie::maitredescles::SignatureDomaines;
+use chrono::format::StrftimeItems;
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-use tokio::pin;
 use tracing::{debug, error, warn};
 
 pub async fn preflight_check(
@@ -65,6 +62,7 @@ pub async fn preflight_check(
 
     Ok(PreflightResult {
         domain_name: domain_name.to_string(),
+        idmg: config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?,
         existing_files,
         redolog_count: 0,
         key: decryption_key,
@@ -114,14 +112,13 @@ async fn process_incremental_file_operations(
     chiffrage: &dyn ChiffrageService,
     domain_info: &PreflightResult,
     redolog_collection_name: &str,
-    path: &Path,
+    backup_path: &Path,
     session: &mut ClientSession,
 ) -> Result<FichierArchiveBackup, CommonError> {
-    let mut file = File::create(path).await?;
+    let incremental_workfile_path = prepare_incremental_backup_file(backup_path).await?;
+    let mut file = File::create(&incremental_workfile_path).await?;
 
-    let idmg = "DUMMY";  // TODO: Get IDMG
-
-    // TODO Write the backup header to the file before starting the stream
+    // Write the backup header to the file before starting the stream
     let (key_id, signature) = match (&domain_info.key.key.cle_id, &domain_info.key.signature) {
         (Some(key_id), Some(signature)) => (key_id.as_str(),signature),
         _ => return Err(CommonError::Str("No key_id/domain signature in key set")),
@@ -129,20 +126,20 @@ async fn process_incremental_file_operations(
     let (mut backup_header, header_size) = write_new_header(
         &mut file,
         &TypeArchive::Incremental,
-        idmg,
+        domain_info.idmg.as_str(),
         domain_info.domain_name.as_str(),
         key_id,
         signature
     ).await?;
 
-    // Create streaming compression -> encryption -> writing pipeline for backup file
+    // Create streaming "compression -> encryption -> file writing" pipeline for backup file
     let mut encryptor = AsyncEncryptionWriterMgs4::new(
         file,
         chiffrage.get_cipher_mgs4(&domain_info.key)?
     );
     let mut compressor = DeflateEncoder::new(&mut encryptor);
 
-    // Produce backup file content
+    // Produce backup file content. This also cleans-up the redo-log table.
     let backup_result = extract_redolog_content(
         mongo,
         &mut compressor,
@@ -174,19 +171,40 @@ async fn process_incremental_file_operations(
         None => return Err(CommonError::Str("Nonce missing from MGS4 encryption result"))
     }
 
-    end_backup_file(path, &backup_header, header_size).await?;
+    end_backup_file(backup_path, &backup_header, header_size).await?;
 
     // Rename working file to final file with digest in name
-    
+    let (path_backup_file, digest_suffix, filesize) = rename_work_file(
+        chiffrage,
+        &TypeArchive::Incremental,
+        &backup_result,
+        domain_info.domain_name.as_str(),
+        backup_path,
+        incremental_workfile_path.as_path()
+    ).await?;
+
+
+    // Position of first byte of data: 4 bytes (version u16, taille header u16) + header
+    let position_data = (4 + header_size) as usize;
     let backup_result = FichierArchiveBackup {
-        path_fichier: path.to_path_buf(),
+        path_fichier: path_backup_file,
         header: backup_header,
-        position_data: 0,
-        digest_suffix: "".to_string(),
-        len: 0,
+        position_data,
+        digest_suffix,
+        len: filesize,
     };
 
     Ok(backup_result)
+}
+
+async fn prepare_incremental_backup_file(backup_path: &Path) -> Result<PathBuf, CommonError> {
+    let prefix = "incremental";
+    let file_path = backup_path.join(format!("{}.mgbak.work", prefix));
+    // Remove any old workfile
+    if let Err(e) = tokio::fs::remove_file(&file_path).await {
+        debug!("prepare_incremental_backup_file Delete file result: {:?}", e);
+    }
+    Ok(file_path)
 }
 
 async fn extract_redolog_content(
@@ -362,4 +380,48 @@ async fn end_backup_file(file_path: &Path, header: &HeaderFichierArchive, header
     file.flush().await?;
 
     Ok(())
+}
+
+pub async fn rename_work_file(
+    chiffrage: &dyn ChiffrageService,
+    archive_type: &TypeArchive,
+    backup_result: &BackupResult,
+    domain: &str,
+    backup_path: &Path,
+    workfile_path: &Path
+) -> Result<(PathBuf, String, u64), CommonError> {
+    // Rename work file
+    let date_premiere_transaction = Utc.timestamp_millis_opt(backup_result.first_transaction as i64).unwrap();
+    let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
+
+    // Calculer le digest du fichier (apres modification du header).
+    let digest_str = chiffrage.digest_file(backup_path, multihash::Code::Blake2b512, multibase::Base::Base58Btc).await?;
+
+    let archive_type_marker = match archive_type {
+        TypeArchive::Incremental => "I",
+        TypeArchive::Concatene => "C",
+        TypeArchive::Final => "F",
+    };
+
+    // Keep last 12 chars of digest
+    let digest_suffix = digest_str[digest_str.len()-12..digest_str.len()].to_string();
+
+    // File name example : AiLanguage_2024-09-24T21:43:07.162Z_I_KozFJz4vLFe7.mgbak
+    let backup_file_name = format!(
+        "{}_{}_{}_{}.mgbak",
+        domain,
+        date_str,
+        archive_type_marker,
+        &digest_suffix
+    );
+
+    debug!("rename_work_file Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
+    let mut backup_file_path = backup_path.to_owned();
+    backup_file_path.push(backup_file_name);
+    fs::rename(workfile_path, &backup_file_path)?;
+
+    let metadata = workfile_path.metadata()?;
+    let filesize = metadata.len();
+
+    Ok((backup_file_path, digest_suffix, filesize))
 }

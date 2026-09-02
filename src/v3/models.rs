@@ -110,6 +110,7 @@ pub struct LockFile {
 
 pub struct PreflightResult {
     pub domain_name: String,
+    pub idmg: String,
     /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
     pub existing_files: Option<Vec<FichierArchiveBackup>>,
     // Number of transactions currently in the redo-log (not backed-up yet)
