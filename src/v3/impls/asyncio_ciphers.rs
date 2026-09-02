@@ -1,8 +1,11 @@
+use std::mem::MaybeUninit;
+use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, Decipher};
+use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
+use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult};
-use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use tokio::io::AsyncWrite;
+use tokio::io::{AsyncRead, ReadBuf};
 
 /// An AsyncWrite decorator that encrypts data on the fly.
 pub struct AsyncEncryptionWriterMgs4<W> {
@@ -159,14 +162,125 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
     }
 }
 
+
+/// An AsyncRead decorator that decrypts data on the fly.
+pub struct AsyncDecryptionReaderMgs4<R> {
+    inner: R,
+    cipher: Option<DecipherMgs4>,
+    input_buffer: Vec<u8>,
+    output_buffer: Vec<u8>,
+    is_eof: bool,
+}
+
+impl<R: AsyncRead + Unpin> AsyncDecryptionReaderMgs4<R> {
+    pub fn new(inner: R, cipher: DecipherMgs4) -> Self {
+        Self {
+            inner,
+            cipher: Some(cipher),
+            input_buffer: Vec::with_capacity(128 * 1024),
+            output_buffer: Vec::with_capacity(128 * 1024),
+            is_eof: false,
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+
+        loop {
+            // 1. If there's data in the output buffer, provide it to the caller.
+            if !this.output_buffer.is_empty() {
+                let n = std::cmp::min(this.output_buffer.len(), buf.remaining());
+                buf.put_slice(&this.output_buffer[..n]);
+                this.output_buffer.drain(..n);
+                return Poll::Ready(Ok(()));
+            }
+
+            // 2. Attempt to decrypt data currently in the input buffer.
+            if !this.input_buffer.is_empty() {
+                let mut temp_out = [0u8; 64 * 1024];
+                // Use as_mut() to call update on the decipher inside the option.
+                match this.cipher.as_mut().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::Other, "Decipher already taken")
+                })?.update(&this.input_buffer, &mut temp_out) {
+                    Ok(n) => {
+                        // The cipher is guaranteed to consume all input.
+                        this.input_buffer.clear();
+                        if n > 0 {
+                            this.output_buffer.extend_from_slice(&temp_out[0..n]);
+                            // Continue loop to return the newly decrypted data in the next iteration.
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        )))
+                    }
+                }
+            }
+
+            // 3. If we have no data to decrypt and the inner reader reached EOF, finalize.
+            if this.is_eof {
+                let mut temp_out = [0u8; 64 * 1024];
+                // Use take() to get ownership of the decipher for finalize().
+                match this.cipher.take().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::Other, "Decipher already taken")
+                })?.finalize(&mut temp_out) {
+                    Ok(n) => {
+                        if n > 0 {
+                            this.output_buffer.extend_from_slice(&temp_out[0..n]);
+                            continue;
+                        } else {
+                            // Truly EOF: nothing left to decrypt.
+                            return Poll::Ready(Ok(()));
+                        }
+                    }
+                    Err(e) => {
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        )))
+                    }
+                }
+            }
+
+            // 4. If not EOF and no data is ready, read more from the inner source.
+            let mut temp_buf = [MaybeUninit::uninit(); 64 * 1024];
+            let mut temp_read_buf = ReadBuf::uninit(&mut temp_buf);
+            match Pin::new(&mut this.inner).poll_read(cx, &mut temp_read_buf) {
+                Poll::Ready(Ok(())) => {
+                    let n = temp_read_buf.filled().len();
+                    if n == 0 {
+                        this.is_eof = true;
+                        // Loop again to handle potential finalization or remaining input_buffer.
+                        continue;
+                    }
+                    this.input_buffer.extend_from_slice(temp_read_buf.filled());
+                    // Continue loop to attempt decryption of the newly read data.
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use tempfile::NamedTempFile;
     use tokio::fs::File;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tempfile::NamedTempFile; // Assuming tempfile is available
-    use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, DecipherMgs4};
-    use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageStruct, Decipher};
     use super::*;
+    use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageStruct, Decipher};
+    // Assuming tempfile is available
+    use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, DecipherMgs4};
 
     #[test]
     fn test_base_mgs4_encrypt_decrypt() {
