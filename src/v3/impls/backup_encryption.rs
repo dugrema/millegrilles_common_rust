@@ -92,7 +92,6 @@ async fn generate_backup_key_for_domain(
 pub struct AsyncEncryptionWriterMgs4<W> {
     inner: W,
     cipher: Option<CipherMgs4>,
-    input_buffer: Vec<u8>,
     output_buffer: Vec<u8>,
 }
 
@@ -101,7 +100,6 @@ impl<W: AsyncWrite + Unpin> AsyncEncryptionWriterMgs4<W> {
         Self {
             inner,
             cipher: Some(cipher),
-            input_buffer: Vec::new(),
             output_buffer: Vec::with_capacity(64 * 1024),
         }
     }
@@ -113,12 +111,10 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        // 1. Access the struct fields mutably via get_mut to avoid
-        // conflicting borrows of 'self' (one for 'inner' and one for 'output_buffer').
         let this = self.get_mut();
 
-        // 2. If there is already data in the output_buffer from a previous call,
-        // we must attempt to flush it before processing new data.
+        // 1. If there's leftover data in the output buffer, flush it first.
+        // This handles the case where a previous poll_write returned Poll::Pending.
         if !this.output_buffer.is_empty() {
             match Pin::new(&mut this.inner).poll_write(cx, &this.output_buffer) {
                 Poll::Ready(Ok(n)) => {
@@ -133,42 +129,27 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
             }
         }
 
-        // 3. Buffer the incoming data. This is critical for AsyncWrite compliance.
-        // If we return Poll::Pending, the caller may retry with the same buffer.
-        // By buffering it, we ensure we don't encrypt the same data twice.
-        this.input_buffer.extend_from_slice(buf);
-
-        // 4. Process the input_buffer through the cipher.
+        // 2. Encrypt the new data.
+        // Since the cipher is guaranteed to consume all input, we can use a temporary buffer.
         let mut temp_out = [0u8; 4096];
-        let cipher = this.cipher.as_mut().expect("Cipher was already taken in poll_shutdown");
+        let cipher = this.cipher
+            .as_mut()
+            .ok_or_else(|| {
+                return std::io::Error::new(std::io::ErrorKind::Other,  CommonError::Str("Cipher was already taken in poll_shutdown"))
+            })?;
 
-        let mut input_pos = 0;
-        while input_pos < this.input_buffer.len() {
-            let produced = match cipher.update(&this.input_buffer[input_pos..], &mut temp_out) {
-                Ok(n) => n,
-                Err(e) => return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
-            };
+        let produced = match cipher.update(buf, &mut temp_out) {
+            Ok(n) => n,
+            Err(e) => return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
+        };
 
-            if produced > 0 {
-                this.output_buffer.extend_from_slice(&temp_out[0..produced]);
-            }
-
-            // Assuming the cipher consumes the input slice provided.
-            // If it doesn't, you would increment input_pos by the actual amount consumed.
-            input_pos += this.input_buffer.len() - input_pos;
-
-            if produced == 0 && input_pos < this.input_buffer.len() {
-                // The cipher is likely waiting for more data to complete a block.
-                break;
-            }
+        if produced > 0 {
+            this.output_buffer.extend_from_slice(&temp_out[0..produced]);
         }
 
-        // Clear the input buffer since it has been processed into the output_buffer.
-        this.input_buffer.clear();
-
-        // 5. Attempt to write the newly encrypted data to the inner sink.
+        // 3. Attempt to write the newly encrypted data to the inner sink.
         if this.output_buffer.is_empty() {
-            // No data was produced by the cipher (it's buffering for a block).
+            // Nothing was produced (e.g. not enough data for a block)
             return Poll::Ready(Ok(buf.len()));
         }
 
@@ -187,16 +168,37 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
+        let this = self.get_mut();
+
+        // Flush output buffer first
+        if !this.output_buffer.is_empty() {
+            match Pin::new(&mut this.inner).poll_write(cx, &this.output_buffer) {
+                Poll::Ready(Ok(n)) => {
+                    if n == this.output_buffer.len() {
+                        this.output_buffer.clear();
+                    } else {
+                        this.output_buffer.drain(0..n);
+                    }
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+
+        Pin::new(&mut this.inner).poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        // Use get_mut to avoid borrow checker conflicts between 'this.inner' and 'this.output_buffer'
         let this = self.get_mut();
 
-        // 1. Finalize encryption and take ownership of the cipher.
-        // We must take ownership because 'finalize' takes 'self' by value.
-        let cipher = this.cipher.take().expect("Cipher already taken during shutdown");
+        // 1. Finalize encryption.
+        // let cipher = this.cipher.take().expect("Cipher already taken during shutdown");
+        let cipher = this.cipher
+            .take()
+            .ok_or_else(|| {
+                return std::io::Error::new(std::io::ErrorKind::Other,  CommonError::Str("Cipher was already taken in poll_shutdown"))
+            })?;
+
         let mut temp_out = [0u8; 4096];
 
         let final_len = match cipher.finalize(&mut temp_out) {
@@ -209,13 +211,11 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
             }
         };
 
-        // If the finalization produced bytes, add them to the buffer to be flushed.
         if final_len > 0 {
             this.output_buffer.extend_from_slice(&temp_out[0..final_len]);
         }
 
-        // 2. Flush any remaining data in the output_buffer to the inner sink.
-        // We use a loop to handle cases where poll_write might return Pending.
+        // 2. Flush remaining output buffer.
         while !this.output_buffer.is_empty() {
             match Pin::new(&mut this.inner).poll_write(cx, &this.output_buffer) {
                 Poll::Ready(Ok(n)) => {
@@ -230,7 +230,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
             }
         }
 
-        // 3. Finally, shut down the inner sink.
+        // 3. Shutdown the inner sink.
         Pin::new(&mut this.inner).poll_shutdown(cx)
     }
 }
