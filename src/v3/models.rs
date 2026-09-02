@@ -109,6 +109,7 @@ pub struct LockFile {
 }
 
 pub struct PreflightResult {
+    pub domain_name: String,
     /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
     pub existing_files: Option<Vec<FichierArchiveBackup>>,
     // Number of transactions currently in the redo-log (not backed-up yet)
@@ -172,4 +173,11 @@ pub struct TransactionProcessedRow {
     pub message: MessageMilleGrillesOwned,
     #[serde(with="FromChrono04DateTime")]
     pub processed: chrono::DateTime<Utc>,
+}
+
+#[derive(Clone)]
+pub struct BackupResult {
+    pub first_transaction: u64,
+    pub last_transaction: u64,
+    pub count: u64
 }

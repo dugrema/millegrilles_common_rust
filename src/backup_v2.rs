@@ -57,10 +57,27 @@ pub const CONST_ARCHIVE_NEW_VERSION: &str = "NEW";
 
 #[derive(Clone)]
 #[allow(dead_code)]
-enum TypeArchive {
+pub enum TypeArchive {
     Incremental,
     Concatene,
     Final
+}
+
+impl Into<&str> for &TypeArchive {
+    fn into(self) -> &'static str {
+        match self {
+            TypeArchive::Incremental => "I",
+            TypeArchive::Concatene => "C",
+            TypeArchive::Final => "F",
+        }
+    }
+}
+
+impl Into<String> for &TypeArchive {
+    fn into(self) -> String {
+        let value: &str = self.into();
+        value.to_string()
+    }
 }
 
 pub async fn thread_backup_v2<M>(middleware: &M, mut rx: Receiver<CommandeBackup>)
@@ -432,16 +449,16 @@ pub struct HeaderFichierArchive {
     /// Type de fichier: I (incremental), C (concatene), F (final)
     pub type_archive: String,
     /// Date de la premiere transaction du backup (epoch seconds)
-    debut_backup: u64,
+    pub debut_backup: u64,
     /// Date de la derniere transaction du backup (epoch seconds)
-    fin_backup: u64,
+    pub fin_backup: u64,
     /// Nombre de transactions dans le backup
-    nombre_transactions: u64,
-    cle_id: String,
-    cle_dechiffrage: SignatureDomaines,
-    nonce: String,
-    format: String,
-    compression: Option<String>,
+    pub nombre_transactions: u64,
+    pub cle_id: String,
+    pub cle_dechiffrage: SignatureDomaines,
+    pub nonce: String,
+    pub format: String,
+    pub compression: Option<String>,
 }
 
 #[derive(Clone)]
