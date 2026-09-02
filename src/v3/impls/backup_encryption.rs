@@ -234,3 +234,42 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         Pin::new(&mut this.inner).poll_shutdown(cx)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageStruct, Decipher};
+    use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
+    use super::*;
+
+    #[test]
+    fn test_base_mgs4_encrypt_decrypt() {
+        // Generate a kew for the cipher
+        let mut cipher = CipherMgs4::new().expect("cipher");
+        let mut buffer_in = [56u8;16];  // 16 bytes with value 56
+        let mut buffer_out = [0u8;64];
+        let out_len = cipher.update(buffer_in.as_mut(), &mut buffer_out).expect("cipher");
+        if out_len > 0 {panic!("Buffer should not be output yet");}
+        let result = cipher.finalize(&mut buffer_out).expect("output");
+        let out_len = result.len;
+
+        let encrypted_value = Vec::from(&buffer_out[0..out_len]);
+
+        let secret_key = result.cles;
+        let decipher_key = CleDechiffrageStruct {
+            cle_chiffree: "NA".to_string(),
+            cle_secrete: Some(secret_key.cle_secrete),
+            format: secret_key.format,
+            nonce: secret_key.nonce,
+            verification: None,
+        };
+
+        let mut decipher = DecipherMgs4::new(&decipher_key).expect("decipher");
+        let out_len = decipher.update(encrypted_value.as_slice(), &mut buffer_out).expect("decipher");
+        if out_len > 0 {panic!("Buffer should not be output yet");}
+        let out_len = decipher.finalize(&mut buffer_out).expect("output");
+        let decrypted_value = Vec::from(&buffer_out[0..out_len]);
+
+        assert_eq!(buffer_in, decrypted_value.as_slice());
+    }
+
+}
