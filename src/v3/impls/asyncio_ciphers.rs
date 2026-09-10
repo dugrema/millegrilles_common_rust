@@ -313,10 +313,11 @@ mod test {
         let mut writer = AsyncEncryptionWriterMgs4::new(file, cipher);
 
         // 3. Write data to the encrypted writer
-        for _i in 0..10 {
+        let mut comparison_value = Vec::new();
+        for _i in 0..10000 {
+            comparison_value.extend(original_data.iter().cloned());
             writer.write_all(original_data).await?;
         }
-        // writer.write_all(original_data).await?;
 
         // 4. Shutdown the writer (this finalizes encryption and flushes buffers)
         writer.shutdown().await?;
@@ -343,7 +344,7 @@ mod test {
         reader.read_to_end(&mut decrypted_data).await?;
 
         // 8. Assert equality
-        assert_eq!(original_data.to_vec(), decrypted_data);
+        assert_eq!(comparison_value, decrypted_data);
 
         // Cleanup
         std::fs::remove_file(path)?;
