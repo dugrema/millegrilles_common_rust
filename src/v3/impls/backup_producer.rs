@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use crate::backup_v2::{organiser_fichiers_backup, FichierArchiveBackup, HeaderFichierArchive, TypeArchive, InfoTransactions};
 use crate::constantes::NEW_LINE_BYTE;
@@ -17,6 +18,7 @@ use mongodb::options::Hint;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use chrono::format::StrftimeItems;
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tracing::{debug, error, warn};
@@ -82,7 +84,8 @@ pub async fn produce_incremental_backup_file(
 ) -> Result<FichierArchiveBackup, CommonError> {
     debug!("Starting incremental backup");
 
-    let path = PathBuf::new();
+    let domain_backup_path = mongo.get_path_backup().join(domain_info.domain_name.as_str());
+    let incremental_workfile_path = prepare_incremental_backup_file(domain_backup_path.as_path()).await?;
 
     // Start database transaction - will commit only once the file is completely flushed.
     let mut session = mongo.get_session().await?;
@@ -93,7 +96,7 @@ pub async fn produce_incremental_backup_file(
         chiffrage,
         domain_info,
         redolog_collection_name,
-        path.as_path(),
+        incremental_workfile_path.as_path(),
         &mut session,
     ).await {
         Ok(backup) => {
@@ -101,7 +104,7 @@ pub async fn produce_incremental_backup_file(
                 Ok(()) => Ok(backup),
                 Err(e) => {
                     error!("Failed to commit transaction, we delete the incremental backup file: {:?}", e);
-                    tokio::fs::remove_file(path).await?;
+                    tokio::fs::remove_file(incremental_workfile_path).await?;
                     Err(e)?  // Raise the error again
                 }
             }
@@ -118,11 +121,10 @@ async fn process_incremental_file_operations(
     chiffrage: &dyn ChiffrageService,
     domain_info: &PreflightResult,
     redolog_collection_name: &str,
-    backup_path: &Path,
+    incremental_workfile_path: &Path,
     session: &mut ClientSession,
 ) -> Result<FichierArchiveBackup, CommonError> {
-    let incremental_workfile_path = prepare_incremental_backup_file(backup_path).await?;
-    let mut file = File::create(&incremental_workfile_path).await?;
+    let mut work_file = File::create(&incremental_workfile_path).await?;
 
     // Write the backup header to the file before starting the stream
     let (key_id, signature) = match (&domain_info.key.key.cle_id, &domain_info.key.signature) {
@@ -130,7 +132,7 @@ async fn process_incremental_file_operations(
         _ => return Err(CommonError::Str("No key_id/domain signature in key set")),
     };
     let (mut backup_header, header_size) = write_new_header(
-        &mut file,
+        &mut work_file,
         &TypeArchive::Incremental,
         domain_info.idmg.as_str(),
         domain_info.domain_name.as_str(),
@@ -140,7 +142,7 @@ async fn process_incremental_file_operations(
 
     // Create streaming "compression -> encryption -> file writing" pipeline for backup file
     let mut encryptor = AsyncEncryptionWriterMgs4::new(
-        file,
+        work_file,
         chiffrage.get_cipher_mgs4(&domain_info.key)?
     );
     let mut compressor = DeflateEncoder::new(&mut encryptor);
@@ -176,16 +178,18 @@ async fn process_incremental_file_operations(
         None => return Err(CommonError::Str("Nonce missing from MGS4 encryption result"))
     }
 
-    end_backup_file(backup_path, &backup_header, header_size).await?;
+    let backup_path = incremental_workfile_path.parent()
+        .expect("Failed to get backup parent directory").to_owned();
+    end_backup_file(backup_path.as_path(), &backup_header, header_size).await?;
 
     // Rename working file to final file with digest in name
-    let (path_backup_file, digest_suffix, filesize) = rename_work_file(
+    let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
         chiffrage,
         &TypeArchive::Incremental,
         &backup_result,
         domain_info.domain_name.as_str(),
-        backup_path,
-        incremental_workfile_path.as_path()
+        backup_path.as_path(),
+        incremental_workfile_path
     ).await?;
 
     // Position of first byte of data: 4 bytes (version u16, taille header u16) + header
@@ -223,12 +227,14 @@ async fn extract_redolog_content(
     )?;
 
     // Make a cursor sorted by _processed time, this ensures all transactions are run in the same order.
+    // Use a hard limit of 10,000 transactions per incremental file (limits DB cleanup per transaction id).
     let mut cursor = collection
         .find(doc!{})
         .hint(Hint::Name("processed".into()))
         // .sort(bson::doc!{"_processed": 1})
         .session(&mut *session)
         .batch_size(20)
+        .limit(10_000)
         .await?;
 
     let mut transaction_ids: Vec<String> = Vec::with_capacity(domain_info.redolog_count);
@@ -243,9 +249,10 @@ async fn extract_redolog_content(
 
     // Read all transactions in the mongo redolog collection
     let mut unreadable_transactions = false;
+    let mut already_processed_certificate_ids = HashSet::new();
     while let Some(transaction) = cursor.next(&mut *session).await {
         match transaction {
-            Ok(transaction) => {
+            Ok(mut transaction) => {
                 // Beancounting
                 if result.first_transaction == 0 {
                     result.first_transaction = transaction.processed.timestamp() as u64;
@@ -258,6 +265,15 @@ async fn extract_redolog_content(
                 last_transaction_date = transaction.processed;  // Keep date instance, more precise for cleanup
                 result.count += 1;
                 // Done beancounting
+
+                // Ensure volatile fields are empty
+                transaction.message.millegrille = None;
+                transaction.message.attachements = None;
+
+                // Extract certificate from transaction
+                if let Some(certificate) = transaction.message.certificat.take() {
+                    save_certificate(&certificate, &mut already_processed_certificate_ids).await?;
+                }
 
                 // Keep transaction id for cleanup at the end (delete)
                 transaction_ids.push(transaction.message.id.clone());
@@ -272,9 +288,6 @@ async fn extract_redolog_content(
             }
         }
     }
-
-    let value = [0x0u8; 16];
-    writer.write_all(value.as_slice()).await?;
 
     // Delete processed transactions
     if ! transaction_ids.is_empty() {
@@ -321,6 +334,18 @@ async fn extract_redolog_content(
     }
 
     Ok(result)
+}
+
+async fn save_certificate(certificate: &Vec<String>, already_processed_ids: &mut HashSet<String>) -> Result<(), CommonError> {
+    // Ensure the certificate is saved by the CorePki domain.
+    let certificate_str = certificate.join("\n");
+    let certificate = EnveloppeCertificat::try_from(certificate_str.as_str())?;
+    let certificate_fingerprint = certificate.fingerprint_pk()?;
+    if ! already_processed_ids.contains(&certificate_fingerprint) {
+        todo!("Save certificate");
+        already_processed_ids.insert(certificate_fingerprint);
+    }
+    Ok(())
 }
 
 pub async fn produce_concatene_backup_file() -> Result<FichierArchiveBackup, CommonError> {
@@ -371,7 +396,7 @@ async fn end_backup_file(file_path: &Path, header: &HeaderFichierArchive, header
         Err("backup_v2.preparer_fichier_chiffrage Header mis a jour est plus grand que l'espace reserve")?;
     }
 
-    let mut file = File::create(file_path).await?;
+    let mut file = File::options().write(true).open(file_path).await?;
 
     // Fix file header with missing information, keep same version and header size info (bytes 0-3)
     // The unused header portion will be padded with 0s.
@@ -379,14 +404,14 @@ async fn end_backup_file(file_path: &Path, header: &HeaderFichierArchive, header
     file.write_all(header_str.as_bytes()).await?;
     // Truncate by filling in 0s over the remaining original header
     for _ in header_updated_size..header_size {
-        file.write(&[0u8]).await?;
+        file.write_all(&[0u8]).await?;
     }
-    file.flush().await?;
+    file.shutdown().await?;
 
     Ok(())
 }
 
-async fn rename_work_file(
+async fn rename_backup_file(
     chiffrage: &dyn ChiffrageService,
     archive_type: &TypeArchive,
     backup_result: &BackupResult,
