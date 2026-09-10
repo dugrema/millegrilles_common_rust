@@ -101,8 +101,8 @@ impl BackupService for DomainBackupServiceImpl {
     ) -> Result<(), CommonError> {
         let backup_path = self.mongo.get_path_backup();
 
-        // Lock the backup folder
-        let lockfile = create_lockfile(backup_path)?;
+        // Lock the backup folder (all domains, only process one domain at a time)
+        let lockfile = create_lockfile(backup_path, true).await?;
 
         let result = self.run_backup(
             domain_name, redolog_collection_name, incremental, correlation_id

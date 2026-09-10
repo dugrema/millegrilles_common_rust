@@ -10,7 +10,7 @@ use crate::backup_v2::FichierArchiveBackup;
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
 /// Raises errors when lock is unsuccessful.
-pub fn create_lockfile(backup_path: &PathBuf) -> Result<LockFile, CommonError> {
+pub async fn create_lockfile(backup_path: &PathBuf, wait: bool) -> Result<LockFile, CommonError> {
     let mut path_lockfile = backup_path.clone();
     path_lockfile.push("backup.lock");
     let file = match File::open(&path_lockfile) {
@@ -29,8 +29,23 @@ pub fn create_lockfile(backup_path: &PathBuf) -> Result<LockFile, CommonError> {
         }
     };
 
-    if let Err(_e) = file.try_lock_exclusive() {
-        return Err(CommonError::Str("Backup file already locked, SKIP backup"));
+    let mut retries = 0;
+    loop {
+        match file.try_lock_exclusive() {
+            Ok(_) => break,
+            Err(_e) => {
+                retries += 1;
+                if retries > 20 {
+                    return Err(CommonError::Str("Lockfile not being released, SKIPPING backup"));
+                }
+                if wait {
+                    info!("Backup lockfile present, waiting ...");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+                } else {
+                    return Err(CommonError::Str("Backup lockfile already present, SKIP backup"));
+                }
+            }
+        }
     }
 
     Ok(LockFile { file, path: path_lockfile })
