@@ -347,53 +347,28 @@ async fn save_certificate(
     let certificate_instance = EnveloppeCertificat::try_from(certificate_str.as_str())?;
     let certificate_fingerprint = certificate_instance.fingerprint_pk()?;
     if ! already_processed_ids.contains(&certificate_fingerprint) {
+
+        // Send certificate for saving
         let routing = RoutageMessageAction::builder(
             DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege]).build();
         let command = CommandeSauvegarderCertificat {
             chaine_pem: certificate.to_owned(),
             ca: None,
         };
-        let response = match outbound.send_command(routing, command).await {
+        match outbound.send_command(routing, command).await {
             Ok(response) => match response {
                 Some(response) => {
-
+                    if let Ok((true, e)) = response.is_err() {
+                        return Err(CommonError::String(format!("Error when saving certificate: {:?}", e)))
+                    }
                 },
                 None => return Err(CommonError::Str("No response received when saving certificate"))
             },
             Err(e) => return Err(CommonError::String(format!("Error saving certificate {}: {:?}", certificate_fingerprint, e)))
         };
 
-        // async fn sauvegarder_certificats<M>(middleware: &M, certificats: &HashMap<String, Vec<String>>)
-        //     -> Result<(), CommonError>
-        //     where M: GenerateurMessages
-        // {
-        //     let routage = RoutageMessageAction::builder(
-        //         DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege]).build();
-        //
-        //     debug!("Sauvegarder {} certificats", certificats.len());
-        //
-        //     for certificat in certificats.values() {
-        //         let commande = CommandeSauvegarderCertificat {
-        //             chaine_pem: certificat.to_owned(),
-        //             ca: None,
-        //         };
-        //         let reponse = middleware.transmettre_commande(routage.clone(), &commande).await?;
-        //         if let Some(TypeMessage::Valide(reponse)) = reponse {
-        //             let reponse_owned = reponse.message.parse_to_owned()?;
-        //             let reponse_commande: ReponseCommande = reponse_owned.deserialize()?;
-        //             if reponse_commande.ok != Some(true) {
-        //                 Err(format!("backup_v2.sauvegarder_certificats Reponse de type erreur durant la sauvegarde de certificat : {:?}", reponse_commande.err))?
-        //             }
-        //         } else {
-        //             Err("backup_v2.sauvegarder_certificats Mauvais type de reponse pour la sauvegarde de certificat")?
-        //         }
-        //     }
-        //
-        //     Ok(())
-        // }
-
+        // Save fingerprint to avoid re-sending this certificate
         already_processed_ids.insert(certificate_fingerprint);
-        todo!("Save certificate");
     }
     Ok(())
 }

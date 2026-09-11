@@ -24,6 +24,15 @@ pub struct VerifiedResponseMessage {
     pub certificate: Arc<EnveloppeCertificat>,
 }
 
+impl VerifiedResponseMessage {
+    pub fn is_ok(&self) -> Result<bool, CommonError> {
+        ErrorMessage::is_ok(&self.message)
+    }
+    pub fn is_err(&self) -> Result<(bool, Option<String>), CommonError> {
+        ErrorMessage::is_err(&self.message)
+    }
+}
+
 #[derive(Clone)]
 pub struct TransactionWrapper {
     pub message: MessageMilleGrillesOwned,
@@ -196,12 +205,12 @@ impl ErrorMessage {
     pub fn ok() -> Self { Self { ok: true, code: None, err: None } }
     pub fn err(msg: &str) -> Self { Self { ok: false, code: None, err: Some(msg.to_string()) } }
     pub fn err_code(code: u16, msg: &str) -> Self { Self { ok: false, code: Some(code), err: Some(msg.to_string()) } }
-    pub fn is_ok<S>(value: &MessageMilleGrillesOwned) -> Result<bool, CommonError> where S: DeserializeOwned {
+    pub fn is_ok(value: &MessageMilleGrillesOwned) -> Result<bool, CommonError> {
         let content: Self = value.deserialize()?;
         Ok(content.ok)
     }
     pub fn is_err(value: &MessageMilleGrillesOwned) -> Result<(bool, Option<String>), CommonError> {
         let content: Self = value.deserialize()?;
-        Ok((content.ok, content.err))
+        Ok((!content.ok, content.err))
     }
 }
