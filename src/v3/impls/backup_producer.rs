@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use chrono::format::StrftimeItems;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use tokio::fs::File;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error, warn};
 
 pub async fn preflight_check(
@@ -124,7 +124,7 @@ async fn process_incremental_file_operations(
     incremental_workfile_path: &Path,
     session: &mut ClientSession,
 ) -> Result<FichierArchiveBackup, CommonError> {
-    let mut work_file = File::create(&incremental_workfile_path).await?;
+    let mut work_file = tokio::io::BufWriter::new(File::create(&incremental_workfile_path).await?);
 
     // Write the backup header to the file before starting the stream
     let (key_id, signature) = match (&domain_info.key.key.cle_id, &domain_info.key.signature) {
@@ -215,13 +215,16 @@ async fn prepare_incremental_backup_file(backup_path: &Path) -> Result<PathBuf, 
     Ok(file_path)
 }
 
-async fn extract_redolog_content(
+async fn extract_redolog_content<W>(
     mongo: &MongoDaoImpl,
-    writer: &mut DeflateEncoder<&mut AsyncEncryptionWriterMgs4<File>>,
+    writer: &mut W,
     domain_info: &PreflightResult,
     redolog_collection_name: &str,
     session: &mut ClientSession,
-) -> Result<BackupResult, CommonError> {
+) -> Result<BackupResult, CommonError>
+where
+    W: AsyncWrite + Unpin,
+{
     let collection = mongo.get_collection_typed::<TransactionProcessedRow>(
         redolog_collection_name
     )?;
@@ -354,16 +357,16 @@ pub async fn produce_concatene_backup_file() -> Result<FichierArchiveBackup, Com
 
 /// Generates and writes a new header. All fields are "maximized" to make space in the file.
 /// This writes all file headers (version, length of header, header itself)
-async fn write_new_header(
-    file: &mut File,
+async fn write_new_header<W>(
+    writer: &mut W,
     archive_type: &TypeArchive,
     idmg: &str,
     domain: &str,
     key_id: &str,
     key_signature: &SignatureDomaines
-) -> Result<(HeaderFichierArchive, u16), CommonError> {
+) -> Result<(HeaderFichierArchive, u16), CommonError> where W: AsyncWrite + Unpin {
     static FILE_VERSION: u16 = 1;
-    let mut header = HeaderFichierArchive {
+    let header = HeaderFichierArchive {
         idmg: idmg.to_string(),
         domaine: domain.to_string(),
         type_archive: archive_type.into(),
@@ -380,10 +383,10 @@ async fn write_new_header(
     let header_size = header_str.len() as u16;
     debug!("preparer_fichier_chiffrage Header taille initiale {}", header_size);
 
-    file.write(&FILE_VERSION.to_le_bytes()).await?;
-    file.write(&header_size.to_le_bytes()).await?;
-    file.write_all(header_str.as_bytes()).await?;
-    file.flush().await?;
+    writer.write(&FILE_VERSION.to_le_bytes()).await?;
+    writer.write(&header_size.to_le_bytes()).await?;
+    writer.write_all(header_str.as_bytes()).await?;
+    writer.flush().await?;
 
     Ok((header, header_size))
 }
