@@ -64,7 +64,7 @@ pub fn unlock_lockfile(file: LockFile) {
 }
 
 /// Rewrites the backup file header to be Concatene
-pub async fn promote_incremental_to_concatene() -> Result<FichierArchiveBackup, CommonError> {
+pub async fn promote_incremental_to_concatene(file: &FichierArchiveBackup) -> Result<FichierArchiveBackup, CommonError> {
 
     todo!()
 }
@@ -127,4 +127,8 @@ pub async fn rename_backup_file(
     fs::rename(workfile_path, &backup_file_path)?;
 
     Ok((backup_file_path, digest_suffix, filesize))
+}
+
+pub async fn rotate_backup_files(domain_backup_path: &Path) -> Result<(), CommonError> {
+    todo!()
 }

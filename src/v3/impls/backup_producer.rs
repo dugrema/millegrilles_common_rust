@@ -37,14 +37,14 @@ pub async fn preflight_check(
 ) -> Result<PreflightResult, CommonError> {
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
-
+    let domain_backup_path = mongo.get_path_backup().join(domain_name);
+    
     let existing_files = if incremental {
         if waiting_transaction_count == 0 {
             return Err(CommonError::Str("No transactions waiting in redo collection for incremental backup, aborting"));
         }
         None
     } else {
-        let domain_backup_path = mongo.get_path_backup().join(domain_name);
         let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
 
         // Check if we have existing incremental backups to concatenate
@@ -68,6 +68,7 @@ pub async fn preflight_check(
     Ok(PreflightResult {
         domain_name: domain_name.to_string(),
         idmg: config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?,
+        domain_backup_path,
         existing_files,
         redolog_count: 0,
         key: decryption_key,
@@ -88,8 +89,9 @@ pub async fn produce_incremental_backup_file(
 ) -> Result<FichierArchiveBackup, CommonError> {
     debug!("Starting incremental backup");
 
-    let domain_backup_path = mongo.get_path_backup().join(domain_info.domain_name.as_str());
-    let incremental_workfile_path = prepare_incremental_backup_file(domain_backup_path.as_path()).await?;
+    // let domain_backup_path = mongo.get_path_backup().join(domain_info.domain_name.as_str());
+    let domain_backup_path = domain_info.domain_backup_path.as_path();
+    let incremental_workfile_path = prepare_incremental_backup_file(domain_backup_path).await?;
 
     // Start database transaction - will commit only once the file is completely flushed.
     let mut session = mongo.get_session().await?;
@@ -373,7 +375,7 @@ async fn save_certificate(
     Ok(())
 }
 
-pub async fn produce_concatene_backup_file() -> Result<FichierArchiveBackup, CommonError> {
+pub async fn produce_concatene_backup_file(files: &Vec<FichierArchiveBackup>) -> Result<FichierArchiveBackup, CommonError> {
     todo!()
 }
 

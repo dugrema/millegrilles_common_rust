@@ -2,7 +2,7 @@ use crate::backup_v2::FichierArchiveBackup;
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
-use crate::v3::impls::backup_filehandling::{create_lockfile, promote_incremental_to_concatene, unlock_lockfile};
+use crate::v3::impls::backup_filehandling::{create_lockfile, promote_incremental_to_concatene, rotate_backup_files, unlock_lockfile};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatene_backup_file, produce_incremental_backup_file};
 use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
@@ -65,26 +65,28 @@ impl DomainBackupServiceImpl {
             None
         };
 
-        if !incremental {
-            // Run full backup
-            match domain_info.existing_files.as_mut() {
-                Some(existing_files) => {
+        match domain_info.existing_files.as_mut() {
+            Some(existing_files) => {
+                if incremental {
+                    debug!("Incremental backup complete");
+                } else {
+                    // Complete backup, concatenate all files including the new one
                     if let Some(new_file) = incremental_file {
                         // Add the new incremental file to the list of files
                         existing_files.push(new_file);
                     }
-
                     // Build new concatene file and rotate previous backup set.
-                    produce_concatene_backup_file().await?;
-                },
-                None => {
-                    // There are no pre-existing file and this is a full backup. Promote the
-                    // incremental file to Concatene: overwrite header and rename from I to C.
-                    promote_incremental_to_concatene().await?;
+                    produce_concatene_backup_file(existing_files).await?;
+                    rotate_backup_files(domain_info.domain_backup_path.as_path()).await?;
+                }
+            },
+            None => {
+                // There are no pre-existing files.
+                if let Some(new_file) = incremental_file {
+                    // Promote the incremental file to Concatene
+                    promote_incremental_to_concatene(&new_file).await?;
                 }
             }
-        } else {
-            debug!("Incremental backup complete");
         }
 
         Ok(())
