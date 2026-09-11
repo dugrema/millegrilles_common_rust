@@ -130,10 +130,60 @@ pub async fn rename_backup_file(
 }
 
 pub async fn rotate_backup_files(domain_backup_path: &Path) -> Result<(), CommonError> {
+    use chrono::Utc;
+    use tokio::fs;
+
+    // 1. Create new backup_DATE folder (date is now).
+    let now = Utc::now();
+    let date_str = now.format("%Y%m%d%H%M%S").to_string();
+    let new_backup_dir_name = format!("backup_{}", date_str);
+    let new_backup_dir = domain_backup_path.join(new_backup_dir_name);
+
+    if let Err(e) = fs::create_dir_all(&new_backup_dir).await {
+        return Err(CommonError::String(format!("Failed to create backup directory {:?}: {:?}", new_backup_dir, e)));
+    }
+
+    // 2. Move *.mgbak files from domain_backup_path to new_backup_dir
+    let mut entries = fs::read_dir(domain_backup_path)
+        .await
+        .map_err(|e| CommonError::String(format!("Failed to read directory {:?}: {:?}", domain_backup_path, e)))?;
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() && path.extension().map_or(false, |ext| ext == "mgbak") {
+            let dest = new_backup_dir.join(path.file_name().unwrap());
+            if let Err(e) = fs::rename(&path, &dest).await {
+                return Err(CommonError::String(format!("Failed to move file {:?} to {:?}: {:?}", path, dest, e)));
+            }
+        }
+    }
+
+    // 3. List backup_DATE folders and keep only the most recent 2
+    let mut entries = fs::read_dir(domain_backup_path)
+        .await
+        .map_err(|e| CommonError::String(format!("Failed to read directory {:?}: {:?}", domain_backup_path, e)))?;
     
-    // List backup_DATE folders in order, keep the last 2 only
-    
-    // Create new backup_NOW folder, move *.mgbak files to that folder
-    
-    todo!()
+    let mut backup_dirs = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_dir() && path.file_name().map_or(false, |name| name.to_string_lossy().starts_with("backup_")) {
+            backup_dirs.push(path);
+        }
+    }
+
+    // Sort by name (which is date-based)
+    backup_dirs.sort();
+
+    // Keep the last 3
+    const KEEP_LAST_N: usize = 3;
+    if backup_dirs.len() > KEEP_LAST_N {
+        let to_delete_count = backup_dirs.len() - KEEP_LAST_N;
+        for i in 0..to_delete_count {
+            if let Err(e) = fs::remove_dir_all(&backup_dirs[i]).await {
+                return Err(CommonError::String(format!("Failed to delete old backup directory {:?}: {:?}", backup_dirs[i], e)));
+            }
+        }
+    }
+
+    Ok(())
 }
