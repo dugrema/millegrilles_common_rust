@@ -7,21 +7,20 @@ use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::AsyncEncryptionWriterMgs4;
 use crate::v3::impls::backup_encryption::get_domain_backup_key;
-use crate::v3::impls::backup_filehandling::{prepare_incremental_backup_file, rename_backup_file, rotate_backup_files};
+use crate::v3::impls::backup_filehandling::{overwrite_backup_file_header, prepare_incremental_backup_file, rename_backup_file, rotate_backup_files};
 use crate::v3::models::{BackupResult, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::write::DeflateEncoder;
 use bson::doc;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::ClientSession;
 use mongodb::options::Hint;
 use std::collections::HashSet;
-use std::io::SeekFrom;
 use std::path::Path;
 use tokio::fs::File;
-use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error, warn};
 
 pub async fn preflight_check(
@@ -187,13 +186,19 @@ async fn process_incremental_file_operations(
 
     let backup_path = incremental_workfile_path.parent()
         .expect("Failed to get backup parent directory").to_owned();
-    end_backup_file(backup_path.as_path(), &backup_header, header_size).await?;
+    overwrite_backup_file_header(backup_path.as_path(), &backup_header).await?;
+
+    // Extract date information from header
+    let first_transaction = match Utc.timestamp_millis_opt(backup_result.first_transaction as i64).single() {
+        Some(timestamp) => timestamp,
+        None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
+    };
 
     // Rename working file to final file with digest in name
     let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
         chiffrage,
         &TypeArchive::Incremental,
-        &backup_result,
+        first_transaction,
         domain_info.domain_name.as_str(),
         backup_path.as_path(),
         incremental_workfile_path
@@ -376,8 +381,8 @@ async fn save_certificate(
 pub async fn produce_concatene_backup_file(
     domain_info: &PreflightResult
 ) -> Result<FichierArchiveBackup, CommonError> {
-    let domain_backup_path = domain_info.domain_backup_path.as_path(); 
-    
+    let domain_backup_path = domain_info.domain_backup_path.as_path();
+
     // Concatenated file done, rotate all backup folders and move *.mgbak files to backup.1
     rotate_backup_files(domain_backup_path).await?;
 
@@ -418,28 +423,4 @@ async fn write_new_header<W>(
     writer.flush().await?;
 
     Ok((header, header_size))
-}
-
-async fn end_backup_file(file_path: &Path, header: &HeaderFichierArchive, header_size: u16) -> Result<(), CommonError> {
-    let header_str = serde_json::to_string(&header)?;
-    let header_updated_size = header_str.len() as u16;
-    debug!("preparer_fichier_chiffrage Header taille mise a jour {}, valeur: {}", header_updated_size, header_str);
-    if header_size < header_updated_size {
-        Err("backup_v2.preparer_fichier_chiffrage Header mis a jour est plus grand que l'espace reserve")?;
-    }
-
-    let mut file = File::options().write(true).open(file_path).await?;
-
-    // Fix file header with missing information, keep same version and header size info (bytes 0-3)
-    // The unused header portion will be padded with 0s.
-    file.seek(SeekFrom::Start(4)).await?;
-    file.write_all(header_str.as_bytes()).await?;
-    // Truncate by filling in 0s over the remaining original header
-    let padding_size = (header_size - header_updated_size) as usize;
-    if padding_size > 0 {
-        file.write_all(&vec![0u8; padding_size]).await?;
-    }
-    file.shutdown().await?;
-
-    Ok(())
 }

@@ -1,8 +1,8 @@
-use crate::backup_v2::FichierArchiveBackup;
+use crate::backup_v2::{FichierArchiveBackup, TypeArchive};
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
-use crate::v3::impls::backup_filehandling::{create_lockfile, promote_incremental_to_concatene, rotate_backup_files, unlock_lockfile};
+use crate::v3::impls::backup_filehandling::{create_lockfile, promote_backup_file, unlock_lockfile};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatene_backup_file, produce_incremental_backup_file};
 use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
@@ -85,7 +85,7 @@ impl DomainBackupServiceImpl {
                 // There are no pre-existing files.
                 if let Some(new_file) = incremental_file {
                     // Promote the incremental file to Concatene
-                    promote_incremental_to_concatene(&new_file).await?;
+                    promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?;
                 }
             }
         }
@@ -113,7 +113,7 @@ impl BackupService for DomainBackupServiceImpl {
         ).await;
 
         // Unlock backup folder
-        unlock_lockfile(lockfile);
+        unlock_lockfile(lockfile).await;
 
         result
     }
