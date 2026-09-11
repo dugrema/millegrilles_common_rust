@@ -88,7 +88,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         }
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
 
         // Flush output buffer first
@@ -109,7 +109,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         Pin::new(&mut this.inner).poll_flush(cx)
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
 
         // The cipher is stateful, ensure we only call finalize once before the result is produced
@@ -183,7 +183,7 @@ impl<R: AsyncRead + Unpin> AsyncDecryptionReaderMgs4<R> {
 
 impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
@@ -200,7 +200,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
 
             // 2. If we reached EOF and have nothing left to decrypt, finalize.
             if this.is_eof {
-                if let Some(mut cipher) = this.cipher.take() {
+                if let Some(cipher) = this.cipher.take() {
                     let mut temp_out = [0u8; 64 * 1024];
                     match cipher.finalize(&mut temp_out) {
                         Ok(n) if n > 0 => {

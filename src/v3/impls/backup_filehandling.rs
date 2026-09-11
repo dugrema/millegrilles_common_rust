@@ -1,7 +1,7 @@
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::error::Error as CommonError;
 use crate::v3::ChiffrageService;
-use crate::v3::models::{BackupResult, LockFile};
+use crate::v3::models::LockFile;
 use chrono::format::StrftimeItems;
 use chrono::{TimeZone, Utc};
 use fs2::FileExt;
@@ -11,7 +11,6 @@ use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::time::sleep;
-use tokio_util::io::simplex::new;
 use tracing::{debug, info};
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
@@ -256,4 +255,33 @@ pub async fn overwrite_backup_file_header(file_path: &Path, header: &HeaderFichi
     file.shutdown().await?;
 
     Ok(())
+}
+
+pub async fn produce_final_file(
+    chiffrage: &dyn ChiffrageService,
+    concatenated_file: &FichierArchiveBackup
+) -> Result<FichierArchiveBackup, CommonError> {
+    // Apply file promotion. This changes header, calculates digest and renames.
+    let mut final_file = promote_backup_file(chiffrage, &concatenated_file, TypeArchive::Final).await?;
+
+    // Create backup domain "final/" dir if not already present
+    let backup_dir = match final_file.path_fichier.parent() {
+        Some(parent) => parent.to_path_buf(),
+        None => return Err(CommonError::Str("Unable to get backup parent path"))
+    };
+    let final_dir = backup_dir.join("final");
+    if let Err(e) = fs::create_dir_all(&final_dir).await {
+        return Err(CommonError::String(format!("Failed to create backup directory {:?}: {:?}", final_dir, e)));
+    }
+
+    // Move new file to final/ dir.
+    let dest = final_dir.join(final_file.path_fichier.file_name().expect("Failed to get file name"));
+    if let Err(e) = fs::rename(final_file.path_fichier.as_path(), &dest).await {
+        return Err(CommonError::String(format!("Failed to move file {:?} to {:?}: {:?}", final_file.path_fichier, dest, e)));
+    }
+
+    // Update file path and return
+    final_file.path_fichier = dest;
+
+    Ok(final_file)
 }

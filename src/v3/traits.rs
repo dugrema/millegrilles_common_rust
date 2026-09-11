@@ -1,5 +1,3 @@
-use std::path::Path;
-use crate::backup_v2::InfoTransactions;
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
@@ -8,15 +6,16 @@ use crate::v3::models::{DecryptedKey, GeneratedSecretKey, TransactionOperationAg
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
+use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
-use serde_json::Value;
-use std::sync::Arc;
-use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use multibase::Base;
 use multihash::Code;
+use serde_json::Value;
+use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
 
 #[async_trait]
@@ -96,7 +95,6 @@ pub trait BackupService: Send + Sync {
         domain_name: String,
         redolog_collection_name: String,
         concatenate: bool,
-        correlation_id: String,
     ) -> Result<(), CommonError>;
 }
 

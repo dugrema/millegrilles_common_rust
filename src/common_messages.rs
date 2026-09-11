@@ -409,3 +409,35 @@ pub struct BackupEvent {
     pub err: Option<String>,
     pub version: Option<String>,
 }
+
+impl BackupEvent {
+    pub fn new_ok(domaine: &str) -> Self {
+        Self {
+            ok: true,
+            done: false,
+            domaine: domaine.to_string(),
+            err: None,
+            version: None,
+        }
+    }
+
+    pub fn new_done(domaine: &str) -> Self {
+        Self {
+            ok: true,
+            done: true,
+            domaine: domaine.to_string(),
+            err: None,
+            version: None,
+        }
+    }
+
+    pub fn new_err(domaine: &str, err: String) -> Self {
+        Self {
+            ok: false,
+            done: true,
+            domaine: domaine.to_string(),
+            err: Some(err),
+            version: None,
+        }
+    }
+}
