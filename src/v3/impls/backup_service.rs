@@ -54,6 +54,7 @@ impl DomainBackupServiceImpl {
             // Extract all transactions into an incremental file even when we do a full backup
             // On full backups, the incremental file gets rotated out with the old backup set.
             let incremental_file = produce_incremental_backup_file(
+                self.outbound.as_ref(),
                 self.mongo.as_ref(),
                 self.chiffrage.as_ref(),
                 &domain_info,

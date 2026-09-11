@@ -16,6 +16,7 @@ use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
 use bson::{Document, doc, serde_helpers::datetime::FromChrono04DateTime};
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 pub struct VerifiedResponseMessage {
@@ -181,4 +182,26 @@ pub struct BackupResult {
     pub first_transaction: u64,
     pub last_transaction: u64,
     pub count: u64
+}
+
+/// Generic message structure, can be used for OK or Errors.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ErrorMessage {
+    pub ok: bool,
+    pub code: Option<u16>,
+    pub err: Option<String>,
+}
+
+impl ErrorMessage {
+    pub fn ok() -> Self { Self { ok: true, code: None, err: None } }
+    pub fn err(msg: &str) -> Self { Self { ok: false, code: None, err: Some(msg.to_string()) } }
+    pub fn err_code(code: u16, msg: &str) -> Self { Self { ok: false, code: Some(code), err: Some(msg.to_string()) } }
+    pub fn is_ok<S>(value: &MessageMilleGrillesOwned) -> Result<bool, CommonError> where S: DeserializeOwned {
+        let content: Self = value.deserialize()?;
+        Ok(content.ok)
+    }
+    pub fn is_err(value: &MessageMilleGrillesOwned) -> Result<(bool, Option<String>), CommonError> {
+        let content: Self = value.deserialize()?;
+        Ok((content.ok, content.err))
+    }
 }

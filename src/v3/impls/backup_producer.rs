@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use crate::backup_v2::{organiser_fichiers_backup, FichierArchiveBackup, HeaderFichierArchive, TypeArchive, InfoTransactions};
-use crate::constantes::NEW_LINE_BYTE;
+use crate::constantes::{Securite, COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, NEW_LINE_BYTE};
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
@@ -22,6 +22,9 @@ use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error, warn};
+use crate::generateur_messages::RoutageMessageAction;
+use crate::messages_generiques::CommandeSauvegarderCertificat;
+use crate::v3::impls::backup_filehandling::{prepare_incremental_backup_file, rename_backup_file};
 
 pub async fn preflight_check(
     config: &dyn ConfigService,
@@ -77,6 +80,7 @@ async fn check_redo_log_size(mongo: &dyn MongoDao, redolog_collection_name: &str
 }
 
 pub async fn produce_incremental_backup_file(
+    outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     chiffrage: &dyn ChiffrageService,
     domain_info: &PreflightResult,
@@ -92,6 +96,7 @@ pub async fn produce_incremental_backup_file(
     session.start_transaction().await?;
 
     match process_incremental_file_operations(
+        outbound,
         mongo,
         chiffrage,
         domain_info,
@@ -104,7 +109,7 @@ pub async fn produce_incremental_backup_file(
                 Ok(()) => Ok(backup),
                 Err(e) => {
                     error!("Failed to commit transaction, we delete the incremental backup file: {:?}", e);
-                    tokio::fs::remove_file(incremental_workfile_path).await?;
+                    tokio::fs::remove_file(incremental_workfile_path).await.ok();
                     Err(e)?  // Raise the error again
                 }
             }
@@ -117,6 +122,7 @@ pub async fn produce_incremental_backup_file(
 }
 
 async fn process_incremental_file_operations(
+    outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     chiffrage: &dyn ChiffrageService,
     domain_info: &PreflightResult,
@@ -149,6 +155,7 @@ async fn process_incremental_file_operations(
 
     // Produce backup file content. This also cleans-up the redo-log table.
     let backup_result = extract_redolog_content(
+        outbound,
         mongo,
         &mut compressor,
         domain_info,
@@ -205,17 +212,8 @@ async fn process_incremental_file_operations(
     Ok(backup_result)
 }
 
-async fn prepare_incremental_backup_file(backup_path: &Path) -> Result<PathBuf, CommonError> {
-    let prefix = "incremental";
-    let file_path = backup_path.join(format!("{}.mgbak.work", prefix));
-    // Remove any old workfile
-    if let Err(e) = tokio::fs::remove_file(&file_path).await {
-        debug!("prepare_incremental_backup_file Delete file result: {:?}", e);
-    }
-    Ok(file_path)
-}
-
 async fn extract_redolog_content<W>(
+    outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     writer: &mut W,
     domain_info: &PreflightResult,
@@ -275,7 +273,7 @@ where
 
                 // Extract certificate from transaction
                 if let Some(certificate) = transaction.message.certificat.take() {
-                    save_certificate(&certificate, &mut already_processed_certificate_ids).await?;
+                    save_certificate(outbound, &certificate, &mut already_processed_certificate_ids).await?;
                 }
 
                 // Keep transaction id for cleanup at the end (delete)
@@ -339,14 +337,63 @@ where
     Ok(result)
 }
 
-async fn save_certificate(certificate: &Vec<String>, already_processed_ids: &mut HashSet<String>) -> Result<(), CommonError> {
+async fn save_certificate(
+    outbound: &MessageOutboundFacade,
+    certificate: &Vec<String>,
+    already_processed_ids: &mut HashSet<String>
+) -> Result<(), CommonError> {
     // Ensure the certificate is saved by the CorePki domain.
     let certificate_str = certificate.join("\n");
-    let certificate = EnveloppeCertificat::try_from(certificate_str.as_str())?;
-    let certificate_fingerprint = certificate.fingerprint_pk()?;
+    let certificate_instance = EnveloppeCertificat::try_from(certificate_str.as_str())?;
+    let certificate_fingerprint = certificate_instance.fingerprint_pk()?;
     if ! already_processed_ids.contains(&certificate_fingerprint) {
-        todo!("Save certificate");
+        let routing = RoutageMessageAction::builder(
+            DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege]).build();
+        let command = CommandeSauvegarderCertificat {
+            chaine_pem: certificate.to_owned(),
+            ca: None,
+        };
+        let response = match outbound.send_command(routing, command).await {
+            Ok(response) => match response {
+                Some(response) => {
+
+                },
+                None => return Err(CommonError::Str("No response received when saving certificate"))
+            },
+            Err(e) => return Err(CommonError::String(format!("Error saving certificate {}: {:?}", certificate_fingerprint, e)))
+        };
+
+        // async fn sauvegarder_certificats<M>(middleware: &M, certificats: &HashMap<String, Vec<String>>)
+        //     -> Result<(), CommonError>
+        //     where M: GenerateurMessages
+        // {
+        //     let routage = RoutageMessageAction::builder(
+        //         DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege]).build();
+        //
+        //     debug!("Sauvegarder {} certificats", certificats.len());
+        //
+        //     for certificat in certificats.values() {
+        //         let commande = CommandeSauvegarderCertificat {
+        //             chaine_pem: certificat.to_owned(),
+        //             ca: None,
+        //         };
+        //         let reponse = middleware.transmettre_commande(routage.clone(), &commande).await?;
+        //         if let Some(TypeMessage::Valide(reponse)) = reponse {
+        //             let reponse_owned = reponse.message.parse_to_owned()?;
+        //             let reponse_commande: ReponseCommande = reponse_owned.deserialize()?;
+        //             if reponse_commande.ok != Some(true) {
+        //                 Err(format!("backup_v2.sauvegarder_certificats Reponse de type erreur durant la sauvegarde de certificat : {:?}", reponse_commande.err))?
+        //             }
+        //         } else {
+        //             Err("backup_v2.sauvegarder_certificats Mauvais type de reponse pour la sauvegarde de certificat")?
+        //         }
+        //     }
+        //
+        //     Ok(())
+        // }
+
         already_processed_ids.insert(certificate_fingerprint);
+        todo!("Save certificate");
     }
     Ok(())
 }
@@ -413,50 +460,4 @@ async fn end_backup_file(file_path: &Path, header: &HeaderFichierArchive, header
     file.shutdown().await?;
 
     Ok(())
-}
-
-async fn rename_backup_file(
-    chiffrage: &dyn ChiffrageService,
-    archive_type: &TypeArchive,
-    backup_result: &BackupResult,
-    domain: &str,
-    backup_path: &Path,
-    workfile_path: &Path
-) -> Result<(PathBuf, String, u64), CommonError> {
-    // Rename work file
-    let date_premiere_transaction = Utc.timestamp_millis_opt(backup_result.first_transaction as i64).unwrap();
-    let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
-
-    // Calculer le digest du fichier (apres modification du header).
-    let digest_str = chiffrage.digest_file(backup_path, multihash::Code::Blake2b512, multibase::Base::Base58Btc).await?;
-
-    let archive_type_marker = match archive_type {
-        TypeArchive::Incremental => "I",
-        TypeArchive::Concatene => "C",
-        TypeArchive::Final => "F",
-    };
-
-    // Keep last 12 chars of digest
-    let digest_suffix = digest_str[digest_str.len()-12..digest_str.len()].to_string();
-
-    // File name example : AiLanguage_2024-09-24T21:43:07.162Z_I_KozFJz4vLFe7.mgbak
-    let backup_file_name = format!(
-        "{}_{}_{}_{}.mgbak",
-        domain,
-        date_str,
-        archive_type_marker,
-        &digest_suffix
-    );
-
-    debug!("rename_work_file Date {}, digest {}, filename: {}", date_str, digest_str, backup_file_name);
-    let mut backup_file_path = backup_path.to_owned();
-    backup_file_path.push(backup_file_name);
-
-    let metadata = workfile_path.metadata()?;
-    let filesize = metadata.len();
-
-    // Last operation - rename. If this success
-    fs::rename(workfile_path, &backup_file_path)?;
-
-    Ok((backup_file_path, digest_suffix, filesize))
 }
