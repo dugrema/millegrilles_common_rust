@@ -406,8 +406,9 @@ async fn end_backup_file(file_path: &Path, header: &HeaderFichierArchive, header
     file.seek(SeekFrom::Start(4)).await?;
     file.write_all(header_str.as_bytes()).await?;
     // Truncate by filling in 0s over the remaining original header
-    for _ in header_updated_size..header_size {
-        file.write_all(&[0u8]).await?;
+    let padding_size = (header_size - header_updated_size) as usize;
+    if padding_size > 0 {
+        file.write_all(&vec![0u8; padding_size]).await?;
     }
     file.shutdown().await?;
 
