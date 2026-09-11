@@ -130,5 +130,10 @@ pub async fn rename_backup_file(
 }
 
 pub async fn rotate_backup_files(domain_backup_path: &Path) -> Result<(), CommonError> {
+    
+    // List backup_DATE folders in order, keep the last 2 only
+    
+    // Create new backup_NOW folder, move *.mgbak files to that folder
+    
     todo!()
 }

@@ -65,8 +65,8 @@ impl DomainBackupServiceImpl {
             None
         };
 
-        match domain_info.existing_files.as_mut() {
-            Some(existing_files) => {
+        match domain_info.existing_files.take() {
+            Some(mut existing_files) => {
                 if incremental {
                     debug!("Incremental backup complete");
                 } else {
@@ -75,9 +75,10 @@ impl DomainBackupServiceImpl {
                         // Add the new incremental file to the list of files
                         existing_files.push(new_file);
                     }
+                    // Put updated files back (removed by .take)
+                    domain_info.existing_files = Some(existing_files);
                     // Build new concatene file and rotate previous backup set.
-                    produce_concatene_backup_file(existing_files).await?;
-                    rotate_backup_files(domain_info.domain_backup_path.as_path()).await?;
+                    produce_concatene_backup_file(&domain_info).await?;
                 }
             },
             None => {

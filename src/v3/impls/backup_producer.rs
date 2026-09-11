@@ -1,30 +1,28 @@
-use std::collections::HashSet;
-use std::fs;
-use crate::backup_v2::{organiser_fichiers_backup, FichierArchiveBackup, HeaderFichierArchive, TypeArchive, InfoTransactions};
-use crate::constantes::{Securite, COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, NEW_LINE_BYTE};
+use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive, organiser_fichiers_backup};
+use crate::constantes::{COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, NEW_LINE_BYTE, Securite};
 use crate::error::Error as CommonError;
+use crate::generateur_messages::RoutageMessageAction;
+use crate::messages_generiques::CommandeSauvegarderCertificat;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::AsyncEncryptionWriterMgs4;
 use crate::v3::impls::backup_encryption::get_domain_backup_key;
+use crate::v3::impls::backup_filehandling::{prepare_incremental_backup_file, rename_backup_file, rotate_backup_files};
 use crate::v3::models::{BackupResult, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::write::DeflateEncoder;
 use bson::doc;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::ClientSession;
 use mongodb::options::Hint;
+use std::collections::HashSet;
 use std::io::SeekFrom;
-use std::path::{Path, PathBuf};
-use chrono::format::StrftimeItems;
-use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use std::path::Path;
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, error, warn};
-use crate::generateur_messages::RoutageMessageAction;
-use crate::messages_generiques::CommandeSauvegarderCertificat;
-use crate::v3::impls::backup_filehandling::{prepare_incremental_backup_file, rename_backup_file};
 
 pub async fn preflight_check(
     config: &dyn ConfigService,
@@ -375,7 +373,14 @@ async fn save_certificate(
     Ok(())
 }
 
-pub async fn produce_concatene_backup_file(files: &Vec<FichierArchiveBackup>) -> Result<FichierArchiveBackup, CommonError> {
+pub async fn produce_concatene_backup_file(
+    domain_info: &PreflightResult
+) -> Result<FichierArchiveBackup, CommonError> {
+    let domain_backup_path = domain_info.domain_backup_path.as_path(); 
+    
+    // Concatenated file done, rotate all backup folders and move *.mgbak files to backup.1
+    rotate_backup_files(domain_backup_path).await?;
+
     todo!()
 }
 
