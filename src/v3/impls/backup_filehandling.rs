@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::error::Error as CommonError;
 use crate::v3::ChiffrageService;
@@ -6,16 +5,16 @@ use crate::v3::models::LockFile;
 use chrono::format::StrftimeItems;
 use chrono::{TimeZone, Utc};
 use fs2::FileExt;
+use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
+use std::ffi::OsString;
 use std::io::{ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
-use futures_util::future::BoxFuture;
-use futures_util::FutureExt;
 use tokio::fs;
-use tokio::fs::{read_dir, File};
+use tokio::fs::{File, read_dir};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
-use tracing_subscriber::filter::FilterExt;
+use tracing::{debug, info};
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
 /// Raises errors when lock is unsuccessful.
@@ -294,18 +293,18 @@ pub async fn load_backup_file_list(backup_path: &Path, idmg: &str) -> Result<Vec
 
     let mut backup_files = process_backup_folder(backup_path, idmg, true).await?;
 
-    // Trier les fichiers par date de transactions
+    // Sort by first transaction date
     backup_files.sort_by(|a, b| {
         a.header.debut_backup
             .partial_cmp(&b.header.debut_backup)
             .expect("header partial_cmp")
     });
 
-    // Verifier l'ordre des fichiers, pas d'overlap de transactions
+    // Check that there is no "overlap" on start dates.
     let mut date_transaction_precedente = 0u64;
     for fichier in &backup_files {
         if fichier.header.debut_backup < date_transaction_precedente {
-            Err(format!("backup_v2.organiser_fichiers_backup Fichiers de transactions dans le mauvais ordre, transaction plus ancienne trouvee dans {:?}", fichier.path_fichier))?
+            Err(format!("Backup files out of order, an older transaction was found in {:?}", fichier.path_fichier))?
         }
         date_transaction_precedente = fichier.header.fin_backup;
     }

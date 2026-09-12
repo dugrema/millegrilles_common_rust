@@ -1,4 +1,4 @@
-use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive, organiser_fichiers_backup};
+use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::constantes::{COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, NEW_LINE_BYTE, Securite};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
@@ -10,19 +10,19 @@ use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_key
 use crate::v3::impls::backup_filehandling::{load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
 use crate::v3::models::{BackupResult, DecryptedKey, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
-use async_compression::tokio::write::DeflateEncoder;
 use async_compression::tokio::bufread::DeflateDecoder;
+use async_compression::tokio::write::DeflateEncoder;
 use bson::doc;
 use chrono::{DateTime, TimeZone, Utc};
+use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::ClientSession;
 use mongodb::options::Hint;
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::Path;
-use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
