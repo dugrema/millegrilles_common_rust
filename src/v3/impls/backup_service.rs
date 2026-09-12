@@ -118,35 +118,6 @@ impl DomainBackupServiceImpl {
             );
         }
 
-        // match domain_info.existing_files.take() {
-        //     Some(mut existing_files) => {
-        //         if incremental {
-        //             debug!("Incremental backup complete");
-        //         } else {
-        //             // Complete backup, concatenate all files including the new one
-        //             if let Some(new_file) = incremental_file {
-        //                 // Add the new incremental file to the list of files
-        //                 existing_files.push(new_file);
-        //             }
-        //             // Put updated files back (removed by .take)
-        //             domain_info.existing_files = Some(existing_files);
-        //             // Build new concatene file and rotate previous backup set.
-        //             concatenated_file = Some(
-        //                 produce_concatenated_backup_file(self.chiffrage.as_ref(), self.outbound.as_ref(), &domain_info).await?
-        //             );
-        //         }
-        //     },
-        //     None => {
-        //         // There are no pre-existing files loaded (this may be an incremental-only backup).
-        //         if let Some(new_file) = incremental_file  && ! incremental {
-        //             // Not an incremental backup, promote the incremental file to Concatene
-        //             concatenated_file = Some(
-        //                 promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?
-        //             );
-        //         }
-        //     }
-        // }
-
         // Check if we can promote the Concatenated file to Final archive
         // Triggers: size of file or age of oldest transaction
         if let Some(file) = concatenated_file {
