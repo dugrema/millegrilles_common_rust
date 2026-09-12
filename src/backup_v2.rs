@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use fs2::FileExt;
 use futures_util::{StreamExt, TryStreamExt};
 use std::collections::{HashMap, HashSet};
@@ -1936,7 +1937,7 @@ async fn resubmit_backup_keys<M>(middleware: &M, domaine: &str, missing_key_id: 
             missing_key_found = true;
         }
         // Create a command to sve the encrypted key in MaitreDesCles (CA)
-        let command = CommandeAjouterCleDomaine {cles: HashMap::new(), signature: cle};
+        let command = CommandeAjouterCleDomaine {cles: Cow::Owned(HashMap::new()), signature: Cow::Owned(cle)};
         cles_dechiffrage.push(command);
     }
 

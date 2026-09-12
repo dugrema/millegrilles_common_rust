@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
@@ -7,6 +8,8 @@ use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::sync::Arc;
+use crate::chiffrage_cle::CommandeAjouterCleDomaine;
+use crate::constantes::{Securite, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES};
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
@@ -142,8 +145,36 @@ impl MessageOutboundFacade {
         todo!()
     }
 
-    pub async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), CommonError> {
-        todo!()
+    pub async fn save_keys(
+        &self,
+        keys: &Vec<&GeneratedSecretKey>,
+        timeout: Option<u64>,
+    ) -> Result<(), CommonError> {
+        // Default timeout of 15 seconds
+        let timeout = timeout.unwrap_or_else(|| 15_000);
+
+        // Save each key individually
+        for key in keys {
+            let add_key_command = CommandeAjouterCleDomaine {
+                cles: Cow::Borrowed(&key.encrypted_keys),
+                signature: Cow::Borrowed(&key.signature)
+            };
+            let routing = RoutageMessageAction::builder(
+                DOMAINE_NOM_MAITREDESCLES,
+                COMMANDE_AJOUTER_CLE_DOMAINES,
+                vec![Securite::L1Public])
+                .timeout_blocking(timeout)
+                .build();
+            let response = match self.send_command(routing, add_key_command).await? {
+                Some(response) => response,
+                None => return Err(CommonError::Str("No response received when saving key"))
+            };
+            if let (true, e) = response.is_err()? {
+                return Err(CommonError::String(format!("Error while saving keys: {:?}", e)));
+            }
+        }
+
+        Ok(())
     }
 
 }

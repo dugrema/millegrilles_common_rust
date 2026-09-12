@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -319,18 +320,18 @@ impl CommandeSauvegarderCle {
 
 /// Commande pour ajouter une nouvelle cle pour des domaines.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CommandeAjouterCleDomaine {
+pub struct CommandeAjouterCleDomaine<'a> {
     /// Cles chiffrees pour differents destinataires.
     /// Key : fingerprint hex, Value: cle chiffree base64
-    pub cles: HashMap<String, String>,
+    pub cles: Cow<'a, HashMap<String, String>>,
 
     /// Signature du domaine. Permet de garantir que seuls les domaines predefinis
     /// auront acces a cette cle. La commande get_cle_ref() permet aussi de recuperer un
     /// identificateur cryptographique unique pour cette cle.
-    pub signature: SignatureDomaines,
+    pub signature: Cow<'a, SignatureDomaines>,
 }
 
-impl CommandeAjouterCleDomaine {
+impl<'a> CommandeAjouterCleDomaine<'a> {
     pub fn verifier_signature<B>(&self, cle_secrete: B) -> Result<(), crate::error::Error>
         where B: AsRef<[u8]>
     {
@@ -380,7 +381,7 @@ pub async fn ajouter_cles_domaine<M>(middleware: &M, domain_signature: Signature
 {
     let timeout = timeout.unwrap_or_else(|| 15_000);
 
-    let add_key_command = CommandeAjouterCleDomaine { cles: decryption_keys, signature: domain_signature };
+    let add_key_command = CommandeAjouterCleDomaine { cles: Cow::Owned(decryption_keys), signature: Cow::Owned(domain_signature) };
     let routing = RoutageMessageAction::builder(
         DOMAINE_NOM_MAITREDESCLES, COMMANDE_AJOUTER_CLE_DOMAINES, vec![Securite::L1Public])
         .timeout_blocking(timeout)

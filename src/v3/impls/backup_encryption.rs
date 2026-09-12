@@ -70,7 +70,7 @@ async fn generate_backup_key_for_domain(
     let new_key = chiffrage.generate_new_key(&vec![domain.to_string()]).await?;
 
     // Save the new backup key immediately
-    outbound.save_keys(vec![new_key.clone()]).await?;
+    outbound.save_keys(&vec![&new_key], None).await?;
 
     // Send the key id to CoreTopologie for usage in this domain
     let routing = RoutageMessageAction::builder(

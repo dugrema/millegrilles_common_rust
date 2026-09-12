@@ -1,6 +1,7 @@
 use crate::certificats::valider_pour_date;
 use crate::chiffrage_cle::{CleChiffrageCache, CleChiffrageHandlerImpl};
 use crate::error::Error as CommonError;
+use crate::hachages::HacheurBuilder;
 use crate::v3::models::{DecryptedKey, GeneratedSecretKey};
 use crate::v3::traits::{ChiffrageService, PkiService};
 use async_trait::async_trait;
@@ -8,25 +9,23 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as base64, engine::g
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
+use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x25519::dechiffrer_asymmetrique_ed25519;
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl};
+use multibase::Base;
+use multihash::Code;
 use openssl::x509::X509;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
-use millegrilles_cryptographie::maitredescles::generer_cle_avec_ca;
-use multibase::Base;
-use multihash::Code;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use x509_parser::nom::ExtendInto;
-use crate::hachages::HacheurBuilder;
 
 // --- Constants ---
 pub const CACHE_LIMIT: usize = 50;
@@ -267,7 +266,7 @@ fn decrypt_document(private_key: &EnveloppePrivee, value: EncryptedDocument) -> 
 async fn digest_file(path: &Path, code: Code, base: Base) -> Result<String, CommonError> {
     let mut backup_file = tokio::io::BufReader::new(tokio::fs::File::open(&path).await?);
 
-    let mut digester = HacheurBuilder::new().digester(Code::Blake2b512).base(Base::Base58Btc).build();
+    let mut digester = HacheurBuilder::new().digester(code).base(base).build();
     let mut buffer = [0u8; 64*1024];
     loop {
         let len = backup_file.read(&mut buffer).await?;
