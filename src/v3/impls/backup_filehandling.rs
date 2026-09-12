@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::error::Error as CommonError;
 use crate::v3::ChiffrageService;
@@ -7,11 +8,14 @@ use chrono::{TimeZone, Utc};
 use fs2::FileExt;
 use std::io::{ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
+use futures_util::future::BoxFuture;
+use futures_util::FutureExt;
 use tokio::fs;
-use tokio::fs::File;
+use tokio::fs::{read_dir, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::time::sleep;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+use tracing_subscriber::filter::FilterExt;
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
 /// Raises errors when lock is unsuccessful.
@@ -283,4 +287,105 @@ pub async fn produce_final_file(
     final_file.path_fichier = dest;
 
     Ok(final_file)
+}
+
+/// Makes a list of all backup files in order. Includes files from the "final" subfolder.
+pub async fn load_backup_file_list(backup_path: &Path, idmg: &str) -> Result<Vec<FichierArchiveBackup>, CommonError> {
+
+    let mut backup_files = process_backup_folder(backup_path, idmg, true).await?;
+
+    // Trier les fichiers par date de transactions
+    backup_files.sort_by(|a, b| {
+        a.header.debut_backup
+            .partial_cmp(&b.header.debut_backup)
+            .expect("header partial_cmp")
+    });
+
+    // Verifier l'ordre des fichiers, pas d'overlap de transactions
+    let mut date_transaction_precedente = 0u64;
+    for fichier in &backup_files {
+        if fichier.header.debut_backup < date_transaction_precedente {
+            Err(format!("backup_v2.organiser_fichiers_backup Fichiers de transactions dans le mauvais ordre, transaction plus ancienne trouvee dans {:?}", fichier.path_fichier))?
+        }
+        date_transaction_precedente = fichier.header.fin_backup;
+    }
+
+    debug!("organiser_fichiers_backup Liste fichiers tries\n{:?}", backup_files);
+
+    Ok(backup_files)
+}
+
+async fn process_backup_file(file_path: &Path, idmg: &str) -> Result<FichierArchiveBackup, CommonError> {
+    let metadata = file_path.metadata()?;
+    let file_len = metadata.len();
+    let mut fp = File::open(file_path).await?;
+    let version = fp.read_i16_le().await?;
+    if version != 1 {
+        Err(format!("Unsupported archive version {}", version))?
+    }
+    let taille_header = fp.read_i16_le().await?;
+    let mut header_vec: Vec<u8> = Vec::new();
+    header_vec.resize(taille_header as usize, 0u8);
+    let mut buffer = header_vec.as_mut_slice();
+    fp.read(&mut buffer).await?;
+
+    // Trouver la fin du header json (premier trailing 0x0)
+    let mut header_len_effective = taille_header as usize;
+    if let Some(v) = header_vec.iter().position(|&x| x == 0u8) {
+        header_len_effective = v;
+    }
+    let header: HeaderFichierArchive = serde_json::from_slice(&header_vec[0..header_len_effective])?;
+    if header.idmg.as_str() != idmg {
+        return Err(CommonError::String(format!("File {:?} for wrong system (IDMG: {}) archive version {}", file_path, header.idmg, version)))
+    }
+
+    // Extract the partial digest from the file name
+    let nom_fichier = file_path.file_stem().expect("file stem").to_str().expect("nom_fichier to_str");
+    let mut split: Vec<&str> = nom_fichier.split("_").collect();
+    let digest_suffix = split.pop().expect("version").to_string();
+
+    let position_data = (4 + taille_header) as usize;  // 4 bytes (version u16, taille header u16) + header
+    Ok(FichierArchiveBackup { path_fichier: file_path.to_owned(), header, position_data, digest_suffix, len: file_len })
+}
+
+fn process_backup_folder<'a>(
+    backup_path: &'a Path,
+    idmg: &'a str,
+    recurse: bool
+) -> BoxFuture<'a, Result<Vec<FichierArchiveBackup>, CommonError>> {
+    async move {
+        let mgback_ext: OsString = "mgbak".into();
+        let mut files = Vec::new();
+
+        let mut paths = read_dir(backup_path).await?;
+
+        loop {
+            let entry = match paths.next_entry().await? {
+                Some(inner) => inner,
+                None => break
+            };
+
+            let file_type = entry.file_type().await?;
+
+            if file_type.is_dir() {
+                if entry.file_name().to_str() == Some("final") && recurse {
+                    // Recurse into final folder, append the final archives to the list
+                    let final_archives = process_backup_folder(entry.path().as_path(), idmg, false).await?;
+                    files.extend(final_archives);
+                } else {
+                    // Skip this folder
+                }
+            } else if file_type.is_file() {
+                if entry.path().extension() == Some(&mgback_ext) {
+                    files.push(process_backup_file(entry.path().as_path(), idmg).await?);
+                } else {
+                    // Not a .mgbak file, skip
+                }
+            } else {
+                // Not a type that is processed
+            }
+        }
+
+        Ok(files)
+    }.boxed()
 }

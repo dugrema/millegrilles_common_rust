@@ -7,7 +7,7 @@ use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
-use crate::v3::impls::backup_filehandling::{overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
+use crate::v3::impls::backup_filehandling::{load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
 use crate::v3::models::{BackupResult, DecryptedKey, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::write::DeflateEncoder;
@@ -48,10 +48,9 @@ pub async fn preflight_check(
     let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
 
     // Check if we have existing incremental backups to concatenate
-    let existing_files = organiser_fichiers_backup(
+    let existing_files = load_backup_file_list(
         domain_backup_path.as_path(),
-        idmg.as_str(),
-        false
+        idmg.as_str()
     ).await?;
 
     if waiting_transaction_count == 0 && existing_files.len() <= 1 {
