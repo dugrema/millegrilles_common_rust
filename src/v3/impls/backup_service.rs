@@ -9,11 +9,12 @@ use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file,
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
 use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
+use chrono::Utc;
 use std::sync::Arc;
-use tracing::debug;
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
-const TRIGGER_CONCATENATED_TO_FINAL: u64 = 630_000_000; // About 600MB
+const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
+const TRIGGER_CONCATENATED_TO_FINAL_DAYS: i64 = 365;
 
 pub struct DomainBackupServiceImpl {
     config: Arc<dyn ConfigService>,
@@ -88,37 +89,69 @@ impl DomainBackupServiceImpl {
 
         // Concatenate backup when applicable
         let mut concatenated_file = None;
-        match domain_info.existing_files.take() {
-            Some(mut existing_files) => {
-                if incremental {
-                    debug!("Incremental backup complete");
-                } else {
-                    // Complete backup, concatenate all files including the new one
-                    if let Some(new_file) = incremental_file {
-                        // Add the new incremental file to the list of files
-                        existing_files.push(new_file);
-                    }
-                    // Put updated files back (removed by .take)
-                    domain_info.existing_files = Some(existing_files);
-                    // Build new concatene file and rotate previous backup set.
-                    concatenated_file = Some(
-                        produce_concatenated_backup_file(self.chiffrage.as_ref(), self.outbound.as_ref(), &domain_info).await?
-                    );
-                }
-            },
-            None => {
-                // There are no pre-existing files.
-                if let Some(new_file) = incremental_file {
-                    // Promote the incremental file to Concatene
-                    concatenated_file = Some(
-                        promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?
-                    );
-                }
+        for file in &domain_info.existing_files {
+            if file.header.type_archive == TypeArchive::Concatene.to_string() {
+                concatenated_file = Some(file.clone());
+                break;
             }
         }
 
+        // Add the new incremental file to list of existing backup files
+        if let Some(new_file) = incremental_file {
+            if concatenated_file.is_none() {
+                // There is no current Concatenated file
+                // Promote the incremental file to Concatene
+                let new_concatenated_file = promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?;
+                domain_info.existing_files.push(new_concatenated_file.clone());
+                concatenated_file = Some(new_concatenated_file);
+            } else {
+                // Add the new incremental file to the list of files
+                domain_info.existing_files.push(new_file);
+            }
+        }
+
+        if ! incremental && domain_info.contains_incremental() {
+            // This is a complete backup - run if the backup contains incremental files
+            // The check is necessary because there could be multiple Final and a Concatene file in the list.
+            concatenated_file = Some(
+                produce_concatenated_backup_file(self.chiffrage.as_ref(), self.outbound.as_ref(), &domain_info).await?
+            );
+        }
+
+        // match domain_info.existing_files.take() {
+        //     Some(mut existing_files) => {
+        //         if incremental {
+        //             debug!("Incremental backup complete");
+        //         } else {
+        //             // Complete backup, concatenate all files including the new one
+        //             if let Some(new_file) = incremental_file {
+        //                 // Add the new incremental file to the list of files
+        //                 existing_files.push(new_file);
+        //             }
+        //             // Put updated files back (removed by .take)
+        //             domain_info.existing_files = Some(existing_files);
+        //             // Build new concatene file and rotate previous backup set.
+        //             concatenated_file = Some(
+        //                 produce_concatenated_backup_file(self.chiffrage.as_ref(), self.outbound.as_ref(), &domain_info).await?
+        //             );
+        //         }
+        //     },
+        //     None => {
+        //         // There are no pre-existing files loaded (this may be an incremental-only backup).
+        //         if let Some(new_file) = incremental_file  && ! incremental {
+        //             // Not an incremental backup, promote the incremental file to Concatene
+        //             concatenated_file = Some(
+        //                 promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?
+        //             );
+        //         }
+        //     }
+        // }
+
+        // Check if we can promote the Concatenated file to Final archive
+        // Triggers: size of file or age of oldest transaction
         if let Some(file) = concatenated_file {
-            if file.len > TRIGGER_CONCATENATED_TO_FINAL {
+            let expired_date = Utc::now() - chrono::Duration::days(TRIGGER_CONCATENATED_TO_FINAL_DAYS);
+            if file.len > TRIGGER_CONCATENATED_TO_FINAL_SIZE || file.header.debut_backup < expired_date.timestamp() as u64 {
                 // Promote the concatenated file to final
                 produce_final_file(self.chiffrage.as_ref(), &file).await?;
             }

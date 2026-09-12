@@ -40,28 +40,24 @@ pub async fn preflight_check(
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
     let domain_backup_path = mongo.get_path_backup().join(domain_name);
     
-    let existing_files = if incremental {
+    if incremental {
         if waiting_transaction_count == 0 {
             return Err(CommonError::Str("No transactions waiting in redo collection for incremental backup, aborting"));
         }
-        None
-    } else {
-        let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
+    }
+    let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
 
-        // Check if we have existing incremental backups to concatenate
-        let files = organiser_fichiers_backup(
-            domain_backup_path.as_path(),
-            idmg.as_str(),
-            false
-        ).await?;
+    // Check if we have existing incremental backups to concatenate
+    let existing_files = organiser_fichiers_backup(
+        domain_backup_path.as_path(),
+        idmg.as_str(),
+        false
+    ).await?;
 
-        if waiting_transaction_count == 0 && files.len() <= 1 {
-            // We only have 1 backup file (Concatene) and there are no additional transactions to back-up
-            return Err(CommonError::Str("All transactions are already in Final/Concatene files, aborting full backup"));
-        }
-
-        Some(files)
-    };
+    if waiting_transaction_count == 0 && existing_files.len() <= 1 {
+        // We only have 1 backup file (Concatene) and there are no additional transactions to back-up
+        return Err(CommonError::Str("All transactions are already in Final/Concatene files, aborting full backup"));
+    }
 
     // Get encryption key for this domain
     let decryption_key = get_domain_backup_key(outbound, chiffrage, domain_name).await?;
@@ -447,12 +443,17 @@ async fn extract_transactions_from_backup<W>(
     writer: &mut W
 ) -> Result<BackupResult, CommonError> where W: AsyncWrite + Unpin {
 
-    let existing_files = match domain_info.existing_files.as_ref() {
-        Some(files) => files,
-        None => return Err(CommonError::Str("No existing files found"))
-    };
+    let existing_files = &domain_info.existing_files;
+
+    let mut first_transaction: u64 = 0;
+    let mut last_transaction: u64 = 0;
+    let mut transaction_count: u64 = 0;
 
     for backup_file in existing_files {
+        if backup_file.header.type_archive == TypeArchive::Final.to_string() {
+            continue  // Skip final archives, they **MUST NOT** be re-processed
+        }
+
         let key_id = backup_file.header.cle_id.as_str();
         let decipher_key = match keys.get(&key_id.to_string()) {
             Some(key) => key,
@@ -476,6 +477,19 @@ async fn extract_transactions_from_backup<W>(
             let mut t: MessageMilleGrillesOwned = serde_json::from_str(transaction.as_str())?;
             t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
 
+            // Transactions must be in order, this is enforced here. Also bean counting.
+            let new_transaction_time = t.estampille.timestamp() as u64;
+            if first_transaction == 0 {
+                first_transaction = new_transaction_time;
+            } else if first_transaction > new_transaction_time {
+                return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
+            }
+            if last_transaction > new_transaction_time {
+                return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to previous transaction"))
+            }
+            last_transaction = new_transaction_time;
+            transaction_count += 1;
+
             // Write transaction back to new file
             writer.write_all(transaction.as_bytes()).await?;
             // Add newline for jsonl format
@@ -483,8 +497,13 @@ async fn extract_transactions_from_backup<W>(
         }
     }
 
+    writer.flush().await?;
 
-    todo!()
+    Ok(BackupResult {
+        first_transaction,
+        last_transaction,
+        count: transaction_count,
+    })
 }
 
 async fn save_certificate(
@@ -528,20 +547,15 @@ pub async fn produce_concatenated_backup_file(
     outbound: &MessageOutboundFacade,
     domain_info: &PreflightResult
 ) -> Result<FichierArchiveBackup, CommonError> {
-    let existing_files = match domain_info.existing_files.as_ref() {
-        Some(existing_files) => {
-            if existing_files.len() <= 1 {
-                return Err(CommonError::Str("No files found to concatenate"))
-            }
-            existing_files
-        },
-        None => return Err(CommonError::Str("No files to concatenate"))
-    };
+    // Preflight check - ensure at least 1 incremental file is present
+    if ! domain_info.contains_incremental() {
+        return Err(CommonError::Str("No incremental files found to concatenate"))
+    }
 
     let domain_backup_path = domain_info.domain_backup_path.as_path();
 
     // Fetch all keys required to decrypt existing backups
-    let keys = load_backup_keys(outbound, existing_files).await?;
+    let keys = load_backup_keys(outbound, &domain_info.existing_files).await?;
 
     // Set-up the new concatenated workfile
     let workfile = prepare_backup_workfile(domain_backup_path).await?;

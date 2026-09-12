@@ -64,6 +64,12 @@ pub enum TypeArchive {
     Final
 }
 
+impl TypeArchive {
+    pub fn to_string(&self) -> String {
+        self.into()
+    }
+}
+
 impl Into<&str> for &TypeArchive {
     fn into(self) -> &'static str {
         match self {

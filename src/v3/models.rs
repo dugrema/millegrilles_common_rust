@@ -1,4 +1,4 @@
-use crate::backup_v2::FichierArchiveBackup;
+use crate::backup_v2::{FichierArchiveBackup, TypeArchive};
 use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
@@ -123,10 +123,21 @@ pub struct PreflightResult {
     pub idmg: String,
     pub domain_backup_path: PathBuf,
     /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
-    pub existing_files: Option<Vec<FichierArchiveBackup>>,
+    pub existing_files: Vec<FichierArchiveBackup>,
     // Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
     pub key: DecryptedKey,
+}
+
+impl PreflightResult {
+    pub fn contains_incremental(&self) -> bool {
+        if let Some(last_file) = self.existing_files.last() {
+            if last_file.header.type_archive == TypeArchive::Incremental.to_string() {
+                return true
+            }
+        }
+        false
+    }
 }
 
 #[derive(Clone)]
