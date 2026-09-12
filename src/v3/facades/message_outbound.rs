@@ -1,28 +1,32 @@
-use std::borrow::Cow;
+use crate::chiffrage_cle::CommandeAjouterCleDomaine;
+use crate::common_messages::{ReponseRequeteDechiffrageV2, RequeteDechiffrage};
+use crate::constantes::{COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, Securite};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
 use crate::v3::models::{DecryptedKey, GeneratedSecretKey, VerifiedResponseMessage};
-use crate::v3::{FormatService, MessagingService};
+use crate::v3::{ConfigService, FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use std::borrow::Cow;
 use std::sync::Arc;
-use crate::chiffrage_cle::CommandeAjouterCleDomaine;
-use crate::constantes::{Securite, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES};
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
+    config: Arc<dyn ConfigService>,
     messaging: Arc<dyn MessagingService>,
     format: Arc<dyn FormatService>,
 }
 
 impl MessageOutboundFacade {
     pub fn new(
+        config: Arc<dyn ConfigService>,
         messaging: Arc<dyn MessagingService>,
         format: Arc<dyn FormatService>,
     ) -> Self {
         Self {
+            config,
             messaging,
             format,
         }
@@ -141,8 +145,53 @@ impl MessageOutboundFacade {
         self.messaging.respond(response, routing).await
     }
 
-    pub async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<DecryptedKey>, CommonError> {
-        todo!()
+    pub async fn get_keys(
+        &self,
+        domain: &str,
+        key_ids: Vec<String>,
+        include_signature: Option<bool>
+    ) -> Result<Vec<DecryptedKey>, CommonError> {
+        let request = RequeteDechiffrage {
+            domaine: domain.to_string(),
+            liste_hachage_bytes: None,
+            cle_ids: Some(key_ids),
+            certificat_rechiffrage: None,
+            inclure_signature: include_signature,
+        };
+
+        let routing = RoutageMessageAction::builder(
+            DOMAINE_NOM_MAITREDESCLES,
+            MAITREDESCLES_REQUETE_DECHIFFRAGE_V2,
+            vec![Securite::L3Protege]
+        ).build();
+
+        let response = self.send_request(routing, request).await?;
+        if response.message.kind == MessageKind::ReponseChiffree {
+            // Decrypt the response
+            let enveloppe_signature = self.config.get_configuration_pki().get_enveloppe_privee();
+            let reponse: ReponseRequeteDechiffrageV2 = response.message.dechiffrer(enveloppe_signature.as_ref())?;
+            let keys = if reponse.ok && reponse.cles.is_some() {
+                reponse.cles.expect("cles")
+            } else {
+                return Err(format!("chiffrage_cle.get_cles_rechiffrees_v2 Erreur reponse dechiffrage cles code: {}, err: {:?}", reponse.code, reponse.err))?
+            };
+
+            // Convert keys to decrypted keys
+            let mut converted_keys: Vec<DecryptedKey> = Vec::with_capacity(keys.len());
+            for key in keys.into_iter() {
+                converted_keys.push(key.try_into()?);
+            }
+
+            Ok(converted_keys)
+        } else {
+            // This is an error
+            let (is_err, e) = response.is_err()?;
+            if is_err {
+                Err(CommonError::String(format!("Unable to get keys: {:?}", e)))
+            } else {
+                Err(CommonError::Str("Unable to get keys: Response OK but no keys found"))
+            }
+        }
     }
 
     pub async fn save_keys(

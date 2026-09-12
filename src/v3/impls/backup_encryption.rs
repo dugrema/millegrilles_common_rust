@@ -29,7 +29,7 @@ pub async fn get_domain_backup_key(
     let key_information: ReponseCleIdBackup = response.message.deserialize()?;
     let backup_key = match key_information.cle_id {
         Some(key_id) => {
-            load_backup_key(outbound, key_id.as_str()).await?
+            load_backup_key(outbound, domain_name, key_id.as_str()).await?
         },
         None => {
             warn!("Error requesting domain backup key, will generate a new one: {:?}", key_information.err);
@@ -40,8 +40,8 @@ pub async fn get_domain_backup_key(
     Ok(backup_key)
 }
 
-async fn load_backup_key(outbound: &MessageOutboundFacade, key_id: &str) -> Result<DecryptedKey, CommonError> {
-    let reponse = outbound.get_keys(vec![key_id.to_string()]).await?;
+async fn load_backup_key(outbound: &MessageOutboundFacade, domain: &str, key_id: &str) -> Result<DecryptedKey, CommonError> {
+    let reponse = outbound.get_keys(domain, vec![key_id.to_string()], None).await?;
     match reponse.into_iter().next() {
         Some(key) => Ok(key),
         None => Err(CommonError::String(format!("Backup key id {} not found", key_id)))
@@ -50,11 +50,16 @@ async fn load_backup_key(outbound: &MessageOutboundFacade, key_id: &str) -> Resu
 
 pub async fn load_backup_keys(outbound: &MessageOutboundFacade, backup_files: &Vec<FichierArchiveBackup>) -> Result<Vec<DecryptedKey>, CommonError> {
     let mut key_ids = HashSet::new();
+    let mut domain = None;
     for file in backup_files {
         key_ids.insert(file.header.cle_id.clone());
+        if domain.is_none() {
+            domain = Some(file.header.domaine.clone());
+        }
     }
     let key_count = key_ids.len();
-    let reponse = outbound.get_keys(key_ids.into_iter().collect()).await?;
+    let domain = match domain { Some(domain) => domain, None => return Err(CommonError::Str("No file/domain provided"))};
+    let reponse = outbound.get_keys(domain.as_str(), key_ids.into_iter().collect(), None).await?;
     if reponse.len() == key_count {
         Ok(reponse)
     } else {
