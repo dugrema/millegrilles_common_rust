@@ -559,15 +559,41 @@ pub async fn produce_concatenated_backup_file(
 
     // Set-up the new concatenated workfile
     let workfile = prepare_backup_workfile(domain_backup_path).await?;
-    process_concatenated_file_operations(chiffrage, domain_info, keys, workfile.as_path()).await?;
+    let backup_result = process_concatenated_file_operations(
+        chiffrage,
+        domain_info,
+        keys,
+        workfile.as_path()
+    ).await?;
 
-    // Concatenated file done, rotate all backup folders and move *.mgbak files to backup.1
+    // Extract date information from header
+    let first_transaction = match Utc.timestamp_millis_opt(backup_result.header.debut_backup as i64).single() {
+        Some(timestamp) => timestamp,
+        None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
+    };
+
+    // Concatenated file done, rotate all backup folders and move *.mgbak files to backup_NOW (NOW is the date)
     rotate_backup_files(domain_backup_path).await?;
 
     // Rename concatenated workfile to proper value
+    let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
+        chiffrage,
+        &TypeArchive::Concatene,
+        first_transaction,
+        domain_info.domain_name.as_str(),
+        domain_backup_path,
+        workfile.as_path()
+    ).await?;
 
+    let backup_result = FichierArchiveBackup {
+        path_fichier: path_backup_file,
+        header: backup_result.header,
+        position_data: backup_result.position_data,
+        digest_suffix,
+        len: filesize,
+    };
 
-    todo!()
+    Ok(backup_result)
 }
 
 /// Generates and writes a new header. All fields are "maximized" to make space in the file.
