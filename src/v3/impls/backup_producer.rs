@@ -53,7 +53,12 @@ pub async fn preflight_check(
         idmg.as_str()
     ).await?;
 
-    if waiting_transaction_count == 0 && existing_files.len() <= 1 {
+    let mut contains_incremental = false;
+    if let Some(last_file) = existing_files.last() {
+        contains_incremental = last_file.header.type_archive == TypeArchive::Incremental.to_string();
+    }
+
+    if waiting_transaction_count == 0 && ! contains_incremental {
         // We only have 1 backup file (Concatene) and there are no additional transactions to back-up
         return Err(CommonError::Str("All transactions are already in Final/Concatene files, aborting full backup"));
     }
