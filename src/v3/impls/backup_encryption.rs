@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use tracing::warn;
+use tracing::{debug, warn};
 use crate::backup_v2::{CommandeEnregistrerCleidBackup, FichierArchiveBackup, ReponseCleIdBackup, RequeteCleIdBackup};
 use crate::constantes::{Securite, DOMAINE_TOPOLOGIE};
 use crate::generateur_messages::RoutageMessageAction;
@@ -15,6 +15,7 @@ pub async fn get_domain_backup_key(
     chiffrage: &dyn ChiffrageService,
     domain_name: &str,
 ) -> Result<DecryptedKey, CommonError> {
+    debug!("get_domain_backup_key for domain {}", domain_name);
 
     // Request key information from CoreTopologie
     let routing = RoutageMessageAction::builder(
@@ -29,7 +30,13 @@ pub async fn get_domain_backup_key(
     let key_information: ReponseCleIdBackup = response.message.deserialize()?;
     let backup_key = match key_information.cle_id {
         Some(key_id) => {
-            load_backup_key(outbound, domain_name, key_id.as_str()).await?
+            match load_backup_key(outbound, domain_name, key_id.as_str()).await {
+                Ok(key) => key,
+                Err(e) => {
+                    warn!("Error loading domain {} backup key, generating a new one: {:?}", domain_name, e);
+                    generate_backup_key_for_domain(outbound, chiffrage, domain_name).await?
+                }
+            }
         },
         None => {
             warn!("Error requesting domain backup key, will generate a new one: {:?}", key_information.err);
@@ -41,7 +48,7 @@ pub async fn get_domain_backup_key(
 }
 
 async fn load_backup_key(outbound: &MessageOutboundFacade, domain: &str, key_id: &str) -> Result<DecryptedKey, CommonError> {
-    let reponse = outbound.get_keys(domain, vec![key_id.to_string()], None).await?;
+    let reponse = outbound.get_keys(domain, vec![key_id.to_string()], Some(true)).await?;
     match reponse.into_iter().next() {
         Some(key) => Ok(key),
         None => Err(CommonError::String(format!("Backup key id {} not found", key_id)))
@@ -59,7 +66,7 @@ pub async fn load_backup_keys(outbound: &MessageOutboundFacade, backup_files: &V
     }
     let key_count = key_ids.len();
     let domain = match domain { Some(domain) => domain, None => return Err(CommonError::Str("No file/domain provided"))};
-    let reponse = outbound.get_keys(domain.as_str(), key_ids.into_iter().collect(), None).await?;
+    let reponse = outbound.get_keys(domain.as_str(), key_ids.into_iter().collect(), Some(true)).await?;
     if reponse.len() == key_count {
         Ok(reponse)
     } else {

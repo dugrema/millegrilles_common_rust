@@ -11,6 +11,7 @@ use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
+use tracing::debug;
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
 const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
@@ -40,20 +41,20 @@ impl DomainBackupServiceImpl {
 
     async fn run_backup(
         &self,
-        domain_name: String,
-        redolog_collection_name: String,
+        domain_name: &str,
+        redolog_collection_name: &str,
         incremental: bool,
     ) -> Result<(), CommonError> {
         // Emit initial message to indicate start of backup for domain
-        emit_backup_event(self.outbound.as_ref(), BackupEvent::new_ok(domain_name.as_str())).await?;
+        emit_backup_event(self.outbound.as_ref(), BackupEvent::new_ok(domain_name)).await?;
 
-        match self.run_backup_process(domain_name.as_str(), redolog_collection_name.as_str(), incremental).await {
+        match self.run_backup_process(domain_name, redolog_collection_name, incremental).await {
             Ok(()) => {
-                emit_backup_event(self.outbound.as_ref(), BackupEvent::new_done(domain_name.as_str())).await?;
+                emit_backup_event(self.outbound.as_ref(), BackupEvent::new_done(domain_name)).await?;
                 Ok(())
             },
             Err(e) => {
-                emit_backup_event(self.outbound.as_ref(), BackupEvent::new_err(domain_name.as_str(), e.to_string())).await.ok();
+                emit_backup_event(self.outbound.as_ref(), BackupEvent::new_err(domain_name, e.to_string())).await.ok();
                 Err(e)
             }
         }
@@ -61,6 +62,7 @@ impl DomainBackupServiceImpl {
 
     async fn run_backup_process(&self, domain_name: &str, redolog_collection_name: &str, incremental: bool) -> Result<(), CommonError> {
         // Run a check to ensure we have all required information to start a backup (raises Error on issue)
+        debug!("run_backup_process Starting");
         let mut domain_info = preflight_check(
             self.config.as_ref(),
             self.mongo.as_ref(),
@@ -70,6 +72,7 @@ impl DomainBackupServiceImpl {
             redolog_collection_name,
             incremental
         ).await?;
+        debug!("run_backup_process Pre-flight successful, {} transactions in redo-log", domain_info.redolog_count);
 
         // Run incremental backup
         let incremental_file: Option<FichierArchiveBackup> = if domain_info.redolog_count > 0 {
@@ -91,6 +94,7 @@ impl DomainBackupServiceImpl {
         let mut concatenated_file = None;
         for file in &domain_info.existing_files {
             if file.header.type_archive == TypeArchive::Concatene.to_string() {
+                debug!("Found existing Concatene file: {:?}", file.path_fichier);
                 concatenated_file = Some(file.clone());
                 break;
             }
@@ -99,6 +103,7 @@ impl DomainBackupServiceImpl {
         // Add the new incremental file to list of existing backup files
         if let Some(new_file) = incremental_file {
             if concatenated_file.is_none() {
+                debug!("Promoting incremental file to Concatene");
                 // There is no current Concatenated file
                 // Promote the incremental file to Concatene
                 let new_concatenated_file = promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?;
@@ -136,8 +141,8 @@ impl DomainBackupServiceImpl {
 impl BackupService for DomainBackupServiceImpl {
     async fn backup_domain(
         &self,
-        domain_name: String,
-        redolog_collection_name: String,
+        domain_name: &str,
+        redolog_collection_name: &str,
         incremental: bool,
     ) -> Result<(), CommonError> {
         let backup_path = self.mongo.get_path_backup();

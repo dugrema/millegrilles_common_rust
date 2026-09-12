@@ -132,10 +132,10 @@ pub async fn rename_backup_file(
     workfile_path: &Path
 ) -> Result<(PathBuf, String, u64), CommonError> {
     // Rename work file
-    let date_str = first_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
+    let date_str = first_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%SZ"));
 
     // Calculer le digest du fichier (apres modification du header).
-    let digest_str = chiffrage.digest_file(backup_path, multihash::Code::Blake2b512, multibase::Base::Base58Btc).await?;
+    let digest_str = chiffrage.digest_file(workfile_path, multihash::Code::Blake2b512, multibase::Base::Base58Btc).await?;
 
     let archive_type_marker = match archive_type {
         TypeArchive::Incremental => "I",
@@ -299,6 +299,8 @@ pub async fn load_backup_file_list(backup_path: &Path, idmg: &str) -> Result<Vec
             .partial_cmp(&b.header.debut_backup)
             .expect("header partial_cmp")
     });
+
+    debug!("Loading backup file list: {}", backup_files.len());
 
     // Check that there is no "overlap" on start dates.
     let mut date_transaction_precedente = 0u64;

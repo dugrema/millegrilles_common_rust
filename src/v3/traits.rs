@@ -88,9 +88,9 @@ pub trait FormatService: Send + Sync {
 pub trait BackupService: Send + Sync {
     async fn backup_domain(
         &self,
-        domain_name: String,
-        redolog_collection_name: String,
-        concatenate: bool,
+        domain_name: &str,
+        redolog_collection_name: &str,
+        incremental: bool,
     ) -> Result<(), CommonError>;
 }
 

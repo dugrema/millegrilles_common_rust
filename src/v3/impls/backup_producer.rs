@@ -71,7 +71,7 @@ pub async fn preflight_check(
         idmg: config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?,
         domain_backup_path,
         existing_files,
-        redolog_count: 0,
+        redolog_count: waiting_transaction_count as usize,
         key: decryption_key,
     })
 }
@@ -170,6 +170,8 @@ async fn process_incremental_file_operations(
     compressor.shutdown().await?;
     encryptor.shutdown().await?;
 
+    debug!("Production of incremental backup file content complete, handling header/digest");
+
     let encryption_result = match encryptor.result {
         Some(result) => result,
         None => {
@@ -188,17 +190,17 @@ async fn process_incremental_file_operations(
         None => return Err(CommonError::Str("Nonce missing from MGS4 encryption result"))
     }
 
-    let backup_path = incremental_workfile_path.parent()
-        .expect("Failed to get backup parent directory").to_owned();
-    overwrite_backup_file_header(backup_path.as_path(), &backup_header).await?;
+    overwrite_backup_file_header(incremental_workfile_path, &backup_header).await?;
 
     // Extract date information from header
-    let first_transaction = match Utc.timestamp_millis_opt(backup_result.first_transaction as i64).single() {
+    let first_transaction = match Utc.timestamp_opt(backup_result.first_transaction as i64, 0).single() {
         Some(timestamp) => timestamp,
         None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
     };
 
     // Rename working file to final file with digest in name
+    let backup_path = incremental_workfile_path.parent()
+        .expect("Failed to get backup parent directory").to_owned();
     let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
         chiffrage,
         &TypeArchive::Incremental,
@@ -238,9 +240,10 @@ where
 
     // Make a cursor sorted by _processed time, this ensures all transactions are run in the same order.
     // Use a hard limit of 10,000 transactions per incremental file (limits DB cleanup per transaction id).
+    debug!("Opening cursor on redo-log collection: {}", redolog_collection_name);
     let mut cursor = collection
         .find(doc!{})
-        .hint(Hint::Name("processed".into()))
+        .hint(Hint::Name("date_processed".into()))
         // .sort(bson::doc!{"_processed": 1})
         .session(&mut *session)
         .batch_size(20)
@@ -260,6 +263,7 @@ where
     // Read all transactions in the mongo redolog collection
     let mut unreadable_transactions = false;
     let mut already_processed_certificate_ids = HashSet::new();
+    debug!("Processing entries from redo-log");
     while let Some(transaction) = cursor.next(&mut *session).await {
         match transaction {
             Ok(mut transaction) => {
@@ -298,6 +302,8 @@ where
             }
         }
     }
+
+    debug!("Done reading redo-log content, cleaning-up");
 
     // Delete processed transactions
     if ! transaction_ids.is_empty() {
@@ -555,6 +561,8 @@ pub async fn produce_concatenated_backup_file(
     if ! domain_info.contains_incremental() {
         return Err(CommonError::Str("No incremental files found to concatenate"))
     }
+
+    debug!("Concatenating all backup files for domain {}", domain_info.domain_name);
 
     let domain_backup_path = domain_info.domain_backup_path.as_path();
 
