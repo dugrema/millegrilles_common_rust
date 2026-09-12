@@ -1,7 +1,7 @@
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
-use crate::v3::models::VerifiedResponseMessage;
+use crate::v3::models::{DecryptedKey, GeneratedSecretKey, VerifiedResponseMessage};
 use crate::v3::{FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::MessageKind;
@@ -137,4 +137,13 @@ impl MessageOutboundFacade {
         let (response, _id) = self.format.build_encrypted_response(value, certificate)?;
         self.messaging.respond(response, routing).await
     }
+
+    pub async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<DecryptedKey>, CommonError> {
+        todo!()
+    }
+
+    pub async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), CommonError> {
+        todo!()
+    }
+
 }

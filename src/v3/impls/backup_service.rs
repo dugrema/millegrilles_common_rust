@@ -102,7 +102,7 @@ impl DomainBackupServiceImpl {
                     domain_info.existing_files = Some(existing_files);
                     // Build new concatene file and rotate previous backup set.
                     concatenated_file = Some(
-                        produce_concatenated_backup_file(self.chiffrage.as_ref(), &domain_info).await?
+                        produce_concatenated_backup_file(self.chiffrage.as_ref(), self.outbound.as_ref(), &domain_info).await?
                     );
                 }
             },

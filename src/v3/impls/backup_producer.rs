@@ -525,6 +525,7 @@ async fn save_certificate(
 
 pub async fn produce_concatenated_backup_file(
     chiffrage: &dyn ChiffrageService,
+    outbound: &MessageOutboundFacade,
     domain_info: &PreflightResult
 ) -> Result<FichierArchiveBackup, CommonError> {
     let existing_files = match domain_info.existing_files.as_ref() {
@@ -540,7 +541,7 @@ pub async fn produce_concatenated_backup_file(
     let domain_backup_path = domain_info.domain_backup_path.as_path();
 
     // Fetch all keys required to decrypt existing backups
-    let keys = load_backup_keys(chiffrage, existing_files).await?;
+    let keys = load_backup_keys(outbound, existing_files).await?;
 
     // Set-up the new concatenated workfile
     let workfile = prepare_backup_workfile(domain_backup_path).await?;

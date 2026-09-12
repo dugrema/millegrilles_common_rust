@@ -60,12 +60,8 @@ pub trait ChiffrageService: Send + Sync {
     fn encryption_key_maintenance(&self);
     fn add_encryption_publickey(&self, certificat: Arc<EnveloppeCertificat>) -> Result<(), CommonError>;
     fn decrypt_document(&self, value: EncryptedDocument) -> Result<Value, CommonError>;
-    /// Fetches keys from the KeyMaster
-    async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<DecryptedKey>, CommonError>;
     /// Generates a new key that can be decrypted by the CA master key
     async fn generate_new_key(&self, domains: &Vec<String>) -> Result<GeneratedSecretKey, CommonError>;
-    /// Saves the generated keys with the KeyMaster
-    async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), CommonError>;
     async fn digest_file(&self, path: &Path, code: Code, base: Base) -> Result<String, CommonError>;
     fn get_cipher_mgs4(&self, key: &DecryptedKey) -> Result<CipherMgs4, CommonError>;
 }

@@ -2651,8 +2651,8 @@ dependencies = [
 
 [[package]]
 name = "millegrilles_cryptographie"
-version = "2026.4.2"
-source = "git+https://github.com/dugrema/millegrilles_cryptographie.git?branch=master#0793ad099376f89ded8945237edd353a6e5b5db3"
+version = "2026.4.3"
+source = "git+https://github.com/dugrema/millegrilles_cryptographie.git?branch=master#cb34526fdb4f76db1b88b457c7da991cad1c89a4"
 dependencies = [
  "base64",
  "blake2",
@@ -4059,7 +4059,7 @@ checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -4372,9 +4372,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.4"
+version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f"
+checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
 dependencies = [
  "proc-macro2",
  "quote",

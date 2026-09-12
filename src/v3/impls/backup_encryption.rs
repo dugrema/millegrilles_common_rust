@@ -29,7 +29,7 @@ pub async fn get_domain_backup_key(
     let key_information: ReponseCleIdBackup = response.message.deserialize()?;
     let backup_key = match key_information.cle_id {
         Some(key_id) => {
-            load_backup_key(chiffrage, key_id.as_str()).await?
+            load_backup_key(outbound, key_id.as_str()).await?
         },
         None => {
             warn!("Error requesting domain backup key, will generate a new one: {:?}", key_information.err);
@@ -40,21 +40,21 @@ pub async fn get_domain_backup_key(
     Ok(backup_key)
 }
 
-async fn load_backup_key(chiffrage: &dyn ChiffrageService, key_id: &str) -> Result<DecryptedKey, CommonError> {
-    let reponse = chiffrage.get_keys(vec![key_id.to_string()]).await?;
+async fn load_backup_key(outbound: &MessageOutboundFacade, key_id: &str) -> Result<DecryptedKey, CommonError> {
+    let reponse = outbound.get_keys(vec![key_id.to_string()]).await?;
     match reponse.into_iter().next() {
         Some(key) => Ok(key),
         None => Err(CommonError::String(format!("Backup key id {} not found", key_id)))
     }
 }
 
-pub async fn load_backup_keys(chiffrage: &dyn ChiffrageService, backup_files: &Vec<FichierArchiveBackup>) -> Result<Vec<DecryptedKey>, CommonError> {
+pub async fn load_backup_keys(outbound: &MessageOutboundFacade, backup_files: &Vec<FichierArchiveBackup>) -> Result<Vec<DecryptedKey>, CommonError> {
     let mut key_ids = HashSet::new();
     for file in backup_files {
         key_ids.insert(file.header.cle_id.clone());
     }
     let key_count = key_ids.len();
-    let reponse = chiffrage.get_keys(key_ids.into_iter().collect()).await?;
+    let reponse = outbound.get_keys(key_ids.into_iter().collect()).await?;
     if reponse.len() == key_count {
         Ok(reponse)
     } else {
@@ -70,7 +70,7 @@ async fn generate_backup_key_for_domain(
     let new_key = chiffrage.generate_new_key(&vec![domain.to_string()]).await?;
 
     // Save the new backup key immediately
-    chiffrage.save_keys(vec![new_key.clone()]).await?;
+    outbound.save_keys(vec![new_key.clone()]).await?;
 
     // Send the key id to CoreTopologie for usage in this domain
     let routing = RoutageMessageAction::builder(

@@ -6,8 +6,8 @@ use bson::{Document, doc, serde_helpers::datetime::FromChrono04DateTime};
 use chrono::Utc;
 use jwt_simple::prelude::Deserialize;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519Impl, CleSecreteSerialisee};
-use millegrilles_cryptographie::maitredescles::SignatureDomaines;
-use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
+use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
+use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesOwned};
 use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::options::WriteModel;
@@ -132,7 +132,7 @@ pub struct PreflightResult {
 #[derive(Clone)]
 pub struct GeneratedSecretKey {
     pub key_id: String,
-    secret_key: CleDerivee,
+    pub secret_key: CleDerivee,
     pub signature: SignatureDomaines,
     pub encrypted_keys: HashMap<String, String>,
 }
@@ -141,6 +141,45 @@ impl GeneratedSecretKey {
     /// Make the secret value obvious
     pub fn secret_key(&self) -> &CleSecreteX25519 {
         &self.secret_key.secret
+    }
+
+    pub fn generate(domains: Vec<String>, ca: &EnveloppeCertificat, public_keys: Vec<&EnveloppeCertificat>) -> Result<Self, CommonError> {
+        // Generate secret key
+        let (new_key, secret_key) = generer_cle_avec_ca(
+            domains,
+            ca,
+            public_keys
+        )?;
+
+        // Convert to proper format
+        Self::from_dechiffrage_key(new_key, secret_key)
+    }
+
+    pub fn from_dechiffrage_key(
+        value: DechiffrageInterMillegrilleOwned,
+        secret_key: CleDerivee
+    ) -> Result<Self, CommonError> {
+        let key_id = match value.cle_id {
+            Some(inner) => inner,
+            None => return Err(CommonError::Str("Key id was not generated"))
+        };
+
+        let signature = match value.signature {
+            Some(inner) => inner,
+            None => return Err(CommonError::Str("Key signature was not generated"))
+        };
+
+        let encrypted_keys: HashMap<String, String> = match value.cles {
+            Some(inner) => inner.into_iter().collect(),
+            None => return Err(CommonError::Str("Encrypted keys were not generated"))
+        };
+
+        Ok(Self {
+            key_id,
+            secret_key,
+            signature,
+            encrypted_keys,
+        })
     }
 }
 

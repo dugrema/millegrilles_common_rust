@@ -14,11 +14,12 @@ use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl};
 use openssl::x509::X509;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
+use millegrilles_cryptographie::maitredescles::generer_cle_avec_ca;
 use multibase::Base;
 use multihash::Code;
 use tokio::io::AsyncReadExt;
@@ -37,7 +38,7 @@ pub const CACHE_RESET_INTERVAL_SEC: u64 = 3600 * 3;
 pub struct SecurityServiceImpl {
     private_key: Arc<EnveloppePrivee>,
     validator: Arc<ValidateurX509Impl>,
-    encryption_handler: CleChiffrageHandlerImpl,
+    encryption_handler: Arc<CleChiffrageHandlerImpl>,
     /// Cache for the certificates that are already verified (local CA/current date only)
     cache_verified_pk: Mutex<HashSet<String>>,
 }
@@ -46,7 +47,7 @@ impl SecurityServiceImpl {
     pub fn new(
         private_key: Arc<EnveloppePrivee>,
         validator: Arc<ValidateurX509Impl>,
-        encryption_handler: CleChiffrageHandlerImpl,
+        encryption_handler: Arc<CleChiffrageHandlerImpl>,
     ) -> Self {
         Self {
             private_key,
@@ -208,21 +209,28 @@ impl ChiffrageService for SecurityServiceImpl {
         decrypt_document(self.private_key.as_ref(), value)
     }
 
-    async fn get_keys(&self, key_ids: Vec<String>) -> Result<Vec<DecryptedKey>, CommonError> {
-        todo!()
-    }
-
     async fn generate_new_key(&self, domains: &Vec<String>) -> Result<GeneratedSecretKey, CommonError> {
-        todo!()
-    }
+        let public_keys = self.encryption_handler.get_publickeys_chiffrage();
+        if public_keys.is_empty() {
+            Err("generate_new_key No keymaster certificate are available")?
+        }
 
-    async fn save_keys(&self, keys: Vec<GeneratedSecretKey>) -> Result<(), CommonError> {
-        todo!()
+        // Convert certificates to references
+        let public_keys_ref: Vec<&EnveloppeCertificat> = public_keys
+            .iter()
+            .map(|k| k.as_ref())
+            .collect();
+
+        let ca = self.private_key.enveloppe_ca.as_ref();
+
+        // Generate secret key
+        GeneratedSecretKey::generate(domains.to_owned(), ca, public_keys_ref)
     }
 
     async fn digest_file(&self, path: &Path, code: Code, base: Base) -> Result<String, CommonError> {
         digest_file(path, code, base).await
     }
+
     fn get_cipher_mgs4(&self, key: &DecryptedKey) -> Result<CipherMgs4, CommonError> {
         Ok(CipherMgs4::with_secret(CleSecreteCipher::CleSecrete(key.secret.clone()))?)
     }
