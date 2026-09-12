@@ -6,7 +6,7 @@ use crate::generateur_messages::RoutageMessageAction;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile};
-use crate::v3::impls::backup_producer::{preflight_check, produce_concatene_backup_file, produce_incremental_backup_file};
+use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
 use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -101,14 +101,18 @@ impl DomainBackupServiceImpl {
                     // Put updated files back (removed by .take)
                     domain_info.existing_files = Some(existing_files);
                     // Build new concatene file and rotate previous backup set.
-                    concatenated_file = Some(produce_concatene_backup_file(&domain_info).await?);
+                    concatenated_file = Some(
+                        produce_concatenated_backup_file(self.chiffrage.as_ref(), &domain_info).await?
+                    );
                 }
             },
             None => {
                 // There are no pre-existing files.
                 if let Some(new_file) = incremental_file {
                     // Promote the incremental file to Concatene
-                    concatenated_file = Some(promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?);
+                    concatenated_file = Some(
+                        promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?
+                    );
                 }
             }
         }

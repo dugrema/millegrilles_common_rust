@@ -5,22 +5,26 @@ use crate::generateur_messages::RoutageMessageAction;
 use crate::messages_generiques::CommandeSauvegarderCertificat;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
-use crate::v3::impls::asyncio_ciphers::AsyncEncryptionWriterMgs4;
-use crate::v3::impls::backup_encryption::get_domain_backup_key;
-use crate::v3::impls::backup_filehandling::{overwrite_backup_file_header, prepare_incremental_backup_file, rename_backup_file, rotate_backup_files};
-use crate::v3::models::{BackupResult, PreflightResult, TransactionProcessedRow};
+use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
+use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
+use crate::v3::impls::backup_filehandling::{overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
+use crate::v3::models::{BackupResult, DecryptedKey, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::write::DeflateEncoder;
+use async_compression::tokio::bufread::DeflateDecoder;
 use bson::doc;
 use chrono::{DateTime, TimeZone, Utc};
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::ClientSession;
 use mongodb::options::Hint;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::io::SeekFrom;
 use std::path::Path;
+use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use tokio::fs::File;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
 pub async fn preflight_check(
@@ -88,7 +92,7 @@ pub async fn produce_incremental_backup_file(
 
     // let domain_backup_path = mongo.get_path_backup().join(domain_info.domain_name.as_str());
     let domain_backup_path = domain_info.domain_backup_path.as_path();
-    let incremental_workfile_path = prepare_incremental_backup_file(domain_backup_path).await?;
+    let incremental_workfile_path = prepare_backup_workfile(domain_backup_path).await?;
 
     // Start database transaction - will commit only once the file is completely flushed.
     let mut session = mongo.get_session().await?;
@@ -342,6 +346,147 @@ where
     Ok(result)
 }
 
+/// This takes all backup files (previous concatenated and incrementals) and saves them in a new file.
+async fn process_concatenated_file_operations(
+    chiffrage: &dyn ChiffrageService,
+    domain_info: &PreflightResult,
+    keys: Vec<DecryptedKey>,
+    workfile_path: &Path,
+) -> Result<FichierArchiveBackup, CommonError> {
+    let mut work_file = tokio::io::BufWriter::new(File::create(&workfile_path).await?);
+
+    let (key_id, signature) = match (&domain_info.key.key.cle_id, &domain_info.key.signature) {
+        (Some(key_id), Some(signature)) => (key_id.as_str(),signature),
+        _ => return Err(CommonError::Str("No key_id/domain signature in key set")),
+    };
+    let (mut backup_header, header_size) = write_new_header(
+        &mut work_file,
+        &TypeArchive::Concatene,
+        domain_info.idmg.as_str(),
+        domain_info.domain_name.as_str(),
+        key_id,
+        signature
+    ).await?;
+
+    // Create streaming "compression -> encryption -> file writing" pipeline for backup file
+    let mut encryptor = AsyncEncryptionWriterMgs4::new(
+        work_file,
+        chiffrage.get_cipher_mgs4(&domain_info.key)?
+    );
+    let mut compressor = DeflateEncoder::new(&mut encryptor);
+
+    // BACKUP
+    let mut keys_map = HashMap::new();
+    for key in keys.into_iter() {
+        let key_id = match key.key.cle_id.as_ref() {
+            Some(key_id) => key_id,
+            None => return Err(CommonError::Str("No key_id/domain signature in key set"))
+        };
+        keys_map.insert(key_id.to_string(), key);
+    }
+    let backup_result = extract_transactions_from_backup(domain_info, &keys_map, &mut compressor).await?;
+
+    // Wind down pipeline
+    compressor.shutdown().await?;
+    encryptor.shutdown().await?;
+
+    let encryption_result = match encryptor.result {
+        Some(result) => result,
+        None => {
+            return Err(CommonError::Str("Encryption results were not available for backup, aborting"));
+        }
+    };
+
+    // Update the backup header with metadata including decryption information
+    backup_header.debut_backup = backup_result.first_transaction;
+    backup_header.fin_backup = backup_result.last_transaction;
+    backup_header.nombre_transactions = backup_result.count;
+    match encryption_result.cles.nonce.as_ref() {
+        Some(inner) => {
+            backup_header.nonce = inner.clone();
+        },
+        None => return Err(CommonError::Str("Nonce missing from MGS4 encryption result"))
+    }
+
+    let backup_path = workfile_path.parent()
+        .expect("Failed to get backup parent directory").to_owned();
+    overwrite_backup_file_header(backup_path.as_path(), &backup_header).await?;
+
+    // Extract date information from header
+    let first_transaction = match Utc.timestamp_millis_opt(backup_result.first_transaction as i64).single() {
+        Some(timestamp) => timestamp,
+        None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
+    };
+
+    // Rename working file to final file with digest in name
+    let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
+        chiffrage,
+        &TypeArchive::Incremental,
+        first_transaction,
+        domain_info.domain_name.as_str(),
+        backup_path.as_path(),
+        workfile_path
+    ).await?;
+
+    // Position of first byte of data: 4 bytes (version u16, taille header u16) + header
+    let position_data = (4 + header_size) as usize;
+    let backup_result = FichierArchiveBackup {
+        path_fichier: path_backup_file,
+        header: backup_header,
+        position_data,
+        digest_suffix,
+        len: filesize,
+    };
+
+    Ok(backup_result)
+}
+
+async fn extract_transactions_from_backup<W>(
+    domain_info: &PreflightResult,
+    keys: &HashMap<String, DecryptedKey>,
+    writer: &mut W
+) -> Result<BackupResult, CommonError> where W: AsyncWrite + Unpin {
+
+    let existing_files = match domain_info.existing_files.as_ref() {
+        Some(files) => files,
+        None => return Err(CommonError::Str("No existing files found"))
+    };
+
+    for backup_file in existing_files {
+        let key_id = backup_file.header.cle_id.as_str();
+        let decipher_key = match keys.get(&key_id.to_string()) {
+            Some(key) => key,
+            None => return Err(CommonError::String(format!("Key id {} not found", key_id)))
+        };
+
+        // Position the file to read from the start of encrypted data
+        let mut file = File::open(backup_file.path_fichier.as_path()).await?;
+        file.seek(SeekFrom::Start(backup_file.position_data as u64)).await?;
+
+        // Set-up the streaming pipeline for decrypting/decompressing the transactions
+        let decipher = DecipherMgs4::new(&decipher_key.try_into()?)
+            .expect("Failed to create decipher");
+        let decryptor = AsyncDecryptionReaderMgs4::new(file, decipher);
+        let buf_reader = BufReader::new(decryptor);
+        let decompressor = DeflateDecoder::new(buf_reader);
+        let mut lines = BufReader::new(decompressor).lines();
+
+        while let Some(transaction) = lines.next_line().await? {
+            // Validate structure of transaction
+            let mut t: MessageMilleGrillesOwned = serde_json::from_str(transaction.as_str())?;
+            t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+
+            // Write transaction back to new file
+            writer.write_all(transaction.as_bytes()).await?;
+            // Add newline for jsonl format
+            writer.write_all(b"\n").await?;
+        }
+    }
+
+
+    todo!()
+}
+
 async fn save_certificate(
     outbound: &MessageOutboundFacade,
     certificate: &Vec<String>,
@@ -378,13 +523,34 @@ async fn save_certificate(
     Ok(())
 }
 
-pub async fn produce_concatene_backup_file(
+pub async fn produce_concatenated_backup_file(
+    chiffrage: &dyn ChiffrageService,
     domain_info: &PreflightResult
 ) -> Result<FichierArchiveBackup, CommonError> {
+    let existing_files = match domain_info.existing_files.as_ref() {
+        Some(existing_files) => {
+            if existing_files.len() <= 1 {
+                return Err(CommonError::Str("No files found to concatenate"))
+            }
+            existing_files
+        },
+        None => return Err(CommonError::Str("No files to concatenate"))
+    };
+
     let domain_backup_path = domain_info.domain_backup_path.as_path();
+
+    // Fetch all keys required to decrypt existing backups
+    let keys = load_backup_keys(chiffrage, existing_files).await?;
+
+    // Set-up the new concatenated workfile
+    let workfile = prepare_backup_workfile(domain_backup_path).await?;
+    process_concatenated_file_operations(chiffrage, domain_info, keys, workfile.as_path()).await?;
 
     // Concatenated file done, rotate all backup folders and move *.mgbak files to backup.1
     rotate_backup_files(domain_backup_path).await?;
+
+    // Rename concatenated workfile to proper value
+
 
     todo!()
 }

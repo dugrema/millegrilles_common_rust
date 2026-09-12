@@ -1,5 +1,6 @@
+use std::collections::HashSet;
 use tracing::warn;
-use crate::backup_v2::{CommandeEnregistrerCleidBackup, ReponseCleIdBackup, RequeteCleIdBackup};
+use crate::backup_v2::{CommandeEnregistrerCleidBackup, FichierArchiveBackup, ReponseCleIdBackup, RequeteCleIdBackup};
 use crate::constantes::{Securite, DOMAINE_TOPOLOGIE};
 use crate::generateur_messages::RoutageMessageAction;
 use crate::messages_generiques::ReponseCommande;
@@ -44,6 +45,20 @@ async fn load_backup_key(chiffrage: &dyn ChiffrageService, key_id: &str) -> Resu
     match reponse.into_iter().next() {
         Some(key) => Ok(key),
         None => Err(CommonError::String(format!("Backup key id {} not found", key_id)))
+    }
+}
+
+pub async fn load_backup_keys(chiffrage: &dyn ChiffrageService, backup_files: &Vec<FichierArchiveBackup>) -> Result<Vec<DecryptedKey>, CommonError> {
+    let mut key_ids = HashSet::new();
+    for file in backup_files {
+        key_ids.insert(file.header.cle_id.clone());
+    }
+    let key_count = key_ids.len();
+    let reponse = chiffrage.get_keys(key_ids.into_iter().collect()).await?;
+    if reponse.len() == key_count {
+        Ok(reponse)
+    } else {
+        Err(CommonError::String(format!("Need {} keys for concatenating backup, only received {}", key_count, reponse.len())))
     }
 }
 

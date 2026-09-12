@@ -5,7 +5,7 @@ use crate::v3::facades::message_inbound::MessageValidated;
 use bson::{Document, doc, serde_helpers::datetime::FromChrono04DateTime};
 use chrono::Utc;
 use jwt_simple::prelude::Deserialize;
-use millegrilles_cryptographie::chiffrage_cles::CleSecreteSerialisee;
+use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519Impl, CleSecreteSerialisee};
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
 use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
+use millegrilles_cryptographie::chiffrage::FormatChiffrage;
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -174,6 +175,20 @@ impl TryFrom<GeneratedSecretKey> for DecryptedKey {
             signature: Some(value.signature),
             key: serialized_key,
             secret: value.secret_key.secret,
+        })
+    }
+}
+
+impl TryInto<CleDechiffrageX25519Impl> for &DecryptedKey {
+    type Error = CommonError;
+
+    fn try_into(self) -> Result<CleDechiffrageX25519Impl, Self::Error> {
+        Ok(CleDechiffrageX25519Impl {
+            cle_chiffree: "N/A".to_string(),
+            cle_secrete: Some(self.secret.clone()),
+            format: self.key.format.clone().unwrap_or(FormatChiffrage::MGS4),
+            nonce: match self.key.nonce.clone() { Some(nonce) => Some(nonce.to_string()), None => None },
+            verification: match self.key.verification.clone() { Some(verif) => Some(verif.to_string()), None => None },
         })
     }
 }

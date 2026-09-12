@@ -111,9 +111,8 @@ pub async fn promote_backup_file(
     Ok(new_file_info)
 }
 
-pub async fn prepare_incremental_backup_file(domain_backup_path: &Path) -> Result<PathBuf, CommonError> {
-    let prefix = "incremental";
-    let file_path = domain_backup_path.join(format!("{}.mgbak.work", prefix));
+pub async fn prepare_backup_workfile(domain_backup_path: &Path) -> Result<PathBuf, CommonError> {
+    let file_path = domain_backup_path.join("backup_workfile.mgbak.work");
     // Remove any old workfile
     if let Err(e) = tokio::fs::remove_file(&file_path).await {
         debug!("prepare_incremental_backup_file Delete file result: {:?}", e);
