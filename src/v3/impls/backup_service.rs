@@ -11,7 +11,8 @@ use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info};
+use crate::v3::models::PreflightError;
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
 const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
@@ -63,7 +64,7 @@ impl DomainBackupServiceImpl {
     async fn run_backup_process(&self, domain_name: &str, redolog_collection_name: &str, incremental: bool) -> Result<(), CommonError> {
         // Run a check to ensure we have all required information to start a backup (raises Error on issue)
         debug!("run_backup_process Starting");
-        let mut domain_info = preflight_check(
+        let mut domain_info = match preflight_check(
             self.config.as_ref(),
             self.mongo.as_ref(),
             self.outbound.as_ref(),
@@ -71,7 +72,14 @@ impl DomainBackupServiceImpl {
             domain_name,
             redolog_collection_name,
             incremental
-        ).await?;
+        ).await {
+            Ok(info) => info,
+            Err(PreflightError::NothingToDo) => {
+                debug!("No transactions in redo-log to backup or files to concatenate");
+                return Ok(());
+            },
+            Err(PreflightError::CommonError(e)) => return Err(e)
+        };
         debug!("run_backup_process Pre-flight successful, {} transactions in redo-log", domain_info.redolog_count);
 
         // Run incremental backup

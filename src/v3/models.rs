@@ -279,3 +279,12 @@ impl ErrorMessage {
         Ok((!content.ok, content.err))
     }
 }
+
+pub enum PreflightError {
+    NothingToDo,
+    CommonError(CommonError),
+}
+
+impl From<CommonError> for PreflightError {
+    fn from(err: CommonError) -> Self { PreflightError::CommonError(err) }
+}

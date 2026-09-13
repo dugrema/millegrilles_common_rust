@@ -8,7 +8,7 @@ use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
 use crate::v3::impls::backup_filehandling::{load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
-use crate::v3::models::{BackupResult, DecryptedKey, PreflightResult, TransactionProcessedRow};
+use crate::v3::models::{BackupResult, DecryptedKey, PreflightError, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
@@ -36,17 +36,18 @@ pub async fn preflight_check(
     domain_name: &str,
     redolog_collection_name: &str,
     incremental: bool,
-) -> Result<PreflightResult, CommonError> {
+) -> Result<PreflightResult, PreflightError> {
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
     let domain_backup_path = mongo.get_path_backup().join(domain_name);
     
     if incremental {
         if waiting_transaction_count == 0 {
-            return Err(CommonError::Str("No transactions waiting in redo collection for incremental backup, aborting"));
+            return Err(PreflightError::NothingToDo);
         }
     }
-    let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
+    let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()
+        .map_err(|e| PreflightError::CommonError(e.into()))?;
 
     // Check if we have existing incremental backups to concatenate
     let existing_files = load_backup_file_list(
@@ -61,7 +62,8 @@ pub async fn preflight_check(
 
     if waiting_transaction_count == 0 && ! contains_incremental {
         // We only have 1 backup file (Concatene) and there are no additional transactions to back-up
-        return Err(CommonError::Str("All transactions are already in Final/Concatene files, aborting full backup"));
+        // Err(CommonError::Str("All transactions are already in Final/Concatene files, aborting full backup"))?;
+        return Err(PreflightError::NothingToDo);
     }
 
     // Get encryption key for this domain
@@ -69,7 +71,7 @@ pub async fn preflight_check(
 
     Ok(PreflightResult {
         domain_name: domain_name.to_string(),
-        idmg: config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?,
+        idmg,
         domain_backup_path,
         existing_files,
         redolog_count: waiting_transaction_count as usize,
@@ -377,7 +379,7 @@ async fn process_concatenated_file_operations(
         (Some(key_id), Some(signature)) => (key_id.as_str(),signature),
         _ => return Err(CommonError::Str("No key_id/domain signature in key set")),
     };
-    let (mut backup_header, header_size) = write_new_header(
+    let (mut backup_header, _header_size) = write_new_header(
         &mut work_file,
         &TypeArchive::Concatene,
         domain_info.idmg.as_str(),
