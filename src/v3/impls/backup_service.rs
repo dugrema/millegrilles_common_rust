@@ -12,8 +12,8 @@ use crate::v3::{BackupService, ChiffrageService, ConfigService, TransactionServi
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
-use tracing::{debug, error, warn};
-use crate::v3::impls::backup_restorer::{process_transactions_from_backup, restore_preflight_check};
+use tracing::{debug, error, info, warn};
+use crate::v3::impls::backup_restorer::{process_transactions_from_backup, restore_preflight_check, truncate_data_tables, RestorationState};
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
 const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
@@ -25,6 +25,8 @@ pub struct DomainBackupServiceImpl {
     chiffrage: Arc<dyn ChiffrageService>,
     mongo: Arc<MongoDaoImpl>,
     transaction: Arc<dyn TransactionService>,
+    /// List of data tables to truncate on restore
+    data_tables: Vec<String>,
 }
 
 impl DomainBackupServiceImpl {
@@ -34,6 +36,7 @@ impl DomainBackupServiceImpl {
         chiffrage: Arc<dyn ChiffrageService>,
         mongo: Arc<MongoDaoImpl>,
         transaction: Arc<dyn TransactionService>,
+        data_tables: Vec<String>,
     ) -> Self {
         Self {
             config,
@@ -41,6 +44,7 @@ impl DomainBackupServiceImpl {
             chiffrage,
             mongo,
             transaction,
+            data_tables,
         }
     }
 
@@ -156,9 +160,10 @@ impl DomainBackupServiceImpl {
         &self,
         domain_name: &str,
         redolog_collection_name: &str,
+        tracking_collection_name: &str,
         resume: bool,
         version: Option<String>
-    ) -> Result<(), CommonError> {
+    ) -> Result<RestorationState, CommonError> {
 
         let preflight = restore_preflight_check(
             self.config.as_ref(),
@@ -171,16 +176,19 @@ impl DomainBackupServiceImpl {
         ).await?;
 
         if preflight.last_processed_id.is_none() {
-            todo!("Truncate all data tables from domain")
+            info!("Truncate tracking collection and all data collections from domain {}", domain_name);
+            truncate_data_tables(self.mongo.as_ref(), &self.data_tables, Some(tracking_collection_name)).await?;
         }
 
         let result = process_transactions_from_backup(
+            self.mongo.as_ref(),
             &preflight,
             self.outbound.as_ref(),
-            self.transaction.as_ref()
+            self.transaction.as_ref(),
+            redolog_collection_name,
         ).await?;
 
-        todo!()
+        Ok(result)
     }
 }
 
@@ -220,16 +228,23 @@ impl BackupService for DomainBackupServiceImpl {
         &self,
         domain_name: &str,
         redolog_collection_name: &str,
+        tracking_collection_name: &str,
         resume: bool,
         version: Option<String>
-    ) -> Result<(), CommonError> {
+    ) -> Result<RestorationState, CommonError> {
         let backup_path = self.mongo.get_path_backup().as_path();
         let domain_backup_path = backup_path.join(domain_name);
 
         // Lock the domain folder (only specific domain). Fail fast.
         let lockfile = create_lockfile(domain_backup_path.as_path(), false).await?;
 
-        let result = self.run_restore(domain_name, redolog_collection_name, resume, version).await;
+        let result = self.run_restore(
+            domain_name,
+            redolog_collection_name,
+            tracking_collection_name,
+            resume,
+            version
+        ).await;
 
         // Unlock backup folder
         unlock_lockfile(lockfile).await;

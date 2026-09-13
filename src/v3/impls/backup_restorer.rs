@@ -1,23 +1,26 @@
 use crate::error::Error as CommonError;
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::AsyncDecryptionReaderMgs4;
 use crate::v3::impls::backup_encryption::load_backup_keys;
 use crate::v3::impls::backup_filehandling::load_backup_file_list;
 use crate::v3::impls::backup_producer::check_redo_log_size;
-use crate::v3::models::{BackupResult, RestorePreflightResult};
+use crate::v3::models::{RestorePreflightResult, TransactionOperationAggregator, TransactionProcessedRow};
 use crate::v3::{ConfigService, TransactionService};
 use async_compression::tokio::bufread::DeflateDecoder;
+use bson::doc;
+use futures_util::StreamExt;
 use millegrilles_cryptographie::chiffrage_cles::CleDechiffrageX25519Impl;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
+use mongodb::options::Hint;
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::sync::Arc;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWrite, BufReader};
-use tracing::debug;
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
+use tracing::{debug, error};
 
 pub async fn restore_preflight_check(
     config: &dyn ConfigService,
@@ -35,7 +38,7 @@ pub async fn restore_preflight_check(
     let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()?;
 
     let file_list = match version {
-        Some(version) => {
+        Some(_version) => {
             todo!("Handle version")
         },
         None => {
@@ -74,34 +77,63 @@ pub async fn restore_preflight_check(
 
 const CERTIFICATE_CACHE_LIMIT: usize = 250;
 
+pub struct RestorationState {
+    first_transaction: u64,
+    last_transaction: u64,
+    transaction_count: u64,
+    skipping: bool,
+    aggregator: Option<TransactionOperationAggregator>,
+}
+
 pub async fn process_transactions_from_backup(
+    mongo: &MongoDaoImpl,
     domain_info: &RestorePreflightResult,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService,
-) -> Result<BackupResult, CommonError> {
+    redolog_collection_name: &str,
+) -> Result<RestorationState, CommonError> {
+    // Process all mgbak files
+    let mut restoration_state = process_backup_files(domain_info, outbound, transaction).await?;
 
-    let existing_files = &domain_info.files;
-    debug!("Extract transactions from {} existing files", existing_files.len());
+    // Process the redo-log collection
+    process_redolog_collection(
+        mongo,
+        outbound,
+        transaction,
+        redolog_collection_name,
+        &mut restoration_state
+    ).await?;
 
-    let keys = &domain_info.keys;
+    // Run last batch of write operations from aggregator when applicable
+    if let Some(aggregator) = restoration_state.aggregator.take() {
+        transaction.run_aggregator(aggregator).await?;
+    }
 
-    let mut first_transaction: u64 = 0;
-    let mut last_transaction: u64 = 0;
-    let mut transaction_count: u64 = 0;
+    debug!("Done processing transactions");
 
-    // When in resume mode, skipping is true and gets toggled to false when ready to resume
-    let mut skipping = domain_info.last_processed_id.is_some();
+    Ok(restoration_state)
+}
 
-    // Use a cache of certificates to accelerate processing
-    let mut certificate_cache:  HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
+async fn process_backup_files(
+    domain_info: &RestorePreflightResult,
+    outbound: &MessageOutboundFacade,
+    transaction: &dyn TransactionService
+) -> Result<RestorationState, CommonError> {
+    let mut restoration_state = RestorationState {
+        first_transaction: 0,
+        last_transaction: 0,
+        transaction_count: 0,
+        skipping: domain_info.last_processed_id.is_some(),
+        aggregator: None,
+    };
 
-    let mut aggregator = None;
-
-    for backup_file in existing_files {
+    let mut certificate_cache: HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
+    debug!("Extract transactions from {} existing files", &domain_info.files.len());
+    for backup_file in &domain_info.files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
 
         let key_id = backup_file.header.cle_id.as_str();
-        let decipher_key = match keys.get(&key_id.to_string()) {
+        let decipher_key = match domain_info.keys.get(&key_id.to_string()) {
             Some(key) => {
                 // Inject the nonce/format from the backup file into the key
                 let mut value: CleDechiffrageX25519Impl = key.try_into()?;
@@ -130,22 +162,22 @@ pub async fn process_transactions_from_backup(
             // Transactions must be in order, this is enforced here. Also bean counting.
             let mut t: MessageMilleGrillesOwned = serde_json::from_str(transaction_data.as_str())?;
             let new_transaction_time = t.estampille.timestamp() as u64;
-            if first_transaction == 0 {
-                first_transaction = new_transaction_time;
-            } else if first_transaction > new_transaction_time {
+            if restoration_state.first_transaction == 0 {
+                restoration_state.first_transaction = new_transaction_time;
+            } else if restoration_state.first_transaction > new_transaction_time {
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
             }
-            if last_transaction > new_transaction_time {
+            if restoration_state.last_transaction > new_transaction_time {
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to previous transaction"))
             }
-            last_transaction = new_transaction_time;
-            transaction_count += 1;
+            restoration_state.last_transaction = new_transaction_time;
+            restoration_state.transaction_count += 1;
 
             // Check if we are skipping (resuming)
-            if skipping {
+            if restoration_state.skipping {
                 if Some(&t.id) == domain_info.last_processed_id.as_ref() {
                     debug!("Ran to last processed transaction id {}, toggling write operations", t.id);
-                    skipping = false
+                    restoration_state.skipping = false
                     // Note: we still skip this transaction as it is already processed
                 }
                 continue  // Transaction already processed
@@ -170,33 +202,100 @@ pub async fn process_transactions_from_backup(
             };
 
             // Add transaction to the operations aggregator.
-            aggregator = Some(transaction.route_transaction(
+            restoration_state.aggregator = Some(transaction.route_transaction(
                 t,
                 certificate,
-                aggregator.take()
+                restoration_state.aggregator.take()
             ).await?);
 
-            if transaction_count % 20 == 0 {
+            if restoration_state.transaction_count % 20 == 0 {
                 // Run write operations from aggregator
-                if let Some(aggregator) = aggregator.take() {
+                if let Some(aggregator) = restoration_state.aggregator.take() {
                     transaction.run_aggregator(aggregator).await?;
                 }
             }
         }
     }
 
-    todo!("Open cursor on redo-log collection - process transactions in batches");
+    Ok(restoration_state)
+}
 
-    // Run last batch of write operations from aggregator when applicable
-    if let Some(aggregator) = aggregator.take() {
-        transaction.run_aggregator(aggregator).await?;
+pub async fn truncate_data_tables(
+    mongo: &dyn MongoDao,
+    data_tables: &Vec<String>,
+    tracking_collection_name: Option<&str>
+) -> Result<(), CommonError> {
+    for table_name in data_tables {
+        let collection = mongo.get_collection(table_name.as_str())?;
+        collection.delete_many(doc!{}).await?;  // TODO - Truncate or drop/recreate with index
     }
 
-    debug!("Done processing transactions");
+    if let Some(tracking) = tracking_collection_name {
+        debug!("Truncating tracking table {}", tracking);
+        let collection = mongo.get_collection(tracking)?;
+        collection.delete_many(doc!{}).await?;
+    }
 
-    Ok(BackupResult {
-        first_transaction,
-        last_transaction,
-        count: transaction_count,
-    })
+    Ok(())
+}
+
+async fn process_redolog_collection(
+    mongo: &MongoDaoImpl,
+    outbound: &MessageOutboundFacade,
+    transaction: &dyn TransactionService,
+    redolog_collection_name: &str,
+    restoration_state: &mut RestorationState,
+) -> Result<(), CommonError> {
+    let collection = mongo.get_collection_typed::<TransactionProcessedRow>(redolog_collection_name)?;
+    debug!("Opening cursor on redo-log collection: {}", redolog_collection_name);
+    let mut cursor = collection
+        .find(doc!{})
+        .hint(Hint::Name("date_processed".into()))
+        // .sort(bson::doc!{"_processed": 1})
+        // .session(&mut *session)
+        .batch_size(20)
+        .limit(10_000)
+        .await?;
+
+    debug!("Processing entries from redo-log");
+    while let Some(transaction_row) = cursor.next().await {
+        match transaction_row {
+            Ok(mut transaction_data) => {
+                // Beancounting
+                if restoration_state.first_transaction == 0 {
+                    restoration_state.first_transaction = transaction_data.processed.timestamp() as u64;
+                }
+                let previous_last = restoration_state.last_transaction;
+                restoration_state.last_transaction = transaction_data.processed.timestamp() as u64;
+                if previous_last > restoration_state.last_transaction {
+                    return Err(CommonError::Str("Transaction processing dates are not sorted properly"));
+                }
+                restoration_state.transaction_count += 1;
+                // Done beancounting
+
+                // Validate structure of transaction
+                transaction_data.message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+
+                // Parse certificate from transaction
+                let certificate = if let Some(certificate_string) = transaction_data.message.certificat.as_ref() {
+                    let certificate_str = certificate_string.join("\n");
+                    Arc::new(EnveloppeCertificat::try_from(certificate_str.as_str())?)
+                } else {
+                    debug!("Fetch certificate for redo-log transaction {}", transaction_data.message.id);
+                    outbound.get_certificate(transaction_data.message.pubkey.as_str(), Some(3_000)).await?
+                };
+
+                restoration_state.aggregator = Some(transaction.route_transaction(
+                    transaction_data.message,
+                    certificate,
+                    restoration_state.aggregator.take()
+                ).await?);
+            }
+            Err(e) => {
+                error!("Error parsing redolog content: {}, will ignore transaction", e);
+            }
+        }
+    }
+
+    Ok(())
 }

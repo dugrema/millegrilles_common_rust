@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
+use crate::v3::impls::backup_restorer::RestorationState;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
@@ -97,9 +98,10 @@ pub trait BackupService: Send + Sync {
         &self,
         domain_name: &str,
         redolog_collection_name: &str,
+        tracking_collection_name: &str,
         resume: bool,
         version: Option<String>,
-    ) -> Result<(), CommonError>;
+    ) -> Result<RestorationState, CommonError>;
 }
 
 #[async_trait]
