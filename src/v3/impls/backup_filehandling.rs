@@ -169,6 +169,8 @@ pub async fn rename_backup_file(
 }
 
 pub async fn rotate_backup_files(domain_backup_path: &Path) -> Result<(), CommonError> {
+    debug!("Rotation backup folders in {:?}", domain_backup_path);
+
     // 1. Create new backup_DATE folder (date is now).
     let now = Utc::now();
     let date_str = now.format("%Y%m%d%H%M%S").to_string();
@@ -178,6 +180,7 @@ pub async fn rotate_backup_files(domain_backup_path: &Path) -> Result<(), Common
     if let Err(e) = fs::create_dir_all(&new_backup_dir).await {
         return Err(CommonError::String(format!("Failed to create backup directory {:?}: {:?}", new_backup_dir, e)));
     }
+    debug!("New backup directory created {:?}", new_backup_dir);
 
     // 2. Move *.mgbak files from domain_backup_path to new_backup_dir
     let mut entries = fs::read_dir(domain_backup_path)
@@ -188,6 +191,7 @@ pub async fn rotate_backup_files(domain_backup_path: &Path) -> Result<(), Common
         let path = entry.path();
         if path.is_file() && path.extension().map_or(false, |ext| ext == "mgbak") {
             let dest = new_backup_dir.join(path.file_name().unwrap());
+            debug!("Moving backup file {:?} to {:?}", path, dest);
             if let Err(e) = fs::rename(&path, &dest).await {
                 return Err(CommonError::String(format!("Failed to move file {:?} to {:?}: {:?}", path, dest, e)));
             }
@@ -212,6 +216,7 @@ pub async fn rotate_backup_files(domain_backup_path: &Path) -> Result<(), Common
 
     // Keep the last 3
     const KEEP_LAST_N: usize = 3;
+    debug!("Keeping last {} of sorted backup_dirs {:?}", KEEP_LAST_N, backup_dirs);
     if backup_dirs.len() > KEEP_LAST_N {
         let to_delete_count = backup_dirs.len() - KEEP_LAST_N;
         for i in 0..to_delete_count {

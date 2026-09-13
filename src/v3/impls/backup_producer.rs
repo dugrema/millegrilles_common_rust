@@ -14,6 +14,7 @@ use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
 use bson::doc;
 use chrono::{DateTime, TimeZone, Utc};
+use millegrilles_cryptographie::chiffrage_cles::CleDechiffrageX25519Impl;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
@@ -359,6 +360,17 @@ async fn process_concatenated_file_operations(
     keys: Vec<DecryptedKey>,
     workfile_path: &Path,
 ) -> Result<FichierArchiveBackup, CommonError> {
+    debug!("Map keys for decryption");
+    let mut keys_map = HashMap::new();
+    for key in keys.into_iter() {
+        let key_id = match key.key.cle_id.as_ref() {
+            Some(key_id) => key_id,
+            None => return Err(CommonError::Str("No key_id/domain signature in key set"))
+        };
+        keys_map.insert(key_id.to_string(), key);
+    }
+
+    debug!("Prepare work file: {:?}", workfile_path);
     let mut work_file = tokio::io::BufWriter::new(File::create(&workfile_path).await?);
 
     let (key_id, signature) = match (&domain_info.key.key.cle_id, &domain_info.key.signature) {
@@ -373,26 +385,23 @@ async fn process_concatenated_file_operations(
         key_id,
         signature
     ).await?;
+    debug!("Header written, creating pipeline");
 
     // Create streaming "compression -> encryption -> file writing" pipeline for backup file
     let mut encryptor = AsyncEncryptionWriterMgs4::new(
         work_file,
         chiffrage.get_cipher_mgs4(&domain_info.key)?
     );
+
+    debug!("Creating compressor");
     let mut compressor = DeflateEncoder::new(&mut encryptor);
 
     // BACKUP
-    let mut keys_map = HashMap::new();
-    for key in keys.into_iter() {
-        let key_id = match key.key.cle_id.as_ref() {
-            Some(key_id) => key_id,
-            None => return Err(CommonError::Str("No key_id/domain signature in key set"))
-        };
-        keys_map.insert(key_id.to_string(), key);
-    }
+    debug!("Starting transaction extraction");
     let backup_result = extract_transactions_from_backup(domain_info, &keys_map, &mut compressor).await?;
 
     // Wind down pipeline
+    debug!("Shut-down writing pipeline");
     compressor.shutdown().await?;
     encryptor.shutdown().await?;
 
@@ -454,28 +463,37 @@ async fn extract_transactions_from_backup<W>(
 ) -> Result<BackupResult, CommonError> where W: AsyncWrite + Unpin {
 
     let existing_files = &domain_info.existing_files;
+    debug!("Extract transactions from {} existing files", existing_files.len());
 
     let mut first_transaction: u64 = 0;
     let mut last_transaction: u64 = 0;
     let mut transaction_count: u64 = 0;
 
     for backup_file in existing_files {
+        debug!("Processing backup file {:?}", backup_file.path_fichier);
         if backup_file.header.type_archive == TypeArchive::Final.to_string() {
             continue  // Skip final archives, they **MUST NOT** be re-processed
         }
 
         let key_id = backup_file.header.cle_id.as_str();
         let decipher_key = match keys.get(&key_id.to_string()) {
-            Some(key) => key,
+            Some(key) => {
+                // Inject the nonce/format from the backup file into the key
+                let mut value: CleDechiffrageX25519Impl = key.try_into()?;
+                value.nonce = Some(backup_file.header.nonce.clone());
+                value.format = backup_file.header.format.as_str().try_into()?;
+                value
+            },
             None => return Err(CommonError::String(format!("Key id {} not found", key_id)))
         };
 
         // Position the file to read from the start of encrypted data
         let mut file = File::open(backup_file.path_fichier.as_path()).await?;
+        debug!("Processing backup file {:?}, starting at byte position {}", backup_file.path_fichier, backup_file.position_data);
         file.seek(SeekFrom::Start(backup_file.position_data as u64)).await?;
 
         // Set-up the streaming pipeline for decrypting/decompressing the transactions
-        let decipher = DecipherMgs4::new(&decipher_key.try_into()?)
+        let decipher = DecipherMgs4::new(&decipher_key)
             .expect("Failed to create decipher");
         let decryptor = AsyncDecryptionReaderMgs4::new(file, decipher);
         let buf_reader = BufReader::new(decryptor);
@@ -506,7 +524,7 @@ async fn extract_transactions_from_backup<W>(
             writer.write_all(b"\n").await?;
         }
     }
-
+    debug!("Done reading transactions");
     writer.flush().await?;
 
     Ok(BackupResult {
@@ -562,15 +580,16 @@ pub async fn produce_concatenated_backup_file(
         return Err(CommonError::Str("No incremental files found to concatenate"))
     }
 
-    debug!("Concatenating all backup files for domain {}", domain_info.domain_name);
-
     let domain_backup_path = domain_info.domain_backup_path.as_path();
+    debug!("Concatenating all backup files for domain {}, using path: {:?}", domain_info.domain_name, domain_backup_path);
 
     // Fetch all keys required to decrypt existing backups
     let keys = load_backup_keys(outbound, &domain_info.existing_files).await?;
+    debug!("Decryption keys loaded: {} keys", keys.len());
 
     // Set-up the new concatenated workfile
     let workfile = prepare_backup_workfile(domain_backup_path).await?;
+    debug!("Using backup workfile: {:?}", workfile);
     let backup_result = process_concatenated_file_operations(
         chiffrage,
         domain_info,
@@ -579,7 +598,7 @@ pub async fn produce_concatenated_backup_file(
     ).await?;
 
     // Extract date information from header
-    let first_transaction = match Utc.timestamp_millis_opt(backup_result.header.debut_backup as i64).single() {
+    let first_transaction = match Utc.timestamp_opt(backup_result.header.debut_backup as i64, 0).single() {
         Some(timestamp) => timestamp,
         None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
     };
@@ -634,7 +653,7 @@ async fn write_new_header<W>(
     };
     let header_str = serde_json::to_string(&header)?;
     let header_size = header_str.len() as u16;
-    debug!("preparer_fichier_chiffrage Header taille initiale {}", header_size);
+    debug!("Wrote new placeholder header, padded size {}", header_size);
 
     writer.write(&FILE_VERSION.to_le_bytes()).await?;
     writer.write(&header_size.to_le_bytes()).await?;

@@ -272,7 +272,7 @@ mod test {
     fn test_base_mgs4_encrypt_decrypt() {
         // Generate a kew for the cipher
         let mut cipher = CipherMgs4::new().expect("cipher");
-        let mut buffer_in = [56u8;16];  // 16 bytes with value 56
+        let mut buffer_in = [56u8;17];  // 17 bytes with value 56
         let mut buffer_out = [0u8;64];
         let out_len = cipher.update(buffer_in.as_mut(), &mut buffer_out).expect("cipher");
         if out_len > 0 {panic!("Buffer should not be output yet");}
@@ -301,7 +301,7 @@ mod test {
 
     #[tokio::test]
     async fn test_async_writer_file_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-        let original_data = b"Hello, world! This is a test of the async encryption writer.";
+        let original_data = b"Hello, world! This is a test of the async encryption writer --- *";
 
         // 1. Create a temporary file
         let temp_file = NamedTempFile::new()?;
@@ -331,6 +331,7 @@ mod test {
             cle_secrete: Some(secret_key.cle_secrete),
             format: secret_key.format,
             nonce: secret_key.nonce,
+            // nonce: Some("hEeWSViTW0KFQlU4VFyekbC41fMZlWih".to_string()),
             verification: None,
         };
 
