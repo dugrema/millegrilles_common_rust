@@ -12,7 +12,7 @@ use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
 const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
@@ -74,9 +74,13 @@ impl DomainBackupServiceImpl {
             incremental
         ).await {
             Ok(info) => info,
+            Err(PreflightError::NotReadyForBackup) => {
+                warn!("The system is not ready for backing-up transactions (ready.txt file missing)");
+                return Ok(())
+            },
             Err(PreflightError::NothingToDo) => {
                 debug!("No transactions in redo-log to backup or files to concatenate");
-                return Ok(());
+                return Ok(())
             },
             Err(PreflightError::CommonError(e)) => return Err(e)
         };

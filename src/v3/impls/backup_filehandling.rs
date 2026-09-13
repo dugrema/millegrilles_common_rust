@@ -395,3 +395,10 @@ fn process_backup_folder<'a>(
         Ok(files)
     }.boxed()
 }
+
+/// Returns true if a ready.txt file exists in the backup path.
+pub async fn is_system_ready(backup_path: &Path) -> Result<bool, CommonError> {
+    const BACKUP_RUNFILE_NAME: &str = "ready.txt";
+    let ready_path = backup_path.join(BACKUP_RUNFILE_NAME);
+    Ok(ready_path.exists())
+}

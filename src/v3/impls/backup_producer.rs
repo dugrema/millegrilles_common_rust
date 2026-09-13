@@ -7,7 +7,7 @@ use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
-use crate::v3::impls::backup_filehandling::{load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
+use crate::v3::impls::backup_filehandling::{is_system_ready, load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
 use crate::v3::models::{BackupResult, DecryptedKey, PreflightError, PreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::bufread::DeflateDecoder;
@@ -39,8 +39,13 @@ pub async fn preflight_check(
 ) -> Result<PreflightResult, PreflightError> {
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
-    let domain_backup_path = mongo.get_path_backup().join(domain_name);
-    
+    let path_backup_root = mongo.get_path_backup();
+    let domain_backup_path = path_backup_root.join(domain_name);
+
+    if ! is_system_ready(path_backup_root).await? {
+        return Err(PreflightError::NotReadyForBackup)
+    }
+
     if incremental {
         if waiting_transaction_count == 0 {
             return Err(PreflightError::NothingToDo);

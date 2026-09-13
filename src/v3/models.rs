@@ -282,6 +282,7 @@ impl ErrorMessage {
 
 pub enum PreflightError {
     NothingToDo,
+    NotReadyForBackup,
     CommonError(CommonError),
 }
 
