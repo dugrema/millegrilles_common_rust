@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::Path;
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
 pub async fn preflight_check(
@@ -359,7 +359,7 @@ async fn process_concatenated_file_operations(
     domain_info: &PreflightResult,
     keys: Vec<DecryptedKey>,
     workfile_path: &Path,
-) -> Result<FichierArchiveBackup, CommonError> {
+) -> Result<HeaderFichierArchive, CommonError> {
     debug!("Map keys for decryption");
     let mut keys_map = HashMap::new();
     for key in keys.into_iter() {
@@ -423,37 +423,38 @@ async fn process_concatenated_file_operations(
         None => return Err(CommonError::Str("Nonce missing from MGS4 encryption result"))
     }
 
-    let backup_path = workfile_path.parent()
-        .expect("Failed to get backup parent directory").to_owned();
-    overwrite_backup_file_header(backup_path.as_path(), &backup_header).await?;
+    overwrite_backup_file_header(workfile_path, &backup_header).await?;
+
+    // let backup_path = workfile_path.parent()
+    //     .expect("Failed to get backup parent directory").to_owned();
 
     // Extract date information from header
-    let first_transaction = match Utc.timestamp_millis_opt(backup_result.first_transaction as i64).single() {
-        Some(timestamp) => timestamp,
-        None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
-    };
+    // let first_transaction = match Utc.timestamp_millis_opt(backup_result.first_transaction as i64).single() {
+    //     Some(timestamp) => timestamp,
+    //     None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
+    // };
 
     // Rename working file to final file with digest in name
-    let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
-        chiffrage,
-        &TypeArchive::Incremental,
-        first_transaction,
-        domain_info.domain_name.as_str(),
-        backup_path.as_path(),
-        workfile_path
-    ).await?;
+    // let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
+    //     chiffrage,
+    //     &TypeArchive::Incremental,
+    //     first_transaction,
+    //     domain_info.domain_name.as_str(),
+    //     backup_path.as_path(),
+    //     workfile_path
+    // ).await?;
 
     // Position of first byte of data: 4 bytes (version u16, taille header u16) + header
-    let position_data = (4 + header_size) as usize;
-    let backup_result = FichierArchiveBackup {
-        path_fichier: path_backup_file,
-        header: backup_header,
-        position_data,
-        digest_suffix,
-        len: filesize,
-    };
+    // let position_data = (4 + header_size) as usize;
+    // let backup_result = FichierArchiveBackup {
+    //     path_fichier: workfile_path.to_owned(),
+    //     header: backup_header,
+    //     position_data,
+    //     digest_suffix,
+    //     len: filesize,
+    // };
 
-    Ok(backup_result)
+    Ok(backup_header)
 }
 
 async fn extract_transactions_from_backup<W>(
@@ -590,7 +591,7 @@ pub async fn produce_concatenated_backup_file(
     // Set-up the new concatenated workfile
     let workfile = prepare_backup_workfile(domain_backup_path).await?;
     debug!("Using backup workfile: {:?}", workfile);
-    let backup_result = process_concatenated_file_operations(
+    let backup_header = process_concatenated_file_operations(
         chiffrage,
         domain_info,
         keys,
@@ -598,7 +599,7 @@ pub async fn produce_concatenated_backup_file(
     ).await?;
 
     // Extract date information from header
-    let first_transaction = match Utc.timestamp_opt(backup_result.header.debut_backup as i64, 0).single() {
+    let first_transaction = match Utc.timestamp_opt(backup_header.debut_backup as i64, 0).single() {
         Some(timestamp) => timestamp,
         None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
     };
@@ -616,10 +617,19 @@ pub async fn produce_concatenated_backup_file(
         workfile.as_path()
     ).await?;
 
+    // Read the position of the data (2 bytes + 2 bytes + header len)
+    let position_data = {
+        let mut reader = File::open(&path_backup_file).await?;
+        let _version = reader.read_u16_le().await?;
+        let header_len = reader.read_u16_le().await?;
+        reader.shutdown().await?;
+        (header_len + 4) as usize
+    };
+
     let backup_result = FichierArchiveBackup {
         path_fichier: path_backup_file,
-        header: backup_result.header,
-        position_data: backup_result.position_data,
+        header: backup_header,
+        position_data,
         digest_suffix,
         len: filesize,
     };
