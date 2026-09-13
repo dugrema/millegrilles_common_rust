@@ -152,15 +152,30 @@ impl TransactionOperationAggregator {
                 self.tracking = other.tracking;
             }
         }
-        match self.batch_insertions.as_mut() {
-            Some(insertions) => {
-                if let Some(other_insertions) = other.batch_insertions {
-                    insertions.extend(other_insertions);
+        if self.ordered.is_none() {
+            match self.batch_insertions.as_mut() {
+                Some(insertions) => {
+                    if let Some(other_insertions) = other.batch_insertions {
+                        insertions.extend(other_insertions);
+                    }
+                }
+                None => {
+                    self.batch_insertions = other.batch_insertions;
                 }
             }
-            None => {
-                self.batch_insertions = other.batch_insertions;
+            match self.unordered.as_mut() {
+                Some(unordered) => {
+                    if let Some(other_unordered) = other.unordered {
+                        unordered.extend(other_unordered);
+                    }
+                }
+                None => {
+                    self.unordered = other.unordered;
+                }
             }
+        } else {
+            // Must add all remaining operations as ordered
+            todo!()
         }
         match self.ordered.as_mut() {
             Some(ordered) => {
@@ -170,16 +185,6 @@ impl TransactionOperationAggregator {
             }
             None => {
                 self.ordered = other.ordered;
-            }
-        }
-        match self.unordered.as_mut() {
-            Some(unordered) => {
-                if let Some(other_unordered) = other.unordered {
-                    unordered.extend(other_unordered);
-                }
-            }
-            None => {
-                self.unordered = other.unordered;
             }
         }
     }
@@ -222,6 +227,8 @@ pub struct RestorePreflightResult {
     // Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
     pub keys: HashMap<String, DecryptedKey>,
+    /// Used when resuming, this is the last processed transaction id in the tracking table
+    pub last_processed_id: Option<String>,
 }
 
 #[derive(Clone)]

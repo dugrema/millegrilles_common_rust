@@ -8,12 +8,12 @@ use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
 use crate::v3::models::PreflightError;
-use crate::v3::{BackupService, ChiffrageService, ConfigService};
+use crate::v3::{BackupService, ChiffrageService, ConfigService, TransactionService};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
 use tracing::{debug, error, warn};
-use crate::v3::impls::backup_restorer::restore_preflight_check;
+use crate::v3::impls::backup_restorer::{process_transactions_from_backup, restore_preflight_check};
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
 const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
@@ -24,6 +24,7 @@ pub struct DomainBackupServiceImpl {
     outbound: Arc<MessageOutboundFacade>,
     chiffrage: Arc<dyn ChiffrageService>,
     mongo: Arc<MongoDaoImpl>,
+    transaction: Arc<dyn TransactionService>,
 }
 
 impl DomainBackupServiceImpl {
@@ -32,12 +33,14 @@ impl DomainBackupServiceImpl {
         outbound: Arc<MessageOutboundFacade>,
         chiffrage: Arc<dyn ChiffrageService>,
         mongo: Arc<MongoDaoImpl>,
+        transaction: Arc<dyn TransactionService>,
     ) -> Self {
         Self {
             config,
             outbound,
             chiffrage,
             mongo,
+            transaction,
         }
     }
 
@@ -164,9 +167,18 @@ impl DomainBackupServiceImpl {
             domain_name,
             redolog_collection_name,
             version.as_ref(),
+            resume,
         ).await?;
 
+        if preflight.last_processed_id.is_none() {
+            todo!("Truncate all data tables from domain")
+        }
 
+        let result = process_transactions_from_backup(
+            &preflight,
+            self.outbound.as_ref(),
+            self.transaction.as_ref()
+        ).await?;
 
         todo!()
     }

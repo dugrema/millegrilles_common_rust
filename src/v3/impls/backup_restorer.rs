@@ -26,6 +26,7 @@ pub async fn restore_preflight_check(
     domain_name: &str,
     redolog_collection_name: &str,
     version: Option<&String>,
+    resume: bool,
 ) -> Result<RestorePreflightResult, CommonError> {
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let path_backup_root = mongo.get_path_backup();
@@ -56,6 +57,10 @@ pub async fn restore_preflight_check(
         keys_map.insert(key_id.to_string(), key);
     }
 
+    if resume {
+        todo!("Find last transaction by date in tracking table");
+    }
+
     Ok(RestorePreflightResult {
         domain_name: domain_name.to_string(),
         idmg,
@@ -63,16 +68,17 @@ pub async fn restore_preflight_check(
         files: file_list,
         redolog_count: waiting_transaction_count as usize,
         keys: keys_map,
+        last_processed_id: None,
     })
 }
 
 const CERTIFICATE_CACHE_LIMIT: usize = 250;
 
-async fn process_transactions_from_backup<W>(
+pub async fn process_transactions_from_backup(
     domain_info: &RestorePreflightResult,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService,
-) -> Result<BackupResult, CommonError> where W: AsyncWrite + Unpin {
+) -> Result<BackupResult, CommonError> {
 
     let existing_files = &domain_info.files;
     debug!("Extract transactions from {} existing files", existing_files.len());
@@ -83,7 +89,8 @@ async fn process_transactions_from_backup<W>(
     let mut last_transaction: u64 = 0;
     let mut transaction_count: u64 = 0;
 
-    let mut skipping = false;  // When in resume mode, this is true and gets toggled to false when ready to resume
+    // When in resume mode, skipping is true and gets toggled to false when ready to resume
+    let mut skipping = domain_info.last_processed_id.is_some();
 
     // Use a cache of certificates to accelerate processing
     let mut certificate_cache:  HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
@@ -136,7 +143,11 @@ async fn process_transactions_from_backup<W>(
 
             // Check if we are skipping (resuming)
             if skipping {
-                // if t.id == LAST_PROCESSED_ID { skipping = false }
+                if Some(&t.id) == domain_info.last_processed_id.as_ref() {
+                    debug!("Ran to last processed transaction id {}, toggling write operations", t.id);
+                    skipping = false
+                    // Note: we still skip this transaction as it is already processed
+                }
                 continue  // Transaction already processed
             }
 
@@ -158,7 +169,7 @@ async fn process_transactions_from_backup<W>(
                 }
             };
 
-            // Add transaction to write operations aggregator.
+            // Add transaction to the operations aggregator.
             aggregator = Some(transaction.route_transaction(
                 t,
                 certificate,
@@ -173,6 +184,8 @@ async fn process_transactions_from_backup<W>(
             }
         }
     }
+
+    todo!("Open cursor on redo-log collection - process transactions in batches");
 
     // Run last batch of write operations from aggregator when applicable
     if let Some(aggregator) = aggregator.take() {
