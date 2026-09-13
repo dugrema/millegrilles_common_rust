@@ -92,6 +92,14 @@ pub trait BackupService: Send + Sync {
         redolog_collection_name: &str,
         incremental: bool,
     ) -> Result<(), CommonError>;
+
+    async fn restore_domain(
+        &self,
+        domain_name: &str,
+        redolog_collection_name: &str,
+        resume: bool,
+        version: Option<String>,
+    ) -> Result<(), CommonError>;
 }
 
 #[async_trait]
@@ -103,6 +111,16 @@ pub trait DatabaseService: Send + Sync {
 pub trait TransactionService: Send + Sync {
     async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), CommonError>;
     async fn process_value(&self, domain: &str, action: &str, value: Value) -> Result<(), CommonError>;
+    async fn route_transaction(
+        &self,
+        message: MessageMilleGrillesOwned,
+        certificate: Arc<EnveloppeCertificat>,
+        aggregator: Option<TransactionOperationAggregator>
+    ) -> Result<TransactionOperationAggregator, CommonError>;
+    async fn run_aggregator(
+        &self,
+        aggregator: TransactionOperationAggregator,
+    ) -> Result<(), CommonError>;
 }
 
 #[async_trait]

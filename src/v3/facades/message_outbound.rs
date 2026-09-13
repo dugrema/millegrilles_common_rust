@@ -226,4 +226,9 @@ impl MessageOutboundFacade {
         Ok(())
     }
 
+    pub async fn get_certificate(&self, fingerprint: &str, timeout: Option<u64>) -> Result<Arc<EnveloppeCertificat>, CommonError> {
+        let timeout = timeout.unwrap_or_else(|| 15_000);
+        
+        todo!()
+    }
 }

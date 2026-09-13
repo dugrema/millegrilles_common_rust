@@ -18,10 +18,10 @@ use tracing::{debug, info};
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
 /// Raises errors when lock is unsuccessful.
-pub async fn create_lockfile(backup_path: &PathBuf, wait: bool) -> Result<LockFile, CommonError> {
+pub async fn create_lockfile(backup_path: &Path, wait: bool) -> Result<LockFile, CommonError> {
     use std::fs::File;
 
-    let mut path_lockfile = backup_path.clone();
+    let mut path_lockfile = backup_path.to_owned();
     path_lockfile.push("backup.lock");
     let file = match File::open(&path_lockfile) {
         Ok(inner) => inner,

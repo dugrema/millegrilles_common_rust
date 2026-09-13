@@ -2,11 +2,14 @@ use crate::backup_v2::{FichierArchiveBackup, TypeArchive};
 use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
-use bson::{Document, doc, serde_helpers::datetime::FromChrono04DateTime};
+use base64::Engine;
+use base64::engine::general_purpose;
+use bson::{Bson, Document, doc, serde_helpers::datetime::FromChrono04DateTime};
 use chrono::Utc;
 use jwt_simple::prelude::Deserialize;
+use millegrilles_cryptographie::chiffrage::FormatChiffrage;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519Impl, CleSecreteSerialisee};
-use millegrilles_cryptographie::maitredescles::{generer_cle_avec_ca, SignatureDomaines};
+use millegrilles_cryptographie::maitredescles::{SignatureDomaines, generer_cle_avec_ca};
 use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOwned, MessageMilleGrillesOwned};
 use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
@@ -17,7 +20,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
-use millegrilles_cryptographie::chiffrage::FormatChiffrage;
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -66,10 +68,38 @@ impl BatchInsertions {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowTransactionTracking {
+    pub bid: Bson,
+    pub ok: bool,
+    pub id: String,
+    #[serde(with = "FromChrono04DateTime")]
+    pub processed: chrono::DateTime<Utc>,
+}
+
+impl TryFrom<&MessageMilleGrillesOwned> for RowTransactionTracking {
+    type Error = CommonError;
+    fn try_from(value: &MessageMilleGrillesOwned) -> Result<Self, CommonError> {
+        let bid_complete = hex::decode(value.id.as_str())?;
+        let bid_truncated = &bid_complete[0..16];
+        let bid_truncated_base64 = general_purpose::STANDARD.encode(bid_truncated);
+        let bid_truncated_bson = Bson::Binary(bson::Binary::from_base64(bid_truncated_base64, None)
+            .expect("bid_truncated_bson base64"));
+        Ok(Self {
+            bid: bid_truncated_bson,
+            ok: true,
+            id: value.id.clone(),
+            processed: Utc::now(),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Used to aggregate transaction operations.
 /// Simplifies batching on rebuilds (redo).
 pub struct TransactionOperationAggregator {
+    /// List of tracking rows to add for the transaction.
+    pub tracking: Option<Vec<Document>>,
     /// Insertions run first as a batch, they must not have any dependency (e.g. deletion to avoid duplicate)
     pub batch_insertions: Option<Vec<BatchInsertions>>,
     /// Operations that can run concurrently (e.g. updating/deleting entries from different collections)
@@ -83,6 +113,7 @@ pub struct TransactionOperationAggregator {
 impl TransactionOperationAggregator {
     pub fn new() -> Self {
         Self {
+            tracking: None,
             batch_insertions: None,
             unordered: None,
             ordered: None
@@ -110,6 +141,48 @@ impl TransactionOperationAggregator {
         self
     }
 
+    pub fn merge(&mut self, other: Self) {
+        match self.tracking.as_mut() {
+            Some(tracking) => {
+                if let Some(other_tracking) = other.tracking {
+                    tracking.extend(other_tracking);
+                }
+            }
+            None => {
+                self.tracking = other.tracking;
+            }
+        }
+        match self.batch_insertions.as_mut() {
+            Some(insertions) => {
+                if let Some(other_insertions) = other.batch_insertions {
+                    insertions.extend(other_insertions);
+                }
+            }
+            None => {
+                self.batch_insertions = other.batch_insertions;
+            }
+        }
+        match self.ordered.as_mut() {
+            Some(ordered) => {
+                if let Some(other_ordered) = other.ordered {
+                    ordered.extend(other_ordered);
+                }
+            }
+            None => {
+                self.ordered = other.ordered;
+            }
+        }
+        match self.unordered.as_mut() {
+            Some(unordered) => {
+                if let Some(other_unordered) = other.unordered {
+                    unordered.extend(other_unordered);
+                }
+            }
+            None => {
+                self.unordered = other.unordered;
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -118,26 +191,37 @@ pub struct LockFile {
     pub path: PathBuf,
 }
 
-pub struct PreflightResult {
+pub struct BackupPreflightResult {
     pub domain_name: String,
     pub idmg: String,
     pub domain_backup_path: PathBuf,
     /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
-    pub existing_files: Vec<FichierArchiveBackup>,
+    pub files: Vec<FichierArchiveBackup>,
     // Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
     pub key: DecryptedKey,
 }
 
-impl PreflightResult {
+impl BackupPreflightResult {
     pub fn contains_incremental(&self) -> bool {
-        if let Some(last_file) = self.existing_files.last() {
+        if let Some(last_file) = self.files.last() {
             if last_file.header.type_archive == TypeArchive::Incremental.to_string() {
                 return true
             }
         }
         false
     }
+}
+
+pub struct RestorePreflightResult {
+    pub domain_name: String,
+    pub idmg: String,
+    pub domain_backup_path: PathBuf,
+    /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
+    pub files: Vec<FichierArchiveBackup>,
+    // Number of transactions currently in the redo-log (not backed-up yet)
+    pub redolog_count: usize,
+    pub keys: HashMap<String, DecryptedKey>,
 }
 
 #[derive(Clone)]

@@ -1,16 +1,13 @@
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::mongo_dao::MongoDao;
-use crate::v3::models::{TransactionOperationAggregator, TransactionProcessedRow, TransactionWrapper};
+use crate::v3::models::{RowTransactionTracking, TransactionOperationAggregator, TransactionProcessedRow, TransactionWrapper};
 use crate::v3::{ConfigService, FormatService, TransactionRouter, TransactionService};
 use async_trait::async_trait;
-use base64::Engine;
-use base64::engine::general_purpose;
-use bson::{Bson, serde_helpers::datetime::FromChrono04DateTime};
 use chrono::Utc;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesOwned};
+use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::ClientSession;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -59,6 +56,71 @@ impl TransactionService for TransactionServiceImpl {
         )?;
         self.process_transaction(wrapper).await
     }
+
+    async fn route_transaction(
+        &self,
+        message: MessageMilleGrillesOwned,
+        certificate: Arc<EnveloppeCertificat>,
+        aggregator: Option<TransactionOperationAggregator>
+    ) -> Result<TransactionOperationAggregator, CommonError> {
+        let action = match message.routage.as_ref() {
+            Some(r) => match r.action.as_ref() {
+                Some(a) => a.to_string(),
+                None => return Err(CommonError::Str("Transaction with no routing action"))
+            },
+            None => return Err(CommonError::Str("Transaction with no routing information"))
+        };
+        let wrapper = TransactionWrapper {
+            message,
+            certificate,
+            content: None,
+        };
+        let tracking_row = RowTransactionTracking::try_from(&wrapper.message)?;
+        let tracking_doc = bson::serialize_to_document(&tracking_row)?;
+
+        let mut operations = self.router.route(action, wrapper).await?;
+
+        match operations.tracking.as_mut() {
+            Some(tracking) => {
+                tracking.push(tracking_doc);
+            }
+            None => {
+                operations.tracking = Some(vec![tracking_doc]);
+            }
+        }
+
+        match aggregator {
+            Some(mut aggregator) => {
+                aggregator.merge(operations);
+                Ok(aggregator)
+            },
+            None => Ok(operations)
+        }
+    }
+
+    async fn run_aggregator(
+        &self,
+        aggregator: TransactionOperationAggregator,
+    ) -> Result<(), CommonError> {
+        let mut session = self.mongo.get_session().await?;
+        session.start_transaction().await?;
+
+        // Run the operations within a database session - will rollback everything on error
+        match run_transaction_aggregator(
+            self.mongo.as_ref(),
+            &mut session, aggregator,
+            self.tracking_table.as_str()
+        ).await {
+            Ok(_) => {
+                session.commit_transaction().await?;
+                Ok(())
+            },
+            Err(e) => {
+                session.abort_transaction().await?;
+                Err(e)
+            },
+        }
+    }
 }
 
 async fn process_transaction(
@@ -104,39 +166,12 @@ async fn process_atomic_transaction(
     persist_transaction(mongo, session, redo_table, tracking_table, &wrapper).await?;
 
     // Run the domain router to generate MongoDB write operations
-    // let operations = ca_transaction_router(action.as_str(), wrapper).await?;
     let operations = router.route(action, wrapper).await?;
 
     // Run the operations within a database session - will rollback everything on error
-    run_transaction_aggregator(mongo, session, operations).await?;
+    run_transaction_aggregator(mongo, session, operations, tracking_table).await?;
 
     Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RowTransactionTracking {
-    bid: Bson,
-    ok: bool,
-    id: String,
-    #[serde(with = "FromChrono04DateTime")]
-    processed: chrono::DateTime<Utc>,
-}
-
-impl TryFrom<&MessageMilleGrillesOwned> for RowTransactionTracking {
-    type Error = CommonError;
-    fn try_from(value: &MessageMilleGrillesOwned) -> Result<Self, CommonError> {
-        let bid_complete = hex::decode(value.id.as_str())?;
-        let bid_truncated = &bid_complete[0..16];
-        let bid_truncated_base64 = general_purpose::STANDARD.encode(bid_truncated);
-        let bid_truncated_bson = Bson::Binary(bson::Binary::from_base64(bid_truncated_base64, None)
-            .expect("bid_truncated_bson base64"));
-        Ok(Self {
-            bid: bid_truncated_bson,
-            ok: true,
-            id: value.id.clone(),
-            processed: Utc::now(),
-        })
-    }
 }
 
 async fn persist_transaction(
@@ -176,8 +211,15 @@ async fn persist_transaction(
 async fn run_transaction_aggregator(
     mongo: &dyn MongoDao,
     session: &mut ClientSession,
-    ops_aggregator: TransactionOperationAggregator
+    ops_aggregator: TransactionOperationAggregator,
+    tracking_table: &str,
 ) -> Result<(), CommonError> {
+    // Insert tracking - detects duplicates
+    if let Some(tracking) = ops_aggregator.tracking {
+        let tracking_collection = mongo.get_collection(tracking_table)?;
+        tracking_collection.insert_many(tracking).session(&mut *session).await?;
+    }
+
     // Run batch inserts first
     if let Some(batch_insertions) = ops_aggregator.batch_insertions {
         for batch_insertion in batch_insertions {

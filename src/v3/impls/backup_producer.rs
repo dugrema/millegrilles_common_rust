@@ -8,7 +8,7 @@ use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
 use crate::v3::impls::backup_filehandling::{is_system_ready, load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
-use crate::v3::models::{BackupResult, DecryptedKey, PreflightError, PreflightResult, TransactionProcessedRow};
+use crate::v3::models::{BackupResult, DecryptedKey, PreflightError, BackupPreflightResult, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
@@ -36,7 +36,7 @@ pub async fn preflight_check(
     domain_name: &str,
     redolog_collection_name: &str,
     incremental: bool,
-) -> Result<PreflightResult, PreflightError> {
+) -> Result<BackupPreflightResult, PreflightError> {
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
     let path_backup_root = mongo.get_path_backup();
@@ -74,17 +74,17 @@ pub async fn preflight_check(
     // Get encryption key for this domain
     let decryption_key = get_domain_backup_key(outbound, chiffrage, domain_name).await?;
 
-    Ok(PreflightResult {
+    Ok(BackupPreflightResult {
         domain_name: domain_name.to_string(),
         idmg,
         domain_backup_path,
-        existing_files,
+        files: existing_files,
         redolog_count: waiting_transaction_count as usize,
         key: decryption_key,
     })
 }
 
-async fn check_redo_log_size(mongo: &dyn MongoDao, redolog_collection_name: &str) -> Result<u64, CommonError> {
+pub async fn check_redo_log_size(mongo: &dyn MongoDao, redolog_collection_name: &str) -> Result<u64, CommonError> {
     let collection = mongo.get_collection(redolog_collection_name)?;
     Ok(collection.count_documents(doc!{}).await?)
 }
@@ -93,7 +93,7 @@ pub async fn produce_incremental_backup_file(
     outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     chiffrage: &dyn ChiffrageService,
-    domain_info: &PreflightResult,
+    domain_info: &BackupPreflightResult,
     redolog_collection_name: &str,
 ) -> Result<FichierArchiveBackup, CommonError> {
     debug!("Starting incremental backup");
@@ -136,7 +136,7 @@ async fn process_incremental_file_operations(
     outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     chiffrage: &dyn ChiffrageService,
-    domain_info: &PreflightResult,
+    domain_info: &BackupPreflightResult,
     redolog_collection_name: &str,
     incremental_workfile_path: &Path,
     session: &mut ClientSession,
@@ -235,7 +235,7 @@ async fn extract_redolog_content<W>(
     outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     writer: &mut W,
-    domain_info: &PreflightResult,
+    domain_info: &BackupPreflightResult,
     redolog_collection_name: &str,
     session: &mut ClientSession,
 ) -> Result<BackupResult, CommonError>
@@ -363,7 +363,7 @@ where
 /// This takes all backup files (previous concatenated and incrementals) and saves them in a new file.
 async fn process_concatenated_file_operations(
     chiffrage: &dyn ChiffrageService,
-    domain_info: &PreflightResult,
+    domain_info: &BackupPreflightResult,
     keys: Vec<DecryptedKey>,
     workfile_path: &Path,
 ) -> Result<HeaderFichierArchive, CommonError> {
@@ -465,12 +465,12 @@ async fn process_concatenated_file_operations(
 }
 
 async fn extract_transactions_from_backup<W>(
-    domain_info: &PreflightResult,
+    domain_info: &BackupPreflightResult,
     keys: &HashMap<String, DecryptedKey>,
     writer: &mut W
 ) -> Result<BackupResult, CommonError> where W: AsyncWrite + Unpin {
 
-    let existing_files = &domain_info.existing_files;
+    let existing_files = &domain_info.files;
     debug!("Extract transactions from {} existing files", existing_files.len());
 
     let mut first_transaction: u64 = 0;
@@ -581,7 +581,7 @@ async fn save_certificate(
 pub async fn produce_concatenated_backup_file(
     chiffrage: &dyn ChiffrageService,
     outbound: &MessageOutboundFacade,
-    domain_info: &PreflightResult
+    domain_info: &BackupPreflightResult
 ) -> Result<FichierArchiveBackup, CommonError> {
     // Preflight check - ensure at least 1 incremental file is present
     if ! domain_info.contains_incremental() {
@@ -592,7 +592,7 @@ pub async fn produce_concatenated_backup_file(
     debug!("Concatenating all backup files for domain {}, using path: {:?}", domain_info.domain_name, domain_backup_path);
 
     // Fetch all keys required to decrypt existing backups
-    let keys = load_backup_keys(outbound, &domain_info.existing_files).await?;
+    let keys = load_backup_keys(outbound, &domain_info.files).await?;
     debug!("Decryption keys loaded: {} keys", keys.len());
 
     // Set-up the new concatenated workfile

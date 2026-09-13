@@ -12,7 +12,8 @@ use crate::v3::{BackupService, ChiffrageService, ConfigService};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
+use crate::v3::impls::backup_restorer::restore_preflight_check;
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
 const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
@@ -104,7 +105,7 @@ impl DomainBackupServiceImpl {
 
         // Concatenate backup when applicable
         let mut concatenated_file = None;
-        for file in &domain_info.existing_files {
+        for file in &domain_info.files {
             if file.header.type_archive == TypeArchive::Concatene.to_string() {
                 debug!("Found existing Concatene file: {:?}", file.path_fichier);
                 concatenated_file = Some(file.clone());
@@ -119,11 +120,11 @@ impl DomainBackupServiceImpl {
                 // There is no current Concatenated file
                 // Promote the incremental file to Concatene
                 let new_concatenated_file = promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?;
-                domain_info.existing_files.push(new_concatenated_file.clone());
+                domain_info.files.push(new_concatenated_file.clone());
                 concatenated_file = Some(new_concatenated_file);
             } else {
                 // Add the new incremental file to the list of files
-                domain_info.existing_files.push(new_file);
+                domain_info.files.push(new_file);
             }
         }
 
@@ -147,6 +148,28 @@ impl DomainBackupServiceImpl {
 
         Ok(())
     }
+
+    pub async fn run_restore(
+        &self,
+        domain_name: &str,
+        redolog_collection_name: &str,
+        resume: bool,
+        version: Option<String>
+    ) -> Result<(), CommonError> {
+
+        let preflight = restore_preflight_check(
+            self.config.as_ref(),
+            self.mongo.as_ref(),
+            self.outbound.as_ref(),
+            domain_name,
+            redolog_collection_name,
+            version.as_ref(),
+        ).await?;
+
+
+
+        todo!()
+    }
 }
 
 #[async_trait]
@@ -157,12 +180,44 @@ impl BackupService for DomainBackupServiceImpl {
         redolog_collection_name: &str,
         incremental: bool,
     ) -> Result<(), CommonError> {
-        let backup_path = self.mongo.get_path_backup();
+        let backup_path = self.mongo.get_path_backup().as_path();
+        let domain_backup_path = backup_path.join(domain_name);
 
         // Lock the backup folder (all domains, only process one domain at a time)
-        let lockfile = create_lockfile(backup_path, true).await?;
+        let root_lockfile = create_lockfile(backup_path, true).await?;
+        // Also get a lock on the domain - if another process (e.g. restore) is already occurring, fail fast
+        let domain_lockfile = match create_lockfile(domain_backup_path.as_path(), false).await {
+            Ok(lockfile) => lockfile,
+            Err(e) => {
+                error!("Error locking domain {} for backup, aborting", domain_name);
+                unlock_lockfile(root_lockfile).await;   // Remove backup root lockfile
+                return Err(e);
+            }
+        };
 
         let result = self.run_backup(domain_name, redolog_collection_name, incremental).await;
+
+        // Unlock backup folders
+        unlock_lockfile(domain_lockfile).await;
+        unlock_lockfile(root_lockfile).await;
+
+        result
+    }
+
+    async fn restore_domain(
+        &self,
+        domain_name: &str,
+        redolog_collection_name: &str,
+        resume: bool,
+        version: Option<String>
+    ) -> Result<(), CommonError> {
+        let backup_path = self.mongo.get_path_backup().as_path();
+        let domain_backup_path = backup_path.join(domain_name);
+
+        // Lock the domain folder (only specific domain). Fail fast.
+        let lockfile = create_lockfile(domain_backup_path.as_path(), false).await?;
+
+        let result = self.run_restore(domain_name, redolog_collection_name, resume, version).await;
 
         // Unlock backup folder
         unlock_lockfile(lockfile).await;
