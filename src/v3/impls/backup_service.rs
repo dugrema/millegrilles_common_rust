@@ -12,6 +12,7 @@ use crate::v3::{BackupService, ChiffrageService, ConfigService, TransactionServi
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
+use openssl::pkey::{PKey, Private};
 use tracing::{debug, error, info, warn};
 use crate::v3::impls::backup_restorer::{process_transactions_from_backup, restore_preflight_check, truncate_data_tables, RestorationState};
 
@@ -162,7 +163,8 @@ impl DomainBackupServiceImpl {
         redolog_collection_name: &str,
         tracking_collection_name: &str,
         resume: bool,
-        version: Option<String>
+        version: Option<String>,
+        master_key: Option<PKey<Private>>,
     ) -> Result<RestorationState, CommonError> {
 
         let preflight = restore_preflight_check(
@@ -173,6 +175,7 @@ impl DomainBackupServiceImpl {
             redolog_collection_name,
             version.as_ref(),
             resume,
+            master_key,
         ).await?;
 
         if preflight.last_processed_id.is_none() {
@@ -230,7 +233,8 @@ impl BackupService for DomainBackupServiceImpl {
         redolog_collection_name: &str,
         tracking_collection_name: &str,
         resume: bool,
-        version: Option<String>
+        version: Option<String>,
+        master_key: Option<PKey<Private>>,
     ) -> Result<RestorationState, CommonError> {
         let backup_path = self.mongo.get_path_backup().as_path();
         let domain_backup_path = backup_path.join(domain_name);
@@ -243,7 +247,8 @@ impl BackupService for DomainBackupServiceImpl {
             redolog_collection_name,
             tracking_collection_name,
             resume,
-            version
+            version,
+            master_key,
         ).await;
 
         // Unlock backup folder

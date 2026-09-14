@@ -16,6 +16,7 @@ use multihash::Code;
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
+use openssl::pkey::{PKey, Private};
 use tokio::sync::mpsc::Receiver;
 use crate::v3::impls::backup_restorer::RestorationState;
 
@@ -101,6 +102,7 @@ pub trait BackupService: Send + Sync {
         tracking_collection_name: &str,
         resume: bool,
         version: Option<String>,
+        master_key: Option<PKey<Private>>,
     ) -> Result<RestorationState, CommonError>;
 }
 

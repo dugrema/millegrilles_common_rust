@@ -17,7 +17,8 @@ use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::options::Hint;
 use std::collections::HashMap;
 use std::io::SeekFrom;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use openssl::pkey::{PKey, Private};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error};
@@ -30,6 +31,7 @@ pub async fn restore_preflight_check(
     redolog_collection_name: &str,
     version: Option<&String>,
     resume: bool,
+    master_key: Option<PKey<Private>>,
 ) -> Result<RestorePreflightResult, CommonError> {
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let path_backup_root = mongo.get_path_backup();
@@ -50,15 +52,20 @@ pub async fn restore_preflight_check(
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
 
     // Collect all keys
-    let keys = load_backup_keys(outbound, &file_list).await?;
-    let mut keys_map = HashMap::new();
-    for key in keys.into_iter() {
-        let key_id = match key.key.cle_id.as_ref() {
-            Some(key_id) => key_id,
-            None => Err(CommonError::Str("No key_id/domain signature in key set"))?
-        };
-        keys_map.insert(key_id.to_string(), key);
-    }
+    let keys_map = if master_key.is_none() {
+        let keys = load_backup_keys(outbound, &file_list).await?;
+        let mut keys_map = HashMap::new();
+        for key in keys.into_iter() {
+            let key_id = match key.key.cle_id.as_ref() {
+                Some(key_id) => key_id,
+                None => Err(CommonError::Str("No key_id/domain signature in key set"))?
+            };
+            keys_map.insert(key_id.to_string(), key);
+        }
+        keys_map
+    } else {
+        HashMap::new()  // Return empty map, decryption will occur on the spot ands keys will get cached
+    };
 
     if resume {
         todo!("Find last transaction by date in tracking table");
@@ -70,17 +77,18 @@ pub async fn restore_preflight_check(
         domain_backup_path,
         files: file_list,
         redolog_count: waiting_transaction_count as usize,
-        keys: keys_map,
+        keys: Mutex::new(keys_map),
         last_processed_id: None,
+        master_key,
     })
 }
 
 const CERTIFICATE_CACHE_LIMIT: usize = 250;
 
 pub struct RestorationState {
-    first_transaction: u64,
-    last_transaction: u64,
-    transaction_count: u64,
+    pub first_transaction: u64,
+    pub last_transaction: u64,
+    pub transaction_count: u64,
     skipping: bool,
     aggregator: Option<TransactionOperationAggregator>,
 }
@@ -132,17 +140,18 @@ async fn process_backup_files(
     for backup_file in &domain_info.files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
 
-        let key_id = backup_file.header.cle_id.as_str();
-        let decipher_key = match domain_info.keys.get(&key_id.to_string()) {
-            Some(key) => {
-                // Inject the nonce/format from the backup file into the key
-                let mut value: CleDechiffrageX25519Impl = key.try_into()?;
-                value.nonce = Some(backup_file.header.nonce.clone());
-                value.format = backup_file.header.format.as_str().try_into()?;
-                value
-            },
-            None => return Err(CommonError::String(format!("Key id {} not found", key_id)))
-        };
+        let decipher_key = domain_info.decrypt_key(&backup_file.header)?;
+        // let key_id = backup_file.header.cle_id.as_str();
+        // let decipher_key = match domain_info.keys.get(&key_id.to_string()) {
+        //     Some(key) => {
+        //         // Inject the nonce/format from the backup file into the key
+        //         let mut value: CleDechiffrageX25519Impl = key.try_into()?;
+        //         value.nonce = Some(backup_file.header.nonce.clone());
+        //         value.format = backup_file.header.format.as_str().try_into()?;
+        //         value
+        //     },
+        //     None => return Err(CommonError::String(format!("Key id {} not found", key_id)))
+        // };
 
         // Position the file to read from the start of encrypted data
         let mut file = File::open(backup_file.path_fichier.as_path()).await?;

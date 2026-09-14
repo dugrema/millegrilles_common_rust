@@ -1,4 +1,4 @@
-use crate::backup_v2::{FichierArchiveBackup, TypeArchive};
+use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
@@ -19,7 +19,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use openssl::pkey::{PKey, Private};
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -226,9 +227,68 @@ pub struct RestorePreflightResult {
     pub files: Vec<FichierArchiveBackup>,
     // Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
-    pub keys: HashMap<String, DecryptedKey>,
+    pub keys: Mutex<HashMap<String, DecryptedKey>>,
     /// Used when resuming, this is the last processed transaction id in the tracking table
     pub last_processed_id: Option<String>,
+    pub master_key: Option<PKey<Private>>,
+}
+
+impl RestorePreflightResult {
+    pub fn decrypt_key(&self, archive_header: &HeaderFichierArchive) -> Result<CleDechiffrageX25519Impl, CommonError> {
+        let key_id = archive_header.cle_id.as_str();
+
+        {
+            let guard = self.keys.lock().unwrap();
+            match guard.get(&key_id.to_string()) {
+                Some(key) => {
+                    // Inject the nonce/format from the backup file into the key
+                    let mut value: CleDechiffrageX25519Impl = key.try_into()?;
+                    value.nonce = Some(archive_header.nonce.clone());
+                    value.format = archive_header.format.as_str().try_into()?;
+                    return Ok(value)
+                },
+                None => {
+                    if self.master_key.is_none() {
+                        return Err(CommonError::String(format!("Key id {} not found", key_id)));
+                    }
+                }
+            }
+        }
+
+        // Key not cached, but we have a decryption key
+        match self.master_key.as_ref() {
+            Some(master_key) => {
+                // Decrypt directly
+                let signature = archive_header.cle_dechiffrage.clone();
+                let decrypted_key = signature.dechiffrer_ca(master_key)?;
+
+                // Rebuild DecryptedKey for the cache
+                let cached_key = DecryptedKey {
+                    signature: Some(signature),
+                    key: CleSecreteSerialisee::from_cle_secrete(decrypted_key.clone(), Some(key_id), None, None::<&str>, None::<&str>)?,
+                    secret: decrypted_key.clone(),
+                };
+                {
+                    // Save the key in map for reuse
+                    let mut guard = self.keys.lock().unwrap();
+                    guard.insert(key_id.to_string(), cached_key);
+                }
+
+                // Build DecryptedKey result
+                Ok(CleDechiffrageX25519Impl {
+                    cle_chiffree: "".to_string(),
+                    cle_secrete: Some(decrypted_key),
+                    format: archive_header.format.as_str().try_into()?,
+                    nonce: Some(archive_header.nonce.as_str().into()),
+                    verification: None,
+                })
+            },
+            None => {
+                // Should not happen - we already checked that we have the master key
+                Err(CommonError::String(format!("Key id {} not found in cache", key_id)))
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
