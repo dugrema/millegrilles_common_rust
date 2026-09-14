@@ -166,6 +166,8 @@ pub async fn process_transactions_from_backup<'a>(
     Ok(restoration_state)
 }
 
+const TRANSACTION_BACTH_SIZE: u64 = 50;
+
 async fn process_backup_files<'a>(
     domain_info: &RestorePreflightResult<'a>,
     outbound: &MessageOutboundFacade,
@@ -202,7 +204,7 @@ async fn process_backup_files<'a>(
         while let Some(transaction_data) = lines.next_line().await? {
 
             // Transactions must be in order, this is enforced here. Also bean counting.
-            let mut t: MessageMilleGrillesOwned = serde_json::from_str(transaction_data.as_str())?;
+            let t: MessageMilleGrillesOwned = serde_json::from_str(transaction_data.as_str())?;
             let new_transaction_time = t.estampille.timestamp() as u64;
             if restoration_state.first_transaction == 0 {
                 restoration_state.first_transaction = new_transaction_time;
@@ -226,8 +228,9 @@ async fn process_backup_files<'a>(
                 continue  // Transaction already processed
             }
 
-            // Validate structure of transaction
-            t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+            // Note : transaction validation is very costly (3x process+DB).
+            // Skip when coming from encrypted .mgbak file.
+            // t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
 
             // Fetch certificate
             let pubkey = &t.pubkey;
@@ -251,7 +254,7 @@ async fn process_backup_files<'a>(
                 restoration_state.aggregator.take()
             ).await?);
 
-            if restoration_state.transaction_count % 20 == 0 {
+            if restoration_state.transaction_count % TRANSACTION_BACTH_SIZE == 0 {
                 // Run write operations from aggregator
                 if let Some(aggregator) = restoration_state.aggregator.take() {
                     transaction.run_aggregator(aggregator).await?;
@@ -328,7 +331,7 @@ async fn process_redolog_collection<'a>(
                     continue  // Transaction already processed
                 }
 
-                // Validate structure of transaction
+                // Validate structure of transaction. Costly, but this is coming from DB (not encrypted).
                 transaction_data.message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
 
                 // Parse certificate from transaction
@@ -345,6 +348,13 @@ async fn process_redolog_collection<'a>(
                     certificate,
                     restoration_state.aggregator.take()
                 ).await?);
+
+                if restoration_state.transaction_count % TRANSACTION_BACTH_SIZE == 0 {
+                    // Run write operations from aggregator
+                    if let Some(aggregator) = restoration_state.aggregator.take() {
+                        transaction.run_aggregator(aggregator).await?;
+                    }
+                }
             }
             Err(e) => {
                 error!("Error parsing redolog content: {}, will ignore transaction", e);
