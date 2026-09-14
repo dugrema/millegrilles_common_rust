@@ -12,7 +12,6 @@ use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::borrow::Cow;
 use std::sync::Arc;
 use chrono::{Duration, Utc};
-use serde_json::json;
 use crate::middleware::ReponseEnveloppe;
 
 /// Facade that exposes methods to easily send different types of messages

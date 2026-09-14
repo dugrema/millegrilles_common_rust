@@ -10,7 +10,6 @@ use crate::v3::{ConfigService, TransactionService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use bson::doc;
 use futures_util::StreamExt;
-use millegrilles_cryptographie::chiffrage_cles::CleDechiffrageX25519Impl;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
