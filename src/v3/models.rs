@@ -90,7 +90,7 @@ impl TryFrom<&MessageMilleGrillesOwned> for RowTransactionTracking {
             bid: bid_truncated_bson,
             ok: true,
             id: value.id.clone(),
-            processed: Utc::now(),
+            processed: value.estampille,
         })
     }
 }

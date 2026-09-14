@@ -5,7 +5,7 @@ use crate::v3::impls::asyncio_ciphers::AsyncDecryptionReaderMgs4;
 use crate::v3::impls::backup_encryption::load_backup_keys;
 use crate::v3::impls::backup_filehandling::load_backup_file_list;
 use crate::v3::impls::backup_producer::check_redo_log_size;
-use crate::v3::models::{RestorePreflightResult, TransactionOperationAggregator, TransactionProcessedRow};
+use crate::v3::models::{RestorePreflightResult, RowTransactionTracking, TransactionOperationAggregator, TransactionProcessedRow};
 use crate::v3::{ConfigService, TransactionService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use bson::doc;
@@ -22,6 +22,7 @@ use openssl::pkey::{PKey, Private};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error};
+use crate::constantes::{FIELD_DATE_PROCESSED, INDEX_DATE_PROCESSED};
 
 pub async fn restore_preflight_check<'a>(
     config: &dyn ConfigService,
@@ -29,6 +30,7 @@ pub async fn restore_preflight_check<'a>(
     outbound: &MessageOutboundFacade,
     domain_name: &str,
     redolog_collection_name: &str,
+    tracking_collection_name: &str,
     version: Option<&String>,
     resume: bool,
     master_key: Option<&'a PKey<Private>>,
@@ -67,9 +69,22 @@ pub async fn restore_preflight_check<'a>(
         HashMap::new()  // Return empty map, decryption will occur on the spot ands keys will get cached
     };
 
-    if resume {
-        todo!("Find last transaction by date in tracking table");
-    }
+    let last_processed_id = if resume {
+        let tracking_collection = mongo.get_collection(tracking_collection_name)?;
+        let last_transaction = tracking_collection
+            .find_one(doc!{})
+            .hint(Hint::Name(INDEX_DATE_PROCESSED.into()))
+            .sort(doc!{FIELD_DATE_PROCESSED: -1})
+            .await?;
+        if let Some(last_transaction) = last_transaction {
+            let row: RowTransactionTracking = bson::deserialize_from_document(last_transaction)?;
+            Some(row.id)    // We have a transaction id
+        } else {
+            None    // No transactions have been processed
+        }
+    } else {
+        None        // We are not resuming, the tracking table will be truncated
+    };
 
     Ok(RestorePreflightResult {
         domain_name: domain_name.to_string(),
@@ -78,7 +93,7 @@ pub async fn restore_preflight_check<'a>(
         files: file_list,
         redolog_count: waiting_transaction_count as usize,
         keys: Mutex::new(keys_map),
-        last_processed_id: None,
+        last_processed_id,
         master_key,
     })
 }
@@ -89,6 +104,7 @@ pub struct RestorationState {
     pub first_transaction: u64,
     pub last_transaction: u64,
     pub transaction_count: u64,
+    pub initially_skipped: u64,
     skipping: bool,
     aggregator: Option<TransactionOperationAggregator>,
 }
@@ -131,6 +147,7 @@ async fn process_backup_files<'a>(
         first_transaction: 0,
         last_transaction: 0,
         transaction_count: 0,
+        initially_skipped: 0,
         skipping: domain_info.last_processed_id.is_some(),
         aggregator: None,
     };
@@ -141,17 +158,6 @@ async fn process_backup_files<'a>(
         debug!("Processing backup file {:?}", backup_file.path_fichier);
 
         let decipher_key = domain_info.decrypt_key(&backup_file.header)?;
-        // let key_id = backup_file.header.cle_id.as_str();
-        // let decipher_key = match domain_info.keys.get(&key_id.to_string()) {
-        //     Some(key) => {
-        //         // Inject the nonce/format from the backup file into the key
-        //         let mut value: CleDechiffrageX25519Impl = key.try_into()?;
-        //         value.nonce = Some(backup_file.header.nonce.clone());
-        //         value.format = backup_file.header.format.as_str().try_into()?;
-        //         value
-        //     },
-        //     None => return Err(CommonError::String(format!("Key id {} not found", key_id)))
-        // };
 
         // Position the file to read from the start of encrypted data
         let mut file = File::open(backup_file.path_fichier.as_path()).await?;
@@ -184,6 +190,7 @@ async fn process_backup_files<'a>(
 
             // Check if we are skipping (resuming)
             if restoration_state.skipping {
+                restoration_state.initially_skipped += 1;
                 if Some(&t.id) == domain_info.last_processed_id.as_ref() {
                     debug!("Ran to last processed transaction id {}, toggling write operations", t.id);
                     restoration_state.skipping = false

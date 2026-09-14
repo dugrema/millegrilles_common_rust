@@ -173,6 +173,7 @@ impl DomainBackupServiceImpl {
             self.outbound.as_ref(),
             domain_name,
             redolog_collection_name,
+            tracking_collection_name,
             version.as_ref(),
             resume,
             master_key,
