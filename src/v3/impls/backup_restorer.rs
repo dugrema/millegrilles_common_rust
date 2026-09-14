@@ -142,6 +142,7 @@ pub async fn process_transactions_from_backup<'a>(
         outbound,
         transaction,
         redolog_collection_name,
+        domain_info,
         &mut restoration_state
     ).await?;
 
@@ -282,11 +283,12 @@ pub async fn truncate_data_tables(
     Ok(())
 }
 
-async fn process_redolog_collection(
+async fn process_redolog_collection<'a>(
     mongo: &MongoDaoImpl,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService,
     redolog_collection_name: &str,
+    domain_info: &RestorePreflightResult<'a>,
     restoration_state: &mut RestorationState,
 ) -> Result<(), CommonError> {
     let collection = mongo.get_collection_typed::<TransactionProcessedRow>(redolog_collection_name)?;
@@ -315,6 +317,17 @@ async fn process_redolog_collection(
                 }
                 restoration_state.transaction_count += 1;
                 // Done beancounting
+
+                // Check if we are skipping (resuming)
+                if restoration_state.skipping {
+                    restoration_state.initially_skipped += 1;
+                    if Some(&transaction_data.message.id) == domain_info.last_processed_id.as_ref() {
+                        debug!("Ran to last processed transaction id {}, toggling write operations", transaction_data.message.id);
+                        restoration_state.skipping = false
+                        // Note: we still skip this transaction as it is already processed
+                    }
+                    continue  // Transaction already processed
+                }
 
                 // Validate structure of transaction
                 transaction_data.message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
