@@ -136,6 +136,13 @@ impl RabbitConnectionManager {
             connection.close(200, "Closing".into()).await.ok();
         }
     }
+    
+    pub async fn is_connected(&self) -> bool {
+        match self.get_connection() {
+            Some(connection) => connection.status().connected(),
+            None => false
+        }
+    }
 }
 
 async fn register_mq_account(

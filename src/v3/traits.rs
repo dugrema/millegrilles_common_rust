@@ -37,6 +37,9 @@ pub trait MessagingService: Send + Sync {
 
     /// Take the message receiver from the queue registry for a named queue.
     fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<InboundMessage>, CommonError>;
+
+    /// Returns ready when the MQ connection is active and a reply_q defined
+    async fn is_ready(&self) -> Result<bool, CommonError>;
 }
 
 #[async_trait]
@@ -102,7 +105,7 @@ pub trait BackupService: Send + Sync {
         tracking_collection_name: &str,
         resume: bool,
         version: Option<String>,
-        master_key: Option<PKey<Private>>,
+        master_key: Option<&PKey<Private>>,
     ) -> Result<RestorationState, CommonError>;
 }
 

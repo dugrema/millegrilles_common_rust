@@ -1,16 +1,19 @@
 use crate::chiffrage_cle::CommandeAjouterCleDomaine;
 use crate::common_messages::{ReponseRequeteDechiffrageV2, RequeteDechiffrage};
-use crate::constantes::{COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, Securite};
+use crate::constantes::{Securite, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
-use crate::v3::models::{DecryptedKey, GeneratedSecretKey, VerifiedResponseMessage};
+use crate::v3::models::{CertificateRequest, DecryptedKey, GeneratedSecretKey, VerifiedResponseMessage};
 use crate::v3::{ConfigService, FormatService, MessagingService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::borrow::Cow;
 use std::sync::Arc;
+use chrono::{Duration, Utc};
+use serde_json::json;
+use crate::middleware::ReponseEnveloppe;
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
@@ -29,6 +32,26 @@ impl MessageOutboundFacade {
             config,
             messaging,
             format,
+        }
+    }
+
+    pub async fn wait_ready(&self, timeout: Option<i64>) -> Result<(), CommonError> {
+        let expiration = match timeout {
+            Some(timeout) => {
+                Some(Utc::now() + Duration::milliseconds(timeout))
+            },
+            None => None
+        };
+        loop {
+            if let Some(expiration) = expiration.as_ref() {
+                if expiration < &Utc::now() {
+                    return Err(CommonError::Str("Timeout"))
+                }
+            }
+            if self.messaging.is_ready().await? {
+                return Ok(());
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
 
@@ -228,7 +251,22 @@ impl MessageOutboundFacade {
 
     pub async fn get_certificate(&self, fingerprint: &str, timeout: Option<u64>) -> Result<Arc<EnveloppeCertificat>, CommonError> {
         let timeout = timeout.unwrap_or_else(|| 15_000);
-        
-        todo!()
+
+        let routing = RoutageMessageAction::builder(
+            PKI_DOMAINE_NOM,
+            PKI_REQUETE_CERTIFICAT,
+            vec![Securite::L1Public])
+            .timeout_blocking(timeout)
+            .build();
+        let request = CertificateRequest { fingerprint: fingerprint.to_string() };
+        let response = self.send_request(routing, request).await?;
+        let certificate_information: ReponseEnveloppe = response.message.deserialize()?;
+        let mut enveloppe = EnveloppeCertificat::try_from(
+            certificate_information.chaine_pem.join("\n").as_str()
+        )?;
+        let ca = self.config.get_configuration_pki().get_enveloppe_privee().enveloppe_ca.certificat.clone();
+        enveloppe.millegrille = Some(ca);
+
+        Ok(Arc::new(enveloppe))
     }
 }

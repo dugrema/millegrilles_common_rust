@@ -72,6 +72,7 @@ impl MessagingServiceImpl {
 
         Ok(())
     }
+
 }
 
 #[async_trait]
@@ -144,5 +145,11 @@ impl MessagingService for MessagingServiceImpl {
     fn take_named_q_rx(&self, q_name: &str) -> Result<Receiver<InboundMessage>, CommonError> {
         self.queue_registry.take_named_q_rx(q_name)
     }
-}
 
+    async fn is_ready(&self) -> Result<bool, CommonError> {
+        Ok(
+            self.connection_manager.is_connected().await &&
+                self.queue_registry.get_reply_q_name().is_some()
+        )
+    }
+}

@@ -23,7 +23,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error};
 
-pub async fn restore_preflight_check(
+pub async fn restore_preflight_check<'a>(
     config: &dyn ConfigService,
     mongo: &dyn MongoDao,
     outbound: &MessageOutboundFacade,
@@ -31,8 +31,8 @@ pub async fn restore_preflight_check(
     redolog_collection_name: &str,
     version: Option<&String>,
     resume: bool,
-    master_key: Option<PKey<Private>>,
-) -> Result<RestorePreflightResult, CommonError> {
+    master_key: Option<&'a PKey<Private>>,
+) -> Result<RestorePreflightResult<'a>, CommonError> {
     // Check how many transactions are in the redo-log (if incremental, we need at least 1)
     let path_backup_root = mongo.get_path_backup();
     let domain_backup_path = path_backup_root.join(domain_name);
@@ -93,9 +93,9 @@ pub struct RestorationState {
     aggregator: Option<TransactionOperationAggregator>,
 }
 
-pub async fn process_transactions_from_backup(
+pub async fn process_transactions_from_backup<'a>(
     mongo: &MongoDaoImpl,
-    domain_info: &RestorePreflightResult,
+    domain_info: &RestorePreflightResult<'a>,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService,
     redolog_collection_name: &str,
@@ -122,8 +122,8 @@ pub async fn process_transactions_from_backup(
     Ok(restoration_state)
 }
 
-async fn process_backup_files(
-    domain_info: &RestorePreflightResult,
+async fn process_backup_files<'a>(
+    domain_info: &RestorePreflightResult<'a>,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService
 ) -> Result<RestorationState, CommonError> {

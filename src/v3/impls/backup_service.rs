@@ -164,7 +164,7 @@ impl DomainBackupServiceImpl {
         tracking_collection_name: &str,
         resume: bool,
         version: Option<String>,
-        master_key: Option<PKey<Private>>,
+        master_key: Option<&PKey<Private>>,
     ) -> Result<RestorationState, CommonError> {
 
         let preflight = restore_preflight_check(
@@ -234,7 +234,7 @@ impl BackupService for DomainBackupServiceImpl {
         tracking_collection_name: &str,
         resume: bool,
         version: Option<String>,
-        master_key: Option<PKey<Private>>,
+        master_key: Option<&PKey<Private>>,
     ) -> Result<RestorationState, CommonError> {
         let backup_path = self.mongo.get_path_backup().as_path();
         let domain_backup_path = backup_path.join(domain_name);

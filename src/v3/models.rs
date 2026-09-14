@@ -219,7 +219,7 @@ impl BackupPreflightResult {
     }
 }
 
-pub struct RestorePreflightResult {
+pub struct RestorePreflightResult<'a> {
     pub domain_name: String,
     pub idmg: String,
     pub domain_backup_path: PathBuf,
@@ -230,10 +230,10 @@ pub struct RestorePreflightResult {
     pub keys: Mutex<HashMap<String, DecryptedKey>>,
     /// Used when resuming, this is the last processed transaction id in the tracking table
     pub last_processed_id: Option<String>,
-    pub master_key: Option<PKey<Private>>,
+    pub master_key: Option<&'a PKey<Private>>,
 }
 
-impl RestorePreflightResult {
+impl<'a> RestorePreflightResult<'a> {
     pub fn decrypt_key(&self, archive_header: &HeaderFichierArchive) -> Result<CleDechiffrageX25519Impl, CommonError> {
         let key_id = archive_header.cle_id.as_str();
 
@@ -439,4 +439,9 @@ pub enum PreflightError {
 
 impl From<CommonError> for PreflightError {
     fn from(err: CommonError) -> Self { PreflightError::CommonError(err) }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CertificateRequest {
+    pub fingerprint: String
 }
