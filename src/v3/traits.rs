@@ -53,6 +53,8 @@ pub trait PkiService: ValidateurX509 + Send + Sync {
     /// Fails with an Error on any issue.
     async fn validate_message(&self, message: &MessageMilleGrillesOwned) -> Result<Arc<EnveloppeCertificat>, CommonError>;
 
+    fn validate_message_with_cert(&self, message: &MessageMilleGrillesOwned, enveloppe: &EnveloppeCertificat) -> Result<(), CommonError>;
+
     async fn validate_message_ref(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, CommonError>;
 
     /// A cached public key implies the corresponding certificate has been verified and is currently valid.

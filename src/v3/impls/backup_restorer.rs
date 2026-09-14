@@ -6,7 +6,7 @@ use crate::v3::impls::backup_encryption::load_backup_keys;
 use crate::v3::impls::backup_filehandling::load_backup_file_list;
 use crate::v3::impls::backup_producer::check_redo_log_size;
 use crate::v3::models::{RestorePreflightResult, RowTransactionTracking, TransactionOperationAggregator, TransactionProcessedRow};
-use crate::v3::{ConfigService, TransactionService};
+use crate::v3::{ConfigService, PkiService, TransactionService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use bson::doc;
 use futures_util::StreamExt;
@@ -116,6 +116,7 @@ pub struct RestorationState {
 }
 
 pub async fn process_transactions_from_backup<'a>(
+    pki: &dyn PkiService,
     mongo: &MongoDaoImpl,
     domain_info: &RestorePreflightResult<'a>,
     outbound: &MessageOutboundFacade,
@@ -124,7 +125,7 @@ pub async fn process_transactions_from_backup<'a>(
 ) -> Result<RestorationState, CommonError> {
 
     // Process all mgbak files
-    let mut restoration_state = process_backup_files(domain_info, outbound, transaction).await?;
+    let mut restoration_state = process_backup_files(pki, domain_info, outbound, transaction).await?;
     if restoration_state.transaction_count != domain_info.file_transaction_count {
         warn!(
             "Was expecting {} transactions according to file headers, we got {} transactions",
@@ -137,6 +138,7 @@ pub async fn process_transactions_from_backup<'a>(
 
     // Process the redo-log collection
     process_redolog_collection(
+        pki,
         mongo,
         outbound,
         transaction,
@@ -169,6 +171,7 @@ pub async fn process_transactions_from_backup<'a>(
 const TRANSACTION_BACTH_SIZE: u64 = 50;
 
 async fn process_backup_files<'a>(
+    pki: &dyn PkiService,
     domain_info: &RestorePreflightResult<'a>,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService
@@ -185,6 +188,8 @@ async fn process_backup_files<'a>(
     let mut certificate_cache: HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
     for backup_file in &domain_info.files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
+
+        let is_trusted_mgbak = false;   // TODO - sign archive (e.g. Final and Concatene)
 
         let decipher_key = domain_info.decrypt_key(&backup_file.header)?;
 
@@ -204,7 +209,7 @@ async fn process_backup_files<'a>(
         while let Some(transaction_data) = lines.next_line().await? {
 
             // Transactions must be in order, this is enforced here. Also bean counting.
-            let t: MessageMilleGrillesOwned = serde_json::from_str(transaction_data.as_str())?;
+            let mut t: MessageMilleGrillesOwned = serde_json::from_str(transaction_data.as_str())?;
             let new_transaction_time = t.estampille.timestamp() as u64;
             if restoration_state.first_transaction == 0 {
                 restoration_state.first_transaction = new_transaction_time;
@@ -228,10 +233,6 @@ async fn process_backup_files<'a>(
                 continue  // Transaction already processed
             }
 
-            // Note : transaction validation is very costly (3x process+DB).
-            // Skip when coming from encrypted .mgbak file.
-            // t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
-
             // Fetch certificate
             let pubkey = &t.pubkey;
             let certificate = match certificate_cache.get(pubkey) {
@@ -246,6 +247,13 @@ async fn process_backup_files<'a>(
                     certificate
                 }
             };
+
+            if ! is_trusted_mgbak {
+                // Note : content validation is very costly (3x process+DB).
+                t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                // Verify that the reported pubkey/certificate and message timestamp match
+                pki.validate_message_with_cert(&t, certificate.as_ref())?;
+            }
 
             // Add transaction to the operations aggregator.
             restoration_state.aggregator = Some(transaction.route_transaction(
@@ -286,6 +294,7 @@ pub async fn truncate_data_tables(
 }
 
 async fn process_redolog_collection<'a>(
+    pki: &dyn PkiService,
     mongo: &MongoDaoImpl,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService,
@@ -331,9 +340,6 @@ async fn process_redolog_collection<'a>(
                     continue  // Transaction already processed
                 }
 
-                // Validate structure of transaction. Costly, but this is coming from DB (not encrypted).
-                transaction_data.message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
-
                 // Parse certificate from transaction
                 let certificate = if let Some(certificate_string) = transaction_data.message.certificat.as_ref() {
                     let certificate_str = certificate_string.join("\n");
@@ -342,6 +348,12 @@ async fn process_redolog_collection<'a>(
                     debug!("Fetch certificate for redo-log transaction {}", transaction_data.message.id);
                     outbound.get_certificate(transaction_data.message.pubkey.as_str(), Some(3_000)).await?
                 };
+
+                // Validate structure of transaction. Costly, but this is coming from DB (not encrypted).
+                transaction_data.message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                // Verify that the reported pubkey/certificate and message timestamp match
+                pki.validate_message_with_cert(&transaction_data.message, certificate.as_ref())?;
+
 
                 restoration_state.aggregator = Some(transaction.route_transaction(
                     transaction_data.message,

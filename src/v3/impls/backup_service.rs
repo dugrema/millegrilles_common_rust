@@ -8,7 +8,7 @@ use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
 use crate::v3::models::PreflightError;
-use crate::v3::{BackupService, ChiffrageService, ConfigService, TransactionService};
+use crate::v3::{BackupService, ChiffrageService, ConfigService, PkiService, TransactionService};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::sync::Arc;
@@ -22,6 +22,7 @@ const TRIGGER_CONCATENATED_TO_FINAL_DAYS: i64 = 365;
 
 pub struct DomainBackupServiceImpl {
     config: Arc<dyn ConfigService>,
+    pki: Arc<dyn PkiService>,
     outbound: Arc<MessageOutboundFacade>,
     chiffrage: Arc<dyn ChiffrageService>,
     mongo: Arc<MongoDaoImpl>,
@@ -33,6 +34,7 @@ pub struct DomainBackupServiceImpl {
 impl DomainBackupServiceImpl {
     pub fn new(
         config: Arc<dyn ConfigService>,
+        pki: Arc<dyn PkiService>,
         outbound: Arc<MessageOutboundFacade>,
         chiffrage: Arc<dyn ChiffrageService>,
         mongo: Arc<MongoDaoImpl>,
@@ -41,6 +43,7 @@ impl DomainBackupServiceImpl {
     ) -> Self {
         Self {
             config,
+            pki,
             outbound,
             chiffrage,
             mongo,
@@ -185,6 +188,7 @@ impl DomainBackupServiceImpl {
         }
 
         let result = process_transactions_from_backup(
+            self.pki.as_ref(),
             self.mongo.as_ref(),
             &preflight,
             self.outbound.as_ref(),

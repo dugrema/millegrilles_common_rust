@@ -149,6 +149,27 @@ impl PkiService for SecurityServiceImpl {
         Ok(enveloppe)
     }
 
+    fn validate_message_with_cert(&self, message: &MessageMilleGrillesOwned, enveloppe: &EnveloppeCertificat) -> Result<(), CommonError> {
+        // Internal cryptographic verification of the message must have been done already.
+        // This will have checked the id with hash of content and the signature (sig) using pubkey and id.
+        if message.contenu_valide != Some((true, true)) {
+            return Err(CommonError::Str("Message internal cryptographic validation must be done before this step"))
+        }
+
+        // Ensure the attached certificate matches the message's pubkey value.
+        let fingerprint = enveloppe.fingerprint_pk()?;
+        if message.pubkey != fingerprint {
+            return Err(CommonError::Str("Mismatch between certificate and message pubkey"));
+        }
+
+        // We checked the certificate for current date - also ensure the message timestamp
+        // overlaps the certificate's date range. Throws error if range is wrong.
+        if ! valider_pour_date(enveloppe, &message.estampille)? {
+            return Err(CommonError::Str("Mismatch between certificate and message expiry"));
+        }
+        Ok(())
+    }
+
     async fn validate_message_ref(&self, message: &MessageMilleGrillesRefDefault) -> Result<Arc<EnveloppeCertificat>, CommonError> {
         // Internal cryptographic verification of the message must have been done already.
         // This will have checked the id with hash of content and the signature (sig) using pubkey and id.
