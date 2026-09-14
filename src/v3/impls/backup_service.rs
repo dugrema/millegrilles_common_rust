@@ -103,6 +103,7 @@ impl DomainBackupServiceImpl {
             // Extract all transactions into an incremental file even when we do a full backup
             // On full backups, the incremental file gets rotated out with the old backup set.
             let incremental_file = produce_incremental_backup_file(
+                self.config.as_ref(),
                 self.outbound.as_ref(),
                 self.mongo.as_ref(),
                 self.chiffrage.as_ref(),
@@ -143,7 +144,12 @@ impl DomainBackupServiceImpl {
             // This is a complete backup - run if the backup contains incremental files
             // The check is necessary because there could be multiple Final and a Concatene file in the list.
             concatenated_file = Some(
-                produce_concatenated_backup_file(self.chiffrage.as_ref(), self.outbound.as_ref(), &domain_info).await?
+                produce_concatenated_backup_file(
+                    self.config.as_ref(),
+                    self.chiffrage.as_ref(),
+                    self.outbound.as_ref(),
+                    &domain_info
+                ).await?
             );
         }
 

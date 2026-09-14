@@ -1,6 +1,6 @@
-use std::borrow::Cow;
 use fs2::FileExt;
 use futures_util::{StreamExt, TryStreamExt};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 
 use async_compression::tokio::bufread::{DeflateDecoder, DeflateEncoder};
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as base64_nopad};
+use bson::doc;
 use chrono::{format::strftime::StrftimeItems, {TimeZone, Utc}};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
+use millegrilles_cryptographie::messages_structs::optionepochseconds;
 use millegrilles_cryptographie::x25519::CleSecreteX25519;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -22,9 +24,11 @@ use tracing::{debug, error, info, warn};
 use millegrilles_cryptographie::chiffrage::CleSecrete;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher, DecipherMgs4};
+use millegrilles_cryptographie::ed25519_dalek::{SecretKey, Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use millegrilles_cryptographie::hachages::{hacher_bytes, HachageCode};
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
 use millegrilles_cryptographie::messages_structs::MessageKind;
-use mongodb::bson::doc;
+use millegrilles_cryptographie::x509::EnveloppePrivee;
 use mongodb::options::Hint;
 use multibase::Base;
 use multihash::Code;
@@ -37,7 +41,7 @@ use tokio::join;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::{bytes::Bytes, io::{ReaderStream, StreamReader}};
 use url::Url;
-
+use x509_parser::nom::AsBytes;
 use crate::backup::CommandeBackup;
 use crate::certificats::ValidateurX509;
 use crate::chiffrage_cle::{CommandeAjouterCleDomaine, ajouter_cles_domaine, generer_cle_v2, get_cles_rechiffrees_v2};
@@ -466,6 +470,71 @@ pub struct HeaderFichierArchive {
     pub nonce: String,
     pub format: String,
     pub compression: Option<String>,
+    /// Timestamp of when this file was produced in epoch seconds
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub timestamp: Option<u64>,
+    /// Digest of the encrypted content area (not file digest)
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub content_digest: Option<String>,
+    /// Public key used for signature (can be used to get certificate)
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub pubkey: Option<String>,
+    /// Signature of timestamp and content_digest, check with pubkey
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub signature: Option<String>,
+}
+
+impl HeaderFichierArchive {
+    fn get_signing_value(&self) -> Result<Vec<u8>, CommonError> {
+        if self.timestamp.is_none() || self.content_digest.is_none() {
+            return Err(CommonError::Str("Missing timestamp/content_digest"))
+        }
+
+        let value_to_sign = format!("{:?};{:?}", self.timestamp, self.content_digest);
+        Ok(hacher_bytes(value_to_sign.as_bytes(), HachageCode::Blake2s256))
+    }
+
+    /// Set the signing value using the provided key
+    pub fn sign(&mut self, key: &EnveloppePrivee) -> Result<(), CommonError> {
+        let value = self.get_signing_value()?;
+        
+        let mut cle_privee_u8 = SecretKey::default();
+        match key.cle_privee.raw_private_key() {
+            Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
+            Err(e) => Err(format!("build_message_action Erreur raw_private_key {:?}", e))?
+        };
+        let signing_key = SigningKey::from_bytes(&cle_privee_u8);
+
+        let signature = signing_key.sign(&value.as_bytes());
+        let signature_string = hex::encode(signature.to_bytes().as_slice());
+
+        self.pubkey = Some(key.fingerprint()?);
+        self.signature = Some(signature_string);
+
+        Ok(())
+    }
+    
+    pub fn verify(&self) -> Result<(), CommonError> {
+        let value = self.get_signing_value()?;
+        let pubkey = match self.pubkey.as_ref() {
+            Some(key) => key,
+            None => return Err(CommonError::Str("No public key found"))
+        };
+        let signature = match self.signature.as_ref() {
+            Some(signature) => signature,
+            None => return Err(CommonError::Str("No signature found"))
+        };
+        let mut buf_pubkey = [0u8; 32];
+        hex::decode_to_slice(pubkey.as_bytes(), &mut buf_pubkey)?;
+        let mut signature_unhex = [0u8; 64];
+        hex::decode_to_slice(signature, &mut signature_unhex).unwrap();
+        let verifying_key = VerifyingKey::from_bytes(&buf_pubkey)
+            .map_err(|e| CommonError::String(e.to_string()))?;
+        let signature_instance = Signature::from_slice(&signature_unhex).unwrap();
+        verifying_key.verify(value.as_slice(), &signature_instance)
+            .map_err(|e| CommonError::String(e.to_string()))?;
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -513,6 +582,10 @@ async fn preparer_fichier_chiffrage(
         nonce: "DUMMY_NONCE_HEADER_40_CHARS_____________".to_string(),
         format: "mgs4".to_string(),
         compression: Some("deflate".to_string()),
+        timestamp: None,
+        content_digest: None,
+        pubkey: None,
+        signature: None,
     };
     let header_str = serde_json::to_string(&header)?;
     let header_size = header_str.len() as u16;

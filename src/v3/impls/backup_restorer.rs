@@ -17,11 +17,15 @@ use mongodb::options::Hint;
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::sync::{Arc, Mutex};
+use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
+use multibase::Base;
+use multihash::Code;
 use openssl::pkey::{PKey, Private};
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error, info, warn};
 use crate::constantes::{FIELD_DATE_PROCESSED, INDEX_DATE_PROCESSED};
+use crate::hachages::Hacheur;
 
 pub async fn restore_preflight_check<'a>(
     config: &dyn ConfigService,
@@ -189,7 +193,77 @@ async fn process_backup_files<'a>(
     for backup_file in &domain_info.files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
 
-        let is_trusted_mgbak = false;   // TODO - sign archive (e.g. Final and Concatene)
+        let is_trusted_mgbak = match backup_file.header.verify() {
+            Ok(()) => { // Header signature OK
+                // Process the file to digest the encrypted content and compare with header
+                let mut file = File::open(backup_file.path_fichier.as_path()).await?;
+                file.seek(SeekFrom::Start(backup_file.position_data as u64)).await?;
+                let mut digester = Hacheur::builder()
+                    .digester(Code::Blake2b512)
+                    .base(Base::Base58Btc)
+                    .build();
+                let mut buffer = [0u8; 32*1024];
+                loop {
+                    let len_read = file.read(&mut buffer).await?;
+                    if len_read == 0 {
+                        break;
+                    }
+                    digester.update(&buffer[..len_read]);
+                }
+                let digest = digester.finalize();
+                if Some(&digest) != backup_file.header.content_digest.as_ref() {
+                    warn!(
+                        "Error verifying backup file {:?}, invalid digest ({:?} != {:?}), marking untrusted",
+                        backup_file.path_fichier,
+                        digest,
+                        backup_file.header.content_digest,
+                    );
+                    false
+                } else {
+                    match backup_file.header.pubkey.as_ref() {
+                        Some(pubkey) => {
+                            let certificate = match certificate_cache.get(pubkey) {
+                                Some(certificate) => certificate.clone(),
+                                None => {
+                                    debug!("Loading certificate {}", pubkey);
+                                    let certificate = outbound.get_certificate(pubkey, Some(5_000)).await?;
+                                    if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
+                                        certificate_cache.clear();
+                                    }
+                                    certificate_cache.insert(pubkey.clone(), certificate.clone());
+                                    certificate
+                                }
+                            };
+                            if pubkey != &certificate.fingerprint()? {
+                                // This should not happen - we loaded the certificate by pubkey
+                                info!("Backup file pubkey does not match certificate, marking untrusted: {:?}", backup_file.path_fichier);
+                                false
+                            } else {
+                                // Check archive date compared to certificate
+                                let not_valid_after = certificate.not_valid_after()?.timestamp();
+                                let not_valid_before = certificate.not_valid_before()?.timestamp();
+                                match backup_file.header.timestamp {
+                                    Some(timestamp) => {
+                                        info!("Backup file signature OK, marking trusted: {:?}", backup_file.path_fichier);
+                                        not_valid_after > timestamp as i64 && not_valid_before < timestamp as i64
+                                    },
+                                    None => {
+                                        false
+                                    }
+                                }
+                            }
+                        },
+                        None => {
+                            false
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                info!("Error verifying backup file {:?}, marking untrusted: {:?}", backup_file.path_fichier, e);
+                false  // Not trusted, each transaction will be verified individually
+            }
+        };
 
         let decipher_key = domain_info.decrypt_key(&backup_file.header)?;
 

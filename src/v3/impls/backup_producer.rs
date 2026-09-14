@@ -9,7 +9,7 @@ use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncrypti
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
 use crate::v3::impls::backup_filehandling::{is_system_ready, load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
 use crate::v3::models::{BackupResult, DecryptedKey, PreflightError, BackupPreflightResult, TransactionProcessedRow};
-use crate::v3::{ChiffrageService, ConfigService};
+use crate::v3::{ChiffrageService, ConfigService, PkiService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
 use bson::doc;
@@ -24,9 +24,16 @@ use mongodb::options::Hint;
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::Path;
+use std::str::from_utf8;
+use millegrilles_cryptographie::ed25519::{signer, signer_into};
+use millegrilles_cryptographie::ed25519_dalek::{SecretKey, Signer, SigningKey};
+use millegrilles_cryptographie::hachages::{hacher_bytes, HachageCode};
+use multihash::Code;
+use reqwest::Certificate;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
+use x509_parser::nom::AsBytes;
 
 pub async fn preflight_check(
     config: &dyn ConfigService,
@@ -90,6 +97,7 @@ pub async fn check_redo_log_size(mongo: &dyn MongoDao, redolog_collection_name: 
 }
 
 pub async fn produce_incremental_backup_file(
+    config: &dyn ConfigService,
     outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     chiffrage: &dyn ChiffrageService,
@@ -107,6 +115,7 @@ pub async fn produce_incremental_backup_file(
     session.start_transaction().await?;
 
     match process_incremental_file_operations(
+        config,
         outbound,
         mongo,
         chiffrage,
@@ -133,6 +142,7 @@ pub async fn produce_incremental_backup_file(
 }
 
 async fn process_incremental_file_operations(
+    config: &dyn ConfigService,
     outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
     chiffrage: &dyn ChiffrageService,
@@ -148,13 +158,16 @@ async fn process_incremental_file_operations(
         (Some(key_id), Some(signature)) => (key_id.as_str(),signature),
         _ => return Err(CommonError::Str("No key_id/domain signature in key set")),
     };
+    let signing_key = config.get_configuration_pki().get_enveloppe_privee();
+
     let (mut backup_header, header_size) = write_new_header(
         &mut work_file,
         &TypeArchive::Incremental,
         domain_info.idmg.as_str(),
         domain_info.domain_name.as_str(),
         key_id,
-        signature
+        signature,
+        signing_key.enveloppe_pub.as_ref(),
     ).await?;
 
     // Create streaming "compression -> encryption -> file writing" pipeline for backup file
@@ -197,6 +210,10 @@ async fn process_incremental_file_operations(
         },
         None => return Err(CommonError::Str("Nonce missing from MGS4 encryption result"))
     }
+
+    // Apply cryptographic signature
+    backup_header.content_digest = Some(encryption_result.hachage_bytes);
+    backup_header.sign(signing_key.as_ref())?;
 
     overwrite_backup_file_header(incremental_workfile_path, &backup_header).await?;
 
@@ -362,6 +379,7 @@ where
 
 /// This takes all backup files (previous concatenated and incrementals) and saves them in a new file.
 async fn process_concatenated_file_operations(
+    config: &dyn ConfigService,
     chiffrage: &dyn ChiffrageService,
     domain_info: &BackupPreflightResult,
     keys: Vec<DecryptedKey>,
@@ -384,13 +402,15 @@ async fn process_concatenated_file_operations(
         (Some(key_id), Some(signature)) => (key_id.as_str(),signature),
         _ => return Err(CommonError::Str("No key_id/domain signature in key set")),
     };
+    let signing_key = config.get_configuration_pki().get_enveloppe_privee();
     let (mut backup_header, _header_size) = write_new_header(
         &mut work_file,
         &TypeArchive::Concatene,
         domain_info.idmg.as_str(),
         domain_info.domain_name.as_str(),
         key_id,
-        signature
+        signature,
+        signing_key.enveloppe_pub.as_ref(),
     ).await?;
     debug!("Header written, creating pipeline");
 
@@ -430,36 +450,11 @@ async fn process_concatenated_file_operations(
         None => return Err(CommonError::Str("Nonce missing from MGS4 encryption result"))
     }
 
+    // Apply cryptographic signature
+    backup_header.content_digest = Some(encryption_result.hachage_bytes);
+    backup_header.sign(signing_key.as_ref())?;
+
     overwrite_backup_file_header(workfile_path, &backup_header).await?;
-
-    // let backup_path = workfile_path.parent()
-    //     .expect("Failed to get backup parent directory").to_owned();
-
-    // Extract date information from header
-    // let first_transaction = match Utc.timestamp_millis_opt(backup_result.first_transaction as i64).single() {
-    //     Some(timestamp) => timestamp,
-    //     None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
-    // };
-
-    // Rename working file to final file with digest in name
-    // let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
-    //     chiffrage,
-    //     &TypeArchive::Incremental,
-    //     first_transaction,
-    //     domain_info.domain_name.as_str(),
-    //     backup_path.as_path(),
-    //     workfile_path
-    // ).await?;
-
-    // Position of first byte of data: 4 bytes (version u16, taille header u16) + header
-    // let position_data = (4 + header_size) as usize;
-    // let backup_result = FichierArchiveBackup {
-    //     path_fichier: workfile_path.to_owned(),
-    //     header: backup_header,
-    //     position_data,
-    //     digest_suffix,
-    //     len: filesize,
-    // };
 
     Ok(backup_header)
 }
@@ -579,6 +574,7 @@ async fn save_certificate(
 }
 
 pub async fn produce_concatenated_backup_file(
+    config: &dyn ConfigService,
     chiffrage: &dyn ChiffrageService,
     outbound: &MessageOutboundFacade,
     domain_info: &BackupPreflightResult
@@ -599,6 +595,7 @@ pub async fn produce_concatenated_backup_file(
     let workfile = prepare_backup_workfile(domain_backup_path).await?;
     debug!("Using backup workfile: {:?}", workfile);
     let backup_header = process_concatenated_file_operations(
+        config,
         chiffrage,
         domain_info,
         keys,
@@ -644,6 +641,9 @@ pub async fn produce_concatenated_backup_file(
     Ok(backup_result)
 }
 
+const DIGEST_PLACEHOLDER: &str = "DUMMY DIGEST - zSEfXUDi5Mbu7pSkHb5mrRtE11kXxzZDxyAYMhx5oKiiCiKryrsWmk1HyNs4P7MXeL2wckhnGLuSJaREq9T7F";
+const SIGNATURE_PLACEHOLDER: &str = "DUMMY SIGNATURE - 720ee1bb68b65408356cec3b2f421ff8b3747210fa46f482f002058e87b02f1dfd45fb3277d19868664caf359c1ce161811ad32f0e44b4";
+
 /// Generates and writes a new header. All fields are "maximized" to make space in the file.
 /// This writes all file headers (version, length of header, header itself)
 async fn write_new_header<W>(
@@ -652,7 +652,8 @@ async fn write_new_header<W>(
     idmg: &str,
     domain: &str,
     key_id: &str,
-    key_signature: &SignatureDomaines
+    key_signature: &SignatureDomaines,
+    certificate: &EnveloppeCertificat,
 ) -> Result<(HeaderFichierArchive, u16), CommonError> where W: AsyncWrite + Unpin {
     static FILE_VERSION: u16 = 1;
     let header = HeaderFichierArchive {
@@ -667,6 +668,10 @@ async fn write_new_header<W>(
         nonce: "DUMMY_NONCE_HEADER_40_CHARS_____________".to_string(),
         format: "mgs4".to_string(),
         compression: Some("deflate".to_string()),
+        timestamp: Some(Utc::now().timestamp() as u64),
+        content_digest: Some(DIGEST_PLACEHOLDER.to_string()),
+        pubkey: Some(certificate.fingerprint()?),
+        signature: Some(SIGNATURE_PLACEHOLDER.to_string()),
     };
     let header_str = serde_json::to_string(&header)?;
     let header_size = header_str.len() as u16;
