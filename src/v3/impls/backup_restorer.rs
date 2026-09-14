@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use openssl::pkey::{PKey, Private};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
-use tracing::{debug, error};
+use tracing::{debug, error, info, warn};
 use crate::constantes::{FIELD_DATE_PROCESSED, INDEX_DATE_PROCESSED};
 
 pub async fn restore_preflight_check<'a>(
@@ -50,6 +50,12 @@ pub async fn restore_preflight_check<'a>(
             load_backup_file_list(domain_backup_path.as_path(), idmg.as_str()).await?
         }
     };
+
+    // Get total transaction counts from file and redo-log
+    let mut file_transaction_count = 0;
+    for file in &file_list {
+        file_transaction_count += file.header.nombre_transactions;
+    }
 
     let waiting_transaction_count = check_redo_log_size(mongo, redolog_collection_name).await?;
 
@@ -91,6 +97,7 @@ pub async fn restore_preflight_check<'a>(
         idmg,
         domain_backup_path,
         files: file_list,
+        file_transaction_count,
         redolog_count: waiting_transaction_count as usize,
         keys: Mutex::new(keys_map),
         last_processed_id,
@@ -116,8 +123,18 @@ pub async fn process_transactions_from_backup<'a>(
     transaction: &dyn TransactionService,
     redolog_collection_name: &str,
 ) -> Result<RestorationState, CommonError> {
+
     // Process all mgbak files
     let mut restoration_state = process_backup_files(domain_info, outbound, transaction).await?;
+    if restoration_state.transaction_count != domain_info.file_transaction_count {
+        warn!(
+            "Was expecting {} transactions according to file headers, we got {} transactions",
+            domain_info.file_transaction_count,
+            restoration_state.transaction_count,
+        )
+    } else {
+        info!("Processed {} transactions from backup files", restoration_state.transaction_count);
+    }
 
     // Process the redo-log collection
     process_redolog_collection(
@@ -131,6 +148,17 @@ pub async fn process_transactions_from_backup<'a>(
     // Run last batch of write operations from aggregator when applicable
     if let Some(aggregator) = restoration_state.aggregator.take() {
         transaction.run_aggregator(aggregator).await?;
+    }
+
+    let total_expected = domain_info.file_transaction_count + domain_info.redolog_count as u64;
+    if total_expected != restoration_state.transaction_count {
+        warn!(
+            "Was expecting {} transactions according to file headers and redo-log count, we got {} transactions",
+            total_expected,
+            restoration_state.transaction_count,
+        )
+    } else {
+        info!("Processed {} transactions as expected", restoration_state.transaction_count);
     }
 
     debug!("Done processing transactions");
@@ -153,7 +181,6 @@ async fn process_backup_files<'a>(
     };
 
     let mut certificate_cache: HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
-    debug!("Extract transactions from {} existing files", &domain_info.files.len());
     for backup_file in &domain_info.files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
 

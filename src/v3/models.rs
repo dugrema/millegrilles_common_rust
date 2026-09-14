@@ -225,7 +225,9 @@ pub struct RestorePreflightResult<'a> {
     pub domain_backup_path: PathBuf,
     /// List of existing backup files in order (Finals, current Concatenated then Incrementals)
     pub files: Vec<FichierArchiveBackup>,
-    // Number of transactions currently in the redo-log (not backed-up yet)
+    /// Transaction count from all file headers
+    pub file_transaction_count: u64,
+    /// Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
     pub keys: Mutex<HashMap<String, DecryptedKey>>,
     /// Used when resuming, this is the last processed transaction id in the tracking table
