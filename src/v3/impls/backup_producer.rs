@@ -211,10 +211,7 @@ async fn process_incremental_file_operations(
     overwrite_backup_file_header(incremental_workfile_path, &backup_header).await?;
 
     // Extract date information from header
-    let first_transaction = match Utc.timestamp_opt(backup_result.first_transaction as i64, 0).single() {
-        Some(timestamp) => timestamp,
-        None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
-    };
+    let first_transaction = backup_result.first_transaction.clone();
 
     // Rename working file to final file with digest in name
     let backup_path = incremental_workfile_path.parent()
@@ -271,8 +268,8 @@ where
     let mut transaction_ids: Vec<String> = Vec::with_capacity(domain_info.redolog_count);
     let mut last_transaction_date: DateTime<Utc> = DateTime::from_timestamp(0, 0).expect("Failed: datetime zero");
     let mut result = BackupResult {
-        first_transaction: 0,
-        last_transaction: 0,
+        first_transaction: DateTime::<Utc>::MIN_UTC,
+        last_transaction: DateTime::<Utc>::MIN_UTC,
         count: 0,
     };
 
@@ -286,11 +283,11 @@ where
         match transaction {
             Ok(mut transaction) => {
                 // Beancounting
-                if result.first_transaction == 0 {
-                    result.first_transaction = transaction.processed.timestamp() as u64;
+                if result.first_transaction == DateTime::<Utc>::MIN_UTC {
+                    result.first_transaction = transaction.processed;
                 }
                 let previous_last = result.last_transaction;
-                result.last_transaction = transaction.processed.timestamp() as u64;
+                result.last_transaction = transaction.processed;
                 if previous_last > result.last_transaction {
                     return Err(CommonError::Str("Transaction processing dates are not sorted properly"));
                 }
@@ -461,8 +458,8 @@ async fn extract_transactions_from_backup<W>(
     let existing_files = &domain_info.files;
     debug!("Extract transactions from {} existing files", existing_files.len());
 
-    let mut first_transaction: u64 = 0;
-    let mut last_transaction: u64 = 0;
+    let mut first_transaction: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
+    let mut last_transaction: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
     let mut transaction_count: u64 = 0;
 
     for backup_file in existing_files {
@@ -502,8 +499,8 @@ async fn extract_transactions_from_backup<W>(
             t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
 
             // Transactions must be in order, this is enforced here. Also bean counting.
-            let new_transaction_time = t.estampille.timestamp() as u64;
-            if first_transaction == 0 {
+            let new_transaction_time = t.estampille;
+            if first_transaction == DateTime::<Utc>::MIN_UTC {
                 first_transaction = new_transaction_time;
             } else if first_transaction > new_transaction_time {
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
@@ -596,10 +593,7 @@ pub async fn produce_concatenated_backup_file(
     ).await?;
 
     // Extract date information from header
-    let first_transaction = match Utc.timestamp_opt(backup_header.debut_backup as i64, 0).single() {
-        Some(timestamp) => timestamp,
-        None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
-    };
+    let first_transaction = backup_header.debut_backup.clone();
 
     // Concatenated file done, rotate all backup folders and move *.mgbak files to backup_NOW (NOW is the date)
     rotate_backup_files(domain_backup_path).await?;
@@ -653,15 +647,15 @@ async fn write_new_header<W>(
         idmg: idmg.to_string(),
         domaine: domain.to_string(),
         type_archive: archive_type.into(),
-        debut_backup: u64::MAX,
-        fin_backup: u64::MAX,
+        debut_backup: DateTime::<Utc>::MAX_UTC,
+        fin_backup: DateTime::<Utc>::MAX_UTC,
         nombre_transactions: u64::MAX,
         cle_id: key_id.to_string(),
         cle_dechiffrage: key_signature.to_owned(),
         nonce: "DUMMY_NONCE_HEADER_40_CHARS_____________".to_string(),
         format: "mgs4".to_string(),
         compression: Some("deflate".to_string()),
-        timestamp: Some(Utc::now().timestamp() as u64),
+        timestamp: Some(Utc::now()),
         content_digest: Some(DIGEST_PLACEHOLDER.to_string()),
         pubkey: Some(certificate.fingerprint()?),
         signature: Some(SIGNATURE_PLACEHOLDER.to_string()),

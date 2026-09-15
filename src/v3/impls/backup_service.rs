@@ -164,7 +164,7 @@ impl DomainBackupServiceImpl {
         // Triggers: size of file or age of oldest transaction
         if let Some(file) = concatenated_file && ! incremental {
             let expired_date = Utc::now() - chrono::Duration::days(TRIGGER_CONCATENATED_TO_FINAL_DAYS);
-            if file.len > TRIGGER_CONCATENATED_TO_FINAL_SIZE || file.header.debut_backup < expired_date.timestamp() as u64 {
+            if file.len > TRIGGER_CONCATENATED_TO_FINAL_SIZE || file.header.debut_backup < expired_date {
                 // Promote the concatenated file to final
                 produce_final_file(self.chiffrage.as_ref(), &file).await?;
             }

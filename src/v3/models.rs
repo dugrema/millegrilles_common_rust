@@ -418,8 +418,10 @@ pub struct TransactionProcessedRow {
 
 #[derive(Clone)]
 pub struct BackupResult {
-    pub first_transaction: u64,
-    pub last_transaction: u64,
+    /// First transaction in the backup, epoch milliseconds
+    pub first_transaction: DateTime<Utc>,
+    /// Last transaction in the backup, epoch milliseconds
+    pub last_transaction: DateTime<Utc>,
     pub count: u64
 }
 

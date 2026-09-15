@@ -239,12 +239,12 @@ async fn process_backup_files<'a>(
                                 false
                             } else {
                                 // Check archive date compared to certificate
-                                let not_valid_after = certificate.not_valid_after()?.timestamp();
-                                let not_valid_before = certificate.not_valid_before()?.timestamp();
+                                let not_valid_after = certificate.not_valid_after()?;
+                                let not_valid_before = certificate.not_valid_before()?;
                                 match backup_file.header.timestamp {
                                     Some(timestamp) => {
                                         info!("Backup file signature OK, marking trusted: {:?}", backup_file.path_fichier);
-                                        not_valid_after > timestamp as i64 && not_valid_before < timestamp as i64
+                                        not_valid_after > timestamp && not_valid_before < timestamp
                                     },
                                     None => {
                                         false

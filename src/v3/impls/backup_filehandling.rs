@@ -3,7 +3,7 @@ use crate::error::Error as CommonError;
 use crate::v3::ChiffrageService;
 use crate::v3::models::LockFile;
 use chrono::format::StrftimeItems;
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use fs2::FileExt;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
@@ -81,10 +81,7 @@ pub async fn promote_backup_file(
     header.type_archive = (&archive_type).into();
 
     // Extract date information from header
-    let first_transaction = match Utc.timestamp_opt(header.debut_backup as i64, 0).single() {
-        Some(timestamp) => timestamp,
-        None => return Err(CommonError::Str("Unable to get time of first transaction from seconds"))
-    };
+    let first_transaction = header.debut_backup.clone();
 
     let parent_folder = match file_info.path_fichier.parent() {
         Some(parent) => parent,
@@ -132,7 +129,7 @@ pub async fn rename_backup_file(
     workfile_path: &Path
 ) -> Result<(PathBuf, String, u64), CommonError> {
     // Rename work file
-    let date_str = first_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%SZ"));
+    let date_str = first_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
 
     // Calculer le digest du fichier (apres modification du header).
     let digest_str = chiffrage.digest_file(workfile_path, multihash::Code::Blake2b512, multibase::Base::Base58Btc).await?;
@@ -308,7 +305,7 @@ pub async fn load_backup_file_list(backup_path: &Path, idmg: &str) -> Result<Vec
     debug!("Loading backup file list: {}", backup_files.len());
 
     // Check that there is no "overlap" on start dates.
-    let mut date_transaction_precedente = 0u64;
+    let mut date_transaction_precedente: DateTime<Utc> = chrono::DateTime::<Utc>::MIN_UTC;
     for fichier in &backup_files {
         if fichier.header.debut_backup < date_transaction_precedente {
             Err(format!("Backup files out of order, an older transaction was found in {:?}", fichier.path_fichier))?

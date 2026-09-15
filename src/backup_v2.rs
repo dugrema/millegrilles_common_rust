@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use async_compression::tokio::bufread::{DeflateDecoder, DeflateEncoder};
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as base64_nopad};
 use bson::doc;
-use chrono::{format::strftime::StrftimeItems, {TimeZone, Utc}};
+use chrono::{format::strftime::StrftimeItems, DateTime, {TimeZone, Utc}};
+use chrono::serde::{ts_milliseconds, ts_milliseconds_option};
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, CleChiffrageHandler, CleDechiffrageStruct, Decipher};
 use millegrilles_cryptographie::deser_message_buffer;
 use millegrilles_cryptographie::x25519::CleSecreteX25519;
@@ -458,10 +459,12 @@ pub struct HeaderFichierArchive {
     pub domaine: String,
     /// Type de fichier: I (incremental), C (concatene), F (final)
     pub type_archive: String,
-    /// Date de la premiere transaction du backup (epoch seconds)
-    pub debut_backup: u64,
-    /// Date de la derniere transaction du backup (epoch seconds)
-    pub fin_backup: u64,
+    /// Date de la premiere transaction du backup (epoch milliseconds)
+    #[serde(with="ts_milliseconds")]
+    pub debut_backup: DateTime<Utc>,
+    /// Date de la derniere transaction du backup (epoch milliseconds)
+    #[serde(with="ts_milliseconds")]
+    pub fin_backup: DateTime<Utc>,
     /// Nombre de transactions dans le backup
     pub nombre_transactions: u64,
     pub cle_id: String,
@@ -469,9 +472,9 @@ pub struct HeaderFichierArchive {
     pub nonce: String,
     pub format: String,
     pub compression: Option<String>,
-    /// Timestamp of when this file was produced in epoch seconds
-    #[serde(skip_serializing_if="Option::is_none")]
-    pub timestamp: Option<u64>,
+    /// Timestamp of when this file was produced in epoch milliseconds
+    #[serde(default, skip_serializing_if="Option::is_none", with="ts_milliseconds_option")]
+    pub timestamp: Option<DateTime<Utc>>,
     /// Digest of the encrypted content area (not file digest)
     #[serde(skip_serializing_if="Option::is_none")]
     pub content_digest: Option<String>,
@@ -538,8 +541,8 @@ impl HeaderFichierArchive {
 
 #[derive(Clone)]
 pub struct InfoTransactions {
-    pub date_premiere_transaction: u64,
-    pub date_derniere_transaction: u64,
+    pub date_premiere_transaction: DateTime<Utc>,
+    pub date_derniere_transaction: DateTime<Utc>,
     pub nombre_transactions: u64
 }
 
@@ -573,8 +576,8 @@ async fn preparer_fichier_chiffrage(
         idmg: idmg.to_string(),
         domaine: domaine.to_string(),
         type_archive: marqueur_type_archive.to_string(),
-        debut_backup: u64::MAX,
-        fin_backup: u64::MAX,
+        debut_backup: DateTime::<Utc>::MAX_UTC,
+        fin_backup: DateTime::<Utc>::MAX_UTC,
         nombre_transactions: u64::MAX,
         cle_id: cle_backup_domaine.cle_id.to_string(),
         cle_dechiffrage: cle_backup_domaine.signature_cle.to_owned(),
@@ -725,7 +728,7 @@ async fn rename_work_file(type_archive: &TypeArchive, info_transactions: &InfoTr
     -> Result<PathBuf, CommonError>
 {
     // Rename work file
-    let date_premiere_transaction = Utc.timestamp_millis_opt(info_transactions.date_premiere_transaction as i64).unwrap();
+    let date_premiere_transaction = info_transactions.date_premiere_transaction;
     let date_str = date_premiere_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
 
     // Calculer le digest du fichier (apres modification du header).
@@ -785,7 +788,7 @@ async fn traiter_transactions_incremental<M>(
     let (temp_file, _) = pipe_result?;
     rename_work_file(&type_archive, &info_transactions, domaine, path_backup, temp_file.as_ref()).await?;
 
-    let date_derniere_transaction = Utc.timestamp_millis_opt(info_transactions.date_derniere_transaction as i64).unwrap();
+    let date_derniere_transaction = info_transactions.date_derniere_transaction;
 
     // Supprimer les transactions traitees. On utilise la date de la plus recente transaction archivee
     // pour s'assurer de ne pas effacer de nouvelles transactions non traitees.
@@ -836,8 +839,8 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
         .await?;
 
     let mut nombre_transactions = 0u64;
-    let mut date_premiere = 0u64;
-    let mut date_derniere = 0u64;
+    let mut date_premiere = DateTime::<Utc>::MIN_UTC;
+    let mut date_derniere = DateTime::<Utc>::MIN_UTC;
 
     let mut certificats_traites = HashSet::new();
     let mut certificats_pending = HashMap::new();
@@ -882,11 +885,10 @@ async fn traiter_transactions_incrementales<M>(middleware: &M, commande_backup: 
 
         // Compteurs et dates
         nombre_transactions += 1;
-        let date_traiee = date_transaction_traitee.timestamp_millis() as u64;
-        if date_premiere == 0 {
-            date_premiere = date_traiee;
+        if date_premiere == DateTime::<Utc>::MIN_UTC {
+            date_premiere = date_transaction_traitee.to_owned();
         }
-        date_derniere = date_traiee;
+        date_derniere = date_transaction_traitee.to_owned();
 
         let mut contenu_bytes = {
             let contenu_str = serde_json::to_string(&transaction)?;
@@ -1061,7 +1063,7 @@ pub async fn organiser_fichiers_backup(backup_path: &Path, idmg: &str, inclure_f
     });
 
     // Verifier l'ordre des fichiers, pas d'overlap de transactions
-    let mut date_transaction_precedente = 0u64;
+    let mut date_transaction_precedente = DateTime::<Utc>::MIN_UTC;
     for fichier in &fichiers {
         if fichier.header.debut_backup < date_transaction_precedente {
             Err(format!("backup_v2.organiser_fichiers_backup Fichiers de transactions dans le mauvais ordre, transaction plus ancienne trouvee dans {:?}", fichier.path_fichier))?
@@ -1282,8 +1284,8 @@ async fn process_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Tokio
 
     let mut line = String::new();
     let mut compteur_transactions = 0;
-    let mut date_premiere = 0;
-    let mut date_derniere = 0;
+    let mut date_premiere = DateTime::<Utc>::MIN_UTC;
+    let mut date_derniere = DateTime::<Utc>::MIN_UTC;
 
     loop {
         let output_len = reader.read_line(&mut line).await?;
@@ -1307,12 +1309,11 @@ async fn process_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Tokio
 
         // Mettre a jour compteur et marqueurs de date pour l'archive
         compteur_transactions += 1;
-        let date_traitement_u64 = date_traitement.timestamp_millis() as u64;
-        if date_traitement_u64 < date_derniere {
+        if date_traitement < &date_derniere {
             Err(format!("backup_v2.process_transactions Erreur transaction compteur:{} id:{} plus ancienne que les transactions precedentes", compteur_transactions, transaction.id))?
         }
-        if date_premiere == 0 { date_premiere = date_traitement_u64; }
-        date_derniere = date_traitement_u64;
+        if date_premiere == DateTime::<Utc>::MIN_UTC { date_premiere = date_traitement.to_owned(); }
+        date_derniere = date_traitement.to_owned();
 
         if let Err(e) = tx.send(Ok(Bytes::from(transaction_str.to_string()))).await {
             error!("process_transactions Error sending data: {:?}", e);
@@ -1365,8 +1366,8 @@ async fn pipe_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Transact
 
     let mut line = String::new();
     let mut compteur_transactions = 0;
-    let mut date_premiere = 0;
-    let mut date_derniere = 0;
+    let mut date_premiere = DateTime::<Utc>::MIN_UTC;
+    let mut date_derniere = DateTime::<Utc>::MIN_UTC;
 
     loop {
         let output_len = reader.read_line(&mut line).await?;
@@ -1390,14 +1391,14 @@ async fn pipe_transactions(rx: Receiver<TokioResult<Bytes>>, tx: Sender<Transact
 
         // Mettre a jour compteur et marqueurs de date pour l'archive
         compteur_transactions += 1;
-        let date_traitement_u64 = date_traitement.timestamp_millis() as u64;
-        if date_premiere == 0 { date_premiere = date_traitement_u64; }
+        // let date_traitement_u64 = date_traitement.timestamp_millis() as u64;
+        if date_premiere == DateTime::<Utc>::MIN_UTC { date_premiere = date_traitement.to_owned(); }
 
-        if date_traitement_u64 < date_derniere {
+        if date_traitement < &date_derniere {
             Err(format!("backup_v2.pipe_transactions Erreur transaction compteur:{} id:{} plus ancienne que les transactions precedentes",
                         compteur_transactions, transaction.id))?
         }
-        date_derniere = date_traitement_u64;
+        date_derniere = date_traitement.to_owned();
 
         if let Err(e) = tx.send(transaction).await {
             error!("process_transactions Error sending data: {:?}", e);
@@ -1948,8 +1949,8 @@ async fn download_backup_files(path_backup: &Path, liste: &Vec<String>, domaine:
 pub struct StatsBackup {
     pub nombre_transactions: u64,
     pub nombre_fichiers: u64,
-    pub date_premiere_transaction: Option<u64>,
-    pub date_derniere_transaction: Option<u64>,
+    pub date_premiere_transaction: Option<DateTime<Utc>>,
+    pub date_derniere_transaction: Option<DateTime<Utc>>,
 }
 
 pub struct StatusRegeneration {
