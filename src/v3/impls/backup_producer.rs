@@ -8,8 +8,8 @@ use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
 use crate::v3::impls::backup_filehandling::{is_system_ready, load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
-use crate::v3::models::{BackupResult, DecryptedKey, PreflightError, BackupPreflightResult, TransactionProcessedRow};
-use crate::v3::{ChiffrageService, ConfigService, PkiService};
+use crate::v3::models::{BackupPreflightResult, BackupResult, DecryptedKey, PreflightError, TransactionProcessedRow};
+use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
 use bson::doc;
@@ -24,16 +24,9 @@ use mongodb::options::Hint;
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::Path;
-use std::str::from_utf8;
-use millegrilles_cryptographie::ed25519::{signer, signer_into};
-use millegrilles_cryptographie::ed25519_dalek::{SecretKey, Signer, SigningKey};
-use millegrilles_cryptographie::hachages::{hacher_bytes, HachageCode};
-use multihash::Code;
-use reqwest::Certificate;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
-use x509_parser::nom::AsBytes;
 
 pub async fn preflight_check(
     config: &dyn ConfigService,

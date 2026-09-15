@@ -432,3 +432,5 @@ pub const INDEX_DATE_PROCESSED: &str = "date_processed";
 pub const FIELD_BID: &str = "bid";
 pub const FIELD_DATE_PROCESSED: &str = "date_traitement";
 pub const FIELD_PROCESSED: &str = "processed";
+
+pub const BACKUP_FINAL_VERSION_VALUE: &str = "final";

@@ -1,8 +1,10 @@
+use crate::backup_v2::FichierArchiveBackup;
 use crate::configuration::{ConfigurationMq, ConfigurationNoeud, ConfigurationPki};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
+use crate::v3::impls::backup_restorer::RestorationState;
 use crate::v3::impls::rabbitmq_consumer::InboundMessage;
-use crate::v3::models::{DecryptedKey, GeneratedSecretKey, TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
+use crate::v3::models::{DecryptedKey, FilehostClient, GeneratedSecretKey, TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
@@ -13,12 +15,11 @@ use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{Collection, bson::Document};
 use multibase::Base;
 use multihash::Code;
+use openssl::pkey::{PKey, Private};
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
-use openssl::pkey::{PKey, Private};
 use tokio::sync::mpsc::Receiver;
-use crate::v3::impls::backup_restorer::RestorationState;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
@@ -100,6 +101,8 @@ pub trait BackupService: Send + Sync {
         incremental: bool,
     ) -> Result<(), CommonError>;
 
+    async fn transfer_backup_files_to_filehost(&self, domain_name: &str) -> Result<(), CommonError>;
+
     async fn restore_domain(
         &self,
         domain_name: &str,
@@ -142,11 +145,12 @@ pub trait TransactionRouter: Send + Sync {
 }
 
 #[async_trait]
-pub trait FilehostClient: Send + Sync {
-    async fn connect() -> Result<(), CommonError>;
-    async fn put_file() -> Result<(), CommonError>;
-    async fn get_file() -> Result<(), CommonError>;
-    async fn get_backup_list() -> Result<(), CommonError>;
-    async fn get_backup_file() -> Result<(), CommonError>;
-    async fn put_backup_file() -> Result<(), CommonError>;
+pub trait FilehostService: Send + Sync {
+    /// Opens an https session with the filehost.
+    /// Fetches the filehost status as a test.
+    async fn connect(&self) -> Result<FilehostClient, CommonError>;
+
+    /// Uploads a backup file to the filehost.
+    /// Version is required for Incremental files (it is the matching Concatene digest suffix).
+    async fn put_backup_file(&self, file: &FichierArchiveBackup, version: Option<&String>) -> Result<(), CommonError>;
 }

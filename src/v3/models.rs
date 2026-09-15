@@ -5,7 +5,7 @@ use crate::v3::facades::message_inbound::MessageValidated;
 use base64::Engine;
 use base64::engine::general_purpose;
 use bson::{Bson, Document, doc, serde_helpers::datetime::FromChrono04DateTime};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use jwt_simple::prelude::Deserialize;
 use millegrilles_cryptographie::chiffrage::FormatChiffrage;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519Impl, CleSecreteSerialisee};
@@ -458,4 +458,12 @@ impl From<CommonError> for PreflightError {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CertificateRequest {
     pub fingerprint: String
+}
+
+#[derive(Clone, Debug)]
+pub struct FilehostClient {
+    pub client: reqwest::Client,
+    pub url: String,
+    pub last_usage: DateTime<Utc>,
+    pub last_test: DateTime<Utc>,
 }

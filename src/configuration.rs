@@ -196,6 +196,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
     let certissuer_url = charger_url("MG_CERTISSUER_URL", Some("http://certissuer:80"))?;
     let tor_proxy = charger_url("TOR_PROXY", Some("socks5h://onionize:9050"))?;  // proxy tor socks5 + (h = socks dns resolver)
     let midcompte_url = charger_url("MG_MIDCOMPTE_URL", None::<&str>)?;
+    let dev = match std::env::var("DEV") { Ok(val) => val.as_str() == "1", _ => false };
 
     Ok(ConfigurationNoeud{
         instance_id,
@@ -208,6 +209,7 @@ fn charger_configuration_noeud() -> Result<ConfigurationNoeud, String> {
         sqlite_path: Some(sqlite_path),
         tor_proxy,
         midcompte_url,
+        dev,
     })
 }
 
@@ -271,6 +273,7 @@ pub struct ConfigurationNoeud {
     pub sqlite_path: Option<String>,
     pub tor_proxy: Option<Url>,
     pub midcompte_url: Option<Url>,
+    pub dev: bool,
 }
 
 #[derive(Debug)]

@@ -7,14 +7,15 @@ use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
+use crate::v3::impls::backup_restorer::{RestorationState, process_transactions_from_backup, restore_preflight_check, truncate_data_tables};
+use crate::v3::impls::backup_transfer::transfer_backup_files_to_filehost;
 use crate::v3::models::PreflightError;
-use crate::v3::{BackupService, ChiffrageService, ConfigService, PkiService, TransactionService};
+use crate::v3::{BackupService, ChiffrageService, ConfigService, FilehostService, PkiService, TransactionService};
 use async_trait::async_trait;
 use chrono::Utc;
-use std::sync::Arc;
 use openssl::pkey::{PKey, Private};
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-use crate::v3::impls::backup_restorer::{process_transactions_from_backup, restore_preflight_check, truncate_data_tables, RestorationState};
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
 const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
@@ -27,6 +28,7 @@ pub struct DomainBackupServiceImpl {
     chiffrage: Arc<dyn ChiffrageService>,
     mongo: Arc<MongoDaoImpl>,
     transaction: Arc<dyn TransactionService>,
+    filehost: Arc<dyn FilehostService>,
     /// List of data tables to truncate on restore
     data_tables: Vec<String>,
 }
@@ -39,6 +41,7 @@ impl DomainBackupServiceImpl {
         chiffrage: Arc<dyn ChiffrageService>,
         mongo: Arc<MongoDaoImpl>,
         transaction: Arc<dyn TransactionService>,
+        filehost: Arc<dyn FilehostService>,
         data_tables: Vec<String>,
     ) -> Self {
         Self {
@@ -48,6 +51,7 @@ impl DomainBackupServiceImpl {
             chiffrage,
             mongo,
             transaction,
+            filehost,
             data_tables,
         }
     }
@@ -61,7 +65,7 @@ impl DomainBackupServiceImpl {
         // Emit initial message to indicate start of backup for domain
         emit_backup_event(self.outbound.as_ref(), BackupEvent::new_ok(domain_name)).await?;
 
-        match self.run_backup_process(domain_name, redolog_collection_name, incremental).await {
+        let backup_result = match self.run_backup_process(domain_name, redolog_collection_name, incremental).await {
             Ok(()) => {
                 emit_backup_event(self.outbound.as_ref(), BackupEvent::new_done(domain_name)).await?;
                 Ok(())
@@ -70,7 +74,10 @@ impl DomainBackupServiceImpl {
                 emit_backup_event(self.outbound.as_ref(), BackupEvent::new_err(domain_name, e.to_string())).await.ok();
                 Err(e)
             }
-        }
+        };
+
+        // Return result of the backup
+        backup_result
     }
 
     async fn run_backup_process(&self, domain_name: &str, redolog_collection_name: &str, incremental: bool) -> Result<(), CommonError> {
@@ -236,6 +243,15 @@ impl BackupService for DomainBackupServiceImpl {
         unlock_lockfile(root_lockfile).await;
 
         result
+    }
+
+    async fn transfer_backup_files_to_filehost(&self, domain_name: &str) -> Result<(), CommonError> {
+        transfer_backup_files_to_filehost(
+            self.config.as_ref(),
+            self.mongo.as_ref(),
+            self.filehost.as_ref(),
+            domain_name
+        ).await
     }
 
     async fn restore_domain(

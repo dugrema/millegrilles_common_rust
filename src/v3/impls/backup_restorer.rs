@@ -1,4 +1,6 @@
+use crate::constantes::{FIELD_DATE_PROCESSED, INDEX_DATE_PROCESSED};
 use crate::error::Error as CommonError;
+use crate::hachages::Hacheur;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::AsyncDecryptionReaderMgs4;
@@ -14,18 +16,15 @@ use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::options::Hint;
-use std::collections::HashMap;
-use std::io::SeekFrom;
-use std::sync::{Arc, Mutex};
-use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
 use multibase::Base;
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
+use std::collections::HashMap;
+use std::io::SeekFrom;
+use std::sync::{Arc, Mutex};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error, info, warn};
-use crate::constantes::{FIELD_DATE_PROCESSED, INDEX_DATE_PROCESSED};
-use crate::hachages::Hacheur;
 
 pub async fn restore_preflight_check<'a>(
     config: &dyn ConfigService,
@@ -310,7 +309,7 @@ async fn process_backup_files<'a>(
             // Output simple progress info
             if restoration_state.transaction_count % 1000 == 0 {
                 let total_count = domain_info.file_transaction_count + domain_info.redolog_count as u64;
-                let pct = (100f64 * restoration_state.transaction_count as f64 / total_count as f64);
+                let pct = 100f64 * restoration_state.transaction_count as f64 / total_count as f64;
                 info!(
                     "Progress: {} / {} transactions processed ({}%)",
                     restoration_state.transaction_count,
