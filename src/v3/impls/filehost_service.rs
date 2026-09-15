@@ -15,7 +15,7 @@ use reqwest::Body;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio_util::io::ReaderStream;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 pub struct FilehostServiceImpl {
     config: Arc<dyn ConfigService>,
