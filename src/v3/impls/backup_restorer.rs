@@ -307,6 +307,18 @@ async fn process_backup_files<'a>(
                 continue  // Transaction already processed
             }
 
+            // Output simple progress info
+            if restoration_state.transaction_count % 1000 == 0 {
+                let total_count = domain_info.file_transaction_count + domain_info.redolog_count as u64;
+                let pct = (100f64 * restoration_state.transaction_count as f64 / total_count as f64);
+                info!(
+                    "Progress: {} / {} transactions processed ({}%)",
+                    restoration_state.transaction_count,
+                    total_count,
+                    pct.round()
+                )
+            }
+
             // Fetch certificate
             let pubkey = &t.pubkey;
             let certificate = match certificate_cache.get(pubkey) {

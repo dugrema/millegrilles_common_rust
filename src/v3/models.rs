@@ -109,6 +109,9 @@ pub struct TransactionOperationAggregator {
     /// Operations that must be run in order, e.g. "update val=val+1" then "delete where val>10".
     /// They will always be run after the batch_insertions and unordered operations.
     pub ordered: Option<Vec<WriteModel>>,
+    /// Set to true when the backup contains legacy transactions.
+    /// This allows workarounds while processing older backups.
+    pub legacy: bool,
 }
 
 impl TransactionOperationAggregator {
@@ -117,7 +120,8 @@ impl TransactionOperationAggregator {
             tracking: None,
             batch_insertions: None,
             unordered: None,
-            ordered: None
+            ordered: None,
+            legacy: false,
         }
     }
 
@@ -143,6 +147,10 @@ impl TransactionOperationAggregator {
     }
 
     pub fn merge(&mut self, other: Self) {
+        // Pass in the legacy flag (only goes from false to true)
+        self.legacy = self.legacy || other.legacy;
+
+        // Tracking entries
         match self.tracking.as_mut() {
             Some(tracking) => {
                 if let Some(other_tracking) = other.tracking {
@@ -153,6 +161,8 @@ impl TransactionOperationAggregator {
                 self.tracking = other.tracking;
             }
         }
+
+        // Presence of ordered operations determine how processing can be done
         if self.ordered.is_none() {
             match self.batch_insertions.as_mut() {
                 Some(insertions) => {
@@ -178,6 +188,8 @@ impl TransactionOperationAggregator {
             // Must add all remaining operations as ordered
             todo!()
         }
+
+        // Always extend ordered at the end in case other operations were injected (insert, unordered)
         match self.ordered.as_mut() {
             Some(ordered) => {
                 if let Some(other_ordered) = other.ordered {
