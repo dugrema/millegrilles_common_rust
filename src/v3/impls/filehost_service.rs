@@ -1,7 +1,7 @@
 use crate::backup_v2::FichierArchiveBackup;
 use crate::common_messages::{FilehostForInstanceRequest, RequestFilehostForInstanceResponse, RequeteFilehostItem};
 use crate::constantes::{BACKUP_FINAL_VERSION_VALUE, DOMAINE_TOPOLOGIE, REQUETE_FICHE_MILLEGRILLE, REQUETE_GET_FILEHOST_FOR_INSTANCE, Securite};
-use crate::error::Error as CommonError;
+use crate::error::{Error as CommonError, Error};
 use crate::fiche_systeme::{FichePublique, RequeteFicheMillegrille};
 use crate::generateur_messages::RoutageMessageAction;
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
@@ -15,7 +15,7 @@ use reqwest::Body;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio_util::io::ReaderStream;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub struct FilehostServiceImpl {
     config: Arc<dyn ConfigService>,
@@ -37,18 +37,73 @@ impl FilehostServiceImpl {
             session: Mutex::new(None),
         }
     }
+
+    async fn authenticate(&self, filehost: &FilehostClient) -> Result<(), Error> {
+        let filehost_url = url::Url::parse(filehost.url.as_str())?;
+        let authentication_url = filehost_url.join("/filehost/authenticate")?;
+        debug!("preparer_client_consignation Authentication url: {:?}", authentication_url.as_str());
+
+        let routage = RoutageMessageAction::builder("filehost", "authenticate", vec! {})
+            .ajouter_ca(true)
+            .build();
+        let auth_request = json!({"auth": true});
+
+        let (authentication_message, _id) = self.format.build_action_message(
+            MessageKind::Commande,
+            &routage,
+            auth_request
+        )?;
+
+        let result = filehost.client
+            .post(authentication_url)
+            .body(authentication_message.buffer)
+            .send().await?
+            .error_for_status()?;
+        debug!("preparer_client_consignation Result: {:?}", result);
+
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl FilehostService for FilehostServiceImpl {
     async fn connect(&self) -> Result<FilehostClient, CommonError> {
         // Get the client from the mutex if already built. Return immediately.
-        {
+        let filehost = {
             let now = Utc::now();  // Get time before mutex lock (slow)
+            let expired = now + chrono::Duration::minutes(3);
             let mut guard = self.session.lock().unwrap();
             if let Some(client) = guard.as_mut() {
-                client.last_usage = now;
-                return Ok(client.clone())
+                if client.last_test < expired {
+                    client.last_usage = now;
+                    return Ok(client.clone())
+                } else{
+                    Some(client.clone())
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(filehost) = filehost {
+            // Make sure the client is still valid by reauthenticating
+            match self.authenticate(&filehost).await {
+                Ok(()) => {
+                    // Update last usage/test timestamp
+                    let now = Utc::now();
+                    let mut guard = self.session.lock().unwrap();
+                    if let Some(filehost) = guard.as_mut() {
+                        filehost.last_test = now.clone();
+                        filehost.last_usage = now;
+                    }
+
+                    // Return re-authenticated filehost for usage
+                    return Ok(filehost)
+                },
+                Err(e) => {
+                    error!("Authentication error with existing filehost connection, rebuilding: {:?}", e);
+                    self.disconnect().await.ok();
+                },
             }
         }
 
@@ -57,23 +112,8 @@ impl FilehostService for FilehostServiceImpl {
         let filehost_info = get_filehost_server(self.config.as_ref(), self.outbound.as_ref()).await?;
         let filehost = build_client(signing_key.as_ref(), &filehost_info).await?;
 
-        // Authenticate
-        let filehost_url = url::Url::parse(filehost.url.as_str())?;
-        let authentication_url = filehost_url.join("/filehost/authenticate")?;
-        debug!("preparer_client_consignation Authentication url: {:?}", authentication_url.as_str());
-        let routage = RoutageMessageAction::builder("filehost", "authenticate", vec!{})
-            .ajouter_ca(true)
-            .build();
-        let nomessage = json!({"auth": true});
-        // let authentication_message = middleware.build_message_action(MessageKind::Commande, routage, nomessage)?.0;
-        let authentication_message = self.format.build_action_message(MessageKind::Commande, &routage, nomessage)?.0;
-        let result = filehost.client.post(authentication_url).body(authentication_message.buffer).send().await?.error_for_status()?;
-        info!("preparer_client_consignation Result: {:?}", result);
-
-        // // Test the connection by fetching the filehost status (quick)
-        // let status_url = format!("{}/filehost/status", filehost.url);
-        // debug!("Connecting to {}", status_url);
-        // filehost.client.get(status_url).send().await?.error_for_status()?;
+        // Authenticate - throws error if unsuccessful
+        self.authenticate(&filehost).await?;
 
         // Client authentication OK, set it in the mutex for reuse
         {
@@ -84,7 +124,14 @@ impl FilehostService for FilehostServiceImpl {
         Ok(filehost)
     }
 
+    async fn disconnect(&self) -> Result<(), CommonError> {
+        let mut guard = self.session.lock().unwrap();
+        *guard = None;  // Dump existing information
+        Ok(())
+    }
+
     async fn put_backup_file(&self, file: &FichierArchiveBackup, version: Option<&String>) -> Result<(), CommonError> {
+        debug!("Putting backup file {:?} with version param {:?}", file.path_fichier, version);
         let (file_type, version) = match file.header.type_archive.as_str() {
             "F" => (BACKUP_FINAL_VERSION_VALUE, BACKUP_FINAL_VERSION_VALUE.to_string()),
             "C" => ("concatene", file.digest_suffix.clone()),

@@ -149,6 +149,8 @@ pub trait FilehostService: Send + Sync {
     /// Opens an https session with the filehost.
     /// Fetches the filehost status as a test.
     async fn connect(&self) -> Result<FilehostClient, CommonError>;
+    /// Removes client session, will get a new one on next connect(). Can be used to force retry.
+    async fn disconnect(&self) -> Result<(), CommonError>;
 
     /// Uploads a backup file to the filehost.
     /// Version is required for Incremental files (it is the matching Concatene digest suffix).
