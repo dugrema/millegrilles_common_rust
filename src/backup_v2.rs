@@ -7,7 +7,6 @@ use std::fs;
 use std::fs::File;
 use std::io::{ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
-
 use async_compression::tokio::bufread::{DeflateDecoder, DeflateEncoder};
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as base64_nopad};
 use bson::doc;
@@ -488,18 +487,23 @@ pub struct HeaderFichierArchive {
 
 impl HeaderFichierArchive {
     fn get_signing_value(&self) -> Result<Vec<u8>, CommonError> {
-        if self.timestamp.is_none() || self.content_digest.is_none() {
-            return Err(CommonError::Str("Missing timestamp/content_digest"))
-        }
-
-        let value_to_sign = format!("{:?};{:?}", self.timestamp, self.content_digest);
+        let content_digest = match self.content_digest.as_ref() {
+            Some(content_digest) => content_digest,
+            None => return Err(CommonError::Str("Missing content_digest"))
+        };
+        let timestamp = match self.timestamp.as_ref() {
+            Some(timestamp) => timestamp.timestamp_millis(),
+            None => return Err(CommonError::Str("Missing timestamp"))
+        };
+        let value_to_sign = format!("{};{}", timestamp, content_digest);
+        debug!("get_signing_value: {}", value_to_sign);
         Ok(hacher_bytes(value_to_sign.as_bytes(), HachageCode::Blake2s256))
     }
 
     /// Set the signing value using the provided key
     pub fn sign(&mut self, key: &EnveloppePrivee) -> Result<(), CommonError> {
         let value = self.get_signing_value()?;
-        
+
         let mut cle_privee_u8 = SecretKey::default();
         match key.cle_privee.raw_private_key() {
             Ok(inner) => cle_privee_u8.copy_from_slice(inner.as_slice()),
