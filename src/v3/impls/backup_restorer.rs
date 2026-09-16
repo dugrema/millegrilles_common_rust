@@ -225,11 +225,17 @@ async fn process_backup_files<'a>(
                                 Some(certificate) => certificate.clone(),
                                 None => {
                                     debug!("Loading certificate {}", pubkey);
-                                    let certificate = outbound.get_certificate(pubkey, Some(5_000)).await?;
-                                    if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
-                                        certificate_cache.clear();
+                                    // Validate with this header's date
+                                    let header_date = backup_file.header.timestamp.as_ref();
+                                    let (certificate, valid) = outbound.get_certificate(pubkey, header_date, Some(5_000)).await?;
+                                    if valid {
+                                        if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
+                                            certificate_cache.clear();
+                                        }
+                                        certificate_cache.insert(pubkey.clone(), certificate.clone());
+                                    } else {
+                                        return Err(CommonError::Str("Error validating certificate with backup header"))
                                     }
-                                    certificate_cache.insert(pubkey.clone(), certificate.clone());
                                     certificate
                                 }
                             };
@@ -324,11 +330,13 @@ async fn process_backup_files<'a>(
                 Some(certificate) => certificate.clone(),
                 None => {
                     debug!("Loading certificate {}", pubkey);
-                    let certificate = outbound.get_certificate(pubkey, Some(3_000)).await?;
-                    if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
-                        certificate_cache.clear();
+                    let (certificate, valid) = outbound.get_certificate(pubkey, Some(&t.estampille), Some(3_000)).await?;
+                    if valid {
+                        if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
+                            certificate_cache.clear();
+                        }
+                        certificate_cache.insert(pubkey.clone(), certificate.clone());
                     }
-                    certificate_cache.insert(pubkey.clone(), certificate.clone());
                     certificate
                 }
             };
@@ -431,14 +439,21 @@ async fn process_redolog_collection<'a>(
                     Arc::new(EnveloppeCertificat::try_from(certificate_str.as_str())?)
                 } else {
                     debug!("Fetch certificate for redo-log transaction {}", transaction_data.message.id);
-                    outbound.get_certificate(transaction_data.message.pubkey.as_str(), Some(3_000)).await?
+                    let (certificate, valid) = outbound.get_certificate(
+                        transaction_data.message.pubkey.as_str(),
+                        Some(&transaction_data.message.estampille),
+                        Some(3_000)
+                    ).await?;
+                    if ! valid {
+                        return Err(CommonError::Str("Certificate does not match redo-log transaction"));
+                    }
+                    certificate
                 };
 
                 // Validate structure of transaction. Costly, but this is coming from DB (not encrypted).
                 transaction_data.message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
                 // Verify that the reported pubkey/certificate and message timestamp match
                 pki.validate_message_with_cert(&transaction_data.message, certificate.as_ref())?;
-
 
                 restoration_state.aggregator = Some(transaction.route_transaction(
                     transaction_data.message,

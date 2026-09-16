@@ -93,7 +93,7 @@ impl PocCompositionRoot {
         // Helper facades
         let shutdown_token = CancellationToken::new();
         let message_outbound_facade = Arc::new(
-            MessageOutboundFacade::new(config_impl.clone(), messaging_impl.clone(), format_impl.clone())
+            MessageOutboundFacade::new(config_impl.clone(), messaging_impl.clone(), format_impl.clone(), security_impl.clone())
         );
         let message_inbound_validator = Arc::new(
             MessageInboundValidator::new(config_impl.clone(), messaging_impl.clone(), security_impl.clone(), shutdown_token)

@@ -5,13 +5,13 @@ use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
 use crate::v3::models::{CertificateRequest, DecryptedKey, GeneratedSecretKey, VerifiedResponseMessage};
-use crate::v3::{ConfigService, FormatService, MessagingService};
+use crate::v3::{ConfigService, FormatService, MessagingService, PkiService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::borrow::Cow;
 use std::sync::Arc;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use crate::middleware::ReponseEnveloppe;
 
 /// Facade that exposes methods to easily send different types of messages
@@ -19,6 +19,7 @@ pub struct MessageOutboundFacade {
     config: Arc<dyn ConfigService>,
     messaging: Arc<dyn MessagingService>,
     format: Arc<dyn FormatService>,
+    pki: Arc<dyn PkiService>,
 }
 
 impl MessageOutboundFacade {
@@ -26,11 +27,13 @@ impl MessageOutboundFacade {
         config: Arc<dyn ConfigService>,
         messaging: Arc<dyn MessagingService>,
         format: Arc<dyn FormatService>,
+        pki: Arc<dyn PkiService>,
     ) -> Self {
         Self {
             config,
             messaging,
             format,
+            pki,
         }
     }
 
@@ -248,7 +251,14 @@ impl MessageOutboundFacade {
         Ok(())
     }
 
-    pub async fn get_certificate(&self, fingerprint: &str, timeout: Option<u64>) -> Result<Arc<EnveloppeCertificat>, CommonError> {
+    /// Loads a certificate.
+    /// Warning - the certificate may not be valid when date is not provided, check bool for validated status
+    pub async fn get_certificate(
+        &self,
+        fingerprint: &str,
+        date: Option<&DateTime<Utc>>,
+        timeout: Option<u64>
+    ) -> Result<(Arc<EnveloppeCertificat>, bool), CommonError> {
         let timeout = timeout.unwrap_or_else(|| 15_000);
 
         let routing = RoutageMessageAction::builder(
@@ -260,12 +270,24 @@ impl MessageOutboundFacade {
         let request = CertificateRequest { fingerprint: fingerprint.to_string() };
         let response = self.send_request(routing, request).await?;
         let certificate_information: ReponseEnveloppe = response.message.deserialize()?;
-        let mut enveloppe = EnveloppeCertificat::try_from(
-            certificate_information.chaine_pem.join("\n").as_str()
-        )?;
-        let ca = self.config.get_configuration_pki().get_enveloppe_privee().enveloppe_ca.certificat.clone();
-        enveloppe.millegrille = Some(ca);
 
-        Ok(Arc::new(enveloppe))
+        match self.pki.validate_pem(
+            certificate_information.chaine_pem.join("\n").as_str(),
+            certificate_information.ca_pem.as_deref(),
+            date
+        ) {
+            Ok(wrapper) => Ok((wrapper, true)),
+            Err(e) => {
+                if date.is_none() {
+                    // Special case - just return certificate without validating.
+                    Ok((
+                        Arc::new(EnveloppeCertificat::try_from(certificate_information.chaine_pem.join("\n").as_str())?),
+                        false
+                    ))
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 }

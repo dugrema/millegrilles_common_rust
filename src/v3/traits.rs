@@ -45,7 +45,7 @@ pub trait MessagingService: Send + Sync {
 
 #[async_trait]
 pub trait PkiService: ValidateurX509 + Send + Sync {
-    /// Loads and validates a PEm file. ca_pem is optional (only required for loading from different system)
+    /// Loads and validates a PEM file. ca_pem is optional (only required for loading from different system)
     /// date=None means current date
     fn validate_pem(&self, pem_chain: &str, ca_pem: Option<&str>, date: Option<&DateTime<Utc>>)
         -> Result<Arc<EnveloppeCertificat>, CommonError>;
