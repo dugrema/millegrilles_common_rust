@@ -1,16 +1,14 @@
 use crate::backup_v2::{FichierArchiveBackup, TypeArchive};
 use crate::common_messages::BackupEvent;
-use crate::constantes::{BACKUP_EVENEMENT_MAJ, Securite};
 use crate::error::Error as CommonError;
-use crate::generateur_messages::RoutageMessageAction;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
 use crate::v3::impls::backup_restorer::{RestorationState, process_transactions_from_backup, restore_preflight_check, truncate_data_tables};
 use crate::v3::impls::backup_transfer::transfer_backup_files_to_filehost;
-use crate::v3::models::PreflightError;
-use crate::v3::{BackupService, ChiffrageService, ConfigService, FilehostService, PkiService, TransactionService};
+use crate::v3::models::{BackupPreflightResult, PreflightError};
+use crate::v3::{BackupService, ChiffrageService, ConfigService, FilehostService, PkiService, PresenceService, TransactionService};
 use async_trait::async_trait;
 use chrono::Utc;
 use openssl::pkey::{PKey, Private};
@@ -61,26 +59,29 @@ impl DomainBackupServiceImpl {
         domain_name: &str,
         redolog_collection_name: &str,
         incremental: bool,
-    ) -> Result<(), CommonError> {
+    ) -> Result<Option<BackupPreflightResult>, CommonError> {
         // Emit initial message to indicate start of backup for domain
-        emit_backup_event(self.outbound.as_ref(), BackupEvent::new_ok(domain_name)).await?;
+        self.outbound.emit_backup_event(BackupEvent::new_ok(domain_name)).await?;
+        // emit_backup_event(self.outbound.as_ref(), BackupEvent::new_ok(domain_name)).await?;
 
-        let backup_result = match self.run_backup_process(domain_name, redolog_collection_name, incremental).await {
-            Ok(()) => {
-                emit_backup_event(self.outbound.as_ref(), BackupEvent::new_done(domain_name)).await?;
-                Ok(())
+        match self.run_backup_process(domain_name, redolog_collection_name, incremental).await {
+            Ok(result) => {
+                // Not emitting event yet, files must be uploaded first (separate operation)
+                Ok(result)
             },
             Err(e) => {
-                emit_backup_event(self.outbound.as_ref(), BackupEvent::new_err(domain_name, e.to_string())).await.ok();
+                self.outbound.emit_backup_event(BackupEvent::new_err(domain_name, e.to_string())).await.ok();
                 Err(e)
             }
-        };
-
-        // Return result of the backup
-        backup_result
+        }
     }
 
-    async fn run_backup_process(&self, domain_name: &str, redolog_collection_name: &str, incremental: bool) -> Result<(), CommonError> {
+    async fn run_backup_process(
+        &self,
+        domain_name: &str,
+        redolog_collection_name: &str,
+        incremental: bool
+    ) -> Result<Option<BackupPreflightResult>, CommonError> {
         // Run a check to ensure we have all required information to start a backup (raises Error on issue)
         debug!("run_backup_process Starting");
         let mut domain_info = match preflight_check(
@@ -95,11 +96,11 @@ impl DomainBackupServiceImpl {
             Ok(info) => info,
             Err(PreflightError::NotReadyForBackup) => {
                 warn!("The system is not ready for backing-up transactions (ready.txt file missing)");
-                return Ok(())
+                return Ok(None)
             },
             Err(PreflightError::NothingToDo) => {
                 debug!("No transactions in redo-log to backup or files to concatenate");
-                return Ok(())
+                return Ok(None)
             },
             Err(PreflightError::CommonError(e)) => return Err(e)
         };
@@ -139,6 +140,8 @@ impl DomainBackupServiceImpl {
                 // There is no current Concatenated file
                 // Promote the incremental file to Concatene
                 let new_concatenated_file = promote_backup_file(self.chiffrage.as_ref(), &new_file, TypeArchive::Concatene).await?;
+                // Update version of backup
+                domain_info.version = Some(new_concatenated_file.digest_suffix.clone());
                 domain_info.files.push(new_concatenated_file.clone());
                 concatenated_file = Some(new_concatenated_file);
             } else {
@@ -150,14 +153,16 @@ impl DomainBackupServiceImpl {
         if ! incremental && domain_info.contains_incremental() {
             // This is a complete backup - run if the backup contains incremental files
             // The check is necessary because there could be multiple Final and a Concatene file in the list.
-            concatenated_file = Some(
-                produce_concatenated_backup_file(
-                    self.config.as_ref(),
-                    self.chiffrage.as_ref(),
-                    self.outbound.as_ref(),
-                    &domain_info
-                ).await?
-            );
+            let new_concatenated_file = produce_concatenated_backup_file(
+                self.config.as_ref(),
+                self.chiffrage.as_ref(),
+                self.outbound.as_ref(),
+                &domain_info
+            ).await?;
+            // Update version of backup
+            domain_info.version = Some(new_concatenated_file.digest_suffix.clone());
+            concatenated_file = Some(new_concatenated_file);
+
         }
 
         // Check if we can promote the Concatenated file to Final archive
@@ -165,12 +170,12 @@ impl DomainBackupServiceImpl {
         if let Some(file) = concatenated_file && ! incremental {
             let expired_date = Utc::now() - chrono::Duration::days(TRIGGER_CONCATENATED_TO_FINAL_DAYS);
             if file.len > TRIGGER_CONCATENATED_TO_FINAL_SIZE || file.header.debut_backup < expired_date {
-                // Promote the concatenated file to final
+                // Promote the concatenated file to final - keep version, this forces sync of files by filecontroler
                 produce_final_file(self.chiffrage.as_ref(), &file).await?;
             }
         }
 
-        Ok(())
+        Ok(Some(domain_info))
     }
 
     pub async fn run_restore(
@@ -220,7 +225,7 @@ impl BackupService for DomainBackupServiceImpl {
         domain_name: &str,
         redolog_collection_name: &str,
         incremental: bool,
-    ) -> Result<(), CommonError> {
+    ) -> Result<Option<BackupPreflightResult>, CommonError> {
         let backup_path = self.mongo.get_path_backup().as_path();
         let domain_backup_path = backup_path.join(domain_name);
 
@@ -285,12 +290,12 @@ impl BackupService for DomainBackupServiceImpl {
     }
 }
 
-async fn emit_backup_event(outbound: &MessageOutboundFacade, event: BackupEvent) -> Result<(), CommonError> {
-    let routing = RoutageMessageAction::builder(
-        &event.domaine,
-        BACKUP_EVENEMENT_MAJ,
-        vec![Securite::L1Public]
-    ).build();
-    outbound.emit_event(routing, event).await?;
-    Ok(())
-}
+// async fn emit_backup_event(outbound: &MessageOutboundFacade, event: BackupEvent) -> Result<(), CommonError> {
+//     let routing = RoutageMessageAction::builder(
+//         &event.domaine,
+//         BACKUP_EVENEMENT_MAJ,
+//         vec![Securite::L1Public]
+//     ).build();
+//     outbound.emit_event(routing, event).await?;
+//     Ok(())
+// }

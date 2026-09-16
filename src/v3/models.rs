@@ -218,6 +218,8 @@ pub struct BackupPreflightResult {
     // Number of transactions currently in the redo-log (not backed-up yet)
     pub redolog_count: usize,
     pub key: DecryptedKey,
+    /// Suffix ot the Concatene file
+    pub version: Option<String>,
 }
 
 impl BackupPreflightResult {
@@ -479,3 +481,13 @@ pub struct DomainPresenceEvent {
     pub primaire: bool,
     pub reclame_fuuids: bool,
 }
+
+// #[derive(Clone, Debug, Serialize, Deserialize)]
+// pub struct BackupEvent {
+//     pub ok: bool,  // Si false, indique echec dans le backup
+//     pub done: bool,
+//     pub domaine: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub err: Option<String>,
+//     pub version: Option<String>,
+// }

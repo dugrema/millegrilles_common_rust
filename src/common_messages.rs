@@ -421,13 +421,13 @@ impl BackupEvent {
         }
     }
 
-    pub fn new_done(domaine: &str) -> Self {
+    pub fn new_done(domaine: &str, version: Option<String>) -> Self {
         Self {
             ok: true,
             done: true,
             domaine: domaine.to_string(),
             err: None,
-            version: None,
+            version,
         }
     }
 

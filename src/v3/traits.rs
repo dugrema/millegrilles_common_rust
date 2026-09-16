@@ -4,7 +4,7 @@ use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::backup_restorer::RestorationState;
 use crate::v3::impls::rabbitmq_consumer::InboundMessage;
-use crate::v3::models::{DecryptedKey, FilehostClient, GeneratedSecretKey, TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
+use crate::v3::models::{BackupPreflightResult, DecryptedKey, FilehostClient, GeneratedSecretKey, TransactionOperationAggregator, TransactionWrapper, VerifiedResponseMessage};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
@@ -20,6 +20,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc::Receiver;
+use crate::common_messages::BackupEvent;
 
 #[async_trait]
 pub trait MessagingService: Send + Sync {
@@ -99,7 +100,7 @@ pub trait BackupService: Send + Sync {
         domain_name: &str,
         redolog_collection_name: &str,
         incremental: bool,
-    ) -> Result<(), CommonError>;
+    ) -> Result<Option<BackupPreflightResult>, CommonError>;
 
     async fn transfer_backup_files_to_filehost(&self, domain_name: &str) -> Result<(), CommonError>;
 
@@ -160,4 +161,5 @@ pub trait FilehostService: Send + Sync {
 #[async_trait]
 pub trait PresenceService: Send + Sync {
     async fn emit_domain_presence(&self, domain_name: &str, reclame_fuuids: Option<bool>) -> Result<(), CommonError>;
+    async fn emit_backup_event(&self, event: BackupEvent) -> Result<(), CommonError>;
 }

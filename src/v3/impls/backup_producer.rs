@@ -7,7 +7,7 @@ use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
-use crate::v3::impls::backup_filehandling::{is_system_ready, load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
+use crate::v3::impls::backup_filehandling::{get_file_digest_suffix, is_system_ready, load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
 use crate::v3::models::{BackupPreflightResult, BackupResult, DecryptedKey, PreflightError, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::bufread::DeflateDecoder;
@@ -24,6 +24,7 @@ use mongodb::options::Hint;
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::Path;
+use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
@@ -46,6 +47,11 @@ pub async fn preflight_check(
         return Err(PreflightError::NotReadyForBackup)
     }
 
+    // Ensure path is created
+    if let Err(e) = fs::create_dir_all(&domain_backup_path).await {
+        Err(CommonError::String(format!("Failed to create backup directory {:?}: {:?}", domain_backup_path, e)))?;
+    }
+
     if incremental {
         if waiting_transaction_count == 0 {
             return Err(PreflightError::NothingToDo);
@@ -65,6 +71,15 @@ pub async fn preflight_check(
         contains_incremental = last_file.header.type_archive == TypeArchive::Incremental.to_string();
     }
 
+    let mut version: Option<String> = None;
+    for file in &existing_files {
+        if file.header.type_archive.as_str() == "C" {
+            version = Some(get_file_digest_suffix(file.path_fichier.as_path())?);
+            println!("File suffix/backup version: {:?}", version);
+            break
+        }
+    }
+
     if waiting_transaction_count == 0 && ! contains_incremental {
         // We only have 1 backup file (Concatene) and there are no additional transactions to back-up
         // Err(CommonError::Str("All transactions are already in Final/Concatene files, aborting full backup"))?;
@@ -81,6 +96,7 @@ pub async fn preflight_check(
         files: existing_files,
         redolog_count: waiting_transaction_count as usize,
         key: decryption_key,
+        version,
     })
 }
 

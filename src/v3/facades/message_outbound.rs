@@ -1,19 +1,20 @@
 use crate::chiffrage_cle::CommandeAjouterCleDomaine;
-use crate::common_messages::{ReponseRequeteDechiffrageV2, RequeteDechiffrage};
-use crate::constantes::{Securite, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT, EVENEMENT_PRESENCE_DOMAINE};
+use crate::common_messages::{BackupEvent, ReponseRequeteDechiffrageV2, RequeteDechiffrage};
+use crate::constantes::Securite::L1Public;
+use crate::constantes::{BACKUP_EVENEMENT_MAJ, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_PRESENCE_DOMAINE, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT, Securite};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
+use crate::middleware::ReponseEnveloppe;
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
 use crate::v3::models::{CertificateRequest, DecryptedKey, DomainPresenceEvent, GeneratedSecretKey, VerifiedResponseMessage};
 use crate::v3::{ConfigService, FormatService, MessagingService, PkiService, PresenceService};
+use async_trait::async_trait;
+use chrono::{DateTime, Duration, Utc};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::borrow::Cow;
 use std::sync::Arc;
-use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
-use crate::middleware::ReponseEnveloppe;
 
 /// Facade that exposes methods to easily send different types of messages
 pub struct MessageOutboundFacade {
@@ -314,5 +315,23 @@ impl PresenceService for MessageOutboundFacade {
         };
 
         self.emit_event(routing, presence).await
+    }
+
+    async fn emit_backup_event(&self, event: BackupEvent) -> Result<(), CommonError> {
+        // let event = BackupEvent {
+        //     ok: true,
+        //     done: true,
+        //     domaine: domain.to_string(),
+        //     err: None,
+        //     version: Some(version.to_string()),
+        // };
+
+        let routing = RoutageMessageAction::builder(
+            event.domaine.to_string(),
+            BACKUP_EVENEMENT_MAJ,
+            vec![L1Public]
+        ).build();
+
+        self.emit_event(routing, event).await
     }
 }

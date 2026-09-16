@@ -343,12 +343,23 @@ async fn process_backup_file(file_path: &Path, idmg: &str) -> Result<FichierArch
     }
 
     // Extract the partial digest from the file name
-    let nom_fichier = file_path.file_stem().expect("file stem").to_str().expect("nom_fichier to_str");
-    let mut split: Vec<&str> = nom_fichier.split("_").collect();
-    let digest_suffix = split.pop().expect("version").to_string();
+    let digest_suffix = get_file_digest_suffix(file_path)?;
 
     let position_data = (4 + taille_header) as usize;  // 4 bytes (version u16, taille header u16) + header
     Ok(FichierArchiveBackup { path_fichier: file_path.to_owned(), header, position_data, digest_suffix, len: file_len })
+}
+
+pub fn get_file_digest_suffix(file_path: &Path) -> Result<String, CommonError> {
+    let nom_fichier = match file_path.file_stem().expect("file stem").to_str() {
+        Some(s) => s,
+        None => return Err(CommonError::Str("Unable to get filename (stem)"))
+    };
+    let mut split: Vec<&str> = nom_fichier.split("_").collect();
+    let digest_suffix = match split.pop() {
+        Some(s) => s.to_owned(),
+        None => return Err(CommonError::Str("Unable to get suffix from filename"))
+    };
+    Ok(digest_suffix)
 }
 
 fn process_backup_folder<'a>(
