@@ -469,3 +469,13 @@ pub struct FilehostClient {
     pub last_usage: DateTime<Utc>,
     pub last_test: DateTime<Utc>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DomainPresenceEvent {
+    pub instance_id: String,
+    pub domaine: String,
+    pub sous_domaines: Option<String>,
+    pub exchanges_routing: Option<String>,
+    pub primaire: bool,
+    pub reclame_fuuids: bool,
+}

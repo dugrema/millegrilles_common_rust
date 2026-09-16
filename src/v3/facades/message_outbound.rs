@@ -1,16 +1,17 @@
 use crate::chiffrage_cle::CommandeAjouterCleDomaine;
 use crate::common_messages::{ReponseRequeteDechiffrageV2, RequeteDechiffrage};
-use crate::constantes::{Securite, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT};
+use crate::constantes::{Securite, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT, EVENEMENT_PRESENCE_DOMAINE};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
-use crate::v3::models::{CertificateRequest, DecryptedKey, GeneratedSecretKey, VerifiedResponseMessage};
-use crate::v3::{ConfigService, FormatService, MessagingService, PkiService};
+use crate::v3::models::{CertificateRequest, DecryptedKey, DomainPresenceEvent, GeneratedSecretKey, VerifiedResponseMessage};
+use crate::v3::{ConfigService, FormatService, MessagingService, PkiService, PresenceService};
 use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use std::borrow::Cow;
 use std::sync::Arc;
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use crate::middleware::ReponseEnveloppe;
 
@@ -289,5 +290,29 @@ impl MessageOutboundFacade {
                 }
             }
         }
+    }
+}
+
+#[async_trait]
+impl PresenceService for MessageOutboundFacade {
+    async fn emit_domain_presence(&self, domain_name: &str, reclame_fuuids: Option<bool>) -> Result<(), CommonError> {
+        let instance_id = self.config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.get_common_name()?;
+
+        let routing = RoutageMessageAction::builder(
+            domain_name,
+            EVENEMENT_PRESENCE_DOMAINE,
+            vec![Securite::L3Protege])
+            .build();
+
+        let presence = DomainPresenceEvent {
+            instance_id,
+            domaine: domain_name.to_string(),
+            sous_domaines: None,
+            exchanges_routing: None,
+            primaire: true,
+            reclame_fuuids: reclame_fuuids == Some(true),
+        };
+
+        self.emit_event(routing, presence).await
     }
 }

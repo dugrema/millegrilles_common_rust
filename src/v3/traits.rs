@@ -156,3 +156,8 @@ pub trait FilehostService: Send + Sync {
     /// Version is required for Incremental files (it is the matching Concatene digest suffix).
     async fn put_backup_file(&self, file: &FichierArchiveBackup, version: Option<&String>) -> Result<(), CommonError>;
 }
+
+#[async_trait]
+pub trait PresenceService: Send + Sync {
+    async fn emit_domain_presence(&self, domain_name: &str, reclame_fuuids: Option<bool>) -> Result<(), CommonError>;
+}
