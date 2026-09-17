@@ -165,7 +165,7 @@ async fn traiter_transactions_receiver<'a, M, T>(
     session_batch_size: u64
 )
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao,
+    M: ValidateurX509 + GenerateurMessages + MongoDaoTyped,
     T: AiguillageTransactions,
 {
     let mut transaction_counter = 0u64;
@@ -363,7 +363,7 @@ async fn regenerer_transactions_v2<'a, M, T>(
     skip_certificats: bool, session: &mut ClientSession)
     -> Result<u64, Box<dyn Error>>
 where
-    M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
+    M: ValidateurX509 + GenerateurMessages + MongoDaoTyped /*+ VerificateurMessage*/,
     T: AiguillageTransactions,
 {
     let mut counter = 0u64;

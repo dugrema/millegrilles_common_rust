@@ -6,7 +6,7 @@ use crate::db_structs::TransactionValide;
 use crate::generateur_messages::GenerateurMessages;
 
 use crate::middleware::Middleware;
-use crate::mongo_dao::MongoDao;
+use crate::mongo_dao::MongoDaoTyped;
 use crate::rabbitmq_dao::QueueType;
 use crate::recepteur_messages::MessageValide;
 
@@ -67,5 +67,5 @@ pub trait GestionnaireDomaineV2: GestionnaireBusMillegrilles + ConsommateurMessa
 pub trait AiguillageTransactions {
     async fn aiguillage_transaction<M>(&self, middleware: &M, transaction: TransactionValide, session: &mut ClientSession)
         -> Result<Option<MessageMilleGrillesBufferDefault>, crate::error::Error>
-        where M: ValidateurX509 + GenerateurMessages + MongoDao;
+        where M: ValidateurX509 + GenerateurMessages + MongoDaoTyped;
 }

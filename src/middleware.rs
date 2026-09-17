@@ -894,7 +894,7 @@ pub async fn sauvegarder_traiter_transaction_serializable_v2<M,G,S>(
     middleware: &M, valeur: &S, gestionnaire: &G, session: &mut ClientSession, domaine: &str, action: &str)
     -> Result<(Option<MessageMilleGrillesBufferDefault>, String), crate::error::Error>
     where
-        M: ValidateurX509 + GenerateurMessages + MongoDao /*+ VerificateurMessage*/,
+        M: ValidateurX509 + GenerateurMessages + MongoDaoTyped /*+ VerificateurMessage*/,
         G: GestionnaireDomaineV2 + AiguillageTransactions,
         S: Serialize + Send + Sync
 {
@@ -928,7 +928,7 @@ pub async fn sauvegarder_traiter_transaction_v2<M, G>(
 )
     -> Result<Option<MessageMilleGrillesBufferDefault>, CommonError>
     where
-        M: ValidateurX509 + GenerateurMessages + MongoDao,
+        M: ValidateurX509 + GenerateurMessages + MongoDaoTyped,
         G: GestionnaireDomaineV2 + AiguillageTransactions
 {
     if middleware.get_mode_regeneration() {
