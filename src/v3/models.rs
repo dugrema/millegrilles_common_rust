@@ -14,13 +14,13 @@ use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOw
 use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::options::WriteModel;
+use openssl::pkey::{PKey, Private};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use openssl::pkey::{PKey, Private};
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -483,11 +483,10 @@ pub struct DomainPresenceEvent {
 }
 
 // #[derive(Clone, Debug, Serialize, Deserialize)]
-// pub struct BackupEvent {
-//     pub ok: bool,  // Si false, indique echec dans le backup
-//     pub done: bool,
+// pub struct CoreTopologyBackupEvent {
+//     pub uuid_rapport: String,
+//     pub evenement: String,
 //     pub domaine: String,
-//     #[serde(skip_serializing_if = "Option::is_none")]
-//     pub err: Option<String>,
-//     pub version: Option<String>,
+//     #[serde(with="ts_seconds")]
+//     pub timestamp: DateTime<Utc>,
 // }

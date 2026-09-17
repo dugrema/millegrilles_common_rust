@@ -1,7 +1,7 @@
 use crate::chiffrage_cle::CommandeAjouterCleDomaine;
 use crate::common_messages::{BackupEvent, ReponseRequeteDechiffrageV2, RequeteDechiffrage};
 use crate::constantes::Securite::L1Public;
-use crate::constantes::{BACKUP_EVENEMENT_MAJ, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_PRESENCE_DOMAINE, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT, Securite};
+use crate::constantes::{Securite, BACKUP_EVENEMENT_MAJ, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_PRESENCE_DOMAINE, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::ReponseEnveloppe;
@@ -318,20 +318,33 @@ impl PresenceService for MessageOutboundFacade {
     }
 
     async fn emit_backup_event(&self, event: BackupEvent) -> Result<(), CommonError> {
-        // let event = BackupEvent {
-        //     ok: true,
-        //     done: true,
-        //     domaine: domain.to_string(),
-        //     err: None,
-        //     version: Some(version.to_string()),
-        // };
+        // if event.ok &&  event.done {
+        //     // Emit CoreTopologie event, this will trigger a filehost sync
+        //     let topoolgy_event = CoreTopologyBackupEvent {
+        //         uuid_rapport: "".to_string(),
+        //         evenement: EVENT_BACKUP_DONE.to_string(),
+        //         domaine: event.domaine.clone(),
+        //         timestamp: Utc::now(),
+        //     };
+        //
+        //     let routing = RoutageMessageAction::builder(
+        //         topoolgy_event.domaine.as_str(),
+        //         BACKUP_EVENEMENT_MAJ,
+        //         vec![Securite::L2Prive]
+        //     ).build();
+        //
+        //     self.emit_event(routing, event.clone()).await?;
+        // }
 
+        // Event for other processes
         let routing = RoutageMessageAction::builder(
             event.domaine.to_string(),
             BACKUP_EVENEMENT_MAJ,
             vec![L1Public]
         ).build();
 
-        self.emit_event(routing, event).await
+        self.emit_event(routing, event.clone()).await?;
+
+        Ok(())
     }
 }
