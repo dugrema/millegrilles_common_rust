@@ -40,6 +40,7 @@ pub mod middleware_db_v2;
 pub mod backup_v2;
 pub mod transactions_v2;
 pub mod fiche_systeme;
+pub mod mongo_serde;
 
 // Re-exports
 pub use millegrilles_cryptographie;
