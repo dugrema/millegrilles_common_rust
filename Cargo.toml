@@ -1,13 +1,13 @@
 [package]
 name = "millegrilles_common_rust"
-version = "2026.4.12"
+version = "2026.5.13"
 edition = "2024"
 
 [dependencies]
 
 # Cryptography module
-# millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", tag = "2026.0-release", features = ["chiffrage"] }
-millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "master", features = ["chiffrage"] }
+millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", tag = "2026.4-release", features = ["chiffrage"] }
+# millegrilles_cryptographie = { git = "https://github.com/dugrema/millegrilles_cryptographie.git", branch = "master", features = ["chiffrage"] }
 
 # Asynchronous utilities
 # async-std = "1.12"
