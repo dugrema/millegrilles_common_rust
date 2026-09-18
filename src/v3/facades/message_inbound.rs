@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
+use crate::certificats::VerificateurPermissions;
 use crate::v3::impls::rabbitmq_consumer::{DeliveryInfo, InboundMessage};
 
 pub struct MessageValidated {
@@ -16,6 +17,23 @@ pub struct MessageValidated {
     pub message: MessageMilleGrillesOwned,
     pub certificate: Arc<EnveloppeCertificat>,
     pub content: Option<Value>,
+}
+
+impl MessageValidated {
+    pub fn get_routing_action(&self) -> Option<&str> {
+        if let Some(routing) = self.message.routage.as_ref() {
+            if let Some(action) = routing.action.as_ref() {
+                return Some(action.as_str());
+            }
+        }
+        None
+    }
+    pub fn get_certificate_user_id(&self) -> Option<String> {
+        if let Ok(value) = self.certificate.get_user_id() {
+            return value
+        }
+        None
+    }
 }
 
 pub struct MessageInboundValidator {

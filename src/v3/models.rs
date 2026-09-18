@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use crate::certificats::VerificateurPermissions;
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -42,6 +43,23 @@ pub struct TransactionWrapper {
     pub certificate: Arc<EnveloppeCertificat>,
     /// Decrypted content when applicable
     pub content: Option<Value>,
+}
+
+impl TransactionWrapper {
+    pub fn get_routing_action(&self) -> Option<&str> {
+        if let Some(routing) = self.message.routage.as_ref() {
+            if let Some(action) = routing.action.as_ref() {
+                return Some(action.as_str());
+            }
+        }
+        None
+    }
+    pub fn get_certificate_user_id(&self) -> Option<String> {
+        if let Ok(value) = self.certificate.get_user_id() {
+            return value
+        }
+        None
+    }
 }
 
 impl From<MessageValidated> for TransactionWrapper {
