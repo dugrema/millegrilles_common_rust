@@ -12,7 +12,7 @@ use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault, MessageMilleGrillesOwned, MessageMilleGrillesRefDefault};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::ValidateurX509;
-use mongodb::{Collection, bson::Document};
+use mongodb::{bson::Document, ClientSession, Collection};
 use multibase::Base;
 use multihash::Code;
 use openssl::pkey::{PKey, Private};
@@ -122,8 +122,8 @@ pub trait DatabaseService: Send + Sync {
 
 #[async_trait]
 pub trait TransactionService: Send + Sync {
-    async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), CommonError>;
-    async fn process_value(&self, domain: &str, action: &str, value: Value) -> Result<(), CommonError>;
+    async fn process_transaction(&self, wrapper: TransactionWrapper, session: Option<&mut ClientSession>) -> Result<(), CommonError>;
+    async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<(), CommonError>;
     async fn route_transaction(
         &self,
         message: MessageMilleGrillesOwned,

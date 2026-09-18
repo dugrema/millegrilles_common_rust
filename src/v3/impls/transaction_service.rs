@@ -11,6 +11,7 @@ use mongodb::ClientSession;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::Arc;
+use tracing::debug;
 
 pub struct TransactionServiceImpl {
     config: Arc<dyn ConfigService>,
@@ -36,17 +37,31 @@ impl TransactionServiceImpl {
 
 #[async_trait]
 impl TransactionService for TransactionServiceImpl {
-    async fn process_transaction(&self, wrapper: TransactionWrapper) -> Result<(), CommonError> {
-        process_transaction(
-            self.mongo.as_ref(),
-            self.router.as_ref(),
-            self.redo_table.as_str(),
-            self.tracking_table.as_str(),
-            wrapper
-        ).await
+    async fn process_transaction(&self, wrapper: TransactionWrapper, session: Option<&mut ClientSession>) -> Result<(), CommonError> {
+        match session {
+            Some(session) => {
+                process_atomic_transaction(
+                    self.mongo.as_ref(),
+                    session,
+                    self.redo_table.as_str(),
+                    self.tracking_table.as_str(),
+                    self.router.as_ref(),
+                    wrapper,
+                ).await
+            },
+            None => {
+                process_transaction(
+                    self.mongo.as_ref(),
+                    self.router.as_ref(),
+                    self.redo_table.as_str(),
+                    self.tracking_table.as_str(),
+                    wrapper
+                ).await
+            }
+        }
     }
 
-    async fn process_value(&self, domain: &str, action: &str, value: Value) -> Result<(), CommonError> {
+    async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<(), CommonError> {
         let wrapper = build_transaction(
             self.config.as_ref(),
             self.format.as_ref(),
@@ -54,7 +69,8 @@ impl TransactionService for TransactionServiceImpl {
             action,
             value
         )?;
-        self.process_transaction(wrapper).await
+        debug!("Processing transaction id {} with content: {:?}", wrapper.message.id, wrapper.message.contenu);
+        self.process_transaction(wrapper, session).await
     }
 
     async fn route_transaction(
