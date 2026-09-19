@@ -354,12 +354,22 @@ async fn process_backup_files<'a>(
                 pki.validate_message_with_cert(&t, certificate.as_ref())?;
             }
 
+            let routing = t.routage.clone();
+            let t_id = t.id.clone();
+
             // Add transaction to the operations aggregator.
-            restoration_state.aggregator = Some(transaction.route_transaction(
+            let aggregator = match transaction.route_transaction(
                 t,
                 certificate,
-                restoration_state.aggregator.take()
-            ).await?);
+            restoration_state.aggregator.take()
+            ).await {
+                Ok(aggregator) => aggregator,
+                Err(e) => {
+                    error!("Error processing transaction routing {:?}, id: {}", routing, t_id);
+                    Err(e)?
+                }
+            };
+            restoration_state.aggregator = Some(aggregator);  // Put back
 
             if restoration_state.transaction_count % TRANSACTION_BACTH_SIZE == 0 {
                 // Run write operations from aggregator
