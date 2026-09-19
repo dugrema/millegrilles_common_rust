@@ -521,6 +521,7 @@ async fn extract_transactions_from_backup<W>(
             if first_transaction == DateTime::<Utc>::MIN_UTC {
                 first_transaction = new_transaction_time;
             } else if first_transaction > new_transaction_time {
+                // first_transaction = new_transaction_time;  // Transactions are out of order, always use oldest date
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
             }
             if last_transaction > new_transaction_time {
