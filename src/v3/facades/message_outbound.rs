@@ -1,12 +1,12 @@
 use crate::chiffrage_cle::CommandeAjouterCleDomaine;
 use crate::common_messages::{BackupEvent, ReponseRequeteDechiffrageV2, RequeteDechiffrage};
 use crate::constantes::Securite::L1Public;
-use crate::constantes::{Securite, BACKUP_EVENEMENT_MAJ, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_PRESENCE_DOMAINE, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT};
+use crate::constantes::{Securite, BACKUP_EVENEMENT_MAJ, COMMANDE_AJOUTER_CLE_DOMAINES, DOMAINE_NOM_MAITREDESCLES, EVENEMENT_PRESENCE_DOMAINE, MAITREDESCLES_REQUETE_DECHIFFRAGE_V2, PKI_DOMAINE_NOM, PKI_REQUETE_CERTIFICAT, REQUETE_CERT_MAITREDESCLES};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::ReponseEnveloppe;
 use crate::v3::impls::rabbitmq_consumer::DeliveryInfo;
-use crate::v3::models::{CertificateRequest, DecryptedKey, DomainPresenceEvent, GeneratedSecretKey, VerifiedResponseMessage};
+use crate::v3::models::{CertificateRequest, DecryptedKey, DomainPresenceEvent, ErrorMessage, GeneratedSecretKey, VerifiedResponseMessage};
 use crate::v3::{ConfigService, FormatService, MessagingService, PkiService, PresenceService};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
@@ -291,6 +291,16 @@ impl MessageOutboundFacade {
                 }
             }
         }
+    }
+
+    pub async fn get_keymaster_certificates(&self) -> Result<Vec<Arc<EnveloppeCertificat>>, CommonError> {
+        let routing = RoutageMessageAction::builder(
+            DOMAINE_NOM_MAITREDESCLES,
+            REQUETE_CERT_MAITREDESCLES,
+            vec![Securite::L1Public]
+        ).build();
+        let response = self.send_request(routing, ErrorMessage::ok()).await?;
+        Ok(vec![response.certificate])
     }
 }
 
