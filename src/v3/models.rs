@@ -180,8 +180,8 @@ impl TransactionOperationAggregator {
             }
         }
 
-        // Presence of ordered operations determine how processing can be done
-        if self.ordered.is_none() {
+        // // Presence of ordered operations determine how processing can be done  - TODO Need to review this
+        //if self.ordered.is_none() {
             match self.batch_insertions.as_mut() {
                 Some(insertions) => {
                     if let Some(other_insertions) = other.batch_insertions {
@@ -202,10 +202,10 @@ impl TransactionOperationAggregator {
                     self.unordered = other.unordered;
                 }
             }
-        } else {
-            // Must add all remaining operations as ordered
-            todo!()
-        }
+        // } else {
+        //     // Must add all remaining operations as ordered
+        //     todo!()
+        // }
 
         // Always extend ordered at the end in case other operations were injected (insert, unordered)
         match self.ordered.as_mut() {
