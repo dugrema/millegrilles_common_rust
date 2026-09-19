@@ -288,7 +288,13 @@ async fn process_backup_files<'a>(
         while let Some(transaction_data) = lines.next_line().await? {
 
             // Transactions must be in order, this is enforced here. Also bean counting.
-            let mut t: MessageMilleGrillesOwned = serde_json::from_str(transaction_data.as_str())?;
+            let mut t: MessageMilleGrillesOwned = match serde_json::from_str(transaction_data.as_str()) {
+                Ok(t) => t,
+                Err(e) => {
+                    error!("Error processing transaction: {}", transaction_data);
+                    Err(e)?
+                }
+            };
             let new_transaction_time = t.estampille.timestamp() as u64;
             if restoration_state.first_transaction == 0 {
                 restoration_state.first_transaction = new_transaction_time;

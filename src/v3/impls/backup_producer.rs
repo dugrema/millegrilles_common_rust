@@ -254,6 +254,8 @@ async fn process_incremental_file_operations(
     Ok(backup_result)
 }
 
+const NEW_LINE_SLICE: [u8; 1] = [NEW_LINE_BYTE; 1];
+
 async fn extract_redolog_content<W>(
     outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
@@ -289,8 +291,6 @@ where
         count: 0,
     };
 
-    let new_line_slice = [NEW_LINE_BYTE; 1];
-
     // Read all transactions in the mongo redolog collection
     let mut unreadable_transactions = false;
     let mut already_processed_certificate_ids = HashSet::new();
@@ -325,7 +325,7 @@ where
                 let transaction_str = serde_json::to_string(&transaction)?;
                 writer.write_all(transaction_str.as_bytes().to_vec().as_slice()).await?;
                 // Add line feed (\n) to allow file to be read as "jsonl"
-                writer.write_all(&new_line_slice).await?;
+                writer.write_all(&NEW_LINE_SLICE).await?;
             }
             Err(e) => {
                 error!("Error parsing redolog content: {}, will ignore and delete transaction", e);
@@ -478,6 +478,8 @@ async fn extract_transactions_from_backup<W>(
     let mut last_transaction: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
     let mut transaction_count: u64 = 0;
 
+    // let mut files_in_memory = Vec::with_capacity(500_000);
+
     for backup_file in existing_files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
         if backup_file.header.type_archive == TypeArchive::Final.to_string() {
@@ -526,14 +528,34 @@ async fn extract_transactions_from_backup<W>(
             }
             last_transaction = new_transaction_time;
             transaction_count += 1;
+            if transaction_count % 1000 == 0 {
+                debug!("Processed transaction count {}", transaction_count);
+            }
 
-            // Write transaction back to new file
+            // files_in_memory.push(t);
+
+            // // Write transaction back to new file
             writer.write_all(transaction.as_bytes()).await?;
-            // Add newline for jsonl format
+            // // Add newline for jsonl format
             writer.write_all(b"\n").await?;
+            writer.flush().await?;  // Issue with writer when overloaded
         }
     }
-    debug!("Done reading transactions");
+    debug!("Done reading {} transactions", transaction_count);
+
+    // Sort
+    // info!("Sorting {} transactions in memory", files_in_memory.len());
+    // files_in_memory.sort_by_key(|m| m.estampille);
+    // info!("Done sorting");
+    //
+    // // Write all
+    // for t in files_in_memory.into_iter() {
+    //     writer.write_all(serde_json::to_vec(&t).unwrap().as_slice()).await?;
+    //     writer.write_all(&NEW_LINE_SLICE).await?;
+    //     writer.flush().await?;  // Issue with writer when overloaded
+    // }
+
+    // Flush
     writer.flush().await?;
 
     Ok(BackupResult {
