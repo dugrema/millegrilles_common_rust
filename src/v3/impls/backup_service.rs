@@ -3,7 +3,7 @@ use crate::common_messages::BackupEvent;
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
-use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile};
+use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile, verify_backup_file};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
 use crate::v3::impls::backup_restorer::{RestorationState, process_transactions_from_backup, restore_preflight_check, truncate_data_tables};
 use crate::v3::impls::backup_transfer::transfer_backup_files_to_filehost;
@@ -159,10 +159,13 @@ impl DomainBackupServiceImpl {
                 self.outbound.as_ref(),
                 &domain_info
             ).await?;
+            let new_file_path = new_concatenated_file.path_fichier.clone();
             // Update version of backup
             domain_info.version = Some(new_concatenated_file.digest_suffix.clone());
             concatenated_file = Some(new_concatenated_file);
 
+            // Run a complete check of the file that was just produced
+            verify_backup_file(new_file_path.as_path(), domain_info.idmg.as_str(), Some(&domain_info.key)).await?;
         }
 
         // Check if we can promote the Concatenated file to Final archive

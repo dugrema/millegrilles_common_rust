@@ -1,7 +1,7 @@
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::error::Error as CommonError;
 use crate::v3::ChiffrageService;
-use crate::v3::models::LockFile;
+use crate::v3::models::{DecryptedKey, LockFile};
 use chrono::format::StrftimeItems;
 use chrono::{DateTime, Utc};
 use fs2::FileExt;
@@ -10,11 +10,19 @@ use futures_util::future::BoxFuture;
 use std::ffi::OsString;
 use std::io::{ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
+use async_compression::tokio::bufread::DeflateDecoder;
+use millegrilles_cryptographie::chiffrage_cles::CleDechiffrageX25519Impl;
+use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
+use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
+use multibase::Base;
+use multihash::Code;
 use tokio::fs;
 use tokio::fs::{File, read_dir};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
+use crate::hachages::Hacheur;
+use crate::v3::impls::asyncio_ciphers::AsyncDecryptionReaderMgs4;
 
 /// Use to create a lockfile with exclusive access - prevents multiple simultaneous backup processes.
 /// Raises errors when lock is unsuccessful.
@@ -409,4 +417,96 @@ pub async fn is_system_ready(backup_path: &Path) -> Result<bool, CommonError> {
     const BACKUP_RUNFILE_NAME: &str = "ready.txt";
     let ready_path = backup_path.join(BACKUP_RUNFILE_NAME);
     Ok(ready_path.exists())
+}
+
+/// Verifies the file information. Parses the decrypted content in memory to verify integrity when key is provided.
+/// Raises an Error if any part fails.
+pub async fn verify_backup_file(backup_file: &Path, idmg: &str, key: Option<&DecryptedKey>) -> Result<(), CommonError> {
+    debug!("Running full verification of backup file {:?}", backup_file);
+    // Verify suffix digest
+    let archive_info = process_backup_file(backup_file, idmg).await?;
+
+    // Verify content digest
+    check_backup_file_digests(&archive_info).await?;  // Raises error on issue
+
+    if let Some(decipher_key) = key {
+        verify_transactions(&archive_info, decipher_key).await?;    // Raises error on issue
+    }
+
+    debug!("backup file {:?}: OK", backup_file);
+    Ok(())
+}
+
+async fn check_backup_file_digests(backup_file: &FichierArchiveBackup) -> Result<(), CommonError> {
+    let mut file = File::open(backup_file.path_fichier.as_path()).await?;
+
+    let mut buffer = [0u8; 64*1024];
+    let mut file_digester = Hacheur::builder()
+        .digester(Code::Blake2b512)
+        .base(Base::Base58Btc)
+        .build();
+
+    // Read header only, this goes is the "complete file" digest
+    file.read_exact(&mut buffer[0..backup_file.position_data]).await?;
+    file_digester.update(&buffer[0..backup_file.position_data]);
+
+    // file.seek(SeekFrom::Start(backup_file.position_data as u64)).await?;
+    let mut content_digester = Hacheur::builder()
+        .digester(Code::Blake2b512)
+        .base(Base::Base58Btc)
+        .build();
+    loop {
+        let len_read = file.read(&mut buffer).await?;
+        if len_read == 0 {
+            break;
+        }
+        file_digester.update(&buffer[..len_read]);
+        content_digester.update(&buffer[..len_read]);
+    }
+
+    // Check the complete file digest (suffix in filename)
+    let file_digest = file_digester.finalize();
+    if ! file_digest.ends_with(backup_file.digest_suffix.as_str()) {
+        return Err(CommonError::Str("File suffix digest mismatch"))
+    }
+    debug!("File suffix digest OK");
+
+    // Check the encrypted content digest
+    let content_digest = content_digester.finalize();
+    if Some(&content_digest) == backup_file.header.content_digest.as_ref() {
+        debug!("Content digest OK");
+        Ok(())
+    } else {
+        Err(CommonError::Str("Content digest mismatch"))
+    }
+}
+
+async fn verify_transactions(archive_info: &FichierArchiveBackup, key: &DecryptedKey) -> Result<(), CommonError> {
+    // Parse all transactions and validate each decrypted entry
+    let mut key_value: CleDechiffrageX25519Impl = key.try_into()?;
+    key_value.nonce = Some(archive_info.header.nonce.clone());
+    key_value.format = archive_info.header.format.as_str().try_into()?;
+    let decipher = DecipherMgs4::new(&key_value)?;
+    let mut file = File::open(archive_info.path_fichier.as_path()).await?;
+    debug!("Processing backup file {:?}, starting at byte position {}", archive_info.path_fichier, archive_info.position_data);
+    file.seek(SeekFrom::Start(archive_info.position_data as u64)).await?;
+
+    // Set-up the streaming pipeline for decrypting/decompressing the transactions
+    let decryptor = AsyncDecryptionReaderMgs4::new(file, decipher);
+    let buf_reader = BufReader::new(decryptor);
+    let decompressor = DeflateDecoder::new(buf_reader);
+    let mut lines = BufReader::new(decompressor).lines();
+
+    while let Some(transaction_data) = lines.next_line().await? {
+        let mut t: MessageMilleGrillesOwned = match serde_json::from_str(transaction_data.as_str()) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Error processing transaction: {}", transaction_data);
+                Err(e)?
+            }
+        };
+        t.verifier_signature()?;    // Cryptographic check of the transaction
+    }
+
+    Ok(())
 }

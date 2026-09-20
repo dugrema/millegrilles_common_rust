@@ -7,7 +7,7 @@ use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
-use crate::v3::impls::backup_filehandling::{get_file_digest_suffix, is_system_ready, load_backup_file_list, overwrite_backup_file_header, prepare_backup_workfile, rename_backup_file, rotate_backup_files};
+use crate::v3::impls::backup_filehandling::*;
 use crate::v3::models::{BackupPreflightResult, BackupResult, DecryptedKey, PreflightError, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::bufread::DeflateDecoder;
@@ -134,6 +134,14 @@ pub async fn produce_incremental_backup_file(
         &mut session,
     ).await {
         Ok(backup) => {
+            // Verify backup file before committing - the commit deletes the data
+            if let Err(e) = verify_backup_file(backup.path_fichier.as_path(), domain_info.idmg.as_str(), Some(&domain_info.key)).await {
+                error!("Error while verifying new backup file {:?}: {:?}", backup.path_fichier.as_path(), e);
+                session.abort_transaction().await?;
+                tokio::fs::remove_file(&backup.path_fichier).await.ok();  // Delete file, it is invalid
+                return Err(e)
+            }
+
             match session.commit_transaction().await {
                 Ok(()) => Ok(backup),
                 Err(e) => {
