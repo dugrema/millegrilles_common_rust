@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use async_compression::tokio::bufread::DeflateDecoder;
 use millegrilles_cryptographie::chiffrage_cles::CleDechiffrageX25519Impl;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use multibase::Base;
 use multihash::Code;
 use tokio::fs;
@@ -21,6 +20,7 @@ use tokio::fs::{File, read_dir};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
 use tracing::{debug, error, info};
+use crate::db_structs::TransactionOwned;
 use crate::hachages::Hacheur;
 use crate::v3::impls::asyncio_ciphers::AsyncDecryptionReaderMgs4;
 
@@ -472,12 +472,16 @@ async fn check_backup_file_digests(backup_file: &FichierArchiveBackup) -> Result
     debug!("File suffix digest OK");
 
     // Check the encrypted content digest
-    let content_digest = content_digester.finalize();
-    if Some(&content_digest) == backup_file.header.content_digest.as_ref() {
-        debug!("Content digest OK");
-        Ok(())
-    } else {
-        Err(CommonError::Str("Content digest mismatch"))
+    let new_content_digest = content_digester.finalize();
+    match backup_file.header.content_digest.as_ref() {
+        Some(content_digest) => {
+            if content_digest != &new_content_digest {
+                Err(CommonError::Str("Content digest mismatch"))
+            } else {
+                Ok(())
+            }
+        },
+        None => Ok(())  // Nothing to check
     }
 }
 
@@ -502,7 +506,7 @@ async fn verify_transactions(archive_info: &FichierArchiveBackup, key: &Decrypte
     let mut last_transaction: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
 
     while let Some(transaction_data) = lines.next_line().await? {
-        let mut t: MessageMilleGrillesOwned = match serde_json::from_str(transaction_data.as_str()) {
+        let mut t: TransactionOwned = match serde_json::from_str(transaction_data.as_str()) {
             Ok(t) => t,
             Err(e) => {
                 error!("Error processing transaction: {}", transaction_data);
@@ -511,18 +515,24 @@ async fn verify_transactions(archive_info: &FichierArchiveBackup, key: &Decrypte
         };
         t.verifier_signature()?;    // Cryptographic check of the transaction
 
-        let new_transaction_time = t.estampille;
+        let new_transaction_time = t.processed_date();
         if first_transaction == DateTime::<Utc>::MIN_UTC {
-            first_transaction = new_transaction_time;
-        } else if first_transaction > new_transaction_time {
+            first_transaction = new_transaction_time.to_owned();
+        } else if &first_transaction > new_transaction_time {
             return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
         }
-        if last_transaction > new_transaction_time {
+        if &last_transaction > new_transaction_time {
             return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to previous transaction"))
         }
-        last_transaction = new_transaction_time;
+        last_transaction = new_transaction_time.to_owned();
         transaction_count += 1;
+
+        if transaction_count % 1000 == 0 {
+            debug!("Processing transaction {} / {}", transaction_count, archive_info.header.nombre_transactions);
+        }
     }
+
+    debug!("Processed {} transactions", transaction_count);
 
     if archive_info.header.nombre_transactions != transaction_count {
         return Err(CommonError::Str("Transaction count mismatch between header and content"))

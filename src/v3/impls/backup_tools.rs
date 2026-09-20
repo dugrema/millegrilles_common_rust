@@ -21,7 +21,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tracing::debug;
 
-async fn load_master_key(key_path: &Path) -> Result<PKey<Private>, CommonError> {
+pub async fn load_master_key(key_path: &Path) -> Result<PKey<Private>, CommonError> {
     eprintln!("Master key path provided: {:?}", key_path);
 
     // rpassword::prompt_password will hide the input as the user types
@@ -44,6 +44,16 @@ async fn load_master_key(key_path: &Path) -> Result<PKey<Private>, CommonError> 
     };
 
     Ok(private_key)
+}
+
+pub async fn tool_verify_backup_file(backup_file: &Path, idmg: &str, master_key_path: &Path) -> Result<(), CommonError> {
+    let master_key = load_master_key(master_key_path).await.unwrap();
+    let archive_info = process_backup_file(backup_file, idmg).await?;
+    let (
+        _key_information,
+        decrypted_key
+    ) = decrypt_key(&archive_info.header, &master_key)?;
+    verify_backup_file(backup_file, idmg, Some(&decrypted_key)).await
 }
 
 pub async fn sort_backup_file(

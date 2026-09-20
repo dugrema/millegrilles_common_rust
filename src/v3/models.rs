@@ -433,7 +433,7 @@ pub struct TransactionProcessedRow {
     #[serde(flatten)]
     pub message: MessageMilleGrillesOwned,
     #[serde(with="FromChrono04DateTime")]
-    pub processed: chrono::DateTime<Utc>,
+    pub processed: DateTime<Utc>,
 }
 
 #[derive(Clone)]

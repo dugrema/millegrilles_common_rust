@@ -17,7 +17,6 @@ use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_cles::CleDechiffrageX25519Impl;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use millegrilles_cryptographie::maitredescles::SignatureDomaines;
-use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, MessageValidable};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::ClientSession;
 use mongodb::options::Hint;
@@ -28,6 +27,7 @@ use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
+use crate::db_structs::TransactionOwned;
 
 pub async fn preflight_check(
     config: &dyn ConfigService,
@@ -521,7 +521,7 @@ async fn extract_transactions_from_backup<W>(
 
         while let Some(transaction) = lines.next_line().await? {
             // Validate structure of transaction
-            let mut t: MessageMilleGrillesOwned = serde_json::from_str(transaction.as_str())?;
+            let mut t: TransactionOwned = serde_json::from_str(transaction.as_str())?;
             t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
 
             // Transactions must be in order, this is enforced here. Also bean counting.

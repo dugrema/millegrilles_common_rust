@@ -75,19 +75,23 @@ pub use tokio;
 // pub use tracing_subscriber;
 // pub use rustls;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use tracing_subscriber::util::SubscriberInitExt;
 use crate::v3::impls::backup_tools::*;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
+    init_logging();
     eprintln!("Running main");
 
     // Tool for sorting encrypted backup archives content
-    run_sort_backup_archive().await
+    // run_sort_backup_archive().await
+    run_verify_backup_file().await
 }
 
+const IDMG: &str = "zaSDqKqrvhrGJS6oC2Zo4TtFXAc5FsbsZkcf9ADPx3u1jFepxikpxxjW";
+
 async fn run_sort_backup_archive() {
-    const IDMG: &str = "zaSDqKqrvhrGJS6oC2Zo4TtFXAc5FsbsZkcf9ADPx3u1jFepxikpxxjW";
     let backup_path = PathBuf::from(
         "/home/mathieu/tas/dev/millegrilles/dev1/var/backup/domains/MaitreDesCles/MaitreDesCles_20220914184226381Z_C_kaQsFm1TFmde.mgbak"
     );
@@ -104,4 +108,22 @@ async fn run_sort_backup_archive() {
         master_key_path.as_path(),
         output_dir.as_path()
     ).await.unwrap();
+}
+
+async fn run_verify_backup_file() {
+    let backup_path = PathBuf::from(
+        "/home/mathieu/tas/dev/millegrilles/dev1/work/MaitreDesCles_20220914184226381Z_C_kaQsFm1TFmde.mgbak"
+    );
+    let master_key_path = PathBuf::from(&format!("/home/mathieu/Documents/cles/{}.pem", IDMG));
+    tool_verify_backup_file(backup_path.as_path(), IDMG, master_key_path.as_path()).await.unwrap()
+}
+
+fn init_logging() {
+    let rust_log_var = std::env::var("RUST_LOG").unwrap_or("error,millegrilles_common_rust=info".to_string());
+    // env_logger::init();
+    use tracing_subscriber::layer::SubscriberExt;
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new(rust_log_var))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 }

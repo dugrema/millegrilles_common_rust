@@ -22,9 +22,11 @@ use openssl::pkey::{PKey, Private};
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::sync::{Arc, Mutex};
+use chrono::Utc;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error, info, warn};
+use crate::db_structs::TransactionOwned;
 
 pub async fn restore_preflight_check<'a>(
     config: &dyn ConfigService,
@@ -110,8 +112,8 @@ pub async fn restore_preflight_check<'a>(
 const CERTIFICATE_CACHE_LIMIT: usize = 250;
 
 pub struct RestorationState {
-    pub first_transaction: u64,
-    pub last_transaction: u64,
+    pub first_transaction: chrono::DateTime<Utc>,
+    pub last_transaction: chrono::DateTime<Utc>,
     pub transaction_count: u64,
     pub initially_skipped: u64,
     skipping: bool,
@@ -180,8 +182,8 @@ async fn process_backup_files<'a>(
     transaction: &dyn TransactionService
 ) -> Result<RestorationState, CommonError> {
     let mut restoration_state = RestorationState {
-        first_transaction: 0,
-        last_transaction: 0,
+        first_transaction: chrono::DateTime::<Utc>::MIN_UTC,
+        last_transaction: chrono::DateTime::<Utc>::MIN_UTC,
         transaction_count: 0,
         initially_skipped: 0,
         skipping: domain_info.last_processed_id.is_some(),
@@ -287,24 +289,26 @@ async fn process_backup_files<'a>(
 
         while let Some(transaction_data) = lines.next_line().await? {
 
-            // Transactions must be in order, this is enforced here. Also bean counting.
-            let mut t: MessageMilleGrillesOwned = match serde_json::from_str(transaction_data.as_str()) {
+            // Transactions must be in order, this is enforced here.
+            // TransactionOwned has a millisecond level processed date.
+            // Also bean counting.
+            let t: TransactionOwned = match serde_json::from_str(transaction_data.as_str()) {
                 Ok(t) => t,
                 Err(e) => {
                     error!("Error processing transaction: {}", transaction_data);
                     Err(e)?
                 }
             };
-            let new_transaction_time = t.estampille.timestamp() as u64;
-            if restoration_state.first_transaction == 0 {
-                restoration_state.first_transaction = new_transaction_time;
-            } else if restoration_state.first_transaction > new_transaction_time {
+            let new_transaction_time = t.processed_date();
+            if restoration_state.first_transaction == chrono::DateTime::<Utc>::MIN_UTC {
+                restoration_state.first_transaction = new_transaction_time.to_owned();
+            } else if &restoration_state.first_transaction > new_transaction_time {
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
             }
-            if restoration_state.last_transaction > new_transaction_time {
+            if &restoration_state.last_transaction > new_transaction_time {
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to previous transaction"))
             }
-            restoration_state.last_transaction = new_transaction_time;
+            restoration_state.last_transaction = new_transaction_time.clone();
             restoration_state.transaction_count += 1;
 
             // Check if we are skipping (resuming)
@@ -347,19 +351,23 @@ async fn process_backup_files<'a>(
                 }
             };
 
+            // Convert t to MessageMillegrillesOwned for rest of processing
+            let mut message: MessageMilleGrillesOwned = t.into();
+
             if ! is_trusted_mgbak {
                 // Note : content validation is very costly (3x process+DB).
-                t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
                 // Verify that the reported pubkey/certificate and message timestamp match
-                pki.validate_message_with_cert(&t, certificate.as_ref())?;
+                // let message_owned: MessageMilleGrillesOwned = t.try_into()?;
+                pki.validate_message_with_cert(&message, certificate.as_ref())?;
             }
 
-            let routing = t.routage.clone();
-            let t_id = t.id.clone();
+            let routing = message.routage.clone();
+            let t_id = message.id.clone();
 
             // Add transaction to the operations aggregator.
             let aggregator = match transaction.route_transaction(
-                t,
+                message,
                 certificate,
             restoration_state.aggregator.take()
             ).await {
@@ -427,11 +435,11 @@ async fn process_redolog_collection<'a>(
         match transaction_row {
             Ok(mut transaction_data) => {
                 // Beancounting
-                if restoration_state.first_transaction == 0 {
-                    restoration_state.first_transaction = transaction_data.processed.timestamp() as u64;
+                if restoration_state.first_transaction == chrono::DateTime::<Utc>::MIN_UTC {
+                    restoration_state.first_transaction = transaction_data.processed;
                 }
                 let previous_last = restoration_state.last_transaction;
-                restoration_state.last_transaction = transaction_data.processed.timestamp() as u64;
+                restoration_state.last_transaction = transaction_data.processed;
                 if previous_last > restoration_state.last_transaction {
                     return Err(CommonError::Str("Transaction processing dates are not sorted properly"));
                 }

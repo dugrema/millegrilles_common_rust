@@ -1,10 +1,11 @@
 use crate::recepteur_messages::MessageValide;
 use chrono::{DateTime, Utc};
+use chrono::serde::ts_milliseconds_option;
 use millegrilles_cryptographie::ed25519::{MessageId, verifier};
 use millegrilles_cryptographie::ed25519_dalek::VerifyingKey;
 use millegrilles_cryptographie::error::Error;
 use millegrilles_cryptographie::hachages::{HacheurBlake2s256, HacheurInterne};
-use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, HacheurMessage, MessageKind, MessageMilleGrillesRef, PreMigration, PreMigrationOwned, RoutageMessage, RoutageMessageOwned, epochseconds};
+use millegrilles_cryptographie::messages_structs::{epochseconds, DechiffrageInterMillegrille, DechiffrageInterMillegrilleOwned, HacheurMessage, MessageKind, MessageMilleGrillesOwned, MessageMilleGrillesRef, PreMigration, PreMigrationOwned, RoutageMessage, RoutageMessageOwned};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +13,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
+use crate::mongo_serde::option_chrono_04_datetime;
 
 /// Mapping avec references des documents d'une table de Transactions.
 #[derive(Clone, Serialize, Deserialize)]
@@ -70,8 +72,11 @@ pub struct TransactionRef<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachements: Option<HashMap<String, Value>>,
 
-    #[serde(rename = "_evenements")]
+    #[serde(rename = "_evenements", skip_serializing_if = "Option::is_none", )]
     pub evenements: Option<EvenementsTransaction>,
+
+    #[serde(skip_serializing_if = "Option::is_none", with="ts_milliseconds_option")]
+    pub processed: Option<DateTime<Utc>>,
 
     #[serde(skip)]
     /// Apres verification, conserve : signature valide, hachage valide
@@ -182,6 +187,7 @@ impl<'a, const C: usize> From<MessageMilleGrillesRef<'a, C>> for TransactionRef<
             millegrille: value.millegrille,
             attachements: None,
             evenements: None,
+            processed: None,
             contenu_valide: value.contenu_valide,
         }
     }
@@ -240,8 +246,11 @@ pub struct TransactionOwned {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachements: Option<HashMap<String, Value>>,
 
-    #[serde(rename = "_evenements")]
+    #[serde(default, rename = "_evenements", skip_serializing_if = "Option::is_none")]
     pub evenements: Option<EvenementsTransaction>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none", with="ts_milliseconds_option")]
+    pub processed: Option<DateTime<Utc>>,
 
     #[serde(skip)]
     /// Apres verification, conserve : signature valide, hachage valide
@@ -292,6 +301,23 @@ impl TransactionOwned {
 
         Ok(())
     }
+
+    /// Returns a date that acts as a processed date
+    /// Supports legacy transactions, also transactions with issues on backup metadata
+    pub fn processed_date(&self) -> &DateTime<Utc> {
+        match self.processed.as_ref() {
+            Some(datetime) => datetime,
+            None => match self.evenements.as_ref() {
+                Some(evenements) => {
+                    match evenements.transaction_traitee.as_ref() {
+                        Some(transaction_traitee) => transaction_traitee,
+                        None => &self.estampille
+                    }
+                },
+                None => &self.estampille
+            }
+        }
+    }
 }
 
 impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
@@ -322,8 +348,30 @@ impl<'a> TryInto<TransactionOwned> for TransactionRef<'a> {
             attachements: match self.attachements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
             // evenements: match self.evenements { Some(inner) => Some(inner.into_iter().map(|(key, value)| (key.to_string(), value)).collect()), None => None },
             evenements: self.evenements,
+            processed: None,
             contenu_valide: self.contenu_valide,
         })
+    }
+}
+
+impl Into<MessageMilleGrillesOwned> for TransactionOwned {
+    fn into(self) -> MessageMilleGrillesOwned {
+        MessageMilleGrillesOwned {
+            id: self.id,
+            pubkey: self.pubkey,
+            estampille: self.estampille,
+            kind: self.kind,
+            contenu: self.contenu,
+            routage: self.routage,
+            pre_migration: self.pre_migration,
+            origine: self.origine,
+            dechiffrage: self.dechiffrage,
+            signature: self.signature,
+            certificat: self.certificat,
+            millegrille: self.millegrille,
+            attachements: self.attachements,
+            contenu_valide: self.contenu_valide,
+        }
     }
 }
 
@@ -370,20 +418,20 @@ impl TryFrom<MessageValide> for TransactionValide {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EvenementsTransaction {
     // #[serde(with = "serde_helpers::chrono_datetime_as_bson_datetime")]
-    pub document_persiste: DateTime<Utc>,
+    pub document_persiste: Value,
     #[serde(rename="_estampille")] //, with = "serde_helpers::chrono_datetime_as_bson_datetime")]
-    pub estampille: DateTime<Utc>,
+    pub estampille: Value,
     pub transaction_complete: Option<bool>,
     pub backup_flag: Option<bool>,
     #[serde(default)] //, with = "opt_chrono_datetime_as_bson_datetime")]
     // #[serde_as(as = "Option<serde_helpers::chrono_datetime_as_bson_datetime>")]
-    pub signature_verifiee: Option<DateTime<Utc>>,
-    #[serde(default)] //, with = "opt_chrono_datetime_as_bson_datetime")]
+    pub signature_verifiee: Option<Value>,
+    #[serde(default, with="option_chrono_04_datetime")] //, with = "opt_chrono_datetime_as_bson_datetime")]
     // #[serde_as(as = "Option<serde_helpers::chrono_datetime_as_bson_datetime>")]
     pub transaction_traitee: Option<DateTime<Utc>>,
     #[serde(default)] //, with = "opt_chrono_datetime_as_bson_datetime")]
     // #[serde_as(as = "Option<serde_helpers::chrono_datetime_as_bson_datetime>")]
-    pub backup_horaire: Option<DateTime<Utc>>,
+    pub backup_horaire: Option<Value>,
     #[serde(flatten)]
     pub extra: Option<HashMap<String, Value>>,
 }
