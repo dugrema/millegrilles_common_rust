@@ -74,3 +74,5 @@ futures-util = { version = "0.3.32" }
 redis = { version = "0.32.7", features = ["tokio-comp", "tokio-native-tls-comp"] }
 # jwt = { version = "0.16.0", features = ["openssl"] }
 jwt-simple = "0.11.9"
+
+rpassword = "7.5.4"

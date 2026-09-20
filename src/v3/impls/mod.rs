@@ -15,3 +15,4 @@ pub mod backup_restorer;
 pub mod backup_encryption;
 pub mod asyncio_ciphers;
 pub mod backup_transfer;
+pub mod backup_tools;

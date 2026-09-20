@@ -284,7 +284,7 @@ fn decrypt_document(private_key: &EnveloppePrivee, value: EncryptedDocument) -> 
     Ok(serde_json::from_slice(document_cles.as_slice())?)
 }
 
-async fn digest_file(path: &Path, code: Code, base: Base) -> Result<String, CommonError> {
+pub async fn digest_file(path: &Path, code: Code, base: Base) -> Result<String, CommonError> {
     let mut backup_file = tokio::io::BufReader::new(tokio::fs::File::open(&path).await?);
 
     let mut digester = HacheurBuilder::new().digester(code).base(base).build();

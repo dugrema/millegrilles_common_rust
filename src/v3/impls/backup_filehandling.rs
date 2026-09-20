@@ -326,7 +326,7 @@ pub async fn load_backup_file_list(backup_path: &Path, idmg: &str) -> Result<Vec
     Ok(backup_files)
 }
 
-async fn process_backup_file(file_path: &Path, idmg: &str) -> Result<FichierArchiveBackup, CommonError> {
+pub async fn process_backup_file(file_path: &Path, idmg: &str) -> Result<FichierArchiveBackup, CommonError> {
     let metadata = file_path.metadata()?;
     let file_len = metadata.len();
     let mut fp = File::open(file_path).await?;

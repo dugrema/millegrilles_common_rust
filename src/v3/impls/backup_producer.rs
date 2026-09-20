@@ -680,7 +680,7 @@ const SIGNATURE_PLACEHOLDER: &str = "DUMMY SIGNATURE - 720ee1bb68b65408356cec3b2
 
 /// Generates and writes a new header. All fields are "maximized" to make space in the file.
 /// This writes all file headers (version, length of header, header itself)
-async fn write_new_header<W>(
+pub async fn write_new_header<W>(
     writer: &mut W,
     archive_type: &TypeArchive,
     idmg: &str,
