@@ -497,6 +497,10 @@ async fn verify_transactions(archive_info: &FichierArchiveBackup, key: &Decrypte
     let decompressor = DeflateDecoder::new(buf_reader);
     let mut lines = BufReader::new(decompressor).lines();
 
+    let mut transaction_count = 0;
+    let mut first_transaction: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
+    let mut last_transaction: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
+
     while let Some(transaction_data) = lines.next_line().await? {
         let mut t: MessageMilleGrillesOwned = match serde_json::from_str(transaction_data.as_str()) {
             Ok(t) => t,
@@ -506,6 +510,22 @@ async fn verify_transactions(archive_info: &FichierArchiveBackup, key: &Decrypte
             }
         };
         t.verifier_signature()?;    // Cryptographic check of the transaction
+
+        let new_transaction_time = t.estampille;
+        if first_transaction == DateTime::<Utc>::MIN_UTC {
+            first_transaction = new_transaction_time;
+        } else if first_transaction > new_transaction_time {
+            return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
+        }
+        if last_transaction > new_transaction_time {
+            return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to previous transaction"))
+        }
+        last_transaction = new_transaction_time;
+        transaction_count += 1;
+    }
+
+    if archive_info.header.nombre_transactions != transaction_count {
+        return Err(CommonError::Str("Transaction count mismatch between header and content"))
     }
 
     Ok(())
