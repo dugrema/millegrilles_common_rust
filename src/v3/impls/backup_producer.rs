@@ -8,7 +8,7 @@ use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncryptionWriterMgs4};
 use crate::v3::impls::backup_encryption::{get_domain_backup_key, load_backup_keys};
 use crate::v3::impls::backup_filehandling::*;
-use crate::v3::models::{BackupPreflightResult, BackupResult, DecryptedKey, PreflightError, TransactionProcessedRow};
+use crate::v3::models::{BackupPreflightResult, BackupResult, BackupTransactionRow, DecryptedKey, PreflightError, TransactionProcessedRow};
 use crate::v3::{ChiffrageService, ConfigService};
 use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
@@ -262,8 +262,6 @@ async fn process_incremental_file_operations(
     Ok(backup_result)
 }
 
-const NEW_LINE_SLICE: [u8; 1] = [NEW_LINE_BYTE; 1];
-
 async fn extract_redolog_content<W>(
     outbound: &MessageOutboundFacade,
     mongo: &MongoDaoImpl,
@@ -330,10 +328,16 @@ where
 
                 // Keep transaction id for cleanup at the end (delete)
                 transaction_ids.push(transaction.message.id.clone());
-                let transaction_str = serde_json::to_string(&transaction)?;
+                // Use wrapper to serialize processed date properly
+                let transaction_ser = BackupTransactionRow {
+                    message: &transaction.message,
+                    processed: &transaction.processed
+                };
+                let transaction_str = serde_json::to_string(&transaction_ser)?;
                 writer.write_all(transaction_str.as_bytes().to_vec().as_slice()).await?;
                 // Add line feed (\n) to allow file to be read as "jsonl"
-                writer.write_all(&NEW_LINE_SLICE).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;  // Avoid encryption stream issue
             }
             Err(e) => {
                 error!("Error parsing redolog content: {}, will ignore and delete transaction", e);
@@ -486,8 +490,6 @@ async fn extract_transactions_from_backup<W>(
     let mut last_transaction: DateTime<Utc> = DateTime::<Utc>::MIN_UTC;
     let mut transaction_count: u64 = 0;
 
-    // let mut files_in_memory = Vec::with_capacity(500_000);
-
     for backup_file in existing_files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
         if backup_file.header.type_archive == TypeArchive::Final.to_string() {
@@ -525,23 +527,21 @@ async fn extract_transactions_from_backup<W>(
             t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
 
             // Transactions must be in order, this is enforced here. Also bean counting.
-            let new_transaction_time = t.estampille;
+            let new_transaction_time = t.processed_date();
             if first_transaction == DateTime::<Utc>::MIN_UTC {
-                first_transaction = new_transaction_time;
-            } else if first_transaction > new_transaction_time {
+                first_transaction = new_transaction_time.to_owned();
+            } else if &first_transaction > new_transaction_time {
                 // first_transaction = new_transaction_time;  // Transactions are out of order, always use oldest date
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
             }
-            if last_transaction > new_transaction_time {
+            if &last_transaction > new_transaction_time {
                 return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to previous transaction"))
             }
-            last_transaction = new_transaction_time;
+            last_transaction = new_transaction_time.to_owned();
             transaction_count += 1;
             if transaction_count % 1000 == 0 {
                 debug!("Processed transaction count {}", transaction_count);
             }
-
-            // files_in_memory.push(t);
 
             // // Write transaction back to new file
             writer.write_all(transaction.as_bytes()).await?;
@@ -551,18 +551,6 @@ async fn extract_transactions_from_backup<W>(
         }
     }
     debug!("Done reading {} transactions", transaction_count);
-
-    // Sort
-    // info!("Sorting {} transactions in memory", files_in_memory.len());
-    // files_in_memory.sort_by_key(|m| m.estampille);
-    // info!("Done sorting");
-    //
-    // // Write all
-    // for t in files_in_memory.into_iter() {
-    //     writer.write_all(serde_json::to_vec(&t).unwrap().as_slice()).await?;
-    //     writer.write_all(&NEW_LINE_SLICE).await?;
-    //     writer.flush().await?;  // Issue with writer when overloaded
-    // }
 
     // Flush
     writer.flush().await?;

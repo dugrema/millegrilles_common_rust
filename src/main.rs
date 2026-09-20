@@ -89,16 +89,17 @@ async fn main() {
     run_verify_backup_file().await
 }
 
-const IDMG: &str = "zaSDqKqrvhrGJS6oC2Zo4TtFXAc5FsbsZkcf9ADPx3u1jFepxikpxxjW";
+// const IDMG: &str = "zaSDqKqrvhrGJS6oC2Zo4TtFXAc5FsbsZkcf9ADPx3u1jFepxikpxxjW";
+const IDMG: &str = "zUBGErt4Dc84B5HnuQRbYtZRgjFghEWgk5cSs1axd2TfZXFmYTgdfGdE";
 
 async fn run_sort_backup_archive() {
     let backup_path = PathBuf::from(
-        "/home/mathieu/tas/dev/millegrilles/dev1/var/backup/domains/MaitreDesCles/MaitreDesCles_20220914184226381Z_C_kaQsFm1TFmde.mgbak"
+        "/home/mathieu/tas/dev/millegrilles/dev1/work/mgfold/current/MaitreDesCles_20260920161231785Z_I_QkBtTetmreXh.mgbak"
     );
     let master_key_path = PathBuf::from(&format!("/home/mathieu/Documents/cles/{}.pem", IDMG));
-    let output_dir = PathBuf::from("/home/mathieu/tas/dev/millegrilles/dev1/work");
-    let signing_key_path = PathBuf::from("/home/mathieu/tas/dev/millegrilles/dev1/secrets/maitredescles.pem");
-    let ca_path = PathBuf::from("/home/mathieu/tas/dev/millegrilles/dev1/etc/millegrille.pem");
+    let output_dir = PathBuf::from("/home/mathieu/tas/dev/millegrilles/dev1/work/mgfold");
+    let signing_key_path = PathBuf::from("/home/mathieu/tas/dev/millegrilles/dev1/work/mgfold/maitredescles.pem");
+    let ca_path = PathBuf::from("/home/mathieu/tas/dev/millegrilles/dev1/work/mgfold/millegrille.pem");
     tokio::fs::create_dir_all(&output_dir).await.unwrap();
     sort_backup_file(
         backup_path.as_path(),
@@ -112,7 +113,7 @@ async fn run_sort_backup_archive() {
 
 async fn run_verify_backup_file() {
     let backup_path = PathBuf::from(
-        "/home/mathieu/tas/dev/millegrilles/dev1/work/MaitreDesCles_20220914184226381Z_C_kaQsFm1TFmde.mgbak"
+        "/home/mathieu/tas/dev/millegrilles/dev1/work/mgfold/MaitreDesCles_20260916175915463Z_C_u4JxLL6YPBdG.mgbak"
     );
     let master_key_path = PathBuf::from(&format!("/home/mathieu/Documents/cles/{}.pem", IDMG));
     tool_verify_backup_file(backup_path.as_path(), IDMG, master_key_path.as_path()).await.unwrap()

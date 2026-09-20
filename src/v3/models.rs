@@ -1,10 +1,12 @@
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
+use crate::certificats::VerificateurPermissions;
 use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
 use base64::Engine;
 use base64::engine::general_purpose;
 use bson::{Bson, Document, doc, serde_helpers::datetime::FromChrono04DateTime};
+use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, Utc};
 use jwt_simple::prelude::Deserialize;
 use millegrilles_cryptographie::chiffrage::FormatChiffrage;
@@ -21,7 +23,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use crate::certificats::VerificateurPermissions;
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -436,6 +437,17 @@ pub struct TransactionProcessedRow {
     pub processed: DateTime<Utc>,
 }
 
+/// Use for serializing in encrypted backup files.
+/// This struct will not work for deserializing legacy data (old backups),
+/// use db_structs::TransactionOwned for those.
+#[derive(Serialize)]
+pub struct BackupTransactionRow<'a> {
+    #[serde(flatten)]
+    pub message: &'a MessageMilleGrillesOwned,
+    #[serde(with="ts_milliseconds")]
+    pub processed: &'a DateTime<Utc>,
+}
+
 #[derive(Clone)]
 pub struct BackupResult {
     /// First transaction in the backup, epoch milliseconds
@@ -499,12 +511,3 @@ pub struct DomainPresenceEvent {
     pub primaire: bool,
     pub reclame_fuuids: bool,
 }
-
-// #[derive(Clone, Debug, Serialize, Deserialize)]
-// pub struct CoreTopologyBackupEvent {
-//     pub uuid_rapport: String,
-//     pub evenement: String,
-//     pub domaine: String,
-//     #[serde(with="ts_seconds")]
-//     pub timestamp: DateTime<Utc>,
-// }

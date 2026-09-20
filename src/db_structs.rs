@@ -250,6 +250,7 @@ pub struct TransactionOwned {
     pub evenements: Option<EvenementsTransaction>,
 
     #[serde(default, skip_serializing_if = "Option::is_none", with="ts_milliseconds_option")]
+    // #[serde(default, skip_serializing_if = "Option::is_none", with="option_chrono_04_datetime")]
     pub processed: Option<DateTime<Utc>>,
 
     #[serde(skip)]

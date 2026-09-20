@@ -4,7 +4,7 @@ use crate::v3::impls::asyncio_ciphers::{AsyncDecryptionReaderMgs4, AsyncEncrypti
 use crate::v3::impls::backup_filehandling::{overwrite_backup_file_header, process_backup_file, verify_backup_file};
 use crate::v3::impls::backup_producer::write_new_header;
 use crate::v3::impls::security_service::digest_file;
-use crate::v3::models::DecryptedKey;
+use crate::v3::models::{BackupTransactionRow, DecryptedKey};
 use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
 use chrono::Utc;
@@ -16,10 +16,12 @@ use millegrilles_cryptographie::x509::{EnveloppePrivee, parse_encrypted_private_
 use openssl::pkey::{PKey, Private};
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
+use bson::DateTime;
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
-use tracing::debug;
+use tracing::{debug, warn};
+use crate::db_structs::TransactionOwned;
 
 pub async fn load_master_key(key_path: &Path) -> Result<PKey<Private>, CommonError> {
     eprintln!("Master key path provided: {:?}", key_path);
@@ -82,6 +84,12 @@ async fn process_sort_backup_file(
     let mut output_writer = tokio::io::BufWriter::new(File::create(outputfile_path.clone()).await?);
 
     let archive_info = process_backup_file(backup_file, idmg).await?;
+    let archive_type = match archive_info.header.type_archive.as_str() {
+        "F" => TypeArchive::Final,
+        "C" => TypeArchive::Concatene,
+        "I" => TypeArchive::Incremental,
+        _ => return Err(CommonError::Str("Unsupported archive type"))
+    };
 
     // Parse all transactions and validate each decrypted entry
     let (key_information, decrypted_key) = decrypt_key(&archive_info.header, master_key)?;
@@ -105,7 +113,7 @@ async fn process_sort_backup_file(
     // Write header first (spacing, it will be overwritten at the end
     let (_backup_header, _header_size) = write_new_header(
         &mut work_file,
-        &TypeArchive::Concatene,
+        &archive_type,
         idmg,
         archive_info.header.domaine.as_str(),
         &archive_info.header.cle_id,
@@ -119,14 +127,17 @@ async fn process_sort_backup_file(
     eprintln!("Creating compressor");
     let mut compressor = DeflateEncoder::new(&mut encryptor);
 
-    let mut transaction_list = Vec::with_capacity(2_000_000);
+    // let mut transaction_list = Vec::with_capacity(2_000_000);
+    let mut first_transaction = chrono::DateTime::<Utc>::MIN_UTC;
+    let mut last_transaction = chrono::DateTime::<Utc>::MIN_UTC;
+    let mut out_of_order = false;
     let mut count_transactions: usize = 0;
     while let Some(transaction_data) = lines.next_line().await? {
         // Output unencrypted data
         output_writer.write_all(transaction_data.as_bytes()).await?;
         output_writer.write_all(b"\n").await?;
 
-        let mut t: MessageMilleGrillesOwned = match serde_json::from_str(transaction_data.as_str()) {
+        let mut t: TransactionOwned = match serde_json::from_str(transaction_data.as_str()) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("Error processing transaction: {}", transaction_data);
@@ -134,15 +145,19 @@ async fn process_sort_backup_file(
             }
         };
 
-        // let new_transaction_time = t.estampille.timestamp() as u64;
-        // if first_transaction == 0 {
-        //     first_transaction = new_transaction_time;
-        // } else if first_transaction > new_transaction_time {
-        //     return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to first"))
-        // }
-        // if last_transaction > new_transaction_time {
-        //     return Err(CommonError::Str("Transactions are out of order - current transaction has time prior to previous transaction"))
-        // }
+        if ! out_of_order {
+            let new_transaction_time = t.processed_date();
+            if first_transaction == chrono::DateTime::<Utc>::MIN_UTC {
+                first_transaction = new_transaction_time.to_owned();
+            } else if &first_transaction > new_transaction_time {
+                warn!("Transactions are out of order - current transaction has time prior to first");
+                out_of_order = true;
+            }
+            if &last_transaction > new_transaction_time {
+                warn!("Transactions are out of order - current transaction has time prior to previous transaction");
+            }
+            last_transaction = new_transaction_time.to_owned();
+        }
         count_transactions += 1;
         if count_transactions % 1000 == 0 {
             eprintln!("Transactions processed: {} / {}", count_transactions, archive_info.header.nombre_transactions);
@@ -150,7 +165,20 @@ async fn process_sort_backup_file(
 
         t.verifier_signature()?;    // Cryptographic check of the transaction
 
-        transaction_list.push(t);
+        if let Some(processed) = t.processed.clone() {
+            // This is a wrong format, convert to proper format
+
+            let owned: MessageMilleGrillesOwned = t.into();
+            let backup_ser = BackupTransactionRow { message: &owned, processed: &processed };
+            compressor.write_all(&serde_json::to_vec(&backup_ser)?).await?;
+        } else {
+            // Just write back the exact string we read from the backup archive
+            compressor.write_all(transaction_data.as_bytes()).await?;
+        }
+
+        compressor.write_all(b"\n").await?;
+        compressor.flush().await?;  // Workaround, issue with stream
+        // transaction_list.push(t);
     }
 
     // Close-out the output writer
@@ -159,18 +187,18 @@ async fn process_sort_backup_file(
 
     // Sort list
     eprintln!("Sorting transactions in memory");
-    transaction_list.sort_by_key(|m| m.estampille);
+    // transaction_list.sort_by_key(|m| *m.processed_date());
 
     // Get updated first transaction times
-    let first_transaction = transaction_list.first().unwrap().estampille;
-    let last_transaction = transaction_list.last().unwrap().estampille;
+    // let first_transaction = transaction_list.first().unwrap().processed_date().to_owned();
+    // let last_transaction = transaction_list.last().unwrap().processed_date().to_owned();
 
     eprintln!("Wrting back transactions into workfile");
-    for t in transaction_list.into_iter() {
-        compressor.write_all(&serde_json::to_vec(&t)?).await?;
-        compressor.write_all(b"\n").await?;
-        compressor.flush().await?;  // Workaround, issue with stream
-    }
+    // for t in transaction_list.into_iter() {
+    //     compressor.write_all(&serde_json::to_vec(&t)?).await?;
+    //     compressor.write_all(b"\n").await?;
+    //     compressor.flush().await?;  // Workaround, issue with stream
+    // }
 
     eprintln!("Shut-down writing pipeline");
     compressor.shutdown().await?;
@@ -187,7 +215,7 @@ async fn process_sort_backup_file(
     // Update the backup header with metadata including decryption information
     let mut backup_header = archive_info.header.clone();
     backup_header.timestamp = Some(Utc::now());
-    backup_header.debut_backup = first_transaction;
+    backup_header.debut_backup = first_transaction.clone();
     backup_header.fin_backup = last_transaction;
     backup_header.nombre_transactions = count_transactions as u64;
     match encryption_result.cles.nonce.as_ref() {
@@ -207,7 +235,7 @@ async fn process_sort_backup_file(
 
     eprintln!("Renaming workfile with calculated digest");
     let (path_backup_file, _digest_suffix, _filesize) = rename_backup_file(
-        &TypeArchive::Concatene,
+        &archive_type,
         first_transaction,
         archive_info.header.domaine.as_str(),
         output_dir,
