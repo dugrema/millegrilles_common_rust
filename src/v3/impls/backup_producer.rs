@@ -1,5 +1,5 @@
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
-use crate::constantes::{COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, NEW_LINE_BYTE, Securite};
+use crate::constantes::{COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, Securite};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::messages_generiques::CommandeSauvegarderCertificat;
