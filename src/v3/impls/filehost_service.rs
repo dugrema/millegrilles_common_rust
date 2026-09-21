@@ -11,11 +11,12 @@ use async_trait::async_trait;
 use chrono::Utc;
 use millegrilles_cryptographie::messages_structs::MessageKind;
 use millegrilles_cryptographie::x509::EnveloppePrivee;
-use reqwest::Body;
+use reqwest::{Body, Response};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio_util::io::ReaderStream;
-use tracing::{debug, error, warn};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
 pub struct FilehostServiceImpl {
     config: Arc<dyn ConfigService>,
@@ -63,6 +64,52 @@ impl FilehostServiceImpl {
 
         Ok(())
     }
+
+    async fn put_file_stream(file: &FichierArchiveBackup, connection: FilehostClient, url_upload: String) -> Result<Response, Error> {
+        let file_reader = tokio::io::BufReader::new(tokio::fs::File::open(file.path_fichier.as_path()).await?);
+        let file_stream = ReaderStream::new(file_reader);
+        debug!("PUT file at {}", url_upload.as_str());
+        let resultat_upload = connection.client.put(url_upload)
+            .body(Body::wrap_stream(file_stream))
+            .header("Content-Length", file.len)
+            .send().await?;
+        Ok(resultat_upload)
+    }
+
+    /// Call this method regularly for maintenance of the filehost connection
+    async fn maintain(&self) -> Result<(), CommonError> {
+        // Remove client if not used within the last 10 minutes.
+        let filehost = {
+            let guard = self.session.lock().unwrap();
+            guard.clone()
+        };
+        if let Some(filehost) = filehost {
+            let now = Utc::now();
+            let expired = now - chrono::Duration::minutes(10);
+            if filehost.last_usage < expired {
+                self.disconnect().await.ok();
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn run(&self, cancellation_token: CancellationToken) {
+        loop {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    debug!("SecurityServiceImpl stopping");
+                    break;
+                }
+                _ = async {
+                    // Reset cache
+                    if let Err(e) = self.maintain().await {
+                        error!("Filehost maintenance error: {:?}", e);
+                    };
+                    tokio::time::sleep(tokio::time::Duration::from_secs(120)).await;
+                } => {}
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -71,13 +118,14 @@ impl FilehostService for FilehostServiceImpl {
         // Get the client from the mutex if already built. Return immediately.
         let filehost = {
             let now = Utc::now();  // Get time before mutex lock (slow)
-            let expired = now + chrono::Duration::minutes(3);
+            let expired = now - chrono::Duration::minutes(3);
             let mut guard = self.session.lock().unwrap();
             if let Some(client) = guard.as_mut() {
-                if client.last_test < expired {
+                if client.last_test > expired {
                     client.last_usage = now;
                     return Ok(client.clone())
                 } else{
+                    // Will re-test the existing client
                     Some(client.clone())
                 }
             } else {
@@ -157,16 +205,21 @@ impl FilehostService for FilehostServiceImpl {
             filename
         );
 
-        let file_reader = tokio::io::BufReader::new(tokio::fs::File::open(file.path_fichier.as_path()).await?);
-        let file_stream = ReaderStream::new(file_reader);
-        debug!("PUT file at {}", url_upload.as_str());
-        let resultat_upload = connection.client.put(url_upload)
-            .body(Body::wrap_stream(file_stream))
-            .header("Content-Length", file.len)
-            .send().await?;
-
+        let resultat_upload = Self::put_file_stream(file, connection.clone(), url_upload.clone()).await?;
         match resultat_upload.status().as_u16() {
             200 | 201 | 202 => Ok(()),
+            401 => {
+                info!("Filehost authentication expired - retrying");
+                // Try to reauthenticate
+                if let Err(e) = self.authenticate(&connection).await {
+                    self.disconnect().await.ok();
+                    Err(e)?;
+                }
+                // Retry
+                let resultat_upload = Self::put_file_stream(file, connection, url_upload).await?;
+                resultat_upload.error_for_status()?;  // Second time we get an error - just raise
+                Ok(())
+            },
             409 => {
                 debug!("File already present on server and OK (status: 409): {:?}", file.path_fichier);
                 Ok(())
@@ -175,6 +228,7 @@ impl FilehostService for FilehostServiceImpl {
         }
     }
 }
+
 
 async fn build_client(private_key: &EnveloppePrivee, filehost: &RequeteFilehostItem) -> Result<FilehostClient, CommonError> {
     let ca = private_key.enveloppe_ca.as_ref();
