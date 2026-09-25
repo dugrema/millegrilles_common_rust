@@ -89,21 +89,23 @@ impl RabbitMessageDispatcher {
         let (
             correlation_id,
             timeout_blocking,
+            blocking,
             domains,
             exchanges
         ) = match &message.routing {
-            MessageRoutingEnum::None => {(None, None, None, None)}
+            MessageRoutingEnum::None => {(None, None, false, None, None)}
             MessageRoutingEnum::Action(r) => {(
                 r.correlation_id.clone(),
                 r.timeout_blocking.clone(),
+                r.blocking != Some(false),
                 Some(vec![r.domaine.clone()]),
                 Some(r.exchanges.clone())
             )}
-            MessageRoutingEnum::Response(_) => {(None, None, None, None)}
+            MessageRoutingEnum::Response(_) => {(None, None, false, None, None)}
         };
-        let receiver = match correlation_id {
-            Some(correlation_id) => {
-                // We have a message with correlation, add expiration information
+        let receiver = match (correlation_id, blocking) {
+            (Some(correlation_id), true)  => {
+                // We have a blocking message with correlation, add expiration information
                 let timeout_messages = timeout_blocking.unwrap_or_else(|| DEFAULT_MESSAGE_TIMEOUT);
                 let expiration = Utc::now() + chrono::Duration::milliseconds(timeout_messages as i64);
 
@@ -115,7 +117,7 @@ impl RabbitMessageDispatcher {
                 // Return receiver
                 Some(rx)
             },
-            None => None
+            _ => None
         };
 
         self.tx_out.send(message).await?;
