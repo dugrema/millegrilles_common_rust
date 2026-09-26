@@ -23,9 +23,8 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use multibase::Base;
 use multihash::Code;
-use crate::hachages::{hacher_bytes, hacher_bytes_vu8};
+use crate::hachages::hacher_bytes_vu8;
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
