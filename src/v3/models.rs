@@ -23,6 +23,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use multibase::Base;
+use multihash::Code;
+use crate::hachages::{hacher_bytes, hacher_bytes_vu8};
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -100,7 +103,13 @@ pub struct RowTransactionTracking {
 impl TryFrom<&MessageMilleGrillesOwned> for RowTransactionTracking {
     type Error = CommonError;
     fn try_from(value: &MessageMilleGrillesOwned) -> Result<Self, CommonError> {
-        let bid_complete = hex::decode(value.id.as_str())?;
+        let bid_complete = match hex::decode(value.id.as_str()) {
+            Ok(value) => value,
+            Err(_e) => {
+                // Probably not a hex digest, e.g. old uuidv4. Just re-hash the string.
+                hacher_bytes_vu8(value.id.as_bytes(), Some(Code::Blake2s256))
+            }
+        };
         let bid_truncated = &bid_complete[0..16];
         let bid_truncated_base64 = general_purpose::STANDARD.encode(bid_truncated);
         let bid_truncated_bson = Bson::Binary(bson::Binary::from_base64(bid_truncated_base64, None)

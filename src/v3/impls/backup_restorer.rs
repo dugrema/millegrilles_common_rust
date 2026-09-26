@@ -1,5 +1,5 @@
 use crate::constantes::{FIELD_DATE_PROCESSED, INDEX_DATE_PROCESSED};
-use crate::error::Error as CommonError;
+use crate::error::{Error as CommonError, Error};
 use crate::hachages::Hacheur;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
@@ -22,7 +22,7 @@ use openssl::pkey::{PKey, Private};
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::sync::{Arc, Mutex};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error, info, warn};
@@ -334,22 +334,20 @@ async fn process_backup_files<'a>(
                 )
             }
 
-            // Fetch certificate
-            let pubkey = &t.pubkey;
-            let certificate = match certificate_cache.get(pubkey) {
-                Some(certificate) => certificate.clone(),
-                None => {
-                    debug!("Loading certificate {}", pubkey);
-                    let (certificate, valid) = outbound.get_certificate(pubkey, Some(&t.estampille), Some(3_000)).await?;
-                    if valid {
-                        if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
-                            certificate_cache.clear();
-                        }
-                        certificate_cache.insert(pubkey.clone(), certificate.clone());
-                    }
-                    certificate
-                }
+            // Fetch certificates
+            let verif_certificate = get_certificate(outbound, &mut certificate_cache, &t.estampille, &t.pubkey).await?;
+            let transaction_certificate: Arc<EnveloppeCertificat> = match t.pre_migration.as_ref() {
+                Some(pre_migration) => match (pre_migration.pubkey.as_ref(), pre_migration.estampille.as_ref()) {
+                    (Some(pubkey), Some(estampille)) => {
+                        debug!("Using pre-migration certificate fingerprint {}", pubkey);
+                        get_certificate(outbound, &mut certificate_cache, estampille, pubkey).await?
+                    },
+                    _ => verif_certificate.clone()
+                },
+                None => verif_certificate.clone()
             };
+
+            let pre_migration = t.pre_migration.clone();
 
             // Convert t to MessageMillegrillesOwned for rest of processing
             let mut message: MessageMilleGrillesOwned = t.into();
@@ -359,7 +357,20 @@ async fn process_backup_files<'a>(
                 message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
                 // Verify that the reported pubkey/certificate and message timestamp match
                 // let message_owned: MessageMilleGrillesOwned = t.try_into()?;
-                pki.validate_message_with_cert(&message, certificate.as_ref())?;
+                pki.validate_message_with_cert(&message, verif_certificate.as_ref())?;
+            }
+
+            if let Some(pre_migration) = pre_migration {
+                debug!("Overriding transaction identifiers with {:?}", pre_migration);
+                if let Some(id) = pre_migration.id {
+                    message.id = id;
+                }
+                if let Some(pubkey) = pre_migration.pubkey {
+                    message.pubkey = pubkey;
+                }
+                if let Some(estampille) = pre_migration.estampille {
+                    message.estampille = estampille;
+                }
             }
 
             let routing = message.routage.clone();
@@ -368,7 +379,7 @@ async fn process_backup_files<'a>(
             // Add transaction to the operations aggregator.
             let aggregator = match transaction.route_transaction(
                 message,
-                certificate,
+                transaction_certificate,
             restoration_state.aggregator.take()
             ).await {
                 Ok(aggregator) => aggregator,
@@ -389,6 +400,28 @@ async fn process_backup_files<'a>(
     }
 
     Ok(restoration_state)
+}
+
+async fn get_certificate(
+    outbound: &MessageOutboundFacade,
+    certificate_cache: &mut HashMap<String, Arc<EnveloppeCertificat>>,
+    estampille: &DateTime<Utc>,
+    pubkey: &String,
+) -> Result<Arc<EnveloppeCertificat>, Error> {
+    match certificate_cache.get(pubkey) {
+        Some(certificate) => Ok(certificate.clone()),
+        None => {
+            debug!("Loading certificate {}", pubkey);
+            let (certificate, valid) = outbound.get_certificate(pubkey, Some(estampille), Some(3_000)).await?;
+            if valid {
+                if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
+                    certificate_cache.clear();
+                }
+                certificate_cache.insert(pubkey.clone(), certificate.clone());
+            }
+            Ok(certificate)
+        }
+    }
 }
 
 pub async fn truncate_data_tables(
