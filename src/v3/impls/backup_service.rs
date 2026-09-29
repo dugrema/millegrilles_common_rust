@@ -187,6 +187,7 @@ impl DomainBackupServiceImpl {
         redolog_collection_name: &str,
         tracking_collection_name: &str,
         resume: bool,
+        disable_certificate_validation: bool,
         version: Option<String>,
         master_key: Option<&PKey<Private>>,
     ) -> Result<RestorationState, CommonError> {
@@ -210,11 +211,13 @@ impl DomainBackupServiceImpl {
 
         let result = process_transactions_from_backup(
             self.pki.as_ref(),
+            self.config.as_ref(),
             self.mongo.as_ref(),
             &preflight,
             self.outbound.as_ref(),
             self.transaction.as_ref(),
             redolog_collection_name,
+            disable_certificate_validation,
         ).await?;
 
         Ok(result)
@@ -268,6 +271,7 @@ impl BackupService for DomainBackupServiceImpl {
         redolog_collection_name: &str,
         tracking_collection_name: &str,
         resume: bool,
+        disable_certificate_validation: bool,
         version: Option<String>,
         master_key: Option<&PKey<Private>>,
     ) -> Result<RestorationState, CommonError> {
@@ -282,6 +286,7 @@ impl BackupService for DomainBackupServiceImpl {
             redolog_collection_name,
             tracking_collection_name,
             resume,
+            disable_certificate_validation,
             version,
             master_key,
         ).await;

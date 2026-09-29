@@ -110,6 +110,7 @@ pub trait BackupService: Send + Sync {
         redolog_collection_name: &str,
         tracking_collection_name: &str,
         resume: bool,
+        disable_certificate_validation: bool,
         version: Option<String>,
         master_key: Option<&PKey<Private>>,
     ) -> Result<RestorationState, CommonError>;

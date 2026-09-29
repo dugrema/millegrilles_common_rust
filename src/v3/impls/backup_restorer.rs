@@ -122,15 +122,17 @@ pub struct RestorationState {
 
 pub async fn process_transactions_from_backup<'a>(
     pki: &dyn PkiService,
+    config: &dyn ConfigService,
     mongo: &MongoDaoImpl,
     domain_info: &RestorePreflightResult<'a>,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService,
     redolog_collection_name: &str,
+    disable_certificate_validation: bool,
 ) -> Result<RestorationState, CommonError> {
 
     // Process all mgbak files
-    let mut restoration_state = process_backup_files(pki, domain_info, outbound, transaction).await?;
+    let mut restoration_state = process_backup_files(pki, config, domain_info, outbound, transaction, disable_certificate_validation).await?;
     if restoration_state.transaction_count != domain_info.file_transaction_count {
         warn!(
             "Was expecting {} transactions according to file headers, we got {} transactions",
@@ -144,12 +146,14 @@ pub async fn process_transactions_from_backup<'a>(
     // Process the redo-log collection
     process_redolog_collection(
         pki,
+        config,
         mongo,
         outbound,
         transaction,
         redolog_collection_name,
         domain_info,
-        &mut restoration_state
+        &mut restoration_state,
+        disable_certificate_validation,
     ).await?;
 
     // Run last batch of write operations from aggregator when applicable
@@ -177,9 +181,12 @@ const TRANSACTION_BACTH_SIZE: u64 = 50;
 
 async fn process_backup_files<'a>(
     pki: &dyn PkiService,
+    config: &dyn ConfigService,
     domain_info: &RestorePreflightResult<'a>,
     outbound: &MessageOutboundFacade,
-    transaction: &dyn TransactionService
+    transaction: &dyn TransactionService,
+    disable_certificate_validation: bool,
+
 ) -> Result<RestorationState, CommonError> {
     let mut restoration_state = RestorationState {
         first_transaction: chrono::DateTime::<Utc>::MIN_UTC,
@@ -190,11 +197,15 @@ async fn process_backup_files<'a>(
         aggregator: None,
     };
 
+    // Keep a reference to the module certificate, used in the special case where we disable
+    // the certificate validation (e.g. when restoring CorePki)
+    let module_certificate = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.clone();
+
     let mut certificate_cache: HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
     for backup_file in &domain_info.files {
         debug!("Processing backup file {:?}", backup_file.path_fichier);
 
-        let is_trusted_mgbak = match backup_file.header.verify() {
+        let is_trusted_mgbak = !disable_certificate_validation && match backup_file.header.verify() {
             Ok(()) => { // Header signature OK
                 // Process the file to digest the encrypted content and compare with header
                 let mut file = File::open(backup_file.path_fichier.as_path()).await?;
@@ -334,32 +345,45 @@ async fn process_backup_files<'a>(
                 )
             }
 
-            // Fetch certificates
-            let verif_certificate = get_certificate(outbound, &mut certificate_cache, &t.estampille, &t.pubkey).await?;
-            let transaction_certificate: Arc<EnveloppeCertificat> = match t.pre_migration.as_ref() {
-                Some(pre_migration) => match (pre_migration.pubkey.as_ref(), pre_migration.estampille.as_ref()) {
-                    (Some(pubkey), Some(estampille)) => {
-                        debug!("Using pre-migration certificate fingerprint {}", pubkey);
-                        get_certificate(outbound, &mut certificate_cache, estampille, pubkey).await?
-                    },
-                    _ => verif_certificate.clone()
-                },
-                None => verif_certificate.clone()
-            };
-
+            // Copy data that gets moved
             let pre_migration = t.pre_migration.clone();
 
-            // Convert t to MessageMillegrillesOwned for rest of processing
-            let mut message: MessageMilleGrillesOwned = t.into();
-
-            if ! is_trusted_mgbak {
+            let (mut message, transaction_certificate) = if disable_certificate_validation {
+                // Verificatino is disabled, we always verify the integrity of the transaction but no cert verification
+                let mut message: MessageMilleGrillesOwned = t.into();
                 // Note : content validation is very costly (3x process+DB).
                 message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
-                // Verify that the reported pubkey/certificate and message timestamp match
-                // let message_owned: MessageMilleGrillesOwned = t.try_into()?;
-                pki.validate_message_with_cert(&message, verif_certificate.as_ref())?;
-            }
+                // Return the module certificate instead of the transaction certificate (cert cannot be None when processing transactions).
+                (message, module_certificate.clone())
+            } else {
+                // Regular approach, fetch certificates
+                let verif_certificate = get_certificate(outbound, &mut certificate_cache, &t.estampille, &t.pubkey).await?;
+                let transaction_certificate: Arc<EnveloppeCertificat> = match t.pre_migration.as_ref() {
+                    Some(pre_migration) => match (pre_migration.pubkey.as_ref(), pre_migration.estampille.as_ref()) {
+                        (Some(pubkey), Some(estampille)) => {
+                            debug!("Using pre-migration certificate fingerprint {}", pubkey);
+                            get_certificate(outbound, &mut certificate_cache, estampille, pubkey).await?
+                        },
+                        _ => verif_certificate.clone()
+                    },
+                    None => verif_certificate.clone()
+                };
 
+                // Convert t to MessageMillegrillesOwned for rest of processing
+                let mut message: MessageMilleGrillesOwned = t.into();
+
+                if !is_trusted_mgbak {
+                    // Note : content validation is very costly (3x process+DB).
+                    message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                    // Verify that the reported pubkey/certificate and message timestamp match
+                    // let message_owned: MessageMilleGrillesOwned = t.try_into()?;
+                    pki.validate_message_with_cert(&message, verif_certificate.as_ref())?;
+                }
+
+                (message, transaction_certificate)
+            };
+
+            // Handle data migration from older structures/millegrilles
             if let Some(pre_migration) = pre_migration {
                 debug!("Overriding transaction identifiers with {:?}", pre_migration);
                 if let Some(id) = pre_migration.id {
@@ -445,12 +469,14 @@ pub async fn truncate_data_tables(
 
 async fn process_redolog_collection<'a>(
     pki: &dyn PkiService,
+    config: &dyn ConfigService,
     mongo: &MongoDaoImpl,
     outbound: &MessageOutboundFacade,
     transaction: &dyn TransactionService,
     redolog_collection_name: &str,
     domain_info: &RestorePreflightResult<'a>,
     restoration_state: &mut RestorationState,
+    disable_certificate_validation: bool,
 ) -> Result<(), CommonError> {
     let collection = mongo.get_collection_typed::<TransactionProcessedRow>(redolog_collection_name)?;
     debug!("Opening cursor on redo-log collection: {}", redolog_collection_name);
@@ -462,6 +488,9 @@ async fn process_redolog_collection<'a>(
         .batch_size(20)
         .limit(10_000)
         .await?;
+
+    // Keep a ref to this module's certificate, used when certificate validation is disabled
+    let module_certificate = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.clone();
 
     debug!("Processing entries from redo-log");
     while let Some(transaction_row) = cursor.next().await {
@@ -495,16 +524,22 @@ async fn process_redolog_collection<'a>(
                     let certificate_str = certificate_string.join("\n");
                     Arc::new(EnveloppeCertificat::try_from(certificate_str.as_str())?)
                 } else {
-                    debug!("Fetch certificate for redo-log transaction {}", transaction_data.message.id);
-                    let (certificate, valid) = outbound.get_certificate(
-                        transaction_data.message.pubkey.as_str(),
-                        Some(&transaction_data.message.estampille),
-                        Some(3_000)
-                    ).await?;
-                    if ! valid {
-                        return Err(CommonError::Str("Certificate does not match redo-log transaction"));
+                    // Certificate was not in transaction
+                    if disable_certificate_validation {
+                        // Validation is disabled (e.g. restoring CorePki). Use a "fake" certificate, just return this modules' certificate.
+                        module_certificate.clone()
+                    } else {
+                        debug!("Fetch certificate for redo-log transaction {}", transaction_data.message.id);
+                        let (certificate, valid) = outbound.get_certificate(
+                            transaction_data.message.pubkey.as_str(),
+                            Some(&transaction_data.message.estampille),
+                            Some(3_000)
+                        ).await?;
+                        if !valid {
+                            return Err(CommonError::Str("Certificate does not match redo-log transaction"));
+                        }
+                        certificate
                     }
-                    certificate
                 };
 
                 // Validate structure of transaction. Costly, but this is coming from DB (not encrypted).
