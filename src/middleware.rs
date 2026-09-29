@@ -744,6 +744,9 @@ pub fn formatter_message_certificat(enveloppe: &EnveloppeCertificat) -> Result<R
     };
 
     let reponse = ReponseEnveloppe {
+        ok: None,
+        code: None,
+        err: None,
         chaine_pem: pems,
         fingerprint: enveloppe.fingerprint()?.to_owned(),
         ca_pem: enveloppe.ca_pem()?,
@@ -768,6 +771,9 @@ impl TryInto<ReponseEnveloppe> for ReponseCertificat {
         let chaine_pem = match self.chaine_pem { Some(inner) => inner, None => Err(crate::error::Error::Str("ReponseCertificat chaine_pem manquant"))?};
         let fingerprint = match self.fingerprint { Some(inner) => inner, None => Err(crate::error::Error::Str("ReponseCertificat fingerprint manquant"))?};
         Ok(ReponseEnveloppe {
+            ok: None,
+            code: None,
+            err: None,
             chaine_pem,
             fingerprint,
             ca_pem: self.ca_pem,
@@ -777,6 +783,9 @@ impl TryInto<ReponseEnveloppe> for ReponseCertificat {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReponseEnveloppe {
+    pub ok: Option<bool>,
+    pub code: Option<usize>,
+    pub err: Option<String>,
     pub chaine_pem: Vec<String>,
     pub fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1177,7 +1186,7 @@ pub async fn requete_certificat<M,S>(middleware: &M, fingerprint: S) -> Result<O
                 let enveloppe = m.enveloppe_certificat;
                 let pem_ca = enveloppe.ca_pem()?;
                 let pems: Vec<String> = enveloppe.chaine_fingerprint_pem()?.into_iter().map(|f| f.pem).collect();
-                ReponseEnveloppe { chaine_pem: pems, fingerprint: enveloppe.fingerprint()?, ca_pem: pem_ca }
+                ReponseEnveloppe { ok: None, code: None, err: None, chaine_pem: pems, fingerprint: enveloppe.fingerprint()?, ca_pem: pem_ca }
             },
             _ => Err(format!("requete_certificat Erreur requete certificat {} : mauvais type reponse", fingerprint_str))?
         },

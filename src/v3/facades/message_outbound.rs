@@ -273,8 +273,16 @@ impl MessageOutboundFacade {
         let response = self.send_request(routing, request).await?;
         let certificate_information: ReponseEnveloppe = response.message.deserialize()?;
 
+        if certificate_information.ok == Some(false) {
+            return Err(CommonError::String(format!("Error {:?} getting certificate: {:?}",
+                certificate_information.code,
+                certificate_information.err
+            )))
+        }
+
+        let chaine_pem = certificate_information.chaine_pem.join("\n");
         match self.pki.validate_pem(
-            certificate_information.chaine_pem.join("\n").as_str(),
+            chaine_pem.as_str(),
             certificate_information.ca_pem.as_deref(),
             date
         ) {
@@ -283,7 +291,7 @@ impl MessageOutboundFacade {
                 if date.is_none() {
                     // Special case - just return certificate without validating.
                     Ok((
-                        Arc::new(EnveloppeCertificat::try_from(certificate_information.chaine_pem.join("\n").as_str())?),
+                        Arc::new(EnveloppeCertificat::try_from(chaine_pem.as_str())?),
                         false
                     ))
                 } else {
