@@ -34,7 +34,7 @@ pub trait MongoDao: Send + Sync {
 
     async fn create_index(
         &self,
-        configuration: &dyn ConfigMessages,
+        // configuration: &dyn ConfigMessages,  // Only used to try to create mongo account again
         nom_collection: &str,
         champs_index: Vec<ChampIndex>,
         options: Option<IndexOptions>
@@ -116,9 +116,16 @@ impl MongoDao for MongoDaoImpl {
         Ok(self.client.start_session().await?)
     }
 
-    async fn create_index(&self, configuration: &dyn ConfigMessages, nom_collection: &str, champs_index: Vec<ChampIndex>, options: Option<IndexOptions>) -> Result<(), CommonError> {
+    async fn create_index(
+        &self,
+        // configuration: &dyn ConfigMessages,
+        nom_collection: &str,
+        champs_index: Vec<ChampIndex>,
+        options: Option<IndexOptions>
+    ) -> Result<(), CommonError> {
         let database = self.get_database()?;
-        create_index(configuration, &database, nom_collection, champs_index, options).await
+        // create_index(configuration, &database, nom_collection, champs_index, options).await
+        create_index(&database, nom_collection, champs_index, options).await
     }
 
     async fn bulk_write(&self, models: Vec<WriteModel>, session: Option<&mut ClientSession>, ordered: bool) -> Result<(), CommonError> {
@@ -189,7 +196,7 @@ fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -
 }
 
 async fn create_index(
-    configuration: &dyn ConfigMessages,
+    // configuration: &dyn ConfigMessages,
     database: &Database,
     nom_collection: &str,
     champs_index: Vec<ChampIndex>,
@@ -219,10 +226,10 @@ async fn create_index(
     match database.run_command(commande_pki).await {
         Ok(_) => Ok(()),
         Err(e) => {
-            info!("Erreur connexion Mongo DB, tenter l'inscription du compte");
-            if let Err(e) = emettre_certificat_compte(configuration).await {
-                error!("create_index Erreur inscription a midcompte : {:?}", e);
-            }
+            // info!("Erreur connexion Mongo DB, tenter l'inscription du compte");
+            // if let Err(e) = emettre_certificat_compte(configuration).await {
+            //     error!("create_index Erreur inscription a midcompte : {:?}", e);
+            // }
 
             Err(CommonError::String(format!("Erreur connexion MongoDB (initial, creation index) : {:?}", e)))
         }

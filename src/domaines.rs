@@ -528,7 +528,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
             );
 
             middleware.create_index(
-                middleware,
+                // middleware,
                 nom_collection_transactions.as_str(),
                 champs_index_transactions,
                 Some(options_unique_transactions)
@@ -543,7 +543,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1}
             );
             middleware.create_index(
-                middleware,
+                // middleware,
                 nom_collection_transactions.as_str(),
                 champs_index_transactions,
                 Some(options_unique_transactions)
@@ -560,7 +560,7 @@ pub trait GestionnaireDomaine: Clone + Sized + Send + Sync + TraiterTransaction 
                 ChampIndex {nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1},
             );
             middleware.create_index(
-                middleware,
+                // middleware,
                 nom_collection_transactions.as_str(),
                 champs_index_transactions,
                 Some(options_unique_transactions)

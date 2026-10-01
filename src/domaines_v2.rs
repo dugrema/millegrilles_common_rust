@@ -795,7 +795,7 @@ pub async fn prepare_mongodb_domain_indexes<M,S>(middleware: &M, collection_name
     );
 
     middleware.create_index(
-        middleware,
+        // middleware,
         collection,
         champs_index_transactions,
         Some(options_unique_transactions)
@@ -810,7 +810,7 @@ pub async fn prepare_mongodb_domain_indexes<M,S>(middleware: &M, collection_name
         ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 }
     );
     middleware.create_index(
-        middleware,
+        // middleware,
         collection,
         champs_index_transactions,
         Some(options_unique_transactions)
@@ -827,7 +827,7 @@ pub async fn prepare_mongodb_domain_indexes<M,S>(middleware: &M, collection_name
         ChampIndex { nom_champ: String::from(TRANSACTION_CHAMP_EVENEMENT_COMPLETE), direction: 1 },
     );
     middleware.create_index(
-        middleware,
+        // middleware,
         collection,
         champs_index_transactions,
         Some(options_unique_transactions)
@@ -845,7 +845,7 @@ pub async fn prepare_mongodb_domain_indexes<M,S>(middleware: &M, collection_name
         ChampIndex { nom_champ: String::from("bid_truncated"), direction: 1 }
     );
     middleware.create_index(
-        middleware,
+        // middleware,
         table_transactions_traitees.as_str(),
         champs_index_transactions,
         Some(options_unique_transactions)
@@ -860,7 +860,7 @@ pub async fn prepare_mongodb_domain_indexes<M,S>(middleware: &M, collection_name
         ChampIndex { nom_champ: String::from("date_traitement"), direction: 1 }
     );
     middleware.create_index(
-        middleware,
+        // middleware,
         table_transactions_traitees.as_str(),
         champs_index_transactions,
         Some(options_unique_transactions)
