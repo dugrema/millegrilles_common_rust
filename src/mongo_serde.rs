@@ -1,15 +1,22 @@
 pub mod option_chrono_04_datetime {
 
     use chrono::{DateTime, Utc};
+    use jwt_simple::prelude::Serialize;
     use serde::{self, Deserialize, Serializer, Deserializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(
+        #[serde(with = "bson::serde_helpers::datetime::FromChrono04DateTime")]
+        DateTime<Utc>,
+    );
 
     pub fn serialize<S>(date: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
     where S: Serializer
     {
         match date {
             Some(inner) => {
-                let s = inner.timestamp();
-                serializer.serialize_i64(s)
+                let helper = Helper(inner.to_owned());
+                serializer.serialize_some(&helper)
             },
             None => {
                 serializer.serialize_none()
@@ -23,8 +30,9 @@ pub mod option_chrono_04_datetime {
         let s: Option<bson::datetime::DateTime> = Option::deserialize(deserializer)?;
         match s {
             Some(inner) =>  {
-                let dt = chrono::DateTime::<Utc>::from_timestamp_millis(inner.timestamp_millis());
-                Ok(dt)
+                // let dt = chrono::DateTime::<Utc>::from_timestamp_millis(inner.timestamp_millis());
+                let dt = inner.to_chrono();
+                Ok(Some(dt))
             },
             None => Ok(None)
         }
