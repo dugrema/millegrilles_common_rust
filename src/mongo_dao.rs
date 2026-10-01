@@ -1,8 +1,7 @@
 use crate::bson::Array;
 use crate::certificats::ValidateurX509;
-use crate::configuration::{ConfigMessages, ConfigurationMongo, ConfigurationPki};
+use crate::configuration::{ConfigurationMongo, ConfigurationPki};
 use crate::error::Error as CommonError;
-use crate::rabbitmq_dao::emettre_certificat_compte;
 use async_trait::async_trait;
 use mongodb::bson::Bson;
 use mongodb::bson::document::Document;
@@ -16,7 +15,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::vec::IntoIter;
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info};
+use tracing::debug;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {

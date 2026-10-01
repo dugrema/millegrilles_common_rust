@@ -92,6 +92,7 @@ async fn main() {
 // const IDMG: &str = "zaSDqKqrvhrGJS6oC2Zo4TtFXAc5FsbsZkcf9ADPx3u1jFepxikpxxjW";
 const IDMG: &str = "zUBGErt4Dc84B5HnuQRbYtZRgjFghEWgk5cSs1axd2TfZXFmYTgdfGdE";
 
+#[allow(dead_code)]
 async fn run_sort_backup_archive() {
     let backup_path = PathBuf::from(
         "/home/mathieu/tas/dev/millegrilles/dev1/work/mgfold/current/MaitreDesCles_20260920161231785Z_I_QkBtTetmreXh.mgbak"

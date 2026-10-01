@@ -178,74 +178,37 @@ impl RabbitMessageDispatcher {
 async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: Option<String>) -> Result<(), CommonError> {
     let options = BasicPublishOptions::default();
     let payload = message.message.buffer;
-    let (correlation_id, reply_to) = match &message.routing {
-        MessageRoutingEnum::None => {(None, None)}
-        MessageRoutingEnum::Action(r) => {(r.correlation_id.clone(), r.reply_to.clone())}
-        MessageRoutingEnum::Response(r) => {(Some(r.correlation_id.clone()), Some(r.reply_to.clone()))}
-    };
 
-    let (properties, reply_to) = {
-        let mut properties = BasicProperties::default();
-        if let Some(correlation_id) = correlation_id.clone() {
-            properties = properties.with_correlation_id(correlation_id.into());
-        }
+    match message.routing {
+        MessageRoutingEnum::None => return Err(CommonError::String(format!("Routing None not supported: {:?}", message.message_kind))),
 
-        let reply_to = match message.message_kind {
-            MessageKind::Requete | MessageKind::Commande => {
-                let reply_to = match reply_to {
-                    Some(reply_to) => reply_to,
-                    None => match reply_q {
-                        Some(q) => q.to_owned(),
-                        None => return Err(CommonError::Str("No reply_q provided for response"))
-                    }
-                };
-                debug!("task_emettre_messages Emission message, reply_q en parametre : {:?}", reply_to);
-                properties = properties.with_reply_to(reply_to.as_str().into());
-
-                Some(reply_to)
-            },
-            MessageKind::Reponse | MessageKind::ReponseChiffree => reply_to,
-            _ => None
-        };
-
-        (properties, reply_to)
-    };
-
-    match message.message_kind {
-        MessageKind::Reponse | MessageKind::ReponseChiffree => {
-            let reply_to_inner = match reply_to {
-                Some(reply_to) => reply_to,
-                None => return Err(CommonError::Str("No reply_q provided for response"))
+        MessageRoutingEnum::Action(routing) => {
+            // Get correlation_id, reply_to q when needed
+            let need_reply_to = routing.blocking == Some(true)
+                || message.message_kind == MessageKind::Requete
+                || message.message_kind == MessageKind::Commande;
+            let reply_to = match routing.reply_to.as_ref() {
+                Some(reply_to) => Some(reply_to),
+                None => reply_q.as_ref()
             };
-            debug!("publish_message Replying to reply_q {} with correlation_id {:?}", reply_to_inner, correlation_id);
-
-            let resultat = channel.basic_publish(
-                "".into(),
-                reply_to_inner.as_str().into(),
-                options,
-                payload.to_vec().as_slice(),
-                properties
-            ).await;
-            if resultat.is_err() {
-                error!("publish_message Error emitting message {:?}", resultat);
-                return Err(CommonError::Str("No reply_q provided for response"))
+            let properties = if let (Some(reply_to), Some(correlation_id)) = (reply_to, routing.correlation_id.as_ref()) {
+                BasicProperties::default()
+                    .with_correlation_id(correlation_id.as_str().into())
+                    .with_reply_to(reply_to.as_str().into())
+            } else if need_reply_to {
+                return Err(CommonError::Str("Message is missing reply to/correlation id"))
             } else {
-                debug!("publish_message Response {:?} to {:?} sent", correlation_id, reply_to_inner);
-            }
-        },
-        MessageKind::Requete | MessageKind::Commande | MessageKind::Evenement => {
-            let routing = match message.routing {
-                MessageRoutingEnum::Action(r) => r,
-                _ => return Err(CommonError::Str("No routing provided for requete/commande/evenement"))
+                BasicProperties::default()
             };
-            let routing_key = concatenate_routing_key(message.message_kind, Some(&routing))?;
 
+            // Publish message on required exchanges
+            let routing_key = concatenate_routing_key(message.message_kind, Some(&routing))?;
             for exchange in routing.exchanges {
                 let resultat = channel.basic_publish(
                     exchange.get_str().into(),
                     routing_key.as_str().into(),
                     options,
-                    payload.clone().as_slice(),
+                    payload.as_slice(),
                     properties.clone()
                 ).await;
                 match resultat {
@@ -253,9 +216,29 @@ async fn publish_message(channel: &Channel, message: OutgoingMessage, reply_q: O
                     Err(e) => error!("task_emettre_messages Erreur emission message {:?}", e)
                 }
             }
+        },
+
+        MessageRoutingEnum::Response(routing) => {
+            let reply_to = routing.reply_to;
+            let correlation_id = routing.correlation_id;
+            debug!("publish_message Replying to reply_q {} with correlation_id {:?}", reply_to, correlation_id);
+            let properties = BasicProperties::default()
+                .with_correlation_id(correlation_id.as_str().into());
+            let resultat = channel.basic_publish(
+                "".into(),
+                reply_to.as_str().into(),
+                options,
+                payload.as_slice(),
+                properties
+            ).await;
+            if resultat.is_err() {
+                error!("publish_message Error emitting message {:?}", resultat);
+                return Err(CommonError::Str("No reply_q provided for response"))
+            } else {
+                debug!("publish_message Response {:?} to {:?} sent", correlation_id, reply_to);
+            }
         }
-        _ => return Err(CommonError::String(format!("Kind not supported: {:?}", message.message_kind))),
-    }
+    };
 
     Ok(())
 }
