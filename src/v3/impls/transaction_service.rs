@@ -61,7 +61,7 @@ impl TransactionService for TransactionServiceImpl {
         }
     }
 
-    async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<(), CommonError> {
+    async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<String, CommonError> {
         let wrapper = build_transaction(
             self.config.as_ref(),
             self.format.as_ref(),
@@ -69,8 +69,10 @@ impl TransactionService for TransactionServiceImpl {
             action,
             value
         )?;
+        let message_id = wrapper.message.id.clone();
         debug!("Processing transaction id {} with content: {:?}", wrapper.message.id, wrapper.message.contenu);
-        self.process_transaction(wrapper, session).await
+        self.process_transaction(wrapper, session).await?;
+        Ok(message_id)
     }
 
     async fn route_transaction(

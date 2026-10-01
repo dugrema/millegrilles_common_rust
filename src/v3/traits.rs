@@ -124,7 +124,7 @@ pub trait DatabaseService: Send + Sync {
 #[async_trait]
 pub trait TransactionService: Send + Sync {
     async fn process_transaction(&self, wrapper: TransactionWrapper, session: Option<&mut ClientSession>) -> Result<(), CommonError>;
-    async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<(), CommonError>;
+    async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<String, CommonError>;
     async fn route_transaction(
         &self,
         message: MessageMilleGrillesOwned,
