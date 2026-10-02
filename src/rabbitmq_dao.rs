@@ -23,6 +23,7 @@ use crate::constantes::*;
 use crate::generateur_messages::{GenerateurMessages, RoutageMessageAction, RoutageMessageReponse};
 use crate::middleware::IsConfigurationPki;
 use crate::recepteur_messages::{TypeMessage, intercepter_message, traiter_delivery};
+use crate::v3::ConfigService;
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
 const INTERVALLE_ENTRETIEN_ATTENTE: Duration = Duration::from_millis(400);
@@ -136,14 +137,28 @@ pub async fn connecter<C>(configuration: &C) -> Result<Connection, lapin::Error>
     ).await
 }
 
-pub async fn emettre_certificat_compte(configuration: &dyn ConfigMessages) -> Result<(), Box<dyn Error>>
+pub async fn emettre_certificat_compte(configuration: &dyn ConfigMessages) -> Result<(), Box<dyn Error>> {
+    let config_mq = configuration.get_configuration_mq();
+    let config_pki = configuration.get_configuration_pki();
+    let midcompte_url = configuration.get_configuration_noeud().midcompte_url.clone();
+    internal_emettre_certificat_compte(config_mq, config_pki, midcompte_url).await?;
+    Ok(())
+}
+
+pub async fn emettre_certificat_compte_v3(configuration: &dyn ConfigService) -> Result<(), crate::error::Error> {
+    let config_mq = configuration.get_configuration_mq();
+    let config_pki = configuration.get_configuration_pki();
+    let midcompte_url = configuration.get_configuration_instance().midcompte_url.clone();
+    internal_emettre_certificat_compte(config_mq, config_pki, midcompte_url).await
+}
+
+async fn internal_emettre_certificat_compte(config_mq: &ConfigurationMq, config_pki: &ConfigurationPki, midcompte_url: Option<Url>) -> Result<(), crate::error::Error>
 {
     const MTLS_PORT: u16 = 444;
     const COMMANDE: &str = "administration/ajouterCompte";
 
-    let config_mq = configuration.get_configuration_mq();
     let mut hosts = Vec::new();
-    if let Some(midcompte) = configuration.get_configuration_noeud().midcompte_url.as_ref() {
+    if let Some(midcompte) = midcompte_url.as_ref() {
         hosts.push(midcompte.clone());
     }
     // Default internal midcompte service in a docker network
@@ -155,7 +170,6 @@ pub async fn emettre_certificat_compte(configuration: &dyn ConfigMessages) -> Re
 
     debug!("Tenter creer compte MQ avec hosts {:?}", hosts);
 
-    let config_pki = configuration.get_configuration_pki();
     // let certfile = config_pki.certfile.as_path();
 
     // Preparer certificat pour auth SSL

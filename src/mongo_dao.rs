@@ -1,6 +1,6 @@
 use crate::bson::Array;
 use crate::certificats::ValidateurX509;
-use crate::configuration::{ConfigurationMongo, ConfigurationPki};
+use crate::configuration::{ConfigMessages, ConfigurationMongo, ConfigurationPki};
 use crate::error::Error as CommonError;
 use async_trait::async_trait;
 use mongodb::bson::Bson;
@@ -15,7 +15,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::vec::IntoIter;
 use tokio_stream::StreamExt;
-use tracing::debug;
+use tracing::{debug, error, warn};
+use crate::rabbitmq_dao::{emettre_certificat_compte, emettre_certificat_compte_v3};
+use crate::v3::ConfigService;
 
 #[async_trait]
 pub trait MongoDao: Send + Sync {
@@ -146,15 +148,50 @@ impl MongoDao for MongoDaoImpl {
 
 impl MongoDaoTyped for MongoDaoImpl {}
 
-pub fn initialiser(config_pki: &ConfigurationPki, config_db: &ConfigurationMongo) -> Result<MongoDaoImpl, String> {
+pub async fn initialiser(config: &dyn ConfigMessages, config_db: &ConfigurationMongo) -> Result<MongoDaoImpl, CommonError> {
     debug!("Initialiser connexion a MongoDB");
 
     // let (pki, mongo): (&ConfigurationPki, &ConfigurationMongo) = match configuration.as_ref() {
     //     ConfigurationMessages{mq: _mq, pki: _pki} => return Err("Mauvais type de configuration (MQ seulement)".into()),
     //     ConfigurationMessagesDb{mq: _mq, mongo, pki} => (pki, mongo),
     // };
-
+    let config_pki = config.get_configuration_pki();
     let client: Client = connecter(config_pki, config_db).expect("Erreur connexion a MongoDB");
+    let idmg: String = config_pki.get_validateur().idmg().to_owned();
+
+    // Try connection to ensure authentication works
+    if let Err(e) = client.list_databases().await {
+        // We have an authentication error. Attempt to register with midcompte.
+        if let Err(e) = emettre_certificat_compte(config).await {
+            return Err(CommonError::String(format!("handle_connection_error Error registering with midcompte : {:?}", e)))
+        }
+    }
+
+    Ok(MongoDaoImpl{
+        client,
+        db_name: idmg.to_owned(),
+        path_backup: config_db.path_backup.to_owned(),
+    })
+}
+
+pub async fn initialiser_v3(config: &dyn ConfigService, config_db: &ConfigurationMongo) -> Result<MongoDaoImpl, CommonError> {
+    debug!("Initialiser connexion a MongoDB");
+
+    // let client: Client = connecter(config_pki, config_db).expect("Erreur connexion a MongoDB");
+    let config_pki = config.get_configuration_pki();
+    let client: Client = connecter(config_pki, config_db)?;
+
+    // Try connection to ensure authentication works. Rebuild client if account created.
+    let client = match client.list_databases().await {
+        Ok(_) => client,
+        Err(e) => {
+            if let Err(e) = handle_connection_error(config, e).await {
+                Err(e)?  // Return original error
+            }
+            connecter(config_pki, config_db)?
+        }
+    };
+
     let idmg: String = config_pki.get_validateur().idmg().to_owned();
 
     Ok(MongoDaoImpl{
@@ -162,6 +199,21 @@ pub fn initialiser(config_pki: &ConfigurationPki, config_db: &ConfigurationMongo
         db_name: idmg.to_owned(),
         path_backup: config_db.path_backup.to_owned(),
     })
+}
+
+async fn handle_connection_error(config: &dyn ConfigService, e: mongodb::error::Error) -> Result<(), CommonError> {
+    warn!("handle_connection_error: Trying to fix error {:?}", e);
+    match e.kind.as_ref() {
+        ErrorKind::Authentication { message: _, .. } => (),
+        _ => Err(e)?  // Throw same error again
+    }
+
+    // We have an authentication error. Attempt to register with midcompte.
+    if let Err(e) = emettre_certificat_compte_v3(config).await {
+        return Err(CommonError::String(format!("handle_connection_error Error registering with midcompte : {:?}", e)))
+    }
+
+    Ok(())
 }
 
 fn connecter(pki: &ConfigurationPki, mongo_configuration: &ConfigurationMongo) -> ResultMongo<Client> {

@@ -395,22 +395,21 @@ pub struct MiddlewareDbRessources {
     pub mongo: Arc<MongoDaoImpl>,
 }
 
-pub fn configurer() -> MiddlewareDbRessources
+pub async fn configurer() -> MiddlewareDbRessources
 {
     let middeware_ressources = configurer_messages();
     let configuration = middeware_ressources.configuration.as_ref().as_ref();
 
     // Connecter au middleware mongo et MQ
-    let mongo= Arc::new(initialiser_mongodb(
-        configuration.get_configuration_pki(), configuration.get_configuraiton_mongo()
-    ).expect("initialiser_mongodb"));
+    let mongo= Arc::new(initialiser_mongodb(configuration, configuration.get_configuraiton_mongo()
+    ).await.expect("initialiser_mongodb"));
 
     MiddlewareDbRessources { ressources: middeware_ressources, mongo }
 }
 
 /// Version speciale du middleware avec un acces a MongoDB
-pub fn preparer_middleware_db() -> MiddlewareHooks {
-    let ressources = configurer();
+pub async fn preparer_middleware_db() -> MiddlewareHooks {
+    let ressources = configurer().await;
 
     let configuration = ressources.ressources.configuration.clone();
 

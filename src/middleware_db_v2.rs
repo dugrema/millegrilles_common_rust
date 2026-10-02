@@ -16,8 +16,8 @@ use crate::redis_dao::RedisDao;
 
 static MIDDLEWARE: StaticCell<MiddlewareDb> = StaticCell::new();
 
-pub fn preparer() -> Result<(&'static MiddlewareDb, FuturesUnordered<JoinHandle<()>>), Error> {
-    let ressources = configurer();
+pub async fn preparer() -> Result<(&'static MiddlewareDb, FuturesUnordered<JoinHandle<()>>), Error> {
+    let ressources = configurer().await;
 
     let configuration = ressources.ressources.configuration.clone();
 
