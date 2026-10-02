@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::vec::IntoIter;
 use tokio_stream::StreamExt;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 use crate::rabbitmq_dao::{emettre_certificat_compte, emettre_certificat_compte_v3};
 use crate::v3::ConfigService;
 
@@ -160,7 +160,7 @@ pub async fn initialiser(config: &dyn ConfigMessages, config_db: &ConfigurationM
     let idmg: String = config_pki.get_validateur().idmg().to_owned();
 
     // Try connection to ensure authentication works
-    if let Err(e) = client.list_databases().await {
+    if let Err(_e) = client.list_databases().await {
         // We have an authentication error. Attempt to register with midcompte.
         if let Err(e) = emettre_certificat_compte(config).await {
             return Err(CommonError::String(format!("handle_connection_error Error registering with midcompte : {:?}", e)))
