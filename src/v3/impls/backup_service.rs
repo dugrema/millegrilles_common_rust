@@ -170,11 +170,18 @@ impl DomainBackupServiceImpl {
 
         // Check if we can promote the Concatenated file to Final archive
         // Triggers: size of file or age of oldest transaction
-        if let Some(file) = concatenated_file && ! incremental {
-            let expired_date = Utc::now() - chrono::Duration::days(TRIGGER_CONCATENATED_TO_FINAL_DAYS);
-            if file.len > TRIGGER_CONCATENATED_TO_FINAL_SIZE || file.header.debut_backup < expired_date {
-                // Promote the concatenated file to final - keep version, this forces sync of files by filecontroler
-                produce_final_file(self.chiffrage.as_ref(), &file).await?;
+        if let Some(file) = concatenated_file {
+            if domain_info.version.is_none() {
+                // Set the backup version, used to trigger file transfers
+                domain_info.version = Some(file.digest_suffix.clone());
+            }
+
+            if ! incremental {
+                let expired_date = Utc::now() - chrono::Duration::days(TRIGGER_CONCATENATED_TO_FINAL_DAYS);
+                if file.len > TRIGGER_CONCATENATED_TO_FINAL_SIZE || file.header.debut_backup < expired_date {
+                    // Promote the concatenated file to final - keep version, this forces sync of files by filecontroler
+                    produce_final_file(self.chiffrage.as_ref(), &file).await?;
+                }
             }
         }
 
