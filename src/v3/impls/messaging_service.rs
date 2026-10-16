@@ -1,12 +1,11 @@
 use crate::certificats::VerificateurPermissions;
 use crate::error::Error as CommonError;
 use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
-use crate::rabbitmq_dao::ConfigQueue;
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
 use crate::v3::impls::rabbitmq_consumer::{InboundMessage, RabbitConsumerManager};
 use crate::v3::impls::rabbitmq_dispatcher::{MessageRoutingEnum, RabbitMessageDispatcher};
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
-use crate::v3::models::VerifiedResponseMessage;
+use crate::v3::models::{ConfigQueueV3, VerifiedResponseMessage};
 use crate::v3::traits::MessagingService;
 use crate::v3::{ConfigService, PkiService};
 use async_trait::async_trait;
@@ -48,8 +47,13 @@ impl MessagingServiceImpl {
     }
 
     /// Allows dynamically adding a named queue configuration. Does not start processing.
-    pub fn add_named_queue(&self, queue: ConfigQueue) -> Result<(), CommonError> {
+    pub fn add_named_queue(&self, queue: ConfigQueueV3) -> Result<(), CommonError> {
         self.queue_registry.add_named_queue(queue)
+    }
+
+    /// Allows dynamically adding an exclusve queue configuration. Does not start processing.
+    pub fn add_exclusive_queue(&self, label: String, queue: ConfigQueueV3) -> Result<(), CommonError> {
+        self.queue_registry.add_exclusive_queue(label, queue)
     }
 
     /// Starts the messaging service background threads including the connection to the server.

@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use multihash::Code;
 use crate::hachages::hacher_bytes_vu8;
+use crate::rabbitmq_dao::ConfigRoutingExchange;
 
 pub struct VerifiedResponseMessage {
     pub message: MessageMilleGrillesOwned,
@@ -518,4 +519,13 @@ pub struct DomainPresenceEvent {
     pub exchanges_routing: Option<String>,
     pub primaire: bool,
     pub reclame_fuuids: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigQueueV3 {
+    pub queue_name: Option<String>,
+    pub routing_keys: Vec<ConfigRoutingExchange>,
+    pub ttl: Option<u32>,
+    pub durable: bool,
+    pub autodelete: bool,
 }

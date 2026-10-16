@@ -1,6 +1,5 @@
 use crate::constantes::{SECURITE_1_PUBLIC, Securite};
 use crate::error::Error as CommonError;
-use crate::rabbitmq_dao::ConfigQueue;
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
 use chrono::{DateTime, Utc};
@@ -16,6 +15,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
+use crate::v3::models::ConfigQueueV3;
 // --- Constants ---
 
 const ATTENTE_RECONNEXION: Duration = Duration::from_millis(15_000);
@@ -125,12 +125,12 @@ impl RabbitConsumerManager {
         for q_name in queue_names {
             let self_clone = self.clone();
             let cancellation_token_clone = cancellation_token.clone();
-            join_set.spawn(async move { self_clone.named_queue_thread(q_name, cancellation_token_clone).await });
+            join_set.spawn(async move { self_clone.topic_queue_thread(q_name, cancellation_token_clone).await });
         }
         Ok(())
     }
 
-    async fn named_queue_thread(self: Arc<Self>, q_name: String, cancellation_token: CancellationToken) -> () {
+    async fn topic_queue_thread(self: Arc<Self>, q_name: String, cancellation_token: CancellationToken) -> () {
         // Get queue config and Sender
         let (config, tx) = self.queue_registry
             .get_named_queue(q_name.as_str()).expect("unknown queue name");
@@ -151,7 +151,7 @@ impl RabbitConsumerManager {
                                 if let Err(e) = channel_inner.basic_qos(1, qos_options_reponses).await {
                                     error!("named_queue_consume Error configuring channel for queue {:?}, {:?}", q_name, e);
                                 } else {
-                                    match create_named_queue(&channel_inner, &config).await {
+                                    match create_topic_queue(&channel_inner, &config).await {
                                         Ok((q, consumer)) => {
                                             consumer_holder = Some(RabbitMqConsumer { queue: q, channel: channel_inner, consumer });
                                         },
@@ -422,7 +422,7 @@ impl RabbitConsumerManager {
     }
 }
 
-async fn create_named_queue(channel: &Channel, config: &ConfigQueue) -> Result<(Queue, Consumer), CommonError> {
+async fn create_topic_queue(channel: &Channel, config: &ConfigQueueV3) -> Result<(Queue, Consumer), CommonError> {
     let options = QueueDeclareOptions {
         passive: false,
         durable: config.durable,
@@ -435,8 +435,12 @@ async fn create_named_queue(channel: &Channel, config: &ConfigQueue) -> Result<(
     let ttl = config.ttl.unwrap_or_else(|| DEFAULT_TTL as u32);
     params.insert(FLAG_TTL.into(), ttl.into());
 
-    let queue_name = config.nom_queue.as_str();
-    let named_queue = channel.queue_declare(queue_name.into(), options, params).await?;
+    let named_queue = match config.queue_name.as_ref() {
+        Some(queue_name) => channel.queue_declare(queue_name.as_str().into(), options, params).await?,
+        None => channel.queue_declare("".into(), options, params).await?
+    };
+    let queue_name = named_queue.name().as_str();
+    // let named_queue = channel.queue_declare(queue_name.into(), options, params).await?;
     info!("create_named_queue Created named Q: {}", queue_name);
 
     for rk in &config.routing_keys {
