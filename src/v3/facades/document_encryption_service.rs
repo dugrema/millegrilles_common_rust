@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
-use jwt_simple::prelude::Serialize;
 use millegrilles_cryptographie::chiffrage::CleSecreteMgs4;
 use millegrilles_cryptographie::chiffrage_cles::Cipher;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher};
 use crate::error::Error as CommonError;
 use serde::de::DeserializeOwned;
-use tracing::debug;
+use serde::Serialize;
+use serde_json::Value;
 use crate::v3::{ChiffrageService, DocumentEncryptionService};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
 use crate::v3::models::GeneratedSecretKey;
@@ -121,11 +121,23 @@ impl DocumentEncryptionService for DocumentEncryptionServiceImpl {
             None => return Err(crate::error::Error::Str("Key id not provided"))
         };
         let key = self.get_key_by_id(key_id.as_str()).await?;
-        let key_slice = key.0.as_slice();
-        debug!("KEY VALUE: {:?}", key_slice);
+        // let key_slice = key.0.as_slice();
+        // debug!("KEY VALUE: {:?}", key_slice);
         let decrypted_content = value.clone().decrypt_with_secret(&key)?;
-        debug!("DECRYPTED VALUE: {}", String::from_utf8(decrypted_content.clone())?);
+        // debug!("DECRYPTED VALUE: {}", String::from_utf8(decrypted_content.clone())?);
         // Deserialize to format requested by caller
-        Ok(serde_json::from_slice(decrypted_content.as_slice())?)
+        match serde_json::from_slice(decrypted_content.as_slice()) {
+            Ok(inner) => Ok(inner),
+            Err(error) => {
+                // Try to extract a string (old value saved without serde_json)
+                match String::from_utf8(decrypted_content) {
+                    Ok(value_string) => match serde_json::from_value(Value::String(value_string)) {
+                        Ok(inner) => Ok(inner),
+                        Err(_) => Err(error)?   // Throw original error
+                    },
+                    Err(_) => Err(error)?       // Throw original error
+                }
+            }
+        }
     }
 }
