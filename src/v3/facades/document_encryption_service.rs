@@ -121,7 +121,6 @@ impl DocumentEncryptionService for DocumentEncryptionServiceImpl {
         };
         let key = self.get_key_by_id(key_id.as_str()).await?;
         let decrypted_content = value.clone().decrypt_with_secret(&key)?;
-
         // Deserialize to format requested by caller
         Ok(serde_json::from_slice(decrypted_content.as_slice())?)
     }
