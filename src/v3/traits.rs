@@ -19,6 +19,8 @@ use openssl::pkey::{PKey, Private};
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
+use jwt_simple::prelude::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::mpsc::Receiver;
 use crate::common_messages::BackupEvent;
 
@@ -163,4 +165,13 @@ pub trait FilehostService: Send + Sync {
 pub trait PresenceService: Send + Sync {
     async fn emit_domain_presence(&self, domain_name: &str, reclame_fuuids: Option<bool>) -> Result<(), CommonError>;
     async fn emit_backup_event(&self, event: BackupEvent) -> Result<(), CommonError>;
+}
+
+#[async_trait]
+pub trait DocumentEncryptionService: Send + Sync {
+    /// Encrypt a document. Uses an automatically managed key.
+    async fn encrypt<S>(&self, value: &S) -> Result<EncryptedDocument, CommonError> where S: Serialize + Sync;
+
+    /// Decrypts a document. Fetches the key from the keymaster.
+    async fn decrypt<D>(&self, value: &EncryptedDocument) -> Result<D, CommonError> where D: DeserializeOwned;
 }

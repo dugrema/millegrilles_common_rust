@@ -17,6 +17,7 @@ use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl}
 use multibase::Base;
 use multihash::Code;
 use openssl::x509::X509;
+use serde_json;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path;
@@ -28,8 +29,8 @@ use tracing::debug;
 use x509_parser::nom::ExtendInto;
 
 // --- Constants ---
-pub const CACHE_LIMIT: usize = 50;
-pub const CACHE_RESET_INTERVAL_SEC: u64 = 3600 * 3;
+const CACHE_LIMIT: usize = 50;
+const CACHE_RESET_INTERVAL_SEC: u64 = 3600 * 3;
 
 
 // --- Internal Components ---
