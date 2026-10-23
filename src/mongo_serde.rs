@@ -39,6 +39,70 @@ pub mod option_chrono_04_datetime {
     }
 }
 
+pub mod map_chrono_datetime_as_bson_datetime {
+    use chrono::Utc;
+    use serde::ser::SerializeMap;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Helper(
+        #[serde(with = "bson::serde_helpers::datetime::FromChrono04DateTime")]
+        chrono::DateTime<Utc>,
+    );
+
+    pub fn serialize<S>(
+        value: &HashMap<String, chrono::DateTime<Utc>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(value.len()))?;
+        for (k, v) in value.iter() {
+            let helper = Helper(v.to_owned());
+            map.serialize_entry(k, &helper)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<HashMap<String, chrono::DateTime<Utc>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+
+        #[derive(Deserialize)]
+        struct DateHelper(
+            #[serde(with = "bson::serde_helpers::datetime::FromChrono04DateTime")]
+            chrono::DateTime<Utc>,
+        );
+
+        impl Into<chrono::DateTime<Utc>> for DateHelper {
+            fn into(self) -> chrono::DateTime<Utc> {
+                self.0
+            }
+        }
+
+        #[derive(Deserialize)]
+        struct MapHelper(
+            HashMap<String, DateHelper>,
+        );
+
+        let map_helper: Option<MapHelper> = Option::deserialize(deserializer)?;
+        match map_helper {
+            Some(inner) => {
+                let mut final_map: HashMap<String, chrono::DateTime<Utc>> = HashMap::new();
+                for (k, v) in inner.0.into_iter() {
+                    final_map.insert(k, v.into());
+                }
+                Ok(Some(final_map))
+            },
+            None => Ok(None),
+        }
+    }
+}
+
+
 pub mod map_opt_chrono_datetime_as_bson_datetime {
     use chrono::Utc;
     use serde::ser::SerializeMap;
