@@ -400,7 +400,7 @@ async fn process_backup_files<'a>(
             let routing = message.routage.clone();
             let t_id = message.id.clone();
 
-            // For legacy behavior (specifically database lookups during tranactions),
+            // For legacy behavior (specifically database lookups during transactions),
             // check if all previous transactions must be flushed.
             if transaction.is_must_flush(&message) {
                 if let Some(aggregator) = restoration_state.aggregator.take() {
