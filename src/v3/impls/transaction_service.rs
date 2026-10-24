@@ -113,7 +113,7 @@ impl TransactionService for TransactionServiceImpl {
 
         match aggregator {
             Some(mut aggregator) => {
-                aggregator.merge(operations);
+                aggregator.merge(operations)?;
                 Ok(aggregator)
             },
             None => Ok(operations)

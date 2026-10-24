@@ -41,7 +41,6 @@ pub mod option_chrono_04_datetime {
 
 pub mod map_chrono_datetime_as_bson_datetime {
     use chrono::Utc;
-    use serde::ser::SerializeMap;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::collections::HashMap;
 

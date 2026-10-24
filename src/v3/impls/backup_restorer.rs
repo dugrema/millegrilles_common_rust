@@ -420,7 +420,14 @@ async fn process_backup_files<'a>(
                     Err(e)?
                 }
             };
-            restoration_state.aggregator = Some(aggregator);  // Put back
+
+            if aggregator.legacy {
+                // Must flush immediately
+                transaction.run_aggregator(aggregator).await?;
+            } else {
+                // Put back aggregator to continue accumulating batch operations
+                restoration_state.aggregator = Some(aggregator);
+            }
 
             if restoration_state.transaction_count % TRANSACTION_BACTH_SIZE == 0 {
                 // Run write operations from aggregator
