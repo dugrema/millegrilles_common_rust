@@ -75,6 +75,10 @@ impl TransactionService for TransactionServiceImpl {
         Ok(message_id)
     }
 
+    fn is_must_flush(&self, message: &MessageMilleGrillesOwned) -> bool {
+        self.router.is_must_flush(message)
+    }
+
     async fn route_transaction(
         &self,
         message: MessageMilleGrillesOwned,

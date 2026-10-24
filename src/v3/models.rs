@@ -174,9 +174,11 @@ impl TransactionOperationAggregator {
         self
     }
 
-    pub fn merge(&mut self, other: Self) {
+    pub fn merge(&mut self, other: Self) -> Result<(), CommonError> {
         // Pass in the legacy flag (only goes from false to true)
-        self.legacy = self.legacy || other.legacy;
+        if self.legacy || other.legacy {
+            return Err(CommonError::Str("Cannot merge legacy operations, flush all transactions first"))?
+        }
 
         // Tracking entries
         match self.tracking.as_mut() {
@@ -228,6 +230,8 @@ impl TransactionOperationAggregator {
                 self.ordered = other.ordered;
             }
         }
+
+        Ok(())
     }
 }
 

@@ -127,6 +127,10 @@ pub trait DatabaseService: Send + Sync {
 pub trait TransactionService: Send + Sync {
     async fn process_transaction(&self, wrapper: TransactionWrapper, session: Option<&mut ClientSession>) -> Result<(), CommonError>;
     async fn process_value(&self, domain: &str, action: &str, value: Value, session: Option<&mut ClientSession>) -> Result<String, CommonError>;
+
+    /// Checks the router and returns true if all transactions must be flushed prior to this new transaction.
+    fn is_must_flush(&self, message: &MessageMilleGrillesOwned) -> bool;
+
     async fn route_transaction(
         &self,
         message: MessageMilleGrillesOwned,
@@ -146,6 +150,11 @@ pub trait TransactionRouter: Send + Sync {
         action: String,
         wrapper: TransactionWrapper
     ) -> Result<TransactionOperationAggregator, CommonError>;
+
+    /// When true, all transactions must be flushed prior to running the transaction
+    fn is_must_flush(&self, _message: &MessageMilleGrillesOwned) -> bool {
+        false
+    }
 }
 
 #[async_trait]
