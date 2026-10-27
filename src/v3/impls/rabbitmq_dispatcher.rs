@@ -90,18 +90,37 @@ impl RabbitMessageDispatcher {
             correlation_id,
             timeout_blocking,
             blocking,
+            exchanges,
             domains,
-            exchanges
+            roles,
         ) = match &message.routing {
-            MessageRoutingEnum::None => {(None, None, false, None, None)}
-            MessageRoutingEnum::Action(r) => {(
-                r.correlation_id.clone(),
-                r.timeout_blocking.clone(),
-                r.blocking != Some(false),
-                Some(vec![r.domaine.clone()]),
-                Some(r.exchanges.clone())
-            )}
-            MessageRoutingEnum::Response(_) => {(None, None, false, None, None)}
+            MessageRoutingEnum::None => {(None, None, false, None, None, None)}
+            MessageRoutingEnum::Action(r) => {
+                let (exchanges, domains, roles) = match r.validation.as_ref() {
+                    Some(validation) => {
+                        if validation.ignore {
+                            (None, None, None)
+                        } else {
+                            let exchanges = match validation.exchanges.as_ref() { Some(exchanges) => Some(exchanges.to_owned()), None => None };
+                            let domains = match validation.domains.as_ref() { Some(domains) => Some(domains.to_owned()), None => None };
+                            let roles = match validation.roles.as_ref() { Some(roles) => Some(roles.to_owned()), None => None };
+                            debug!("Using custom validation: security {:?}, domains {:?}, roles {:?}", exchanges, domains, roles);
+                            (exchanges, domains, roles)
+                        }
+                    },
+                    None => (Some(r.exchanges.clone()), Some(vec![r.domaine.clone()]), None)  // Defaults
+                };
+
+                (
+                    r.correlation_id.clone(),
+                    r.timeout_blocking.clone(),
+                    r.blocking != Some(false),
+                    exchanges,
+                    domains,
+                    roles,
+                )
+            }
+            MessageRoutingEnum::Response(_) => {(None, None, false, None, None, None)}
         };
         let receiver = match (correlation_id, blocking) {
             (Some(correlation_id), true)  => {
@@ -111,7 +130,7 @@ impl RabbitMessageDispatcher {
 
                 // Create correlation waiter for the response (to be put on the tx)
                 let (tx, rx) = oneshot::channel();
-                let response_waiter = ResponseWaiter::new(tx, expiration, exchanges, domains, None);
+                let response_waiter = ResponseWaiter::new(tx, expiration, exchanges, domains, roles);
                 self.consumer.add_response(correlation_id.to_owned(), response_waiter)?;
 
                 // Return receiver

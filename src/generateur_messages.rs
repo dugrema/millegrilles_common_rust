@@ -37,6 +37,8 @@ pub struct RoutageMessageAction {
     pub ajouter_ca: bool,
     pub timeout_blocking: Option<u64>,
     pub queue_reception: Option<String>,
+    /// Used to override the default domain validation on responses
+    pub validation: Option<RoutingValidation>,
 }
 impl RoutageMessageAction {
 
@@ -49,7 +51,8 @@ impl RoutageMessageAction {
             user_id: None,
             partition: None, exchanges: exchanges.into(), reply_to: None, correlation_id: None,
             ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
-            queue_reception: None
+            queue_reception: None,
+            validation: None,
         }
     }
 
@@ -85,6 +88,7 @@ pub struct RoutageMessageActionBuilder {
     ajouter_ca: bool,
     timeout_blocking: Option<u64>,
     queue_reception: Option<String>,
+    validation: Option<RoutingValidation>,
 }
 impl RoutageMessageActionBuilder {
     pub fn new<S,T,V>(domaine: S, action: T, exchanges: V) -> Self
@@ -97,6 +101,7 @@ impl RoutageMessageActionBuilder {
             partition: None, exchanges: exchanges.into(), reply_to: None, correlation_id: None,
             ajouter_reply_q: false, blocking: None, ajouter_ca: false, timeout_blocking: None,
             queue_reception: None,
+            validation: None,
         }
     }
 
@@ -158,6 +163,11 @@ impl RoutageMessageActionBuilder {
         self
     }
 
+    pub fn validation(mut self, validation: RoutingValidation) -> Self {
+        self.validation = Some(validation);
+        self
+    }
+
     pub fn build(self) -> RoutageMessageAction {
         RoutageMessageAction {
             domaine: self.domaine,
@@ -172,8 +182,21 @@ impl RoutageMessageActionBuilder {
             ajouter_ca: self.ajouter_ca,
             timeout_blocking: self.timeout_blocking,
             queue_reception: self.queue_reception,
+            validation: self.validation,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoutingValidation{
+    /// When true, automatic response validation is bypassed
+    pub ignore: bool,
+    /// List of acceptable exchanges (security level) in the response (any of)
+    pub exchanges: Option<Vec<Securite>>,
+    /// List of acceptable domains in the response (any of)
+    pub domains: Option<Vec<String>>,
+    /// List of acceptable roles in the response (any of)
+    pub roles: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
