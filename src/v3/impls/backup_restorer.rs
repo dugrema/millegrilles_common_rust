@@ -415,6 +415,8 @@ async fn process_backup_files<'a>(
                 }
             }
 
+            let content = message.contenu.clone();  // Copy for troubleshooting
+
             // Add transaction to the operations aggregator.
             let aggregator = match transaction.route_transaction(
                 message,
@@ -423,7 +425,7 @@ async fn process_backup_files<'a>(
             ).await {
                 Ok(aggregator) => aggregator,
                 Err(e) => {
-                    error!("Error processing transaction routing {:?}, id: {}", routing, t_id);
+                    error!("Error processing transaction routing {:?}, id: {}\n{:?}", routing, t_id, content);
                     Err(e)?
                 }
             };
