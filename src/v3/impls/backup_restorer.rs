@@ -1,4 +1,4 @@
-use crate::constantes::{FIELD_DATE_PROCESSED, INDEX_DATE_PROCESSED};
+use crate::constantes::{FIELD_DATE_PROCESSED, FIELD_PROCESSED, INDEX_DATE_PROCESSED};
 use crate::error::{Error as CommonError, Error};
 use crate::hachages::Hacheur;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
@@ -84,7 +84,7 @@ pub async fn restore_preflight_check<'a>(
         let last_transaction = tracking_collection
             .find_one(doc!{})
             .hint(Hint::Name(INDEX_DATE_PROCESSED.into()))
-            .sort(doc!{FIELD_DATE_PROCESSED: -1})
+            .sort(doc!{FIELD_PROCESSED: -1})
             .await?;
         if let Some(last_transaction) = last_transaction {
             let row: RowTransactionTracking = bson::deserialize_from_document(last_transaction)?;
@@ -203,7 +203,7 @@ async fn process_backup_files<'a>(
 
     let mut certificate_cache: HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
     for backup_file in &domain_info.files {
-        debug!("Processing backup file {:?}", backup_file.path_fichier);
+        info!("Processing backup file {:?}", backup_file.path_fichier);
 
         let is_trusted_mgbak = !disable_certificate_validation && match backup_file.header.verify() {
             Ok(()) => { // Header signature OK
@@ -322,6 +322,19 @@ async fn process_backup_files<'a>(
             restoration_state.last_transaction = new_transaction_time.clone();
             restoration_state.transaction_count += 1;
 
+            // Output simple progress info
+            if restoration_state.transaction_count % 250 == 0 {
+                let total_count = domain_info.file_transaction_count + domain_info.redolog_count as u64;
+                let pct = 100f64 * restoration_state.transaction_count as f64 / total_count as f64;
+                info!(
+                    "Progress: {} / {} transactions processed ({}%, skipping?{}) ",
+                    restoration_state.transaction_count,
+                    total_count,
+                    pct.round(),
+                    restoration_state.skipping,
+                )
+            }
+
             // Check if we are skipping (resuming)
             if restoration_state.skipping {
                 restoration_state.initially_skipped += 1;
@@ -329,20 +342,14 @@ async fn process_backup_files<'a>(
                     debug!("Ran to last processed transaction id {}, toggling write operations", t.id);
                     restoration_state.skipping = false
                     // Note: we still skip this transaction as it is already processed
+                } else if let Some(pre_migration) = t.pre_migration.as_ref() {
+                    if pre_migration.id.as_ref() == domain_info.last_processed_id.as_ref() {
+                        debug!("Ran to last processed transaction id {}, toggling write operations", t.id);
+                        restoration_state.skipping = false
+                        // Note: we still skip this transaction as it is already processed
+                    }
                 }
                 continue  // Transaction already processed
-            }
-
-            // Output simple progress info
-            if restoration_state.transaction_count % 1000 == 0 {
-                let total_count = domain_info.file_transaction_count + domain_info.redolog_count as u64;
-                let pct = 100f64 * restoration_state.transaction_count as f64 / total_count as f64;
-                info!(
-                    "Progress: {} / {} transactions processed ({}%)",
-                    restoration_state.transaction_count,
-                    total_count,
-                    pct.round()
-                )
             }
 
             // Copy data that gets moved
