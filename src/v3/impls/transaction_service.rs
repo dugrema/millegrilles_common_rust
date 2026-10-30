@@ -238,8 +238,10 @@ async fn run_transaction_aggregator(
 ) -> Result<(), CommonError> {
     // Insert tracking - detects duplicates
     if let Some(tracking) = ops_aggregator.tracking {
-        let tracking_collection = mongo.get_collection(tracking_table)?;
-        tracking_collection.insert_many(tracking).session(&mut *session).await?;
+        if ! tracking.is_empty() {
+            let tracking_collection = mongo.get_collection(tracking_table)?;
+            tracking_collection.insert_many(tracking).session(&mut *session).await?;
+        }
     }
 
     // Run batch inserts first
@@ -252,12 +254,16 @@ async fn run_transaction_aggregator(
 
     // Run unordered operations
     if let Some(unordered) = ops_aggregator.unordered {
-        mongo.bulk_write(unordered, Some(session), false).await?;
+        if ! unordered.is_empty() {
+            mongo.bulk_write(unordered, Some(session), false).await?;
+        }
     }
 
     // Ordered operations last
     if let Some(ordered) = ops_aggregator.ordered {
-        mongo.bulk_write(ordered, Some(session), true).await?;
+        if ! ordered.is_empty() {
+            mongo.bulk_write(ordered, Some(session), true).await?;
+        }
     }
 
     Ok(())
