@@ -359,7 +359,17 @@ async fn process_backup_files<'a>(
                 // Verificatino is disabled, we always verify the integrity of the transaction but no cert verification
                 let mut message: MessageMilleGrillesOwned = t.into();
                 // Note : content validation is very costly (3x process+DB).
-                message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                // message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                if let Err(e) = message.verifier_signature() {
+                    warn!(
+                        "Transaction id:{} ({:?}) verify signature failed: {:?}. **REJECTING**\nContent: {:?}",
+                        message.id,
+                        message.routage,
+                        e,
+                        message.contenu
+                    );
+                    continue  // Transaction rejected
+                }
                 // Return the module certificate instead of the transaction certificate (cert cannot be None when processing transactions).
                 (message, module_certificate.clone())
             } else {
@@ -381,7 +391,17 @@ async fn process_backup_files<'a>(
 
                 if !is_trusted_mgbak {
                     // Note : content validation is very costly (3x process+DB).
-                    message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                    // message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                    if let Err(e) = message.verifier_signature() {
+                        warn!(
+                        "Transaction id:{} ({:?}) verify signature failed: {:?}. **REJECTING**\nContent: {:?}",
+                        message.id,
+                        message.routage,
+                        e,
+                        message.contenu
+                    );
+                        continue  // Transaction rejected
+                    }
                     // Verify that the reported pubkey/certificate and message timestamp match
                     // let message_owned: MessageMilleGrillesOwned = t.try_into()?;
                     pki.validate_message_with_cert(&message, verif_certificate.as_ref())?;
@@ -567,7 +587,17 @@ async fn process_redolog_collection<'a>(
                 };
 
                 // Validate structure of transaction. Costly, but this is coming from DB (not encrypted).
-                transaction_data.message.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+                // Ensure transaction is valid through self-contained check
+                if let Err(e) = transaction_data.message.verifier_signature() {
+                    warn!(
+                        "Transaction id:{} ({:?}) verify signature failed: {:?}. **REJECTING**\nContent: {:?}",
+                        transaction_data.message.id,
+                        transaction_data.message.routage,
+                        e,
+                        transaction_data.message.contenu
+                    );
+                    continue  // Transaction rejected
+                }
                 // Verify that the reported pubkey/certificate and message timestamp match
                 pki.validate_message_with_cert(&transaction_data.message, certificate.as_ref())?;
 
