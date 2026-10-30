@@ -1,5 +1,5 @@
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
-use crate::constantes::{COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, Securite};
+use crate::constantes::{Securite, COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, ENV_DROP_INVALID_TRANSACTIONS};
 use crate::error::Error as CommonError;
 use crate::generateur_messages::RoutageMessageAction;
 use crate::messages_generiques::CommandeSauvegarderCertificat;
@@ -89,6 +89,12 @@ pub async fn preflight_check(
     // Get encryption key for this domain
     let decryption_key = get_domain_backup_key(outbound, chiffrage, domain_name).await?;
 
+    let danger_drop_invalid_transactions = match std::env::var(ENV_DROP_INVALID_TRANSACTIONS) {
+        Ok(val) => val.as_str() == "1",
+        _ => false,
+    };
+    if danger_drop_invalid_transactions { warn!("!! DROPPING INVALID TRANSACTIONS !!") }
+
     Ok(BackupPreflightResult {
         domain_name: domain_name.to_string(),
         idmg,
@@ -97,6 +103,7 @@ pub async fn preflight_check(
         redolog_count: waiting_transaction_count as usize,
         key: decryption_key,
         version,
+        danger_drop_invalid_transactions,
     })
 }
 
@@ -524,7 +531,15 @@ async fn extract_transactions_from_backup<W>(
         while let Some(transaction) = lines.next_line().await? {
             // Validate structure of transaction
             let mut t: TransactionOwned = serde_json::from_str(transaction.as_str())?;
-            t.verifier_signature()?;  // Ensure transaction is valid through self-contained check
+            if let Err(e) = t.verifier_signature() {  // Ensure transaction is valid through self-contained check
+                error!("Invalid transaction id {} ({:?}): {:?}\n{:?}", t.id, t.routage, e, t.contenu);
+                if domain_info.danger_drop_invalid_transactions {
+                    error!("**DROPPING** Invalid transaction id {}", t.id);
+                    continue
+                } else {
+                    return Err(e)
+                }
+            }
 
             // Transactions must be in order, this is enforced here. Also bean counting.
             let new_transaction_time = t.processed_date();

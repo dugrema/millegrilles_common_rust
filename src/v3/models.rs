@@ -252,6 +252,8 @@ pub struct BackupPreflightResult {
     pub key: DecryptedKey,
     /// Suffix ot the Concatene file
     pub version: Option<String>,
+    /// Flag that will make the process skip invalid transactions instead of raising an exception
+    pub danger_drop_invalid_transactions: bool,
 }
 
 impl BackupPreflightResult {

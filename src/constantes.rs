@@ -425,6 +425,7 @@ pub const PATH_REGLES_VALIDATION: &str = "/var/opt/millegrilles/configuration/id
 pub const REQUETE_GET_FILEHOST_FOR_INSTANCE: &str = "getFilehostForInstance";
 
 pub const ENV_BACKUP_PATH: &str = "BACKUP_PATH";
+pub const ENV_DROP_INVALID_TRANSACTIONS: &str = "DANGER_DROP_INVALID_TRANSACTIONS";
 
 pub const INDEX_BID: &str = "index_bid";
 pub const INDEX_DATE_PROCESSED: &str = "date_processed";

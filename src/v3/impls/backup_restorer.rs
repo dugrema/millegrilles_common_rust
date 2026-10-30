@@ -1,4 +1,4 @@
-use crate::constantes::{FIELD_DATE_PROCESSED, FIELD_PROCESSED, INDEX_DATE_PROCESSED};
+use crate::constantes::{FIELD_PROCESSED, INDEX_DATE_PROCESSED};
 use crate::error::{Error as CommonError, Error};
 use crate::hachages::Hacheur;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
