@@ -362,7 +362,11 @@ pub fn get_file_digest_suffix(file_path: &Path) -> Result<String, CommonError> {
         Some(s) => s,
         None => return Err(CommonError::Str("Unable to get filename (stem)"))
     };
-    let mut split: Vec<&str> = nom_fichier.split("_").collect();
+    let nom_fichier = match nom_fichier.split('.').next() {
+        Some(s) => s,
+        None => return Err(CommonError::Str("Unable to get filename (stem)"))
+    };
+    let mut split: Vec<&str> = nom_fichier.split('_').collect();
     let digest_suffix = match split.pop() {
         Some(s) => s.to_owned(),
         None => return Err(CommonError::Str("Unable to get suffix from filename"))

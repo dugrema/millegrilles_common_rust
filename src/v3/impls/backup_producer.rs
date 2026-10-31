@@ -1,6 +1,6 @@
 use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::constantes::{Securite, COMMANDE_SAUVEGARDER_CERTIFICAT, DOMAINE_PKI, ENV_DROP_INVALID_TRANSACTIONS};
-use crate::error::Error as CommonError;
+use crate::error::{Error as CommonError, Error};
 use crate::generateur_messages::RoutageMessageAction;
 use crate::messages_generiques::CommandeSauvegarderCertificat;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl, MongoDaoTyped};
@@ -57,8 +57,17 @@ pub async fn preflight_check(
             return Err(PreflightError::NothingToDo);
         }
     }
-    let idmg = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.idmg()
-        .map_err(|e| PreflightError::CommonError(e.into()))?;
+
+    let certificate = config.get_configuration_pki().get_enveloppe_privee();
+
+    let idmg = certificate.enveloppe_pub.idmg().map_err(|e| PreflightError::CommonError(e.into()))?;
+
+    // Ensure the domain's certificate is saved
+    save_certificate_with_pki(
+        outbound,
+        &certificate.enveloppe_pub.chaine_pem().map_err(|e| PreflightError::CommonError(e.into()))?,
+        &certificate.enveloppe_pub.fingerprint().map_err(|e| PreflightError::CommonError(e.into()))?
+    ).await?;
 
     // Check if we have existing incremental backups to concatenate
     let existing_files = load_backup_file_list(
@@ -589,27 +598,34 @@ async fn save_certificate(
     if ! already_processed_ids.contains(&certificate_fingerprint) {
 
         // Send certificate for saving
-        let routing = RoutageMessageAction::builder(
-            DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege]).build();
-        let command = CommandeSauvegarderCertificat {
-            chaine_pem: certificate.to_owned(),
-            ca: None,
-        };
-        match outbound.send_command(routing, command).await {
-            Ok(response) => match response {
-                Some(response) => {
-                    if let Ok((true, e)) = response.is_err() {
-                        return Err(CommonError::String(format!("Error when saving certificate: {:?}", e)))
-                    }
-                },
-                None => return Err(CommonError::Str("No response received when saving certificate"))
-            },
-            Err(e) => return Err(CommonError::String(format!("Error saving certificate {}: {:?}", certificate_fingerprint, e)))
-        };
+        save_certificate_with_pki(outbound, certificate, &certificate_fingerprint).await?;
 
         // Save fingerprint to avoid re-sending this certificate
         already_processed_ids.insert(certificate_fingerprint);
     }
+    Ok(())
+}
+
+async fn save_certificate_with_pki(outbound: &MessageOutboundFacade, certificate: &Vec<String>, certificate_fingerprint: &String) -> Result<(), Error> {
+    let routing = RoutageMessageAction::builder(
+        DOMAINE_PKI, COMMANDE_SAUVEGARDER_CERTIFICAT, vec![Securite::L3Protege]).build();
+    let command = CommandeSauvegarderCertificat {
+        chaine_pem: certificate.to_owned(),
+        ca: None,
+    };
+    match outbound.send_command(routing, command).await {
+        Ok(response) => match response {
+            Some(response) => {
+                if let Ok((true, e)) = response.is_err() {
+                    return Err(CommonError::String(format!("Error when saving certificate: {:?}", e)))
+                }
+                debug!("Saved certificate {} with CorePki", certificate_fingerprint);
+            },
+            None => return Err(CommonError::Str("No response received when saving certificate"))
+        },
+        Err(e) => return Err(CommonError::String(format!("Error saving certificate {}: {:?}", certificate_fingerprint, e)))
+    };
+
     Ok(())
 }
 
@@ -645,9 +661,6 @@ pub async fn produce_concatenated_backup_file(
     // Extract date information from header
     let first_transaction = backup_header.debut_backup.clone();
 
-    // Concatenated file done, rotate all backup folders and move *.mgbak files to backup_NOW (NOW is the date)
-    rotate_backup_files(domain_backup_path).await?;
-
     // Rename concatenated workfile to proper value
     let (path_backup_file, digest_suffix, filesize) = rename_backup_file(
         chiffrage,
@@ -657,6 +670,27 @@ pub async fn produce_concatenated_backup_file(
         domain_backup_path,
         workfile.as_path()
     ).await?;
+
+    // Renamed file to .notverified, check it and remove suffix if verificate passes
+    let filename = path_backup_file.file_name().expect("filename");
+    let mut not_verified_path = path_backup_file.clone();
+    not_verified_path.set_file_name(format!("{}.notverified", filename.to_string_lossy()));
+    fs::rename(&path_backup_file, &not_verified_path).await?;
+
+    // Run a complete check of the file that was just produced
+    if let Err(e) = verify_backup_file(not_verified_path.as_path(), domain_info.idmg.as_str(), Some(&domain_info.key)).await {
+        error!("Error during verification, deleting the workfile (it is corrupted):\nError {:?}", e);
+        if let Err(e) = fs::remove_file(not_verified_path.as_path()).await {
+            warn!("Error deleting workfile {:?}.notverified: {:?}", filename.to_str(), e);
+        }
+        return Err(e)
+    }
+
+    // Concatenated file done, rotate all backup folders and move *.mgbak files to backup_NOW (NOW is the date)
+    rotate_backup_files(domain_backup_path).await?;
+
+    // Remove .notverified suffix, needs to be done after file rotation
+    fs::rename(&not_verified_path, &path_backup_file).await?;
 
     // Read the position of the data (2 bytes + 2 bytes + header len)
     let position_data = {

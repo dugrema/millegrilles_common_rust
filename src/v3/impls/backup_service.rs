@@ -163,9 +163,6 @@ impl DomainBackupServiceImpl {
             // Update version of backup
             domain_info.version = Some(new_concatenated_file.digest_suffix.clone());
             concatenated_file = Some(new_concatenated_file);
-
-            // Run a complete check of the file that was just produced
-            verify_backup_file(new_file_path.as_path(), domain_info.idmg.as_str(), Some(&domain_info.key)).await?;
         }
 
         // Check if we can promote the Concatenated file to Final archive
