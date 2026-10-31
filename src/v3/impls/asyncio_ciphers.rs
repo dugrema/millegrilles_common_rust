@@ -1,28 +1,55 @@
-use std::mem::MaybeUninit;
+use futures::ready;
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, Decipher};
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::AsyncWrite;
 use tokio::io::{AsyncRead, ReadBuf};
 
-/// An AsyncWrite decorator that encrypts data on the fly.
+/// An AsyncWrite decorator that encrypts data on the fly using MGS4.
+/// Refactored and fixed by : Gemini 3.1
 pub struct AsyncEncryptionWriterMgs4<W> {
     inner: W,
     cipher: Option<CipherMgs4>,
-    output_buffer: Vec<u8>,
-    pub result: Option<CipherResult<32>>
+    output_buffer: Vec<u8>,       // Staging buffer for ciphertext waiting to be written to `inner`
+    scratch_buffer: Vec<u8>,      // Reusable scratch buffer for cipher updates
+    pub result: Option<CipherResult<32>>,
 }
-
 impl<W: AsyncWrite + Unpin> AsyncEncryptionWriterMgs4<W> {
     pub fn new(inner: W, cipher: CipherMgs4) -> Self {
         Self {
             inner,
             cipher: Some(cipher),
             output_buffer: Vec::with_capacity(128 * 1024),
+            scratch_buffer: Vec::with_capacity(65536 + 1024),
             result: None,
         }
+    }
+
+    /// Helper to drain `output_buffer` into the inner writer.
+    fn poll_flush_output(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        while !self.output_buffer.is_empty() {
+            match Pin::new(&mut self.inner).poll_write(cx, &self.output_buffer) {
+                Poll::Ready(Ok(0)) => {
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "failed to write encrypted data: inner writer returned zero bytes",
+                    )));
+                }
+                Poll::Ready(Ok(n)) => {
+                    if n >= self.output_buffer.len() {
+                        self.output_buffer.clear();
+                    } else {
+                        self.output_buffer.drain(0..n);
+                    }
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -34,130 +61,66 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
 
-        // 1. If there's leftover data in the output buffer, flush it first.
-        // This handles the case where a previous poll_write returned Poll::Pending.
-        if !this.output_buffer.is_empty() {
-            match Pin::new(&mut this.inner).poll_write(cx, &this.output_buffer) {
-                Poll::Ready(Ok(n)) => {
-                    if n == this.output_buffer.len() {
-                        this.output_buffer.clear();
-                    } else {
-                        this.output_buffer.drain(0..n);
-                    }
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-        }
+        // 1. Flush any pending ciphertext first.
+        ready!(this.poll_flush_output(cx))?;
 
-        // 2. Encrypt the new data.
-        // Since the cipher is guaranteed to consume all input, we can use a temporary buffer.
-        let mut temp_out = [0u8; 128 * 1024];
+        // 2. Ensure scratch buffer accommodates the 64k block requirement plus input overhead.
+        let required_capacity = std::cmp::max(65536, buf.len() + 1024);
+        this.scratch_buffer.resize(required_capacity, 0);
+
         let cipher = this.cipher
             .as_mut()
-            .ok_or_else(|| {
-                return std::io::Error::new(std::io::ErrorKind::Other, crate::error::Error::Str("poll_write: Cipher was already taken in poll_shutdown"))
-            })?;
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "poll_write: Cipher already taken"))?;
 
-        let produced = match cipher.update(buf, &mut temp_out) {
+        let produced = match cipher.update(buf, &mut this.scratch_buffer) {
             Ok(n) => n,
             Err(e) => return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
         };
 
         if produced > 0 {
-            this.output_buffer.extend_from_slice(&temp_out[0..produced]);
+            this.output_buffer.extend_from_slice(&this.scratch_buffer[..produced]);
         }
 
-        // 3. Attempt to write the newly encrypted data to the inner sink.
-        if this.output_buffer.is_empty() {
-            // Nothing was produced (e.g. not enough data for a block)
-            return Poll::Ready(Ok(buf.len()));
-        }
+        // 3. Attempt to flush the newly encrypted data immediately.
+        ready!(this.poll_flush_output(cx))?;
 
-        match Pin::new(&mut this.inner).poll_write(cx, &this.output_buffer) {
-            Poll::Ready(Ok(n)) => {
-                if n == this.output_buffer.len() {
-                    this.output_buffer.clear();
-                } else {
-                    this.output_buffer.drain(0..n);
-                }
-                Poll::Ready(Ok(buf.len()))
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
-        }
+        Poll::Ready(Ok(buf.len()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
-
-        // Flush output buffer first
-        if !this.output_buffer.is_empty() {
-            match Pin::new(&mut this.inner).poll_write(cx, &this.output_buffer) {
-                Poll::Ready(Ok(n)) => {
-                    if n == this.output_buffer.len() {
-                        this.output_buffer.clear();
-                    } else {
-                        this.output_buffer.drain(0..n);
-                    }
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-        }
-
+        ready!(this.poll_flush_output(cx))?;
         Pin::new(&mut this.inner).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         let this = self.get_mut();
 
-        // The cipher is stateful, ensure we only call finalize once before the result is produced
+        // Ensure we only call finalize once before result is produced
         if this.result.is_none() {
-            // 1. Finalize encryption.
             let cipher = this.cipher
                 .take()
-                .ok_or_else(|| {
-                    return std::io::Error::new(std::io::ErrorKind::Other, crate::error::Error::Str("poll_shutdown: Cipher was already taken"))
-                })?;
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "poll_shutdown: Cipher was already taken"))?;
 
-            let mut temp_out = [0u8; 64 * 1024];
-
+            let mut temp_out = vec![0u8; 2 * 1024 * 1024];
             let final_len = match cipher.finalize(&mut temp_out) {
                 Ok(res) => {
-                    let length_result = res.len;
+                    let len = res.len;
                     this.result = Some(res);
-                    length_result
-                },
-                Err(e) => {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    len
                 }
+                Err(e) => return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
             };
 
             if final_len > 0 {
-                this.output_buffer.extend_from_slice(&temp_out[0..final_len]);
+                this.output_buffer.extend_from_slice(&temp_out[..final_len]);
             }
         }
 
-        // 2. Flush remaining output buffer.
-        while !this.output_buffer.is_empty() {
-            match Pin::new(&mut this.inner).poll_write(cx, &this.output_buffer) {
-                Poll::Ready(Ok(n)) => {
-                    if n == this.output_buffer.len() {
-                        this.output_buffer.clear();
-                    } else {
-                        this.output_buffer.drain(0..n);
-                    }
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-        }
+        // Flush all remaining output buffer content
+        ready!(this.poll_flush_output(cx))?;
 
-        // 3. Shutdown the inner sink.
+        // Shutdown the inner sink
         Pin::new(&mut this.inner).poll_shutdown(cx)
     }
 }
@@ -260,13 +223,13 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
 
 #[cfg(test)]
 mod test {
-    use tempfile::NamedTempFile;
-    use tokio::fs::File;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use super::*;
     use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageStruct, Decipher};
     // Assuming tempfile is available
     use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, DecipherMgs4};
+    use tempfile::NamedTempFile;
+    use tokio::fs::File;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn test_base_mgs4_encrypt_decrypt() {
