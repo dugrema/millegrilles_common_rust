@@ -392,12 +392,33 @@ async fn process_backup_files<'a>(
                 (message, module_certificate.clone())
             } else {
                 // Regular approach, fetch certificates
-                let verif_certificate = get_certificate(outbound, &mut certificate_cache, &t.estampille, &t.pubkey).await?;
+                let verif_certificate = match get_certificate(outbound, &mut certificate_cache, &t.estampille, &t.pubkey).await {
+                    Ok(inner) => inner,
+                    Err(e) => {
+                        return Err(CommonError::String(format!(
+                            "process_backup_files: Error fetching certificate {} for transaction {} ({:?}): {:?}",
+                            t.pubkey,
+                            t.id,
+                            t.routage,
+                            e
+                        )))
+                    }
+                };
                 let transaction_certificate: Arc<EnveloppeCertificat> = match t.pre_migration.as_ref() {
                     Some(pre_migration) => match (pre_migration.pubkey.as_ref(), pre_migration.estampille.as_ref()) {
                         (Some(pubkey), Some(estampille)) => {
                             debug!("Using pre-migration certificate fingerprint {}", pubkey);
-                            get_certificate(outbound, &mut certificate_cache, estampille, pubkey).await?
+                            match get_certificate(outbound, &mut certificate_cache, estampille, pubkey).await {
+                                Ok(inner) => inner,
+                                Err(e) => {
+                                    return Err(CommonError::String(format!(
+                                        "process_backup_files: Error fetching certificate {} for transaction {} (migrated): {:?}",
+                                        t.pubkey,
+                                        t.id,
+                                        e
+                                    )))
+                                }
+                            }
                         },
                         _ => verif_certificate.clone()
                     },
@@ -468,7 +489,7 @@ async fn process_backup_files<'a>(
                 }
             };
 
-            if aggregator.legacy {
+            if aggregator.legacy || aggregator.flush {
                 // Must flush immediately
                 transaction.run_aggregator(aggregator).await?;
             } else {
@@ -592,11 +613,19 @@ async fn process_redolog_collection<'a>(
                         module_certificate.clone()
                     } else {
                         debug!("Fetch certificate for redo-log transaction {}", transaction_data.message.id);
-                        let (certificate, valid) = outbound.get_certificate(
+                        let (certificate, valid) = match outbound.get_certificate(
                             transaction_data.message.pubkey.as_str(),
                             Some(&transaction_data.message.estampille),
                             Some(3_000)
-                        ).await?;
+                        ).await {
+                            Ok(inner) => inner,
+                            Err(e) => return Err(CommonError::String(format!(
+                                "process_redolog_collection Error fetching transaction {} certificate {}: {:?}",
+                                transaction_data.message.id,
+                                transaction_data.message.pubkey,
+                                e
+                            )))
+                        };
                         if !valid {
                             return Err(CommonError::Str("Certificate does not match redo-log transaction"));
                         }

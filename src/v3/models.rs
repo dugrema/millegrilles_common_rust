@@ -140,6 +140,8 @@ pub struct TransactionOperationAggregator {
     /// Set to true when the backup contains legacy transactions.
     /// This allows workarounds while processing older backups.
     pub legacy: bool,
+    /// When true, suggests that a commit should be done immediately.
+    pub flush: bool,
 }
 
 impl TransactionOperationAggregator {
@@ -150,6 +152,7 @@ impl TransactionOperationAggregator {
             unordered: None,
             ordered: None,
             legacy: false,
+            flush: false,
         }
     }
 
@@ -230,6 +233,9 @@ impl TransactionOperationAggregator {
                 self.ordered = other.ordered;
             }
         }
+
+        // Keep true once toggled
+        self.flush = self.flush || other.flush;
 
         Ok(())
     }
