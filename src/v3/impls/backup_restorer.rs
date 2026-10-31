@@ -140,6 +140,10 @@ pub async fn process_transactions_from_backup<'a>(
             restoration_state.transaction_count,
         )
     } else {
+        // Run aggregator after all files completed
+        if let Some(aggregator) = restoration_state.aggregator.take() {
+            transaction.run_aggregator(aggregator).await?;
+        }
         info!("Processed {} transactions from backup files", restoration_state.transaction_count);
     }
 
