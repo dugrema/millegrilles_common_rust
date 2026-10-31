@@ -239,40 +239,54 @@ async fn process_backup_files<'a>(
                     match backup_file.header.pubkey.as_ref() {
                         Some(pubkey) => {
                             let certificate = match certificate_cache.get(pubkey) {
-                                Some(certificate) => certificate.clone(),
+                                Some(certificate) => Some(certificate.clone()),
                                 None => {
                                     debug!("Loading certificate {}", pubkey);
                                     // Validate with this header's date
                                     let header_date = backup_file.header.timestamp.as_ref();
-                                    let (certificate, valid) = outbound.get_certificate(pubkey, header_date, Some(5_000)).await?;
-                                    if valid {
-                                        if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
-                                            certificate_cache.clear();
+                                    match outbound.get_certificate(pubkey, header_date, Some(5_000)).await {
+                                        Ok((certificate, valid)) => {
+                                            if valid {
+                                                if certificate_cache.len() > CERTIFICATE_CACHE_LIMIT {
+                                                    certificate_cache.clear();
+                                                }
+                                                certificate_cache.insert(pubkey.clone(), certificate.clone());
+                                                Some(certificate)
+                                            } else {
+                                                warn!("Error validating certificate with backup header, marking file NOT TRUSTED");
+                                                None
+                                            }
+                                        },
+                                        Err(err) => {
+                                            warn!("Error validating certificate with backup header: {:?}, marking file NOT TRUSTED", err);
+                                            None
                                         }
-                                        certificate_cache.insert(pubkey.clone(), certificate.clone());
-                                    } else {
-                                        return Err(CommonError::Str("Error validating certificate with backup header"))
                                     }
-                                    certificate
                                 }
                             };
-                            if pubkey != &certificate.fingerprint()? {
-                                // This should not happen - we loaded the certificate by pubkey
-                                info!("Backup file pubkey does not match certificate, marking untrusted: {:?}", backup_file.path_fichier);
-                                false
-                            } else {
-                                // Check archive date compared to certificate
-                                let not_valid_after = certificate.not_valid_after()?;
-                                let not_valid_before = certificate.not_valid_before()?;
-                                match backup_file.header.timestamp {
-                                    Some(timestamp) => {
-                                        info!("Backup file signature OK, marking trusted: {:?}", backup_file.path_fichier);
-                                        not_valid_after > timestamp && not_valid_before < timestamp
-                                    },
-                                    None => {
+
+                            match certificate {
+                                Some(certificate) => {
+                                    if pubkey != &certificate.fingerprint()? {
+                                        // This should not happen - we loaded the certificate by pubkey
+                                        info!("Backup file pubkey does not match certificate, marking untrusted: {:?}", backup_file.path_fichier);
                                         false
+                                    } else {
+                                        // Check archive date compared to certificate
+                                        let not_valid_after = certificate.not_valid_after()?;
+                                        let not_valid_before = certificate.not_valid_before()?;
+                                        match backup_file.header.timestamp {
+                                            Some(timestamp) => {
+                                                info!("Backup file signature OK, marking trusted: {:?}", backup_file.path_fichier);
+                                                not_valid_after > timestamp && not_valid_before < timestamp
+                                            },
+                                            None => {
+                                                false
+                                            }
+                                        }
                                     }
-                                }
+                                },
+                                None => false
                             }
                         },
                         None => {
