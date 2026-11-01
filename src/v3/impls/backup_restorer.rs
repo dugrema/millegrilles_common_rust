@@ -22,7 +22,7 @@ use openssl::pkey::{PKey, Private};
 use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::sync::{Arc, Mutex};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, BufReader};
 use tracing::{debug, error, info, warn};
@@ -206,6 +206,8 @@ async fn process_backup_files<'a>(
     let module_certificate = config.get_configuration_pki().get_enveloppe_privee().enveloppe_pub.clone();
 
     let mut certificate_cache: HashMap<String, Arc<EnveloppeCertificat>> = HashMap::new();
+    let mut log_last_update = Utc::now();
+    let log_interval = Duration::seconds(1);
     for backup_file in &domain_info.files {
         info!("Processing backup file {:?}", backup_file.path_fichier);
 
@@ -341,16 +343,19 @@ async fn process_backup_files<'a>(
             restoration_state.transaction_count += 1;
 
             // Output simple progress info
-            if restoration_state.transaction_count % 250 == 0 {
-                let total_count = domain_info.file_transaction_count + domain_info.redolog_count as u64;
-                let pct = 100f64 * restoration_state.transaction_count as f64 / total_count as f64;
-                info!(
-                    "Progress: {} / {} transactions processed ({}%, skipping?{}) ",
-                    restoration_state.transaction_count,
-                    total_count,
-                    pct.round(),
-                    restoration_state.skipping,
-                )
+            if restoration_state.transaction_count % 100 == 0 {
+                if log_last_update < Utc::now() - log_interval {
+                    log_last_update = Utc::now();
+                    let total_count = domain_info.file_transaction_count + domain_info.redolog_count as u64;
+                    let pct = 100f64 * restoration_state.transaction_count as f64 / total_count as f64;
+                    info!(
+                        "Progress: {} / {} transactions processed ({}%, skipping?{}) ",
+                        restoration_state.transaction_count,
+                        total_count,
+                        pct.round(),
+                        restoration_state.skipping,
+                    )
+                }
             }
 
             // Check if we are skipping (resuming)
