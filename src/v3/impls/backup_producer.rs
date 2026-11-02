@@ -350,10 +350,11 @@ where
                     processed: &transaction.processed
                 };
                 let transaction_str = serde_json::to_string(&transaction_ser)?;
+
                 writer.write_all(transaction_str.as_bytes().to_vec().as_slice()).await?;
                 // Add line feed (\n) to allow file to be read as "jsonl"
                 writer.write_all(b"\n").await?;
-                writer.flush().await?;  // Avoid encryption stream issue
+                // writer.flush().await?;  // Avoid encryption stream issue
             }
             Err(e) => {
                 error!("Error parsing redolog content: {}, will ignore and delete transaction", e);
@@ -361,6 +362,8 @@ where
             }
         }
     }
+
+    writer.flush().await?;
 
     debug!("Done reading redo-log content, cleaning-up");
 

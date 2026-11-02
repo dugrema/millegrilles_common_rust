@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 use tokio::io::AsyncWrite;
 use tokio::io::{AsyncRead, ReadBuf};
-use tracing::warn;
+use tracing::{info, warn};
 
 const BUF_INPUT_LEN: usize = 65_536;
 const BUF_OUTPUT_LEN: usize = 2 * BUF_INPUT_LEN;
@@ -68,13 +68,6 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         // 1. Flush any pending ciphertext first.
         ready!(this.poll_flush_output(cx))?;
 
-        {
-            let buflen = buf.len();
-            if buflen > 60_000 {
-                warn!("BUFLEN:{}", buflen);
-            }
-        }
-
         // 2. Ensure scratch buffer accommodates the 64k block requirement plus input overhead.
         let required_capacity = std::cmp::max(BUF_INPUT_LEN, buf.len() + 1024);
         this.scratch_buffer.resize(required_capacity, 0);
@@ -93,7 +86,17 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         }
 
         // 3. Attempt to flush the newly encrypted data immediately.
-        ready!(this.poll_flush_output(cx))?;
+        //    Continue even on error, input bytes have been consumed.
+        if let Err(e) = ready!(this.poll_flush_output(cx)) {
+            info!("Flush poll error: {:?}", e);
+        }
+        // match this.poll_flush_output(cx) {
+        //     Poll::Pending => (),
+        //     Poll::Ready(Ok(())) => (),
+        //     Poll::Ready(Err(e)) => {
+        //         info!("Flush poll error: {:?}", e);
+        //     },
+        // }
 
         Poll::Ready(Ok(buf.len()))
     }
