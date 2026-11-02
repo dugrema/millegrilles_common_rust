@@ -1,12 +1,16 @@
-use futures::ready;
 use millegrilles_cryptographie::chiffrage_cles::{Cipher, CipherResult, Decipher};
 use millegrilles_cryptographie::chiffrage_mgs4::CipherMgs4;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{ready, Context, Poll};
 use tokio::io::AsyncWrite;
 use tokio::io::{AsyncRead, ReadBuf};
+use tracing::warn;
+
+const BUF_INPUT_LEN: usize = 65_536;
+const BUF_OUTPUT_LEN: usize = 2 * BUF_INPUT_LEN;
+const TEMPBUF_OUTPUT_LEN: usize = 2 * 1024 * 1024;
 
 /// An AsyncWrite decorator that encrypts data on the fly using MGS4.
 /// Refactored and fixed by : Gemini 3.1
@@ -22,8 +26,8 @@ impl<W: AsyncWrite + Unpin> AsyncEncryptionWriterMgs4<W> {
         Self {
             inner,
             cipher: Some(cipher),
-            output_buffer: Vec::with_capacity(128 * 1024),
-            scratch_buffer: Vec::with_capacity(65536 + 1024),
+            output_buffer: Vec::with_capacity(BUF_OUTPUT_LEN),
+            scratch_buffer: Vec::with_capacity(BUF_INPUT_LEN + 1024),
             result: None,
         }
     }
@@ -64,8 +68,15 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
         // 1. Flush any pending ciphertext first.
         ready!(this.poll_flush_output(cx))?;
 
+        {
+            let buflen = buf.len();
+            if buflen > 60_000 {
+                warn!("BUFLEN:{}", buflen);
+            }
+        }
+
         // 2. Ensure scratch buffer accommodates the 64k block requirement plus input overhead.
-        let required_capacity = std::cmp::max(65536, buf.len() + 1024);
+        let required_capacity = std::cmp::max(BUF_INPUT_LEN, buf.len() + 1024);
         this.scratch_buffer.resize(required_capacity, 0);
 
         let cipher = this.cipher
@@ -102,7 +113,7 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
                 .take()
                 .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "poll_shutdown: Cipher was already taken"))?;
 
-            let mut temp_out = vec![0u8; 2 * 1024 * 1024];
+            let mut temp_out = vec![0u8; TEMPBUF_OUTPUT_LEN];
             let final_len = match cipher.finalize(&mut temp_out) {
                 Ok(res) => {
                     let len = res.len;
@@ -138,7 +149,7 @@ impl<R: AsyncRead + Unpin> AsyncDecryptionReaderMgs4<R> {
         Self {
             inner,
             cipher: Some(cipher),
-            output_buffer: Vec::with_capacity(128 * 1024),
+            output_buffer: Vec::with_capacity(BUF_OUTPUT_LEN),
             is_eof: false,
         }
     }
@@ -164,7 +175,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
             // 2. If we reached EOF and have nothing left to decrypt, finalize.
             if this.is_eof {
                 if let Some(cipher) = this.cipher.take() {
-                    let mut temp_out = [0u8; 64 * 1024];
+                    let mut temp_out = [0u8; BUF_INPUT_LEN];
                     match cipher.finalize(&mut temp_out) {
                         Ok(n) if n > 0 => {
                             this.output_buffer.extend_from_slice(&temp_out[..n]);
@@ -184,7 +195,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
             }
 
             // 3. Read more from the inner source.
-            let mut temp_buf = [MaybeUninit::uninit(); 64 * 1024];
+            let mut temp_buf = [MaybeUninit::uninit(); BUF_INPUT_LEN];
             let mut temp_read_buf = ReadBuf::uninit(&mut temp_buf);
             match Pin::new(&mut this.inner).poll_read(cx, &mut temp_read_buf) {
                 Poll::Ready(Ok(())) => {
@@ -195,7 +206,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for AsyncDecryptionReaderMgs4<R> {
                     }
 
                     // 4. Decrypt the newly read data.
-                    let mut temp_out = [0u8; 64 * 1024];
+                    let mut temp_out = [0u8; BUF_INPUT_LEN];
                     match this.cipher.as_mut().ok_or_else(|| {
                         std::io::Error::new(std::io::ErrorKind::Other, "Decipher already taken")
                     })?.update(temp_read_buf.filled(), &mut temp_out) {

@@ -513,7 +513,11 @@ async fn verify_transactions(archive_info: &FichierArchiveBackup, key: &Decrypte
         let mut t: TransactionOwned = match serde_json::from_str(transaction_data.as_str()) {
             Ok(t) => t,
             Err(e) => {
-                error!("Error processing transaction: {}", transaction_data);
+                if transaction_data.len() < 2_000 {
+                    error!("Error processing transaction: {}", transaction_data);
+                } else {
+                    error!("Error processing transaction of len {}", transaction_data.len());
+                }
                 Err(e)?
             }
         };
