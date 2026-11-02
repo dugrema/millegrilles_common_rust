@@ -574,7 +574,7 @@ async fn extract_transactions_from_backup<W>(
             writer.write_all(transaction.as_bytes()).await?;
             // // Add newline for jsonl format
             writer.write_all(b"\n").await?;
-            writer.flush().await?;  // Issue with writer when overloaded
+            // writer.flush().await?;  // Issue with writer when overloaded
         }
     }
     debug!("Done reading {} transactions", transaction_count);
@@ -751,8 +751,8 @@ pub async fn write_new_header<W>(
     let header_size = header_str.len() as u16;
     debug!("Wrote new placeholder header, padded size {}", header_size);
 
-    writer.write(&FILE_VERSION.to_le_bytes()).await?;
-    writer.write(&header_size.to_le_bytes()).await?;
+    writer.write_all(&FILE_VERSION.to_le_bytes()).await?;
+    writer.write_all(&header_size.to_le_bytes()).await?;
     writer.write_all(header_str.as_bytes()).await?;
     writer.flush().await?;
 
