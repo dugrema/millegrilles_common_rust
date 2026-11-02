@@ -87,16 +87,16 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
 
         // 3. Attempt to flush the newly encrypted data immediately.
         //    Continue even on error, input bytes have been consumed.
-        if let Err(e) = ready!(this.poll_flush_output(cx)) {
-            info!("Flush poll error: {:?}", e);
-        }
-        // match this.poll_flush_output(cx) {
-        //     Poll::Pending => (),
-        //     Poll::Ready(Ok(())) => (),
-        //     Poll::Ready(Err(e)) => {
-        //         info!("Flush poll error: {:?}", e);
-        //     },
+        // if let Err(e) = ready!(this.poll_flush_output(cx)) {
+        //     info!("Flush poll error: {:?}", e);
         // }
+        match this.poll_flush_output(cx) {
+            Poll::Pending => (),
+            Poll::Ready(Ok(())) => (),
+            Poll::Ready(Err(e)) => {
+                info!("Flush poll error: {:?}", e);
+            },
+        }
 
         Poll::Ready(Ok(buf.len()))
     }
