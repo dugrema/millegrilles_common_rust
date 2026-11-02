@@ -76,8 +76,9 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
             .as_mut()
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "poll_write: Cipher already taken"))?;
 
+        // Consume the bytes through update. On OK, we MUST return "Poll::Ready(Ok(buf.len()))" to avoid resubmission of buf.
         let produced = match cipher.update(buf, &mut this.scratch_buffer) {
-            Ok(n) => n,
+            Ok(n) => n,  // Cipher state updated
             Err(e) => return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
         };
 
@@ -87,14 +88,14 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptionWriterMgs4<W> {
 
         // 3. Attempt to flush the newly encrypted data immediately.
         //    Continue even on error, input bytes have been consumed.
-        // if let Err(e) = ready!(this.poll_flush_output(cx)) {
-        //     info!("Flush poll error: {:?}", e);
-        // }
         match this.poll_flush_output(cx) {
-            Poll::Pending => (),
-            Poll::Ready(Ok(())) => (),
+            Poll::Pending => (),            // Data still in output_buffer
+            Poll::Ready(Ok(())) => (),      // Data written out
             Poll::Ready(Err(e)) => {
-                info!("Flush poll error: {:?}", e);
+                // Eat the error.
+                // If this is a fatal error (e.g. no more space) it will be thrown again on a
+                // poll_flush_output during subsequent calls to poll_write or on poll_shutdown.
+                info!("AsyncEncryptionWriterMgs4 poll_write flush error: {:?}", e);
             },
         }
 
