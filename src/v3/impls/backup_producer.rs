@@ -23,6 +23,7 @@ use mongodb::options::Hint;
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
 use std::path::Path;
+use async_compression::Level;
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -458,7 +459,7 @@ async fn process_concatenated_file_operations(
     );
 
     debug!("Creating compressor");
-    let mut compressor = DeflateEncoder::new(&mut encryptor);
+    let mut compressor = DeflateEncoder::with_quality(&mut encryptor, Level::Best);
 
     // BACKUP
     debug!("Starting transaction extraction");

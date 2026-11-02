@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 use tokio::io::AsyncWrite;
 use tokio::io::{AsyncRead, ReadBuf};
-use tracing::{info, warn};
+use tracing::info;
 
 const BUF_INPUT_LEN: usize = 65_536;
 const BUF_OUTPUT_LEN: usize = 2 * BUF_INPUT_LEN;

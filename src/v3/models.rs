@@ -271,6 +271,13 @@ impl BackupPreflightResult {
         }
         false
     }
+
+    pub fn count_incrementals(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|f| f.header.type_archive == TypeArchive::Incremental.to_string())
+            .count()
+    }
 }
 
 pub struct RestorePreflightResult<'a> {

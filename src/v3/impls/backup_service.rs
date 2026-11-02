@@ -3,7 +3,7 @@ use crate::common_messages::BackupEvent;
 use crate::error::Error as CommonError;
 use crate::mongo_dao::{MongoDao, MongoDaoImpl};
 use crate::v3::facades::message_outbound::MessageOutboundFacade;
-use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile, verify_backup_file};
+use crate::v3::impls::backup_filehandling::{create_lockfile, produce_final_file, promote_backup_file, unlock_lockfile};
 use crate::v3::impls::backup_producer::{preflight_check, produce_concatenated_backup_file, produce_incremental_backup_file};
 use crate::v3::impls::backup_restorer::{RestorationState, process_transactions_from_backup, restore_preflight_check, truncate_data_tables};
 use crate::v3::impls::backup_transfer::transfer_backup_files_to_filehost;
@@ -16,8 +16,9 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 /// Size of concatenated file that triggers moving it to final directory as final backup archive.
-const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 630_000_000; // About 600MB
+const TRIGGER_CONCATENATED_TO_FINAL_SIZE: u64 = 200_000_000; // 200 MB
 const TRIGGER_CONCATENATED_TO_FINAL_DAYS: i64 = 365;
+const TRIGGER_INCREMENTAL_TO_CONCATENATED_ARCHIVE_COUNT: usize = 50;
 
 pub struct DomainBackupServiceImpl {
     config: Arc<dyn ConfigService>,
@@ -150,7 +151,13 @@ impl DomainBackupServiceImpl {
             }
         }
 
-        if ! incremental && domain_info.contains_incremental() {
+        // If this backup contains incremental files and it is a complete backup, trigger concatenated.
+        // Also, if the total number of files in the backup exceeds the limit, convert to full backup.
+        let is_produce_concatenated_file =
+            ! incremental && domain_info.contains_incremental()
+                || domain_info.count_incrementals() >= TRIGGER_INCREMENTAL_TO_CONCATENATED_ARCHIVE_COUNT;
+
+        if is_produce_concatenated_file {
             // This is a complete backup - run if the backup contains incremental files
             // The check is necessary because there could be multiple Final and a Concatene file in the list.
             let new_concatenated_file = produce_concatenated_backup_file(
@@ -159,7 +166,6 @@ impl DomainBackupServiceImpl {
                 self.outbound.as_ref(),
                 &domain_info
             ).await?;
-            let new_file_path = new_concatenated_file.path_fichier.clone();
             // Update version of backup
             domain_info.version = Some(new_concatenated_file.digest_suffix.clone());
             concatenated_file = Some(new_concatenated_file);
@@ -173,7 +179,7 @@ impl DomainBackupServiceImpl {
                 domain_info.version = Some(file.digest_suffix.clone());
             }
 
-            if ! incremental {
+            if ! incremental || is_produce_concatenated_file {
                 let expired_date = Utc::now() - chrono::Duration::days(TRIGGER_CONCATENATED_TO_FINAL_DAYS);
                 if file.len > TRIGGER_CONCATENATED_TO_FINAL_SIZE || file.header.debut_backup < expired_date {
                     // Promote the concatenated file to final - keep version, this forces sync of files by filecontroler
