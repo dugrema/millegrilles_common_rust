@@ -152,19 +152,27 @@ async fn register_mq_account(
     const MTLS_PORT: u16 = 444;
     const COMMANDE: &str = "administration/ajouterCompte";
 
+    let mq_host = &mq.host;
+
+    // In some cases, the "local" midcompte instance only activates the mongo account. If the mq
+    // host is not just plain internal "mq", even on success we'll still try to create an account on
+    // a remote host.
+    let try_all_urls = mq_host.as_str() != "mq";
+
     let mut hosts = Vec::new();
     hosts.push(Url::parse("https://midcompte:2444")?);
     hosts.push(Url::parse(format!("https://{}:{}", mq.host, MTLS_PORT).as_str())?);
     hosts.push(Url::parse(format!("https://nginx:{}", MTLS_PORT).as_str())?);
 
-    info!("Attempt creating MQ account with hosts {:?}", hosts);
+    info!("Attempt creating MQ account with hosts {:?}", hosts.iter().map(|u| u.as_str()).collect::<Vec<_>>());
 
     let enveloppe = pki.get_enveloppe_privee().clone();
     let ca_cert_pem = enveloppe.ca_pem.as_str();
     let root_ca = reqwest::Certificate::from_pem(ca_cert_pem.as_bytes())?;
 
+    let mut account_created = false;
     for host in hosts {
-        debug!("MQ account creation with host : {}", host);
+        debug!("MQ account creation with host : {}", host.as_str());
 
         let pem_cert = enveloppe.chaine_pem.join("\n");
         let pem_cle = enveloppe.cle_privee_pem.as_str();
@@ -186,18 +194,30 @@ async fn register_mq_account(
                 let status_code = r.status().as_u16();
                 if r.status().is_success() {
                     if status_code == 201 {
-                        info!("Account created using {} : {:?}", url, r);
+                        let content = r.text().await.ok();
+                        info!("Account created using {} : {:?}", url.as_str(), content);
                     } else {
-                        info!("Account created using {} (status:{})", url, status_code);
+                        info!("Account created using {} (status:{})", url.as_str(), status_code);
                     }
-                    return Ok(())
+                    account_created = true;
+                    if ! try_all_urls {
+                        return Ok(())
+                    }
                 }
             },
             Err(e) => {
-                warn!("Error attempting to create MQ account : {:?}", e);
+                if let Some(url) = e.url() {
+                    info!("Error attempting to create MQ account : {}", url.as_str());
+                } else {
+                    warn!("Error attempting to create MQ account : {:?}", e);
+                }
             }
         }
     }
 
-    Err("Echec creation de compte avec certificat sur MQ".into())
+    if account_created {
+        Ok(())
+    } else {
+        Err("Echec creation de compte avec certificat sur MQ".into())
+    }
 }
