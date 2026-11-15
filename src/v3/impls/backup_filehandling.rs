@@ -22,7 +22,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufR
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 use crate::db_structs::TransactionOwned;
-use crate::error::Error::Multihash;
 use crate::hachages::Hacheur;
 use crate::v3::impls::asyncio_ciphers::AsyncDecryptionReaderMgs4;
 

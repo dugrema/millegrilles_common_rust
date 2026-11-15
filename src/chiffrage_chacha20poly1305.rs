@@ -6,7 +6,7 @@ use std::fmt::{Debug, Formatter};
 use aead::NewAead;
 use tracing::debug;
 use multibase::{Base, decode, encode};
-use multihash::Code;
+use millegrilles_cryptographie::multihash_codetable::Code;
 use openssl::pkey::{PKey, Private};
 
 use crate::certificats::FingerprintCertPublicKey;

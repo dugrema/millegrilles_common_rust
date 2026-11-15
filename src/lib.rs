@@ -78,7 +78,7 @@ pub use tracing_subscriber;
 pub use rustls;
 
 #[cfg(test)]
-mod test_setup {
+pub mod test_setup {
     use tracing::{debug};
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 

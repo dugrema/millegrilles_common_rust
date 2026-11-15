@@ -2,9 +2,9 @@ use std::convert::TryFrom;
 
 use tracing::debug;
 use millegrilles_cryptographie::multibase::{Base, decode, encode};
-use millegrilles_cryptographie::multihash::{Multihash};  // Sha2_256, Sha2_512, Blake2b512, Blake2s256, StatefulHasher
-use millegrilles_cryptographie::sha2;
-use millegrilles_cryptographie::blake2;
+use millegrilles_cryptographie::multihash::Multihash;
+use millegrilles_cryptographie::sha2::{Sha256, Sha512, Digest as Sha2Digest};
+use millegrilles_cryptographie::blake2::{Blake2b512, Blake2s256};
 use multihash_codetable::{Code, MultihashDigest};
 use serde::Serialize;
 use uuid::Uuid;
@@ -88,7 +88,7 @@ pub fn verifier_multihash(hachage: &str, contenu: &[u8]) -> Result<bool, Error> 
     let mb_bytes = decode(hachage)?;
 
     // Extraire le code et digest du multihash
-    let mh = Multihash::from_bytes(&mb_bytes.1)?;
+    let mh: Multihash<64> = Multihash::from_bytes(&mb_bytes.1)?;
     let digest = mh.digest();
     let code = mh.code();
     debug!("Chargement multihash, code {:x}, \ndigest: {:02x?}", code, digest);
@@ -165,10 +165,10 @@ impl HacheurBuilder {
     pub fn build(self) -> Hacheur {
 
         let hacheur_interne: Box<dyn HacheurInterne> = match u64::from(self.digester) {
-            0x12 => Box::new(HacheurSha2_256{hacheur: Code::Sha2_256::default()}),
-            0x13 => Box::new(HacheurSha2_512{hacheur: Code::Sha2_512::default()}),
-            0xb240 => Box::new(HacheurBlake2b512{hacheur: Code::Blake2b512::default()}),
-            0xb260 => Box::new(HacheurBlake2s256{hacheur: Code::Blake2s256::default()}),
+            0x12 => Box::new(HacheurSha2_256{hacheur: Sha256::default()}),
+            0x13 => Box::new(HacheurSha2_512{hacheur: Sha512::default()}),
+            0xb240 => Box::new(HacheurBlake2b512{hacheur: Blake2b512::default()}),
+            0xb260 => Box::new(HacheurBlake2s256{hacheur: Blake2s256::default()}),
             _ => panic!("Type hacheur inconnu")
         };
 
@@ -189,26 +189,24 @@ trait HacheurInterne: Send {
 }
 
 #[derive(Debug)]
-struct HacheurSha2_256 { hacheur: Sha2_256 }
+struct HacheurSha2_256 { hacheur: Sha256 }
 impl HacheurInterne for HacheurSha2_256 {
-    fn new() -> Self { HacheurSha2_256{hacheur: Sha2_256::default()} }
+    fn new() -> Self { HacheurSha2_256{hacheur: Sha256::default()} }
     fn update(&mut self, data: &[u8]) { self.hacheur.update(data) }
     fn finalize(&mut self) -> Vec<u8> {
-        let digest = self.hacheur.finalize();
-        let mh = Code::multihash_from_digest(&digest);
-        mh.to_bytes().to_owned()
+        let digest = self.hacheur.finalize_reset();
+        Code::Sha2_256.wrap(&digest).unwrap().to_bytes()
     }
 }
 
 #[derive(Debug)]
-struct HacheurSha2_512 { hacheur: Sha2_512 }
+struct HacheurSha2_512 { hacheur: Sha512 }
 impl HacheurInterne for HacheurSha2_512 {
-    fn new() -> Self { HacheurSha2_512{hacheur: Sha2_512::default()} }
+    fn new() -> Self { HacheurSha2_512{hacheur: Sha512::default()} }
     fn update(&mut self, data: &[u8]) { self.hacheur.update(data) }
     fn finalize(&mut self) -> Vec<u8> {
-        let digest = self.hacheur.finalize();
-        let mh = Code::multihash_from_digest(&digest);
-        mh.to_bytes().to_owned()
+        let digest = self.hacheur.finalize_reset();
+        Code::Sha2_512.wrap(&digest).unwrap().to_bytes()
     }
 }
 
@@ -218,21 +216,19 @@ impl HacheurInterne for HacheurBlake2b512 {
     fn new() -> Self { HacheurBlake2b512{hacheur: Blake2b512::default()} }
     fn update(&mut self, data: &[u8]) { self.hacheur.update(data) }
     fn finalize(&mut self) -> Vec<u8> {
-        let digest = self.hacheur.finalize();
-        let mh = Code::multihash_from_digest(&digest);
-        mh.to_bytes().to_owned()
+        let digest = self.hacheur.finalize_reset();
+        Code::Blake2b512.wrap(&digest).unwrap().to_bytes()
     }
 }
 
 #[derive(Debug)]
-struct HacheurBlake2s256 { hacheur: Blake2s256 }
+pub struct HacheurBlake2s256 { hacheur: Blake2s256 }
 impl HacheurInterne for HacheurBlake2s256 {
     fn new() -> Self { HacheurBlake2s256{hacheur: Blake2s256::default()} }
     fn update(&mut self, data: &[u8]) { self.hacheur.update(data) }
     fn finalize(&mut self) -> Vec<u8> {
-        let digest = self.hacheur.finalize();
-        let mh = Code::multihash_from_digest(&digest);
-        mh.to_bytes().to_owned()
+        let digest = self.hacheur.finalize_reset();
+        Code::Blake2s256.wrap(&digest).unwrap().to_bytes()
     }
 }
 
@@ -252,9 +248,9 @@ pub fn hacher_uuid<S>(uuid_in: S, len_bytes: Option<u8>) -> Result<String, uuid:
     // let hachage_str = hacher_bytes(
     //     uuid_bytes, Some(Code::Sha2_256), Some(Base::Base64));
 
-    let mut hacheur = Sha2_256::default();
+    let mut hacheur = Sha256::default();
     hacheur.update(uuid_bytes);
-    let hachage = hacheur.finalize();
+    let hachage: [u8; 32] = hacheur.finalize().into();
     let hachage_str: String = encode(Base::Base58Btc, hachage.as_ref());
     debug!("hacher_uuid str : {}", hachage_str);
 
@@ -264,11 +260,23 @@ pub fn hacher_uuid<S>(uuid_in: S, len_bytes: Option<u8>) -> Result<String, uuid:
 #[cfg(test)]
 mod backup_tests {
     use super::*;
-    use crate::test_setup::setup;
+    use tracing::debug;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    fn test_setup(nom: &str) {
+        // Only initialize tracing if not already set
+        if tracing::subscriber::set_global_default(
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::EnvFilter::new("warn,millegrilles_common_rust=debug"))
+                .with(tracing_subscriber::fmt::layer()),
+        ).is_ok() {
+            debug!("Running {}", nom);
+        }
+    }
 
     #[test]
     fn hacheur_update() {
-        setup("hacheur_update");
+        test_setup("hacheur_update");
         let hacheur_interne = Box::new(HacheurSha2_256::new());
 
         let mut hacheur = Hacheur {
@@ -285,7 +293,7 @@ mod backup_tests {
 
     #[test]
     fn hacheur_build_default() {
-        setup("hacheur_build_default");
+        test_setup("hacheur_build_default");
         let mut hacheur = Hacheur::builder().build();
         hacheur.update("Allo tout le monde".as_bytes());
         let mh = hacheur.finalize();
@@ -294,7 +302,7 @@ mod backup_tests {
 
     #[test]
     fn hacheur_build_params() {
-        setup("hacheur_build_params");
+        test_setup("hacheur_build_params");
         let mut hacheur = Hacheur::builder()
             .digester(Code::Sha2_256)
             .base(Base::Base58Btc)
@@ -307,7 +315,7 @@ mod backup_tests {
 
     #[test]
     fn hacher_uuid_test() {
-        setup("hacher_uuid_test");
+        test_setup("hacher_uuid_test");
         const UUID_STR: &str = "7a2764fa-c457-4f25-af0d-0fc915439b21";
         let valeur_hachee = hacher_uuid(UUID_STR, None).expect("uuid");
         debug!("hachage_uuid_test : {}", valeur_hachee);

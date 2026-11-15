@@ -236,8 +236,8 @@ pub fn calculer_idmg_ref(cert: &X509Ref) -> Result<String, String> {
         hasher.finalize()
     };
 
-    // Multihash
-    let mh = Multihash::wrap(Blake2s_256.code().into(), fingerprint.as_ref()).unwrap();
+    // Multihash (Blake2s-256: 32-byte digest + 4 bytes header = 36 bytes total)
+    let mh: Multihash<36> = Multihash::wrap(Blake2s_256.code().into(), fingerprint.as_ref()).unwrap();
     let mh_bytes: Vec<u8> = mh.to_bytes();
 
     // Preparation slice du IDMG, 41 bytes

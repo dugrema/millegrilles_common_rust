@@ -2596,6 +2596,7 @@ dependencies = [
  "mongodb",
  "multicodec",
  "multihash-codetable",
+ "multihash-derive",
  "num-traits",
  "redis",
  "reqwest",

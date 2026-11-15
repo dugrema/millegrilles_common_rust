@@ -17,6 +17,7 @@ pub enum Error {
     Io(std::io::Error),
     Multibase(millegrilles_cryptographie::multibase::Error),
     Multihash(millegrilles_cryptographie::multihash::Error),
+    MultihashCode(String),
     Chacha20poly1350(millegrilles_cryptographie::chacha20poly1305::Error),
     Dryoc(millegrilles_cryptographie::dryoc::Error),
     MillegrillesCryptographie(millegrilles_cryptographie::error::Error),
@@ -141,6 +142,12 @@ impl From<millegrilles_cryptographie::multibase::Error> for Error {
 impl From<millegrilles_cryptographie::multihash::Error> for Error {
     fn from(value: millegrilles_cryptographie::multihash::Error) -> Self {
         Self::Multihash(value)
+    }
+}
+
+impl From<multihash_derive::UnsupportedCode> for Error {
+    fn from(value: multihash_derive::UnsupportedCode) -> Self {
+        Self::MultihashCode(format!("Unsupported multihash code: {:?}", value))
     }
 }
 
