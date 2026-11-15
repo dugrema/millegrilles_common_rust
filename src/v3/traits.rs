@@ -13,9 +13,9 @@ use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGril
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use millegrilles_cryptographie::x509_store::ValidateurX509;
 use mongodb::{bson::Document, ClientSession, Collection};
-use multibase::Base;
-use multihash::Code;
-use openssl::pkey::{PKey, Private};
+use millegrilles_cryptographie::multibase::Base;
+use multihash_codetable::Code;
+use millegrilles_cryptographie::openssl::pkey::{PKey, Private};
 use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;

@@ -11,7 +11,7 @@ use crate::v3::models::{BackupPreflightResult, PreflightError};
 use crate::v3::{BackupService, ChiffrageService, ConfigService, FilehostService, PkiService, PresenceService, TransactionService};
 use async_trait::async_trait;
 use chrono::Utc;
-use openssl::pkey::{PKey, Private};
+use millegrilles_cryptographie::openssl::pkey::{PKey, Private};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 

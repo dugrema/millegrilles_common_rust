@@ -4,7 +4,7 @@ use crate::generateur_messages::{RoutageMessageAction, RoutageMessageReponse};
 use crate::v3::impls::rabbitmq_connection::RabbitConnectionManager;
 use crate::v3::impls::rabbitmq_consumer::{RabbitConsumerManager, ResponseMessage, ResponseWaiter};
 use crate::v3::impls::rabbitmq_registry::RabbitQueueRegistry;
-use chrono::Utc;
+use millegrilles_cryptographie::chrono::Utc;
 use lapin::options::BasicPublishOptions;
 use lapin::{BasicProperties, Channel};
 use millegrilles_cryptographie::messages_structs::{MessageKind, MessageMilleGrillesBufferDefault};
@@ -126,7 +126,7 @@ impl RabbitMessageDispatcher {
             (Some(correlation_id), true)  => {
                 // We have a blocking message with correlation, add expiration information
                 let timeout_messages = timeout_blocking.unwrap_or_else(|| DEFAULT_MESSAGE_TIMEOUT);
-                let expiration = Utc::now() + chrono::Duration::milliseconds(timeout_messages as i64);
+                let expiration = Utc::now() + millegrilles_cryptographie::chrono::Duration::milliseconds(timeout_messages as i64);
 
                 // Create correlation waiter for the response (to be put on the tx)
                 let (tx, rx) = oneshot::channel();

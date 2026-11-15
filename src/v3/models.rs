@@ -3,8 +3,8 @@ use crate::certificats::VerificateurPermissions;
 use crate::common_messages::ResponseRequestDechiffrageV2Cle;
 use crate::error::Error as CommonError;
 use crate::v3::facades::message_inbound::MessageValidated;
-use base64::Engine;
-use base64::engine::general_purpose;
+use millegrilles_cryptographie::base64::Engine;
+use millegrilles_cryptographie::base64::engine::general_purpose;
 use bson::{Bson, Document, doc, serde_helpers::datetime::FromChrono04DateTime};
 use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, Utc};
@@ -16,14 +16,14 @@ use millegrilles_cryptographie::messages_structs::{DechiffrageInterMillegrilleOw
 use millegrilles_cryptographie::x25519::{CleDerivee, CleSecreteX25519};
 use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::options::WriteModel;
-use openssl::pkey::{PKey, Private};
+use millegrilles_cryptographie::openssl::pkey::{PKey, Private};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use multihash::Code;
+use multihash_codetable::Code;
 use crate::hachages::hacher_bytes_vu8;
 use crate::rabbitmq_dao::ConfigRoutingExchange;
 

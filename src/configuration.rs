@@ -1,10 +1,10 @@
 use tracing::{debug, info};
 use millegrilles_cryptographie::x509::EnveloppePrivee;
-use multibase;
-use openssl::pkcs12::Pkcs12;
-use openssl::stack::Stack;
-use openssl::x509::X509;
-use rand::Rng;
+use millegrilles_cryptographie::multibase;
+use millegrilles_cryptographie::openssl::pkcs12::Pkcs12;
+use millegrilles_cryptographie::openssl::stack::Stack;
+use millegrilles_cryptographie::openssl::x509::X509;
+use millegrilles_cryptographie::rand::Rng;
 use std::fs::{File, Permissions, read_to_string};
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -303,7 +303,8 @@ impl ConfigurationPki {
         let enveloppe_privee = &self.enveloppe_privee;
 
         // Preparer cle, cert, pass
-        let password: [u8; 32] = rand::rng().random::<[u8; 32]>();
+        let mut password: [u8; 32] = [0; 32];
+        millegrilles_cryptographie::rand::rng().fill_bytes(&mut password);
         let password: String = multibase::encode(multibase::Base::Base64, password);
         // let enveloppe_privee = charger_enveloppe_privee(
         //     self.certfile.as_path(), self.keyfile.as_path(), validateur)

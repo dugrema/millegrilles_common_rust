@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use flate2::Compression;
-use flate2::write::GzEncoder;
+use millegrilles_cryptographie::flate2::Compression;
+use millegrilles_cryptographie::flate2::write::GzEncoder;
 use futures::pin_mut;
 use tracing::{debug, error, info, warn};
 
@@ -20,7 +20,7 @@ use millegrilles_cryptographie::x509::EnveloppeCertificat;
 use mongodb::Cursor;
 use mongodb::bson::doc;
 use mongodb::options::Hint;
-use multibase::{Base, encode};
+use millegrilles_cryptographie::multibase::{Base, encode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tempfile::{TempDir, tempdir};

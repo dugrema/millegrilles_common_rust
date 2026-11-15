@@ -5,7 +5,7 @@ use crate::hachages::HacheurBuilder;
 use crate::v3::models::{DecryptedKey, GeneratedSecretKey};
 use crate::v3::traits::{ChiffrageService, PkiService};
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad};
+use millegrilles_cryptographie::base64::{Engine as _, engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad};
 use chrono::{DateTime, Utc};
 use millegrilles_cryptographie::chiffrage_cles::CleChiffrageHandler;
 use millegrilles_cryptographie::chiffrage_docs::EncryptedDocument;
@@ -14,9 +14,9 @@ use millegrilles_cryptographie::messages_structs::{MessageMilleGrillesOwned, Mes
 use millegrilles_cryptographie::x25519::dechiffrer_asymmetrique_ed25519;
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use millegrilles_cryptographie::x509_store::{ValidateurX509, ValidateurX509Impl};
-use multibase::Base;
-use multihash::Code;
-use openssl::x509::X509;
+use millegrilles_cryptographie::multibase::Base;
+use multihash_codetable::Code;
+use millegrilles_cryptographie::openssl::x509::X509;
 use serde_json;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -26,7 +26,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-use x509_parser::nom::ExtendInto;
+use millegrilles_cryptographie::x509_parser::nom::ExtendInto;
 
 // --- Constants ---
 const CACHE_LIMIT: usize = 50;

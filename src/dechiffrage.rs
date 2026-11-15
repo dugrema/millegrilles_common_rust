@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
+use millegrilles_cryptographie::base64::{engine::general_purpose::STANDARD as base64, engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use jwt_simple::prelude::{Deserialize, Serialize};
 use tracing::debug;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519, CleDechiffrageX25519Impl, Decipher};

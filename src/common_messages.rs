@@ -326,18 +326,18 @@ impl TryInto<CleSecreteSerialisee> for ResponseRequestDechiffrageV2Cle {
 
     fn try_into(self) -> Result<CleSecreteSerialisee, CommonError> {
         Ok(CleSecreteSerialisee {
-            cle_secrete_base64: heapless::String::try_from(self.cle_secrete_base64.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee>  cle_secrete_base64"))?,
+            cle_secrete_base64: heapless::String::try_from(self.cle_secrete_base64.as_str()).map_err(|_| CommonError::Str("TryInto<CleSecreteSerialisee>  cle_secrete_base64"))?,
             cle_id: match &self.cle_id {Some(inner) => {
-                let value = heapless::String::try_from(inner.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee> cle_id"))?;
+                let value = heapless::String::try_from(inner.as_str()).map_err(|_| CommonError::Str("TryInto<CleSecreteSerialisee> cle_id"))?;
                 Some(value)
             }, None => None},
             format: self.format.clone(),
             nonce: match &self.nonce {Some(inner) => {
-                let value = heapless::String::try_from(inner.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee> nonce"))?;
+                let value = heapless::String::try_from(inner.as_str()).map_err(|_| CommonError::Str("TryInto<CleSecreteSerialisee> nonce"))?;
                 Some(value)
             }, None => None},
             verification: match &self.verification {Some(inner) => {
-                let value = heapless::String::try_from(inner.as_str()).map_err(|()| CommonError::Str("TryInto<CleSecreteSerialisee> verification"))?;
+                let value = heapless::String::try_from(inner.as_str()).map_err(|_| CommonError::Str("TryInto<CleSecreteSerialisee> verification"))?;
                 Some(value)
             }, None => None},
         })

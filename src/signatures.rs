@@ -1,11 +1,11 @@
 use std::error::Error;
 
 use tracing::debug;
-use multibase::{Base, Base::Base64, decode, encode};
-use multihash::Code;
-use openssl::error::ErrorStack;
-use openssl::pkey::{PKey, Private, Public};
-use openssl::sign::{Signer, Verifier};
+use millegrilles_cryptographie::multibase::{Base, Base::Base64, decode, encode};
+use multihash_codetable::Code;
+use millegrilles_cryptographie::openssl::error::ErrorStack;
+use millegrilles_cryptographie::openssl::pkey::{PKey, Private, Public};
+use millegrilles_cryptographie::openssl::sign::{Signer, Verifier};
 use crate::hachages::hacher_bytes_vu8;
 
 // pub const SALT_LENGTH: c_int = 64;

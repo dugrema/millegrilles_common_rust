@@ -1,8 +1,11 @@
 use std::convert::TryFrom;
 
 use tracing::debug;
-use multibase::{Base, decode, encode};
-use multihash::{Code, Multihash, MultihashDigest, Sha2_256, Sha2_512, Blake2b512, Blake2s256, StatefulHasher};
+use millegrilles_cryptographie::multibase::{Base, decode, encode};
+use millegrilles_cryptographie::multihash::{Multihash};  // Sha2_256, Sha2_512, Blake2b512, Blake2s256, StatefulHasher
+use millegrilles_cryptographie::sha2;
+use millegrilles_cryptographie::blake2;
+use multihash_codetable::{Code, MultihashDigest};
 use serde::Serialize;
 use uuid::Uuid;
 use substring::Substring;
@@ -162,10 +165,10 @@ impl HacheurBuilder {
     pub fn build(self) -> Hacheur {
 
         let hacheur_interne: Box<dyn HacheurInterne> = match u64::from(self.digester) {
-            0x12 => Box::new(HacheurSha2_256{hacheur: Sha2_256::default()}),
-            0x13 => Box::new(HacheurSha2_512{hacheur: Sha2_512::default()}),
-            0xb240 => Box::new(HacheurBlake2b512{hacheur: Blake2b512::default()}),
-            0xb260 => Box::new(HacheurBlake2s256{hacheur: Blake2s256::default()}),
+            0x12 => Box::new(HacheurSha2_256{hacheur: Code::Sha2_256::default()}),
+            0x13 => Box::new(HacheurSha2_512{hacheur: Code::Sha2_512::default()}),
+            0xb240 => Box::new(HacheurBlake2b512{hacheur: Code::Blake2b512::default()}),
+            0xb260 => Box::new(HacheurBlake2s256{hacheur: Code::Blake2s256::default()}),
             _ => panic!("Type hacheur inconnu")
         };
 
@@ -252,7 +255,7 @@ pub fn hacher_uuid<S>(uuid_in: S, len_bytes: Option<u8>) -> Result<String, uuid:
     let mut hacheur = Sha2_256::default();
     hacheur.update(uuid_bytes);
     let hachage = hacheur.finalize();
-    let hachage_str: String = multibase::encode(Base::Base58Btc, hachage.as_ref());
+    let hachage_str: String = encode(Base::Base58Btc, hachage.as_ref());
     debug!("hacher_uuid str : {}", hachage_str);
 
     Ok(String::from(hachage_str.substring(1, (len_hachage+1) as usize)))

@@ -2,8 +2,8 @@ use crate::backup_v2::{FichierArchiveBackup, HeaderFichierArchive, TypeArchive};
 use crate::error::Error as CommonError;
 use crate::v3::ChiffrageService;
 use crate::v3::models::{DecryptedKey, LockFile};
-use chrono::format::StrftimeItems;
-use chrono::{DateTime, Utc};
+use millegrilles_cryptographie::chrono::format::StrftimeItems;
+use millegrilles_cryptographie::chrono::{DateTime, Utc};
 use fs2::FileExt;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
@@ -13,14 +13,16 @@ use std::path::{Path, PathBuf};
 use async_compression::tokio::bufread::DeflateDecoder;
 use millegrilles_cryptographie::chiffrage_cles::CleDechiffrageX25519Impl;
 use millegrilles_cryptographie::chiffrage_mgs4::DecipherMgs4;
-use multibase::Base;
-use multihash::Code;
+use millegrilles_cryptographie::multibase::Base;
+// use millegrilles_cryptographie::multihash::Multihash;
+use multihash_codetable::Code;
 use tokio::fs;
 use tokio::fs::{File, read_dir};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::time::sleep;
 use tracing::{debug, error, info};
 use crate::db_structs::TransactionOwned;
+use crate::error::Error::Multihash;
 use crate::hachages::Hacheur;
 use crate::v3::impls::asyncio_ciphers::AsyncDecryptionReaderMgs4;
 
@@ -131,7 +133,7 @@ pub async fn prepare_backup_workfile(domain_backup_path: &Path) -> Result<PathBu
 pub async fn rename_backup_file(
     chiffrage: &dyn ChiffrageService,
     archive_type: &TypeArchive,
-    first_transaction: chrono::DateTime<Utc>,
+    first_transaction: DateTime<Utc>,
     domain: &str,
     backup_path: &Path,
     workfile_path: &Path
@@ -140,7 +142,7 @@ pub async fn rename_backup_file(
     let date_str = first_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
 
     // Calculer le digest du fichier (apres modification du header).
-    let digest_str = chiffrage.digest_file(workfile_path, multihash::Code::Blake2b512, multibase::Base::Base58Btc).await?;
+    let digest_str = chiffrage.digest_file(workfile_path, Code::Blake2b512, Base::Base58Btc).await?;
 
     let archive_type_marker = match archive_type {
         TypeArchive::Incremental => "I",

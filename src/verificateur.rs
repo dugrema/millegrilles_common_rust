@@ -3,7 +3,7 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use tracing::debug;
-use openssl::pkey::{PKey, Public};
+use millegrilles_cryptographie::openssl::pkey::{PKey, Public};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

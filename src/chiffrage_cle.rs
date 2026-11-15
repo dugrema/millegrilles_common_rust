@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
-use base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
+use millegrilles_cryptographie::base64::{engine::general_purpose::STANDARD_NO_PAD as base64_nopad, Engine as _};
 use chrono::{DateTime, Utc};
 use tracing::{error, info};
 use millegrilles_cryptographie::chiffrage::{FormatChiffrage, formatchiffragestr};

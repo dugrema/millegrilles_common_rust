@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
 use hex::FromHexError;
-use openssl::error::ErrorStack;
+use millegrilles_cryptographie::openssl::error::ErrorStack;
 use redis::RedisError;
 use url::ParseError;
 use tokio::sync::mpsc::error::SendError;
@@ -15,10 +15,10 @@ pub enum Error {
     Openssl(ErrorStack),
     SerdeJson(serde_json::Error),
     Io(std::io::Error),
-    Multibase(multibase::Error),
-    Multihash(multihash::Error),
-    Chacha20poly1350(chacha20poly1305::Error),
-    Dryoc(dryoc::Error),
+    Multibase(millegrilles_cryptographie::multibase::Error),
+    Multihash(millegrilles_cryptographie::multihash::Error),
+    Chacha20poly1350(millegrilles_cryptographie::chacha20poly1305::Error),
+    Dryoc(millegrilles_cryptographie::dryoc::Error),
     MillegrillesCryptographie(millegrilles_cryptographie::error::Error),
     ErreurVerification(ErreurVerification),
     Redis(RedisError),
@@ -31,7 +31,7 @@ pub enum Error {
     Utf8Error(Utf8Error),
     FromUtf8Error(FromUtf8Error),
     TokioSendError(String),
-    Base64DecodeError(base64::DecodeError),
+    Base64DecodeError(millegrilles_cryptographie::base64::DecodeError),
     /// Used to wrap an error response back to the user, params are (Code, Message, Error)
     ErrorResponse(Option<i64>, Option<String>, Option<String>),
     BsonError(bson::error::Error),
@@ -90,8 +90,8 @@ impl From<RedisError> for Error {
     }
 }
 
-impl From<dryoc::Error> for Error {
-    fn from(value: dryoc::Error) -> Self {
+impl From<millegrilles_cryptographie::dryoc::Error> for Error {
+    fn from(value: millegrilles_cryptographie::dryoc::Error) -> Self {
         Error::Dryoc(value)
     }
 }
@@ -132,14 +132,14 @@ impl From<url::ParseError> for Error {
     }
 }
 
-impl From<multibase::Error> for Error {
-    fn from(value: multibase::Error) -> Self {
+impl From<millegrilles_cryptographie::multibase::Error> for Error {
+    fn from(value: millegrilles_cryptographie::multibase::Error) -> Self {
         Self::Multibase(value)
     }
 }
 
-impl From<multihash::Error> for Error {
-    fn from(value: multihash::Error) -> Self {
+impl From<millegrilles_cryptographie::multihash::Error> for Error {
+    fn from(value: millegrilles_cryptographie::multihash::Error) -> Self {
         Self::Multihash(value)
     }
 }
@@ -162,8 +162,8 @@ impl<T> From<SendError<T>> for Error {
     }
 }
 
-impl From<base64::DecodeError> for Error {
-    fn from(value: base64::DecodeError) -> Self {
+impl From<millegrilles_cryptographie::base64::DecodeError> for Error {
+    fn from(value: millegrilles_cryptographie::base64::DecodeError) -> Self {
         Self::Base64DecodeError(value)
     }
 }

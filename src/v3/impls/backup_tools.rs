@@ -7,13 +7,14 @@ use crate::v3::impls::security_service::digest_file;
 use crate::v3::models::{BackupTransactionRow, DecryptedKey};
 use async_compression::tokio::bufread::DeflateDecoder;
 use async_compression::tokio::write::DeflateEncoder;
-use chrono::Utc;
-use chrono::format::StrftimeItems;
+use millegrilles_cryptographie::chrono::Utc;
+use millegrilles_cryptographie::chrono::format::StrftimeItems;
 use millegrilles_cryptographie::chiffrage_cles::{CleDechiffrageX25519Impl, CleSecreteSerialisee};
 use millegrilles_cryptographie::chiffrage_mgs4::{CipherMgs4, CleSecreteCipher, DecipherMgs4};
 use millegrilles_cryptographie::messages_structs::MessageMilleGrillesOwned;
 use millegrilles_cryptographie::x509::{EnveloppePrivee, parse_encrypted_private_key};
-use openssl::pkey::{PKey, Private};
+use millegrilles_cryptographie::openssl::pkey::{PKey, Private};
+use multihash_codetable::Code;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -127,8 +128,8 @@ async fn process_sort_backup_file(
     let mut compressor = DeflateEncoder::new(&mut encryptor);
 
     // let mut transaction_list = Vec::with_capacity(2_000_000);
-    let mut first_transaction = chrono::DateTime::<Utc>::MIN_UTC;
-    let mut last_transaction = chrono::DateTime::<Utc>::MIN_UTC;
+    let mut first_transaction = millegrilles_cryptographie::chrono::DateTime::<Utc>::MIN_UTC;
+    let mut last_transaction = millegrilles_cryptographie::chrono::DateTime::<Utc>::MIN_UTC;
     let mut out_of_order = false;
     let mut count_transactions: usize = 0;
     while let Some(transaction_data) = lines.next_line().await? {
@@ -146,7 +147,7 @@ async fn process_sort_backup_file(
 
         if ! out_of_order {
             let new_transaction_time = t.processed_date();
-            if first_transaction == chrono::DateTime::<Utc>::MIN_UTC {
+            if first_transaction == millegrilles_cryptographie::chrono::DateTime::<Utc>::MIN_UTC {
                 first_transaction = new_transaction_time.to_owned();
             } else if &first_transaction > new_transaction_time {
                 warn!("Transactions are out of order - current transaction has time prior to first");
@@ -273,7 +274,7 @@ fn decrypt_key(archive_header: &HeaderFichierArchive, master_key: &PKey<Private>
 
 pub async fn rename_backup_file(
     archive_type: &TypeArchive,
-    first_transaction: chrono::DateTime<Utc>,
+    first_transaction: millegrilles_cryptographie::chrono::DateTime<Utc>,
     domain: &str,
     backup_path: &Path,
     workfile_path: &Path
@@ -282,7 +283,7 @@ pub async fn rename_backup_file(
     let date_str = first_transaction.format_with_items(StrftimeItems::new("%Y%m%d%H%M%S%3fZ"));
 
     // Calculer le digest du fichier (apres modification du header).
-    let digest_str = digest_file(workfile_path, multihash::Code::Blake2b512, multibase::Base::Base58Btc).await?;
+    let digest_str = digest_file(workfile_path, Code::Blake2b512, millegrilles_cryptographie::multibase::Base::Base58Btc).await?;
 
     let archive_type_marker = match archive_type {
         TypeArchive::Incremental => "I",

@@ -8,8 +8,8 @@ use millegrilles_cryptographie::messages_structs::MessageMilleGrillesBufferDefau
 use millegrilles_cryptographie::x509::{EnveloppeCertificat, EnveloppePrivee};
 use mongodb::{ClientSession, Database};
 use mongodb::options::WriteModel;
-use openssl::x509::X509;
-use openssl::x509::store::X509Store;
+use millegrilles_cryptographie::openssl::x509::X509;
+use millegrilles_cryptographie::openssl::x509::store::X509Store;
 use serde::Serialize;
 use tokio::sync::{Notify, mpsc, mpsc::Sender};
 use tokio::task::JoinHandle;
